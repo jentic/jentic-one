@@ -7,7 +7,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 )
 
@@ -18,6 +20,46 @@ func notEmptyField(label string) func(string) error {
 		}
 		return nil
 	}
+}
+
+// optionalBrokerField validates the interactive broker input: blank is allowed
+// (the field is optional — the post-registration warning covers it), anything
+// else must pass the same check as --broker-url so the form can't persist a
+// value the flag would reject.
+func optionalBrokerField() func(string) error {
+	return func(s string) error {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil
+		}
+		return validateBrokerURL(s)
+	}
+}
+
+// validateBrokerURL checks an explicit broker URL before it is persisted: it
+// must parse as an absolute http(s) URL with a host, and it obeys the SDK's
+// transport invariant (https required for any non-loopback host) — `jentic
+// execute` sends the agent bearer to this URL, so it must never be a plaintext
+// non-loopback target (SEC-1). auth.RequireSecureURL is the same guard the
+// token/broker transports enforce at send time; validating here fails fast at
+// onboarding instead of at the first execute.
+func validateBrokerURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return &ux.CodedError{
+			Code:       ux.CodeMissingArgument,
+			Msg:        fmt.Sprintf("invalid --broker-url %q: must be an absolute http(s) URL", raw),
+			Actionable: "Pass the broker's full URL, e.g. --broker-url https://broker.jentic.example.com.",
+		}
+	}
+	if err := auth.RequireSecureURL(raw); err != nil {
+		return &ux.CodedError{
+			Code:       ux.CodeMissingArgument,
+			Msg:        "invalid --broker-url: " + err.Error(),
+			Actionable: "Use https for a remote broker (http is allowed only for loopback addresses).",
+		}
+	}
+	return nil
 }
 
 // deriveEnvName proposes an environment name from the install URL: the first
@@ -33,6 +75,19 @@ func deriveEnvName(installURL string) string {
 		return s
 	}
 	return "default"
+}
+
+// seedBrokerURL resolves a NEW environment's broker_url: an explicit
+// --broker-url always wins (the one-command remote onboarding path); otherwise
+// a loopback control plane gets the co-located local broker seed. Remote
+// installs with no explicit broker get "" — the broker is never derived from a
+// remote base_url (it usually lives on its own host) and the caller warns
+// instead.
+func seedBrokerURL(explicit, installURL string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return localBrokerURL(installURL)
 }
 
 // localBrokerURL returns the co-located local broker URL for a loopback control

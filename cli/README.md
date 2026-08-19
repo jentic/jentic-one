@@ -38,6 +38,17 @@ setting up a local agent, run `jentic setup` to create one (isolated account +
 registration + skills); if you're an agent that doesn't have a profile yet, run
 `jentic register`.
 
+**Connecting to a remote Jentic server?** You don't need `jenticctl` or a local
+install at all — the `jentic` binary is self-contained (it links none of the
+installer/lifecycle code; enforced by an arch test) and one command onboards it:
+
+```bash
+jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
+```
+
+Ask your operator for both URLs — the control plane and the broker often live on
+different hosts, and the CLI never derives one from the other.
+
 ## Install
 
 Fastest first. `jentic` (agent) and `jenticctl` (installer/server) are **separate
@@ -182,7 +193,7 @@ Notes:
 
 ```bash
 # Connect this machine to a Jentic install, browse the catalog, execute an operation.
-jentic register --url https://jentic.example.com
+jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
 jentic catalog
 jentic access whoami                                  # a fresh agent is bound to no APIs
 jentic access request --toolkit <vendor/name> --wait  # ask a human to grant access
@@ -190,16 +201,19 @@ jentic execute <operation>
 ```
 
 > **Remote install:** a remote control plane's broker usually lives on a
-> different host, so `jentic register` does **not** guess a `broker_url` for it.
-> Set it before `jentic execute` can reach a 2xx (otherwise execute fail-closes
-> with `RESOLVE_FAILED` rather than dialing your local default):
+> different host, so `jentic register` does **not** guess a `broker_url` for it
+> — pass `--broker-url` as above (ask your operator for it). Without a broker,
+> `jentic execute` fail-closes with `RESOLVE_FAILED` rather than dialing your
+> local default. Forgot it? Re-running register fills it in on the existing
+> environment:
 >
 > ```bash
-> jentic env add <env> --url https://jentic.example.com --broker-url https://broker.jentic.example --force
+> jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example
 > ```
 >
-> (`--url` is required on `env add`.) See [Local setup](#local-setup) for the
-> loopback case, where `register` seeds the broker automatically.
+> (`jentic env add <env> --url <URL> --broker-url <URL> --force` does the same
+> without re-registering.) See [Local setup](#local-setup) for the loopback
+> case, where `register` seeds the broker automatically.
 
 ## Local setup
 
@@ -482,8 +496,9 @@ command:
 ```bash
 # Fresh machine → working setup, one command. Creates the environment,
 # identity and context, activates them, registers the key, waits for the
-# operator to approve, and mints a token.
-jentic register --url https://jentic.example.com
+# operator to approve, and mints a token. --broker-url points `jentic execute`
+# at the remote data plane (loopback installs seed it automatically).
+jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
 
 # Name things explicitly (defaults: identity = hostname, env = URL's first label)
 jentic register --url https://jentic.example.com --name crawler --env prod
@@ -491,8 +506,12 @@ jentic register --url https://jentic.example.com --name crawler --env prod
 # With a context already active, re-register / resume that identity:
 jentic register
 
-# Interactive: bare `jentic register` on a fresh machine prompts for the two
-# values (install URL + agent name) and does the rest.
+# Fill in a missing broker on the active environment while re-registering:
+jentic register --broker-url https://broker.jentic.example.com
+
+# Interactive: bare `jentic register` on a fresh machine prompts for the
+# install URL + agent name (and the broker URL, for a remote install) and
+# does the rest.
 ```
 
 Approval is a human, out-of-band step: `register` prints the console link
@@ -511,7 +530,7 @@ jentic catalog           # you're in business
 To work against several installs, add more environments and switch contexts:
 
 ```bash
-jentic env add staging --url https://staging.jentic.example.com
+jentic env add staging --url https://staging.jentic.example.com --broker-url https://broker.staging.jentic.example.com
 jentic context create staging --env staging --identity crawler
 jentic context use staging
 jentic register          # register the identity's key with the new env
@@ -608,3 +627,20 @@ Inspect and edit it with `jentic context/env/identity` rather than by hand;
 and `XDG_STATE_HOME` variables relocate the config and state directories (the
 XDG layout is enforced on every OS, including Windows, so paths stay
 predictable); the cache follows the platform's native cache dir.
+
+### File-less mode (orchestrators)
+
+An orchestrator that injects credentials can skip the config file entirely by
+setting environment variables — nothing is read from or written to disk:
+
+```bash
+export JENTIC_BASE_URL=https://jentic.example.com                # control plane
+export JENTIC_BEARER_TOKEN=<token minted for this agent>        # never persisted
+export JENTIC_BROKER_URL=https://broker.jentic.example.com      # required for execute on a remote install
+```
+
+`JENTIC_BROKER_URL` is the file-less counterpart of the environment's
+`broker_url`: without it, `jentic execute` against a remote `JENTIC_BASE_URL`
+fail-closes with `RESOLVE_FAILED` (it never falls back to the local default
+for a remote control plane). All three are required for a working remote
+data-plane loop; the control-plane commands need only the first two.

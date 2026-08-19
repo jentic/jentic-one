@@ -17,6 +17,7 @@ type registerOptions struct {
 	url         string // install URL (fresh-machine setup arm)
 	env         string // environment name override (default: derived from --url)
 	name        string
+	brokerURL   string // explicit broker (data plane) URL for the environment
 	timeout     time.Duration
 	force       bool
 	yes         bool
@@ -45,9 +46,14 @@ func NewRegisterCmd(app *App) *cobra.Command {
 			"token-exchange audience is matched exactly against the backend's\n" +
 			"canonical_base_url, and a local backend uses 127.0.0.1. For a loopback URL,\n" +
 			"register also seeds the environment's broker_url (http://127.0.0.1:8100) so\n" +
-			"`jentic execute` works without extra flags.",
+			"`jentic execute` works without extra flags.\n\n" +
+			"Remote install: pass --broker-url too. The broker usually lives on its own\n" +
+			"host and is never derived from the control-plane URL; without it the\n" +
+			"environment has no broker and `jentic execute` fail-closes until one is set\n" +
+			"(ask your operator for the broker URL). Re-running register with\n" +
+			"--broker-url fills it in on an existing environment.",
 		Example: "  jentic register --url http://127.0.0.1:8000   # local install (use 127.0.0.1, not localhost)\n" +
-			"  jentic register --url https://jentic.example.com\n" +
+			"  jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com\n" +
 			"  jentic register --url https://jentic.example.com --name crawler --env prod\n" +
 			"  jentic register                      # active context (or interactive setup)\n" +
 			"  jentic register --force              # re-register the active identity",
@@ -61,6 +67,7 @@ func NewRegisterCmd(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&opts.url, "url", "", "Jentic install URL to connect to (creates environment/identity/context on first run)")
 	cmd.Flags().StringVar(&opts.env, "env", "", "environment name for --url (default: derived from the URL host)")
 	cmd.Flags().StringVar(&opts.name, "name", "", "agent name shown to the approving operator (default: hostname)")
+	cmd.Flags().StringVar(&opts.brokerURL, "broker-url", "", "broker (data plane) URL for the environment — execute needs it on a remote install; seeded automatically for loopback")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 5*time.Minute, "how long to wait for approval")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "re-register even if this identity already has a registration")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the interactive prompt; use flags + defaults")
@@ -84,7 +91,7 @@ func flagsAllowPrompt(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 }
 
 // registerFieldFlags are the flags whose presence makes `register` non-interactive.
-var registerFieldFlags = []string{"url", "env", "name"}
+var registerFieldFlags = []string{"url", "env", "name", "broker-url"}
 
 // SetupFieldFlags extend the register set with the skill-target and
 // activation flags setup adds, so a flag-driven run (e.g. `--operator
@@ -133,10 +140,10 @@ func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 	// with whatever happened to be active.
 	if opts.url == "" {
 		if st := clictx.ActiveContext(ctx); st != nil {
-			return a.RegisterActive(ctx, st, opts.name, opts.timeout, opts.force)
+			return a.RegisterActive(ctx, st, opts.name, opts.brokerURL, opts.timeout, opts.force)
 		}
 	}
-	vals := SetupValues{URL: opts.url, Env: opts.env, Name: opts.name}
+	vals := SetupValues{URL: opts.url, Env: opts.env, Name: opts.name, BrokerURL: opts.brokerURL}
 	_, err := a.RegisterSetup(ctx, vals, opts.timeout, opts.force, opts.interactive)
 	if errors.Is(err, ErrOnboardCancelled) {
 		return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,14 +32,16 @@ import (
 //	identity register                   (key mint + RFC 7591 DCR)
 //	...wait for operator approval, then prove it with a token exchange.
 
-// SetupValues are the two things the fresh-machine arm must learn: where the
-// install lives and what to call this agent. Everything else is derived.
+// SetupValues are the things the fresh-machine arm must learn: where the
+// install lives, what to call this agent, and (for a remote install) where the
+// broker lives. Everything else is derived.
 // Exported (with exported fields) because setup now lives in the
 // localagentcmd package (ARCH-1) and constructs this to drive onboarding.
 type SetupValues struct {
-	URL  string // control-plane URL (becomes the environment's base_url)
-	Env  string // environment name ("" -> derived from the URL host)
-	Name string // identity + client name ("" -> derived from the hostname)
+	URL       string // control-plane URL (becomes the environment's base_url)
+	Env       string // environment name ("" -> derived from the URL host)
+	Name      string // identity + client name ("" -> derived from the hostname)
+	BrokerURL string // broker URL ("" -> loopback seed, or unset for remote — never derived)
 }
 
 // ErrOnboardCancelled signals a user-aborted interactive onboarding (Esc in
@@ -60,7 +63,7 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 		if vals.Name == "" {
 			vals.Name = defaultIdentityName()
 		}
-		if err := promptOnboarding(&vals.URL, &vals.Name); err != nil {
+		if err := promptOnboarding(&vals.URL, &vals.Name, &vals.BrokerURL); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, st.Dim.Render("Cancelled."))
 				return vals, ErrOnboardCancelled
@@ -102,6 +105,16 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 			}
 		}
 	}
+	// An explicit broker URL must be sane BEFORE anything is persisted: it is
+	// the target `jentic execute` sends the agent bearer to, so it obeys the
+	// same transport invariant as every other bearer-carrying URL (https
+	// required for any non-loopback host — SEC-1).
+	vals.BrokerURL = strings.TrimRight(strings.TrimSpace(vals.BrokerURL), "/")
+	if vals.BrokerURL != "" {
+		if err := validateBrokerURL(vals.BrokerURL); err != nil {
+			return vals, err
+		}
+	}
 
 	// Upsert the trio and activate it. The context is named per-identity-per-env
 	// (env "-" name) so registering a SECOND agent into the same env gets its own
@@ -130,18 +143,18 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 		}
 		if _, ok := cfg.Environments[envName]; !ok {
 			env := sdkconfig.Env{BaseURL: vals.URL}
-			// Local convenience: when the control plane is a loopback address,
-			// the broker is co-located on the standard local broker port over
-			// plain HTTP (jenticctl install stands both up together). Seeding it
-			// here means `jentic execute` works out of the box on a local install
-			// instead of falling back to the https default and hitting a TLS
-			// error. For REMOTE/enterprise URLs we leave broker_url unset — there
-			// the broker frequently lives on a different domain and MUST be set
-			// explicitly (`jentic env add --broker-url`); it is never derived.
-			if bu := localBrokerURL(vals.URL); bu != "" {
+			if bu := seedBrokerURL(vals.BrokerURL, vals.URL); bu != "" {
 				env.BrokerURL = bu
 			}
 			cfg.Environments[envName] = env
+		} else if vals.BrokerURL != "" {
+			// Existing env: an explicit --broker-url completes an env that has
+			// none, and refuses (without --force) to silently repoint one that
+			// already names a DIFFERENT broker — same shape as the base-URL
+			// mismatch guard above.
+			if err := applyBrokerURL(cfg, envName, vals.BrokerURL, force); err != nil {
+				return err
+			}
 		}
 		brokerConfigured = cfg.Environments[envName].BrokerURL != ""
 		// (Re)bind and activate the context. The context name is derived by
@@ -179,18 +192,21 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 	}
 
 	a.registerProgress(ctx, st.Successf("Environment %q → %s", envName, vals.URL))
+	if vals.BrokerURL != "" {
+		a.registerProgress(ctx, st.Successf("Broker → %s", vals.BrokerURL))
+	}
 	a.registerProgress(ctx, st.Successf("Identity %q (agent)", vals.Name))
 	a.registerProgress(ctx, st.Successf("Context %q (active)", contextName))
 
 	// Remote control plane with no broker → teach the mandatory next step now,
 	// at the moment it matters (remote-cli-usage F1/Phase B). `jentic execute`
 	// fail-closes when base_url is remote and broker_url is empty. Routed through
-	// registerProgress, so it goes to stderr and is suppressed in machine mode
-	// (never corrupts an agent's stdout stream).
+	// registerProgress, so it is suppressed in machine mode (never corrupts an
+	// agent's stdout stream).
 	if !brokerConfigured {
 		a.registerProgress(ctx, theme.Warnf("No broker_url set for remote environment %q. "+
-			"`jentic execute` needs one — set it with `jentic env add %s --url %s --broker-url https://<broker-host>:<port> --force` "+
-			"(ask your operator for the broker URL).", envName, envName, vals.URL))
+			"`jentic execute` needs one — re-run `jentic register --url %s --broker-url https://<broker-host>` to fill it in "+
+			"(ask your operator for the broker URL).", envName, vals.URL))
 	}
 
 	return vals, a.registerAndWait(ctx, vals.Name, envName, vals.URL, vals.Name, timeout, force)
@@ -198,8 +214,11 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 
 // RegisterActive registers the ACTIVE context's identity with its
 // environment — the same store `jentic identity register` writes, plus the
-// human-facing approval wait.
-func (a *App) RegisterActive(ctx context.Context, st *clictx.ActiveState, clientName string, timeout time.Duration, force bool) error {
+// human-facing approval wait. A non-empty brokerURL is applied to the active
+// environment first (fill-if-empty; a different existing broker refuses
+// without force), so `jentic register --broker-url …` is the one-line way to
+// complete a remote environment that was onboarded without one.
+func (a *App) RegisterActive(ctx context.Context, st *clictx.ActiveState, clientName, brokerURL string, timeout time.Duration, force bool) error {
 	if st.BaseURL == "" {
 		return &ux.CodedError{
 			Code:       ux.CodeResolveFailed,
@@ -207,16 +226,61 @@ func (a *App) RegisterActive(ctx context.Context, st *clictx.ActiveState, client
 			Actionable: "Set it with `jentic env add` / edit the environment.",
 		}
 	}
+	brokerURL = strings.TrimRight(strings.TrimSpace(brokerURL), "/")
+	if brokerURL != "" {
+		if err := validateBrokerURL(brokerURL); err != nil {
+			return err
+		}
+		if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
+			return applyBrokerURL(cfg, st.EnvironmentName, brokerURL, force)
+		}); err != nil {
+			return err
+		}
+		a.registerProgress(ctx, theme.StylesFromContext(ctx).Successf(
+			"Broker → %s (environment %q)", brokerURL, st.EnvironmentName))
+	}
 	if clientName == "" {
 		clientName = st.IdentityName
 	}
 	return a.registerAndWait(ctx, st.IdentityName, st.EnvironmentName, st.BaseURL, clientName, timeout, force)
 }
 
-// promptOnboarding collects the two fresh-machine onboarding values, styled
-// like the legacy register wizard. Environment/context names are derived (and
-// overridable via flags), so the form stays two fields.
-func promptOnboarding(installURL, name *string) error {
+// applyBrokerURL sets envName's broker_url inside cfg with the semantics both
+// register arms share: filling an EMPTY broker_url is a completion and always
+// allowed; replacing a DIFFERENT non-empty one is a repoint and refuses
+// without force (an env's broker is load-bearing for every context bound to
+// it). Setting the same value again is a no-op, so re-running register stays
+// idempotent. The environment must already exist.
+func applyBrokerURL(cfg *sdkconfig.Config, envName, brokerURL string, force bool) error {
+	env, ok := cfg.Environments[envName]
+	if !ok {
+		return &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        fmt.Sprintf("environment %q does not exist", envName),
+			Actionable: "Create it first: `jentic env add " + envName + " --url <control-plane URL> --broker-url " + brokerURL + "`.",
+		}
+	}
+	if env.BrokerURL != "" && env.BrokerURL != brokerURL && !force {
+		return &ux.CodedError{
+			Code: ux.CodeMissingArgument,
+			Msg: fmt.Sprintf("environment %q already has broker_url %s, not %s",
+				envName, env.BrokerURL, brokerURL),
+			Actionable: "Pass --force to repoint it, or drop --broker-url to keep the existing broker.",
+		}
+	}
+	env.BrokerURL = brokerURL
+	cfg.Environments[envName] = env
+	return nil
+}
+
+// promptOnboarding collects the fresh-machine onboarding values, styled like
+// the legacy register wizard. Environment/context names are derived (and
+// overridable via flags), so the form stays small. The broker group only
+// appears for a non-loopback install URL (a loopback install seeds the broker
+// automatically); it is optional — leaving it blank falls through to the
+// post-registration warning rather than blocking onboarding on a value the
+// user may not know yet.
+func promptOnboarding(installURL, name, brokerURL *string) error {
 	return prompt.NewForm(
 		huh.NewGroup(
 			prompt.Input().Title("Jentic install URL").
@@ -226,5 +290,16 @@ func promptOnboarding(installURL, name *string) error {
 				Description("Identity name, shown to the operator approving this agent.").
 				Value(name).Validate(notEmptyField("name")),
 		),
+		huh.NewGroup(
+			prompt.Input().Title("Broker URL (recommended)").
+				Description("Data-plane URL `jentic execute` sends requests through — usually its own\nhost on a remote install; ask your operator. Leave blank to set later.").
+				Value(brokerURL).Validate(optionalBrokerField()),
+		).WithHideFunc(func() bool {
+			// Evaluated when the form reaches this group, i.e. AFTER the URL was
+			// typed: loopback installs seed the broker themselves, so only a
+			// remote URL needs the extra question.
+			u, err := url.Parse(strings.TrimSpace(*installURL))
+			return err != nil || isLoopbackHost(u.Hostname())
+		}),
 	).WithShowHelp(true).Run()
 }

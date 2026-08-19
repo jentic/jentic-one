@@ -59,14 +59,16 @@ stored and how one credential is shared across an API's operations.
 Give the agent its own identity. From the machine that will run the agent:
 
 ```bash
-jentic register --base-url http://127.0.0.1:8000
+jentic register --url http://127.0.0.1:8000
 ```
 
 This generates an Ed25519 keypair and registers the agent through dynamic client
 registration. **`register` then blocks, waiting for an operator to approve the
 agent.** On a single-operator install you are the operator: approve the pending
 agent in the UI at `/app`, and the command completes automatically once the
-agent is active. Re-running `register` is idempotent.
+agent is active. Re-running `register` is idempotent. (Registering with a
+**remote** deployment instead? Pass `--broker-url` too — see the
+[CLI README](../cli/README.md#usage).)
 
 ## 5. Grant access
 

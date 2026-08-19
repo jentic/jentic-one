@@ -34,6 +34,12 @@ to external APIs and handles credentials for you.
   and select it with `jentic context use <name>` (inspect via
   `jentic context view`). Onboard a fresh machine with `jentic register --url
   <URL>`. There is no `--base-url` flag on data-plane commands.
+- **Remote deployments:** if the environment's base URL is remote (an
+  `https://…` host in `jentic context view`), the broker must be set
+  explicitly too — `broker_url` on the environment (pass `--broker-url` to
+  `register`, or `jentic env add`), or `JENTIC_BROKER_URL` in file-less mode.
+  It is never derived from the control-plane URL. A loopback install seeds it
+  automatically.
 
 ## Procedure
 
@@ -400,9 +406,18 @@ failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
   install; otherwise set it on the environment, or override per call:
 
 ```
+jentic register --url <control-plane URL> --broker-url <broker URL>   # fills a missing broker_url
 jentic env add <env> --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force
 jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 ```
+
+- **Missing broker on a remote install (`RESOLVE_FAILED`, exit 2).** If the
+  environment's base_url is remote and no `broker_url` is set, `execute`
+  refuses up front (it never dials the local default for a remote control
+  plane). This means the environment was onboarded without a broker: set it
+  with `jentic register --url <URL> --broker-url <broker URL>` (or
+  `JENTIC_BROKER_URL` in file-less mode) — ask the operator for the broker
+  URL; do **not** assume a local broker.
 
 - **Stopped instance (connection refused on a local target).** If the target
   is already local (`127.0.0.1` / `localhost`) and the connection is
