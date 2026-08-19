@@ -127,6 +127,7 @@ func TestBindFlagsWithOptions_ExcludesAndHides(t *testing.T) {
 	f := cmd.Flags().Lookup("server-port")
 	if f == nil {
 		t.Fatal("expected --server-port to be registered")
+		return
 	}
 	if !f.Hidden {
 		t.Error("--server-port should be hidden when BindOptions.Hidden is set")
