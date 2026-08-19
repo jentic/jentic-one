@@ -72,9 +72,15 @@ func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount
 		// MkdirAll's mode is masked by umask and leaves pre-existing dirs
 		// untouched; pin 0700 so the secrets dirs can't sit wider. A directory
 		// needs its owner-execute bit to be traversable, so 0700 (not 0600) is
-		// the correct floor here.
-		if err := os.Chmod(d, 0o700); err != nil { //nolint:gosec // G302: dir needs owner-exec; 0700 is the intended secrets-dir floor
-			return err
+		// the correct floor here. The pin must tolerate a dir a PREVIOUS export
+		// already chowned to the agent uid: chmod is owner-gated on POSIX, so
+		// the operator's re-run gets EPERM there even though the mode is the
+		// 0700 we pinned at creation — pinDirMode0700 skips an already-tight
+		// dir instead of failing every launch after the first. A dir that is
+		// genuinely wider AND un-chmod-able can't be fixed from here; warn
+		// rather than abort (its contents are written 0600 regardless).
+		if err := pinDirMode0700(d); err != nil {
+			fmt.Fprintln(a.Out, theme.Warnf("could not pin %s to 0700: %v", d, err))
 		}
 	}
 
@@ -195,17 +201,44 @@ func copyCredFile(src, dst string) error {
 	return writeFile0600(dst, data)
 }
 
+// pinDirMode0700 pins directory d to exactly 0700, skipping the chmod when the
+// mode already matches. The skip is what keeps repeat launches working: the
+// export chowns the agent's XDG tree to the agent uid at the end of each run,
+// and chmod is owner-gated on POSIX, so once the hand-off has happened the
+// operator can no longer chmod these dirs (the inherited ACL grants read/write,
+// never chmod) — but they are already at the pinned 0700, so there is nothing
+// to do. A chmod is attempted (and its error surfaced) only when the mode is
+// genuinely wider than the floor.
+func pinDirMode0700(d string) error {
+	info, err := os.Lstat(d)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() == 0o700 {
+		return nil
+	}
+	return os.Chmod(d, 0o700) //nolint:gosec // G302: dir needs owner-exec; 0700 is the intended secrets-dir floor
+}
+
 // writeFile0600 writes data to path with exactly 0600 perms (chmod pins the
 // mode even when the file pre-exists or umask is loose) and fsyncs so the
-// bytes are durable before the launch hands the tree over.
+// bytes are durable before the launch hands the tree over. Like
+// pinDirMode0700, the pin skips an already-0600 file: a previous export
+// chowned it to the agent uid, so the operator can still write it through the
+// inherited ACL but can no longer chmod it — and doesn't need to.
 func writeFile0600(path string, data []byte) error {
 	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // path is a constructed agent-home XDG path, not user input.
 	if err != nil {
 		return err
 	}
-	if err := out.Chmod(0o600); err != nil {
+	if info, err := out.Stat(); err != nil {
 		_ = out.Close()
 		return err
+	} else if info.Mode().Perm() != 0o600 {
+		if err := out.Chmod(0o600); err != nil {
+			_ = out.Close()
+			return err
+		}
 	}
 	if _, err := out.Write(data); err != nil {
 		_ = out.Close()
