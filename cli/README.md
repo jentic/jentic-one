@@ -510,8 +510,9 @@ jentic register
 jentic register --broker-url https://broker.jentic.example.com
 
 # Interactive: bare `jentic register` on a fresh machine prompts for the
-# install URL + agent name (and the broker URL, for a remote install) and
-# does the rest.
+# install URL (prefilled with the local default — just confirm after a local
+# install) + agent name (and the broker URL, for a remote install) and does
+# the rest.
 ```
 
 Approval is a human, out-of-band step: `register` prints the console link
