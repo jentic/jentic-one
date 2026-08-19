@@ -13,7 +13,7 @@
           "use": "setup",
           "short": "Set up a new local agent (identity + skills + isolation) — start here if you're a person",
           "long": "setup takes a fresh machine from nothing to ready: it connects this\nmachine to a Jentic install (creating the environment, identity and context\nif needed), registers the agent (Dynamic Client Registration), prints an\napproval link and waits for a human to approve it, mints and saves tokens,\nand generates the Jentic CLI-usage skill into your agent runtime's native\nlayout. It also offers to isolate the coding agent behind its own Unix user.\n\nIt is a thin orchestration of `jentic register` and `jentic skill`: nothing\nhere you can't do by hand, just sequenced so you can start playing right\naway. Re-running refreshes everything idempotently.",
-          "example": "  jentic setup\n  jentic setup --url https://jentic.example.com --operator claude --yes\n  jentic setup --skip-skill   # identity only\n  jentic setup --dry-run",
+          "example": "  jentic setup\n  jentic setup --url https://jentic.example.com --broker-url https://broker.jentic.example.com\n  jentic setup --url https://jentic.example.com --operator claude --yes\n  jentic setup --skip-skill   # identity only\n  jentic setup --dry-run",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
@@ -21,6 +21,11 @@
               "type": "bool",
               "default": "false",
               "usage": "target every supported operator"
+            },
+            {
+              "name": "broker-url",
+              "type": "string",
+              "usage": "broker (data plane) URL for the environment — execute needs it on a remote install; seeded automatically for loopback"
             },
             {
               "name": "context",
@@ -101,10 +106,15 @@
           "path": "jentic register",
           "use": "register",
           "short": "Obtain tokens for an existing agent identity (identity only, no skills) — agents run this",
-          "long": "register connects this machine to a Jentic install: it generates an\nEd25519 keypair (if absent), performs Dynamic Client Registration, waits\nfor an operator to approve the agent, then mints and saves tokens.\n\nWith an active context (`jentic context use`), it registers that context's\nidentity with its environment. On a fresh machine, pass --url (or answer\nthe prompt) and register creates the environment, identity and context in\none step, activates them, and registers.\n\nLocal install: use http://127.0.0.1:8000 (NOT http://localhost:8000) — the\ntoken-exchange audience is matched exactly against the backend's\ncanonical_base_url, and a local backend uses 127.0.0.1. For a loopback URL,\nregister also seeds the environment's broker_url (http://127.0.0.1:8100) so\n`jentic execute` works without extra flags.",
-          "example": "  jentic register --url http://127.0.0.1:8000   # local install (use 127.0.0.1, not localhost)\n  jentic register --url https://jentic.example.com\n  jentic register --url https://jentic.example.com --name crawler --env prod\n  jentic register                      # active context (or interactive setup)\n  jentic register --force              # re-register the active identity",
+          "long": "register connects this machine to a Jentic install: it generates an\nEd25519 keypair (if absent), performs Dynamic Client Registration, waits\nfor an operator to approve the agent, then mints and saves tokens.\n\nWith an active context (`jentic context use`), it registers that context's\nidentity with its environment. On a fresh machine, pass --url (or answer\nthe prompt) and register creates the environment, identity and context in\none step, activates them, and registers.\n\nLocal install: use http://127.0.0.1:8000 (NOT http://localhost:8000) — the\ntoken-exchange audience is matched exactly against the backend's\ncanonical_base_url, and a local backend uses 127.0.0.1. For a loopback URL,\nregister also seeds the environment's broker_url (http://127.0.0.1:8100) so\n`jentic execute` works without extra flags.\n\nRemote install: pass --broker-url too. The broker usually lives on its own\nhost and is never derived from the control-plane URL; without it the\nenvironment has no broker and `jentic execute` fail-closes until one is set\n(ask your operator for the broker URL). Re-running register with\n--broker-url fills it in on an existing environment.",
+          "example": "  jentic register --url http://127.0.0.1:8000   # local install (use 127.0.0.1, not localhost)\n  jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com\n  jentic register --url https://jentic.example.com --name crawler --env prod\n  jentic register                      # active context (or interactive setup)\n  jentic register --force              # re-register the active identity",
           "group_title": "Identity \u0026 access",
           "flags": [
+            {
+              "name": "broker-url",
+              "type": "string",
+              "usage": "broker (data plane) URL for the environment — execute needs it on a remote install; seeded automatically for loopback"
+            },
             {
               "name": "context",
               "type": "string",

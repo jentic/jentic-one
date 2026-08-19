@@ -24,6 +24,7 @@ type setupOptions struct {
 	url       string // install URL (fresh-machine setup arm)
 	env       string // environment name override
 	name      string
+	brokerURL string // explicit broker (data plane) URL for the environment
 	timeout   time.Duration
 	force     bool
 	yes       bool
@@ -89,6 +90,7 @@ func NewSetupCmd(app *cmdcore.App) *cobra.Command {
 			"here you can't do by hand, just sequenced so you can start playing right\n" +
 			"away. Re-running refreshes everything idempotently.",
 		Example: "  jentic setup\n" +
+			"  jentic setup --url https://jentic.example.com --broker-url https://broker.jentic.example.com\n" +
 			"  jentic setup --url https://jentic.example.com --operator claude --yes\n" +
 			"  jentic setup --skip-skill   # identity only\n" +
 			"  jentic setup --dry-run",
@@ -102,6 +104,7 @@ func NewSetupCmd(app *cmdcore.App) *cobra.Command {
 	cmd.Flags().StringVar(&opts.url, "url", "", "Jentic install URL to connect to (creates environment/identity/context on first run)")
 	cmd.Flags().StringVar(&opts.env, "env", "", "environment name for --url (default: derived from the URL host)")
 	cmd.Flags().StringVar(&opts.name, "name", "", "agent client name shown to the approver")
+	cmd.Flags().StringVar(&opts.brokerURL, "broker-url", "", "broker (data plane) URL for the environment — execute needs it on a remote install; seeded automatically for loopback")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 5*time.Minute, "how long to wait for approval")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "re-register the agent even if the identity already has one (does not overwrite an edited skill block)")
 	cmd.Flags().BoolVar(&opts.skipSkill, "skip-skill", false, "provision identity only; do not write skill files")
@@ -221,12 +224,12 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 		if identity == "" {
 			identity = st.IdentityName
 		}
-		if err := a.RegisterActive(ctx, st, opts.name, opts.timeout, opts.force); err != nil {
+		if err := a.RegisterActive(ctx, st, opts.name, opts.brokerURL, opts.timeout, opts.force); err != nil {
 			return err
 		}
 	} else {
 		vals, err := a.RegisterSetup(ctx,
-			cmdcore.SetupValues{URL: opts.url, Env: opts.env, Name: opts.name},
+			cmdcore.SetupValues{URL: opts.url, Env: opts.env, Name: opts.name, BrokerURL: opts.brokerURL},
 			opts.timeout, opts.force, opts.interactive)
 		if errors.Is(err, cmdcore.ErrOnboardCancelled) {
 			return nil

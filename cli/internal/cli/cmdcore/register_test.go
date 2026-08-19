@@ -3,6 +3,7 @@ package cmdcore
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 func TestFlagsAllowPrompt(t *testing.T) {
@@ -19,6 +21,7 @@ func TestFlagsAllowPrompt(t *testing.T) {
 		c.Flags().String("url", "", "")
 		c.Flags().String("env", "", "")
 		c.Flags().String("name", "", "")
+		c.Flags().String("broker-url", "", "")
 		return c
 	}
 
@@ -49,6 +52,7 @@ func TestSetupFlagsAllowPrompt(t *testing.T) {
 		c.Flags().String("url", "", "")
 		c.Flags().String("env", "", "")
 		c.Flags().String("name", "", "")
+		c.Flags().String("broker-url", "", "")
 		c.Flags().StringSlice("operator", nil, "")
 		c.Flags().Bool("all", false, "")
 		c.Flags().String("scope", "", "")
@@ -178,6 +182,129 @@ func TestNormalizeLoopbackURL(t *testing.T) {
 			t.Errorf("normalizeLoopbackURL(%q) = (%q,%v), want (%q,%v)", c.in, got, changed, c.want, c.changed)
 		}
 	}
+}
+
+// TestValidateBrokerURL pins the --broker-url guard: an explicit broker must be
+// an absolute http(s) URL, and https is required for any non-loopback host —
+// `jentic execute` sends the agent bearer to this URL (SEC-1), so a plaintext
+// remote broker must be rejected at onboarding, not discovered at the first
+// execute.
+func TestValidateBrokerURL(t *testing.T) {
+	valid := []string{
+		"https://broker.jentic.example.com",
+		"https://broker.example.com:8443",
+		"http://127.0.0.1:8100", // plaintext allowed only for loopback
+		"http://localhost:8100",
+		"http://[::1]:8100",
+	}
+	for _, in := range valid {
+		if err := validateBrokerURL(in); err != nil {
+			t.Errorf("validateBrokerURL(%q) = %v, want nil", in, err)
+		}
+	}
+
+	invalid := []string{
+		"http://broker.example.com", // bearer over plaintext to a remote host
+		"http://10.0.0.5:8100",
+		"broker.example.com", // not absolute
+		"ftp://broker.example.com",
+		"https://", // no host
+		"not a url",
+	}
+	for _, in := range invalid {
+		err := validateBrokerURL(in)
+		if err == nil {
+			t.Errorf("validateBrokerURL(%q) = nil, want rejection", in)
+			continue
+		}
+		var coded *ux.CodedError
+		if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+			t.Errorf("validateBrokerURL(%q) error = %v, want coded MISSING_ARGUMENT", in, err)
+		}
+	}
+}
+
+// TestSeedBrokerURL pins the new-environment broker resolution: an explicit
+// --broker-url always wins (remote one-command onboarding), otherwise only a
+// loopback control plane gets the co-located seed — a remote URL with no
+// explicit broker stays empty (never derived).
+func TestSeedBrokerURL(t *testing.T) {
+	cases := []struct {
+		explicit, installURL, want string
+	}{
+		{"https://broker.example.com", "https://jentic.example.com", "https://broker.example.com"},
+		{"https://broker.example.com", "http://127.0.0.1:8000", "https://broker.example.com"}, // explicit beats the loopback seed
+		{"", "http://127.0.0.1:8000", "http://127.0.0.1:8100"},
+		{"", "https://jentic.example.com", ""},
+	}
+	for _, c := range cases {
+		if got := seedBrokerURL(c.explicit, c.installURL); got != c.want {
+			t.Errorf("seedBrokerURL(%q, %q) = %q, want %q", c.explicit, c.installURL, got, c.want)
+		}
+	}
+}
+
+// TestApplyBrokerURL pins the semantics both register arms share when an
+// explicit --broker-url meets an EXISTING environment: filling an empty
+// broker_url is a completion (always allowed), re-setting the same value is an
+// idempotent no-op, repointing a DIFFERENT broker refuses without --force
+// (every context bound to the env depends on it), --force repoints, and a
+// missing environment is a coded failure, never an implicit create.
+func TestApplyBrokerURL(t *testing.T) {
+	const envName = "prod"
+	newCfg := func(broker string) *sdkconfig.Config {
+		return &sdkconfig.Config{Environments: map[string]sdkconfig.Env{
+			envName: {BaseURL: "https://jentic.example.com", BrokerURL: broker},
+		}}
+	}
+
+	t.Run("fills an empty broker_url", func(t *testing.T) {
+		cfg := newCfg("")
+		if err := applyBrokerURL(cfg, envName, "https://broker.example.com", false); err != nil {
+			t.Fatalf("fill empty: %v", err)
+		}
+		if got := cfg.Environments[envName].BrokerURL; got != "https://broker.example.com" {
+			t.Errorf("broker_url = %q, want the filled value", got)
+		}
+	})
+
+	t.Run("same value is a no-op", func(t *testing.T) {
+		cfg := newCfg("https://broker.example.com")
+		if err := applyBrokerURL(cfg, envName, "https://broker.example.com", false); err != nil {
+			t.Fatalf("idempotent re-set: %v", err)
+		}
+	})
+
+	t.Run("different value refuses without force", func(t *testing.T) {
+		cfg := newCfg("https://broker-a.example.com")
+		err := applyBrokerURL(cfg, envName, "https://broker-b.example.com", false)
+		var coded *ux.CodedError
+		if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+			t.Fatalf("repoint without force = %v, want coded MISSING_ARGUMENT", err)
+		}
+		if got := cfg.Environments[envName].BrokerURL; got != "https://broker-a.example.com" {
+			t.Errorf("broker_url mutated on refusal: %q", got)
+		}
+	})
+
+	t.Run("force repoints", func(t *testing.T) {
+		cfg := newCfg("https://broker-a.example.com")
+		if err := applyBrokerURL(cfg, envName, "https://broker-b.example.com", true); err != nil {
+			t.Fatalf("force repoint: %v", err)
+		}
+		if got := cfg.Environments[envName].BrokerURL; got != "https://broker-b.example.com" {
+			t.Errorf("broker_url = %q, want the forced value", got)
+		}
+	})
+
+	t.Run("missing environment is a coded failure", func(t *testing.T) {
+		cfg := &sdkconfig.Config{Environments: map[string]sdkconfig.Env{}}
+		err := applyBrokerURL(cfg, envName, "https://broker.example.com", false)
+		var coded *ux.CodedError
+		if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+			t.Fatalf("missing env = %v, want coded RESOLVE_FAILED", err)
+		}
+	})
 }
 
 // TestAgentClaimURL pins the claim link the enterprise console expects: the SPA
