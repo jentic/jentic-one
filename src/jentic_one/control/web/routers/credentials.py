@@ -159,6 +159,7 @@ async def create_credential(
     return CredentialCreateResponse(
         credential=redacted,
         secret=result.secret.model_dump(),
+        warnings=result.warnings,
     )
 
 

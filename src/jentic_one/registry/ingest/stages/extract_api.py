@@ -5,7 +5,10 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
-from jentic_one.registry.ingest.exc import DuplicateRevisionError
+from jentic_one.registry.ingest.exc import (
+    CatalogIdentityConflictError,
+    DuplicateRevisionError,
+)
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository, OverlayRepository
@@ -20,13 +23,40 @@ class ResolveApiStage(BasePipelineStage):
     _produces: ClassVar[dict[str, type]] = {"api_id": uuid.UUID}
 
     async def _run(self, ctx: PipelineContext) -> None:
+        identifier = ctx.specification.api_identifier
+        incoming_catalog_api_id = ctx.specification.catalog_api_id
+        if incoming_catalog_api_id:
+            # Two distinct catalog entries can collapse to the same registry
+            # identity (`extract_vendor` reduces hosts to eTLD+1, so e.g.
+            # `stripe.com/checkout` and `api.stripe.com/checkout` both resolve
+            # to `stripe-com/checkout`). Silently upserting would stack a
+            # foreign spec onto the existing Api as a new revision — refuse
+            # instead. A NULL stored id (manual import of the same identity)
+            # stays a backfill, and a matching id is an ordinary re-import.
+            # The read locks the row (see get_by_identifier) so two concurrent
+            # colliding imports can't both pass the guard and race the backfill.
+            existing = await ApiRepository.get_by_identifier(
+                ctx.session, identifier.vendor, identifier.name, identifier.version, for_update=True
+            )
+            if (
+                existing is not None
+                and existing.catalog_api_id
+                and existing.catalog_api_id != incoming_catalog_api_id
+            ):
+                raise CatalogIdentityConflictError(
+                    vendor=identifier.vendor,
+                    name=identifier.name,
+                    version=identifier.version,
+                    stored_id=existing.catalog_api_id,
+                    incoming_id=incoming_catalog_api_id,
+                )
         api = await ApiRepository.upsert(
             ctx.session,
-            vendor=ctx.specification.api_identifier.vendor,
-            name=ctx.specification.api_identifier.name,
-            version=ctx.specification.api_identifier.version,
+            vendor=identifier.vendor,
+            name=identifier.name,
+            version=identifier.version,
             created_by=ctx.created_by,
-            catalog_api_id=ctx.specification.catalog_api_id,
+            catalog_api_id=incoming_catalog_api_id,
         )
         ctx.produce("api_id", api.id, uuid.UUID)
 

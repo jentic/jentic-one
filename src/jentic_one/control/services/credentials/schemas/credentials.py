@@ -208,6 +208,10 @@ class CredentialFullView(BaseModel):
     created_at: datetime
     server_variables: dict[str, str] | None = None
     secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull | Sigv4Full
+    # Advisory only — e.g. the API scope covers no imported registry API
+    # identity (#1020). The credential is created regardless; None when there
+    # is nothing to flag (or the check could not run).
+    warnings: list[str] | None = None
 
 
 class CredentialRedactedView(BaseModel):

@@ -21,6 +21,26 @@ class IngestJobError(BaseIngestError):
     """Raised when an ingest job fails."""
 
 
+class CatalogIdentityConflictError(IngestStageError):
+    """Raised when a catalog import collides with a different catalog entry's identity.
+
+    Two distinct catalog entries can collapse to the same registry identity
+    (vendor extraction reduces hosts to eTLD+1); stacking the second entry's
+    spec onto the first's Api row as a new revision would silently corrupt
+    provenance, so the import is refused instead (#1020).
+    """
+
+    def __init__(
+        self, *, vendor: str, name: str, version: str, stored_id: str, incoming_id: str
+    ) -> None:
+        super().__init__(
+            f"catalog identity conflict: '{vendor}/{name}' ({version}) is already "
+            f"imported from catalog entry '{stored_id}', which collides with "
+            f"'{incoming_id}' on the same registry identity; the existing import is "
+            f"unchanged — delete API '{vendor}/{name}' first if you meant to replace it"
+        )
+
+
 class DuplicateRevisionError(IngestStageError):
     """Raised when a revision with identical content already exists for the API."""
 

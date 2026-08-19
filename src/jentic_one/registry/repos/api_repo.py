@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, noload
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -27,11 +27,20 @@ class ApiRepository:
 
     @staticmethod
     async def get_by_identifier(
-        session: AsyncSession, vendor: str, name: str, version: str
+        session: AsyncSession, vendor: str, name: str, version: str, *, for_update: bool = False
     ) -> Api | None:
-        result = await session.execute(
-            select(Api).where(Api.vendor == vendor, Api.name == name, Api.version == version)
-        )
+        stmt = select(Api).where(Api.vendor == vendor, Api.name == name, Api.version == version)
+        if for_update:
+            # Row lock for check-then-act callers (the catalog-identity collision
+            # guard): under Postgres READ COMMITTED a concurrent import would
+            # otherwise read the same pre-update row and both pass the guard.
+            # Lock only the apis row (`of=Api`) and skip the joined-eager
+            # current_revision — Postgres refuses FOR UPDATE on the nullable
+            # side of an outer join. SQLite ignores FOR UPDATE (writers are
+            # already serialized by BEGIN IMMEDIATE); the no-row case is
+            # backstopped by uq_apis_vendor_name_version.
+            stmt = stmt.options(noload(Api.current_revision)).with_for_update(of=Api)
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
