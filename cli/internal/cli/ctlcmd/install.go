@@ -53,6 +53,12 @@ type installOptions struct {
 	// checkout instead of pulling the published image (the default). It is
 	// auto-selected when a source checkout / $JENTIC_SRC / --ref is present.
 	buildLocal bool
+	// ref pins the git ref (branch, tag, or commit) the managed clone builds
+	// from under --build-local (which it implies). Without it the build targets
+	// the ref this CLI was installed from (per the install manifest), then the
+	// CLI version — never the remote's default branch, which can be a different
+	// generation than the CLI's compose/migration expectations.
+	ref string
 	// imageTag pins the app image the Docker path pulls: a bare tag, an
 	// @sha256: digest, or a full ghcr.io/…@sha256:… reference (overrides the
 	// CLI-version → tag mapping). Ignored under --build-local.
@@ -78,8 +84,8 @@ func newInstallCmd(app *app) *cobra.Command {
 			"Docker path: by default this PULLS the published, signed app image\n" +
 			"(ghcr.io/jentic/jentic-one-app, version-matched to the CLI) — no local build.\n" +
 			"Use --build-local to build from a checkout instead (auto-selected inside a\n" +
-			"jentic-one source tree or with $JENTIC_SRC), or --image-tag to pin a specific\n" +
-			"tag or @sha256: digest.\n\n" +
+			"jentic-one source tree or with $JENTIC_SRC), --ref to build a specific\n" +
+			"branch/tag/commit, or --image-tag to pin a specific tag or @sha256: digest.\n\n" +
 			"Advanced: --preset and the generated --<section>-<field> flags (e.g.\n" +
 			"--server-public-base-url, --logging-file-enabled) overlay schema-driven\n" +
 			"configuration onto the generated jentic-one.yaml, on top of the wizard.",
@@ -113,6 +119,9 @@ func newInstallCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.buildLocal, "build-local", false,
 		"Docker path: build the app image from a local checkout instead of pulling the "+
 			"published image (auto-selected inside a jentic-one checkout, with $JENTIC_SRC, or --ref)")
+	cmd.Flags().StringVar(&opts.ref, "ref", "",
+		"git ref (branch/tag/commit) to build the stack from; implies --build-local "+
+			"(default: the ref this CLI was installed from, then the CLI version)")
 	cmd.Flags().StringVar(&opts.imageTag, "image-tag", "",
 		"Docker path: pull this app image tag or @sha256: digest (or a full ghcr.io/…@sha256 ref) "+
 			"instead of the version-matched tag; ignored with --build-local")
@@ -300,7 +309,7 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 	// venv (from the local checkout if we're inside the repo, otherwise clone
 	// from GitHub first) and apply migrations.
 	if local {
-		if err := installLocal(cmd.Context(), a, draft, out, opts.freshVenv); err != nil {
+		if err := installLocal(cmd.Context(), a, draft, out, opts.freshVenv, opts.ref); err != nil {
 			banner.Stop()
 			return err
 		}
@@ -503,6 +512,35 @@ func (a *app) offerWizard(cmd *cobra.Command, opts *installOptions, started bool
 	}
 }
 
+// resolveStackBuildRef resolves which git ref a --build-local managed-clone
+// build should target. An explicit --ref wins (pinned). Otherwise fall back to
+// the ref this CLI was installed from (the install manifest, written by
+// tools/install.sh), then the CLI version — the same chain `update` uses. The
+// fallback is what keeps a from-source install coherent: without it the
+// managed clone hard-resets to the remote's default branch, which can be a
+// different generation than this CLI's compose/migration expectations (e.g. a
+// compose without the schema-bootstrap init script driving an app image whose
+// migrations still require it).
+func (a *app) resolveStackBuildRef(explicit string) (ref string, pinned bool) {
+	if explicit != "" {
+		return explicit, true
+	}
+	if m, _, err := config.LoadManifest(a.Paths); err == nil && m.Ref != "" {
+		return m.Ref, false
+	}
+	return defaultRef(version), false
+}
+
+// refIgnoredError explains why a pinned --ref cannot be honoured when the
+// build reads a local checkout: syncing the operator's working tree to a ref
+// would clobber their work, so refuse rather than build something other than
+// what was asked for. Mirrors `update --ref`'s refusal.
+func refIgnoredError(ref, sourceDir string) error {
+	return fmt.Errorf("--ref %s cannot be applied: the stack builds from the local checkout at %s, "+
+		"so the ref would be ignored. Check out %s there yourself and re-run without --ref, "+
+		"or unset %s to build from the managed clone", ref, sourceDir, ref, install.SrcEnv)
+}
+
 // recordManifest persists what was installed (deploy mode, db, and the CLI's
 // own ref/commit/version) so `jenticctl update` knows what to track and how to
 // refresh it. A failure here is non-fatal: the install succeeded regardless.
@@ -531,7 +569,12 @@ func (a *app) recordManifest(draft *install.Draft) {
 			m.BinaryPath = exe
 		}
 	}
-	if err := m.MergeStack(a.Paths, mode, db, draft.BrokerPort, version, commit, version); err != nil {
+	// Record the ref the stack was really built from (a managed-clone
+	// build-local install), so the next `install`/`update` keeps tracking it
+	// rather than snapping back to the CLI version. Pull-path and
+	// local-checkout installs keep recording the CLI version as before.
+	stackRef := firstNonEmpty(draft.StackRef, version)
+	if err := m.MergeStack(a.Paths, mode, db, draft.BrokerPort, stackRef, commit, version); err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("warning: could not record install manifest: %v", err))
 	}
 }
@@ -601,20 +644,28 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 		return install.DaemonError(check)
 	}
 
-	// Build locally when explicitly asked, or when a source checkout is in play
-	// (cwd repo-root walk / $JENTIC_SRC) — a contributor iterating on local
-	// changes should not silently run a published image. Otherwise pull the
-	// signed release image and thread it into compose.
+	// Build locally when explicitly asked (--build-local / --ref), or when a
+	// source checkout is in play (cwd repo-root walk / $JENTIC_SRC) — a
+	// contributor iterating on local changes should not silently run a
+	// published image. Otherwise pull the signed release image and thread it
+	// into compose.
 	_, haveSrc := install.RepoRoot()
-	buildLocal := opts.buildLocal || haveSrc
+	buildLocal := opts.buildLocal || haveSrc || opts.ref != ""
 
 	var appImage string
 	if buildLocal {
-		plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath())
+		ref, pinned := a.resolveStackBuildRef(opts.ref)
+		plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
+		if plan.PinnedRefIgnored() {
+			return refIgnoredError(ref, plan.SourceDir)
+		}
 		fmt.Fprintln(a.Out)
 		fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
 		if err := plan.BuildImages(a.Out); err != nil {
 			return fmt.Errorf("image build failed: %w", err)
+		}
+		if plan.FromGit {
+			draft.StackRef = ref
 		}
 	} else {
 		appImage = install.ResolveAppImage(cmdcore.Version(), opts.imageTag)
@@ -740,7 +791,7 @@ func (a *app) startAppBackground(draft *install.Draft, configPath, logsDir strin
 	fmt.Fprintln(a.Out, theme.Successf("  Broker started (pid %d, port %s)", brokerPID, draft.BrokerPort))
 }
 
-func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath string, freshVenv bool) error {
+func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath string, freshVenv bool, explicitRef string) error {
 	venvDir := a.Paths.VenvPath()
 	srcDir := a.Paths.SrcPath()
 
@@ -766,7 +817,10 @@ func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath 
 		return install.MissingError(missing)
 	}
 
-	plan := install.PlanLocalBuild(venvDir, srcDir)
+	plan := install.PlanLocalBuild(venvDir, srcDir).AtRef(a.resolveStackBuildRef(explicitRef))
+	if plan.PinnedRefIgnored() {
+		return refIgnoredError(plan.Ref, plan.SourceDir)
+	}
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, plan.RenderHeader())
 
@@ -778,6 +832,9 @@ func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath 
 		return fmt.Errorf("build failed: %w", err)
 	}
 	draft.VenvPython = plan.VenvPython()
+	if plan.FromGit {
+		draft.StackRef = plan.Ref
+	}
 
 	// Apply migrations for real. On the SQLite path wrap them in the shared
 	// snapshot/rollback net so a failed first-install migration restores the
