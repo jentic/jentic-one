@@ -18,8 +18,13 @@ func TestResolveAppImage(t *testing.T) {
 	}{
 		{"released version maps to :X.Y.Z", "v0.31.0", "", DefaultAppImageRepo + ":0.31.0"},
 		{"released version without v prefix", "0.31.0", "", DefaultAppImageRepo + ":0.31.0"},
+		{"prerelease semver keeps its tag", "v0.32.0-rc1", "", DefaultAppImageRepo + ":0.32.0-rc1"},
 		{"dev falls back to :latest", "dev", "", DefaultAppImageRepo + ":latest"},
 		{"empty version falls back to :latest", "", "", DefaultAppImageRepo + ":latest"},
+		{"main ref falls back to :latest (no :main image is published)", "main", "", DefaultAppImageRepo + ":latest"},
+		{"branch name falls back to :latest", "cli-v2-release", "", DefaultAppImageRepo + ":latest"},
+		{"commit sha falls back to :latest", "9a858218", "", DefaultAppImageRepo + ":latest"},
+		{"non-semver version falls back to :latest", "0.31", "", DefaultAppImageRepo + ":latest"},
 		{"bare-tag override wins over version", "v0.31.0", "edge", DefaultAppImageRepo + ":edge"},
 		{"digest override applied to default repo", "v0.31.0", "@sha256:abc123", DefaultAppImageRepo + "@sha256:abc123"},
 		{"digest override without @ prefix", "v0.31.0", "sha256:abc123", DefaultAppImageRepo + "@sha256:abc123"},

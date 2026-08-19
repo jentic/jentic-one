@@ -512,6 +512,17 @@ func (a *app) offerWizard(cmd *cobra.Command, opts *installOptions, started bool
 	}
 }
 
+// shouldBuildNonRelease reports whether the Docker path should build the server
+// image from source because the CLI is a NON-RELEASE build (dev / main / a
+// branch / a commit) and the operator has not pinned a specific image. Such a
+// ref has no matching published server image, and pulling the last release
+// would pair this (newer) CLI with an OLDER server; building from the same ref
+// keeps the stack coherent. An explicit image pin (--image-tag /
+// $JENTIC_APP_IMAGE_TAG) means "pull exactly this", so it disables the build.
+func shouldBuildNonRelease(version string, imagePinned bool) bool {
+	return !imagePinned && !install.IsReleaseVersion(version)
+}
+
 // resolveStackBuildRef resolves which git ref a --build-local managed-clone
 // build should target. An explicit --ref wins (pinned). Otherwise fall back to
 // the ref this CLI was installed from (the install manifest, written by
@@ -647,13 +658,27 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	// Build locally when explicitly asked (--build-local / --ref), or when a
 	// source checkout is in play (cwd repo-root walk / $JENTIC_SRC) — a
 	// contributor iterating on local changes should not silently run a
-	// published image. Otherwise pull the signed release image and thread it
-	// into compose.
+	// published image. Also build locally for a NON-RELEASE build (dev / main /
+	// a branch / a commit) with no explicit image pin: there is no matching
+	// published server image for such a ref, and pulling the last release would
+	// pair this (newer) CLI with an OLDER server — so build the server from the
+	// same ref the CLI came from, keeping the stack coherent. An explicit
+	// --image-tag / $JENTIC_APP_IMAGE_TAG always means "pull exactly this", so
+	// it still takes the pull path even for a non-release build.
 	_, haveSrc := install.RepoRoot()
-	buildLocal := opts.buildLocal || haveSrc || opts.ref != ""
+	imagePinned := opts.imageTag != "" || os.Getenv(install.AppImageTagEnv) != ""
+	nonReleaseNeedsBuild := shouldBuildNonRelease(cmdcore.Version(), imagePinned)
+	buildLocal := opts.buildLocal || haveSrc || opts.ref != "" || nonReleaseNeedsBuild
 
 	var appImage string
 	if buildLocal {
+		if nonReleaseNeedsBuild && !opts.buildLocal && !haveSrc && opts.ref == "" {
+			fmt.Fprintln(a.Out)
+			fmt.Fprintln(a.Out, theme.Dimf(
+				"note: non-release build (%s) — no published server image matches this ref, "+
+					"so the server is built from source to match this CLI. "+
+					"Pin a published image with --image-tag <tag> to pull instead.", cmdcore.Version()))
+		}
 		ref, pinned := a.resolveStackBuildRef(opts.ref)
 		plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
 		if plan.PinnedRefIgnored() {
