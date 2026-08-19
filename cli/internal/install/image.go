@@ -28,8 +28,9 @@ const (
 //
 //	override (a full ref, a bare tag, or an @sha256: digest) — from --image-tag
 //	         or $JENTIC_APP_IMAGE_TAG
-//	CLI build version, when it is a real release (not "dev"/empty) → :X.Y.Z
-//	"latest"
+//	CLI build version, when it is a real semver release → :X.Y.Z
+//	"latest" — for any non-release version ("dev", "main", a branch, a commit),
+//	         since the release workflow only ever publishes :X.Y.Z (and :latest)
 //
 // The repository defaults to DefaultAppImageRepo and is overridable via
 // $JENTIC_APP_IMAGE. An override that already looks like a full reference
@@ -52,10 +53,47 @@ func ResolveAppImage(version, override string) string {
 	}
 
 	tag := "latest"
-	if v := strings.TrimSpace(version); v != "" && v != "dev" {
-		tag = strings.TrimPrefix(v, "v")
+	if v := releaseTag(version); v != "" {
+		tag = v
 	}
 	return repo + ":" + tag
+}
+
+// IsReleaseVersion reports whether a CLI build version is a real published
+// release (a semver the release workflow tags an image with). It is false for
+// "dev"/"main"/a branch/a commit — the cases where the Docker pull path falls
+// back to :latest — so callers can explain that fallback to the user.
+func IsReleaseVersion(version string) bool { return releaseTag(version) != "" }
+
+// releaseTag returns the image tag for a CLI build version when that version is
+// a real published release — a semver `X.Y.Z` (optionally `v`-prefixed, with an
+// optional `-prerelease`/`+build` suffix), which is the only shape the release
+// workflow ever pushes as an image tag. It returns "" for anything else
+// ("dev", "main", a branch name, or a bare commit SHA from a `JENTIC_REF=…`
+// install), so the caller falls back to :latest instead of pulling a
+// `:main`/`:<sha>` tag that is never published (jentic-one Docker install from
+// a non-release ref). Testers who need the server built from that exact ref use
+// `--build-local`.
+func releaseTag(version string) string {
+	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if v == "" {
+		return ""
+	}
+	// Require a leading MAJOR.MINOR.PATCH; a trailing -prerelease/+build is fine.
+	core := v
+	if i := strings.IndexAny(core, "-+"); i >= 0 {
+		core = core[:i]
+	}
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	for _, p := range parts {
+		if p == "" || strings.TrimLeft(p, "0123456789") != "" {
+			return ""
+		}
+	}
+	return v
 }
 
 // applyRef joins a repo with a bare tag or an @sha256: digest.

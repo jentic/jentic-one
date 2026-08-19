@@ -672,6 +672,15 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Headingf("Pull app image"))
 		fmt.Fprintln(a.Out, theme.Dimf("  image: %s", appImage))
+		// A non-release CLI build (dev / main / a branch / a commit) has no
+		// matching published server image — ResolveAppImage falls back to
+		// :latest. Say so, so a tester on `main` isn't surprised the server is
+		// the latest RELEASE, not their ref; --build-local builds it from source.
+		if opts.imageTag == "" && !install.IsReleaseVersion(cmdcore.Version()) {
+			fmt.Fprintln(a.Out, theme.Dimf(
+				"  note: this is a non-release build (%s); pulling the latest RELEASE image. "+
+					"Use --build-local to build the server from your ref instead.", cmdcore.Version()))
+		}
 		if err := install.PullAppImage(a.Out, appImage); err != nil {
 			return err
 		}
