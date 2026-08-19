@@ -197,6 +197,29 @@ func TestClassifyTokenError_AssertionInvalid(t *testing.T) {
 	}
 }
 
+// TestClassifyTokenError_ShippedPendingDetail pins the exact detail the shipped
+// backend emits for a signature-verified pending agent
+// ("Agent is not active yet (pending approval)" — auth/services/assertion_service.py).
+// It MUST classify as *PendingError: this is the signal that lets the
+// register/setup/wizard approval wait poll on self-hosted backends, which mint
+// no claim tokens. If a phrase added to isAssertionInvalidDetail ever matches
+// it, the approval flow dies on first contact again.
+func TestClassifyTokenError_ShippedPendingDetail(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body: io.NopCloser(strings.NewReader(
+			`{"type":"invalid_grant","status":400,"detail":"Agent is not active yet (pending approval)","instance":"/oauth/token"}`)),
+	}
+	err := classifyTokenError(resp)
+	var pending *PendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("shipped pending detail classified as %v, want *PendingError", err)
+	}
+	if ClassifyTokenExchange(err, ClaimContext{}) != OutcomePending {
+		t.Errorf("shipped pending detail must classify as OutcomePending without a claim outstanding")
+	}
+}
+
 // TestClassifyTokenExchange pins the shared claim-vs-audience disambiguation
 // (AR2-9): a pending error is always pending; an assertion-invalid error is a
 // hard failure UNLESS a claim is still outstanding, in which case the identical

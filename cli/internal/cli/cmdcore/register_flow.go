@@ -238,13 +238,15 @@ func saveRegState(identity, envName, clientID, status string) error {
 // (AGT-4 semantics).
 //
 // claimPending is true when registration returned a claim token: the human must
-// still claim + approve in the console before the agent can mint. In that state
-// the backend rejects the token exchange with an ambiguous 400 invalid_grant
-// "Assertion is invalid" — the SAME string it uses for a real audience mismatch
-// (the approval-status gate is checked before signature/audience). So while a
-// claim is outstanding we treat that as PENDING (keep waiting / exit clean)
-// rather than the hard audience-mismatch failure, which would abort the flow the
-// moment it started.
+// still claim + approve in the console before the agent can mint. On backends
+// where the approval-status gate runs before signature verification, that state
+// comes back as an ambiguous 400 invalid_grant "Assertion is invalid" — the
+// SAME string as a real audience mismatch. So while a claim is outstanding we
+// treat that as PENDING (keep waiting / exit clean) rather than the hard
+// audience-mismatch failure, which would abort the flow the moment it started.
+// (The shipped backend now returns a distinct pending detail after verifying
+// the signature, which classifies as pending on its own; the claim-context
+// tolerance remains for claim-enabled backends that keep the ambiguous string.)
 func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clientID string, timeout time.Duration, claimPending bool) error {
 	st := theme.StylesFromContext(ctx)
 	// Force a FRESH mint even if a (stale-scoped or old-client) token is
