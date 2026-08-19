@@ -80,6 +80,27 @@ credentials:
 # the assertion audience collapses to "/oauth/token".
 auth:
   canonical_base_url: "http://127.0.0.1:8000"
+  # ES256 signing key for ID token issuance (local dev only - never use in prod)
+  id_signing:
+    - kid: "local-dev-key"
+      private_key_pem: |
+        -----BEGIN EC PRIVATE KEY-----
+        MHcCAQEEIBG7o+PPPIdPqMK4RwNWnj+UaW8fZFzxw7oZD5XFqW5CoAoGCCqGSM49
+        AwEHoUQDQgAElriD/rpklmqTXbUOa9uLHAB2l+qr+DoeDmmykYLGblbxs+a1qvxB
+        369JIs2Ej4zMfkjBTGES38wMDs1J+PJG6g==
+        -----END EC PRIVATE KEY-----
+  # Mock OAuth IdP for local testing (NAV mock-oauth2-server).
+  # Start with: docker run -p 8080:8080 ghcr.io/navikt/mock-oauth2-server:2.1.5
+  # Any username/password works - it accepts all credentials.
+  idp:
+    enabled: true
+    provider: oidc
+    issuer: "http://localhost:8080/default"
+    client_id: "jentic-one"
+    client_secret: "secret"
+    authorization_endpoint: "http://localhost:8080/default/authorize"
+    exchange_endpoint: "http://localhost:8080/default/token"
+    userinfo_endpoint: "http://localhost:8080/default/userinfo"
 
 # No collector runs locally by default — point both signals at /dev/null
 # so the terminal isn't spammed with retry warnings. Override these (or

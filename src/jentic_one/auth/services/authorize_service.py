@@ -104,6 +104,33 @@ class AuthorizeService:
 
         Returns the platform authorization code.
         """
+        platform_code, _ = await self.handle_idp_callback_with_email(
+            code=code,
+            redirect_uri=redirect_uri,
+            client_id=client_id,
+            original_redirect_uri=original_redirect_uri,
+            code_challenge=code_challenge,
+            scopes=scopes,
+            nonce=nonce,
+        )
+        return platform_code
+
+    async def handle_idp_callback_with_email(
+        self,
+        *,
+        code: str,
+        redirect_uri: str,
+        client_id: str,
+        original_redirect_uri: str,
+        code_challenge: str,
+        scopes: str,
+        nonce: str | None,
+    ) -> tuple[str, str]:
+        """Handle IdP callback and return both platform code and user email.
+
+        Returns (platform_authorization_code, user_email).
+        Used by consent flow to display user identity on the consent page.
+        """
         adapter = self._get_idp_adapter()
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
@@ -112,7 +139,7 @@ class AuthorizeService:
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
 
-        return await self._issue_authorization_code(
+        platform_code = await self._issue_authorization_code(
             user_id=user_id,
             client_id=client_id,
             redirect_uri=original_redirect_uri,
@@ -120,6 +147,7 @@ class AuthorizeService:
             scopes=scopes,
             nonce=nonce,
         )
+        return platform_code, claims.email
 
     async def issue_authorization_code(
         self,

@@ -1,4 +1,4 @@
-"""AuthCode+PKCE authorization endpoints."""
+"""AuthCode+PKCE authorization endpoints with consent screen support."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
+from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.shared.context import Context
@@ -22,12 +23,8 @@ from jentic_one.shared.web.deps import get_ctx
 router = APIRouter()
 
 
-def _is_allowed_redirect_uri(redirect_uri: str, canonical_base_url: str) -> bool:
-    """Validate redirect_uri against the platform's canonical origin.
-
-    Allows any path under the canonical base URL origin. If no canonical URL is
-    configured, rejects all redirect URIs (fail-closed).
-    """
+def _matches_canonical_origin(redirect_uri: str, canonical_base_url: str) -> bool:
+    """Check if redirect_uri matches the platform's canonical origin."""
     if not canonical_base_url:
         return False
     parsed_redirect = urlparse(redirect_uri)
@@ -38,6 +35,27 @@ def _is_allowed_redirect_uri(redirect_uri: str, canonical_base_url: str) -> bool
         parsed_redirect.scheme == parsed_canonical.scheme
         and parsed_redirect.netloc == parsed_canonical.netloc
     )
+
+
+async def _is_allowed_redirect_uri(
+    redirect_uri: str, client_id: str, ctx: Context
+) -> bool:
+    """Validate redirect_uri against the platform's canonical origin or registered clients.
+
+    First checks if the redirect_uri matches the canonical base URL (for jentic-one's
+    own UI). If not, looks up the client_id in the OAuth client registry and checks
+    if the redirect_uri is in the client's allowed list.
+    """
+    if _matches_canonical_origin(redirect_uri, ctx.config.auth.canonical_base_url):
+        return True
+
+    async with ctx.admin_db.session() as session:
+        client = await OAuthClientRepository.get_by_client_id(session, client_id)
+
+    if client is None or not client.active:
+        return False
+
+    return redirect_uri in client.redirect_uris
 
 
 def _callback_uri(request: Request, canonical_base_url: str) -> str:
@@ -62,6 +80,208 @@ def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
 
 
 STATE_MAX_AGE_SECONDS = 600
+CONSENT_STATE_MAX_AGE_SECONDS = 300
+
+_CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Authorize {app_name} | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;500;600;700&family=Sora:wght@600;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f5f7f7;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .card {{
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
+            max-width: 400px;
+            width: 100%;
+            padding: 32px;
+        }}
+        .logo {{
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+        .logo-text {{
+            font-family: 'Sora', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #0E1A1D;
+            letter-spacing: -0.5px;
+        }}
+        .logo-text span {{
+            color: #689296;
+        }}
+        h1 {{
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #0E1A1D;
+            text-align: center;
+            line-height: 1.4;
+        }}
+        .app-name {{
+            color: #305256;
+            font-weight: 700;
+        }}
+        .description {{
+            color: #689296;
+            font-size: 14px;
+            margin-bottom: 24px;
+            line-height: 1.5;
+            text-align: center;
+        }}
+        .user-info {{
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 12px;
+            background: #f5f7f7;
+            border-radius: 8px;
+        }}
+        .user-info .label {{
+            font-size: 11px;
+            color: #689296;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }}
+        .user-info .email {{
+            font-size: 14px;
+            color: #0E1A1D;
+            font-weight: 600;
+        }}
+        .permissions {{
+            background: #f5f7f7;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+        }}
+        .permissions h2 {{
+            font-size: 12px;
+            font-weight: 600;
+            color: #305256;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        .permissions ul {{
+            list-style: none;
+            font-size: 14px;
+            color: #305256;
+        }}
+        .permissions li {{
+            padding: 8px 0;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #E4EAEB;
+        }}
+        .permissions li:last-child {{
+            border-bottom: none;
+        }}
+        .permissions li::before {{
+            content: "";
+            width: 18px;
+            height: 18px;
+            background: #5EDEB9;
+            border-radius: 50%;
+            margin-right: 12px;
+            flex-shrink: 0;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E");
+            background-size: 12px;
+            background-repeat: no-repeat;
+            background-position: center;
+        }}
+        .buttons {{
+            display: flex;
+            gap: 12px;
+        }}
+        button {{
+            flex: 1;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }}
+        .deny {{
+            background: #f5f7f7;
+            color: #305256;
+            border: 1px solid #E4EAEB;
+        }}
+        .deny:hover {{ background: #E4EAEB; }}
+        .approve {{
+            background: #305256;
+            color: white;
+        }}
+        .approve:hover {{
+            background: #193238;
+        }}
+        .footer {{
+            text-align: center;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #689296;
+        }}
+        .footer a {{
+            color: #305256;
+            text-decoration: none;
+        }}
+        .footer a:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <div class="logo-text">Jentic<span>One</span></div>
+        </div>
+        <div class="user-info">
+            <div class="label">Signed in as</div>
+            <div class="email">{user_email}</div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> wants to access your account</h1>
+        <p class="description">{app_description}</p>
+        <div class="permissions">
+            <h2>This will allow access to:</h2>
+            <ul>
+                {permission_items}
+            </ul>
+        </div>
+        <div class="buttons">
+            <form method="post" action="/oauth/consent" style="flex: 1; display: flex;">
+                <input type="hidden" name="consent_token" value="{consent_token}">
+                <input type="hidden" name="action" value="deny">
+                <button type="submit" class="deny">Deny</button>
+            </form>
+            <form method="post" action="/oauth/consent" style="flex: 1; display: flex;">
+                <input type="hidden" name="consent_token" value="{consent_token}">
+                <input type="hidden" name="action" value="approve">
+                <button type="submit" class="approve">Authorize</button>
+            </form>
+        </div>
+        <div class="footer">
+            By authorizing, you agree to Jentic One's <a href="#">Terms of Service</a>
+        </div>
+    </div>
+</body>
+</html>
+"""
 
 
 def _sign_state(payload: dict[str, str | None], secret: str) -> str:
@@ -108,7 +328,7 @@ async def authorize_endpoint(
     If an external IdP is configured, redirects to the upstream provider.
     Otherwise returns an error (direct login requires a separate credential exchange).
     """
-    if not _is_allowed_redirect_uri(redirect_uri, ctx.config.auth.canonical_base_url):
+    if not await _is_allowed_redirect_uri(redirect_uri, client_id, ctx):
         return RedirectResponse(url="/error?error=invalid_redirect_uri", status_code=302)
 
     if response_type != "code":
@@ -173,7 +393,7 @@ async def oauth_callback(
 
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
     try:
-        platform_code = await authorize_svc.handle_idp_callback(
+        platform_code, user_email = await authorize_svc.handle_idp_callback_with_email(
             code=code,
             redirect_uri=callback_uri,
             client_id=client_id or "",
@@ -183,11 +403,31 @@ async def oauth_callback(
             nonce=nonce,
         )
     except UserNotAdmittedError:
-        # Authenticated by the IdP, but the deployment's admission policy declined
-        # to provision this account. Distinct from a grant/exchange failure.
         return RedirectResponse(url="/error?error=access_denied", status_code=302)
     except (InvalidGrantError, httpx.HTTPStatusError):
         return RedirectResponse(url="/error?error=server_error", status_code=302)
+
+    async with ctx.admin_db.session() as session:
+        oauth_client = await OAuthClientRepository.get_by_client_id(session, client_id or "")
+
+    if oauth_client is not None and oauth_client.require_consent:
+        consent_token = _sign_state(
+            {
+                "code": platform_code,
+                "redirect_uri": original_redirect_uri,
+                "original_state": original_state,
+                "client_id": client_id,
+                "client_name": oauth_client.name,
+                "client_description": oauth_client.description,
+                "scope": scope,
+                "user_email": user_email,
+                "iat": str(int(time.time())),
+            },
+            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+        )
+        return RedirectResponse(
+            url=f"/oauth/consent?consent_token={consent_token}", status_code=302
+        )
 
     redirect_params: dict[str, str] = {"code": platform_code}
     if original_state:
@@ -203,6 +443,107 @@ async def oauth_callback(
 async def error_page(error: str = Query(default="unknown_error")) -> dict[str, str]:
     """Minimal error endpoint for browser-facing authorization failures."""
     return {"error": error}
+
+
+def _scope_to_permission_description(scope: str) -> str:
+    """Map OAuth scopes to human-readable permission descriptions."""
+    scope_descriptions = {
+        "openid": "View your basic profile information",
+        "email": "View your email address",
+        "profile": "View your profile details",
+        "agents:read": "View your agents",
+        "agents:write": "Create and manage agents on your behalf",
+        "toolkits:read": "View available toolkits",
+        "toolkits:write": "Manage toolkit configurations",
+        "credentials:read": "View stored credentials",
+        "credentials:write": "Manage stored credentials",
+    }
+    return scope_descriptions.get(scope, f"Access: {scope}")
+
+
+@router.get("/oauth/consent", response_class=HTMLResponse)
+async def consent_page(
+    consent_token: str = Query(...),
+    ctx: Context = Depends(get_ctx),
+) -> HTMLResponse:
+    """Display the OAuth consent screen."""
+    try:
+        params = _verify_consent_state(
+            consent_token, ctx.config.admin.auth.jwt_secret.get_secret_value()
+        )
+    except InvalidGrantError:
+        return HTMLResponse(
+            content="<html><body><h1>Invalid or expired consent request</h1></body></html>",
+            status_code=400,
+        )
+
+    app_name = params.get("client_name") or "Unknown Application"
+    app_description = params.get("client_description") or "This application"
+    user_email = params.get("user_email") or "unknown"
+    scope = params.get("scope") or "openid"
+
+    scopes = [s.strip() for s in scope.split() if s.strip()]
+    permission_items = "\n".join(
+        f"<li>{_scope_to_permission_description(s)}</li>" for s in scopes
+    )
+
+    html = _CONSENT_PAGE_TEMPLATE.format(
+        app_name=app_name,
+        app_description=app_description,
+        user_email=user_email,
+        permission_items=permission_items,
+        consent_token=consent_token,
+    )
+    return HTMLResponse(content=html)
+
+
+@router.post("/oauth/consent")
+async def consent_submit(
+    consent_token: str = Form(...),
+    action: str = Form(...),
+    ctx: Context = Depends(get_ctx),
+) -> RedirectResponse:
+    """Process the consent form submission."""
+    try:
+        params = _verify_consent_state(
+            consent_token, ctx.config.admin.auth.jwt_secret.get_secret_value()
+        )
+    except InvalidGrantError:
+        return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+
+    redirect_uri = params.get("redirect_uri") or ""
+    original_state = params.get("original_state")
+    platform_code = params.get("code") or ""
+
+    if action == "deny":
+        return _error_redirect(redirect_uri, "access_denied", original_state)
+
+    redirect_params: dict[str, str] = {"code": platform_code}
+    if original_state:
+        redirect_params["state"] = original_state
+
+    separator = "&" if "?" in redirect_uri else "?"
+    return RedirectResponse(
+        url=f"{redirect_uri}{separator}{urlencode(redirect_params)}", status_code=302
+    )
+
+
+def _verify_consent_state(state_str: str, secret: str) -> dict[str, str | None]:
+    """Verify consent token with shorter TTL."""
+    parts = state_str.rsplit(".", 1)
+    if len(parts) != 2:
+        raise InvalidGrantError("invalid consent token")
+    data, sig = parts
+    expected = hmac.HMAC(secret.encode(), data.encode(), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(sig, expected):
+        raise InvalidGrantError("consent signature invalid")
+    payload: dict[str, str | None] = json.loads(urlsafe_b64decode(data))
+    iat = payload.get("iat")
+    if iat is not None:
+        age = time.time() - float(iat)
+        if age > CONSENT_STATE_MAX_AGE_SECONDS or age < 0:
+            raise InvalidGrantError("consent expired")
+    return payload
 
 
 def _error_redirect(

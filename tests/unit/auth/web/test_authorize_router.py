@@ -13,7 +13,7 @@ from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.web.routers.authorize import (
     STATE_MAX_AGE_SECONDS,
     _callback_uri,
-    _is_allowed_redirect_uri,
+    _matches_canonical_origin,
     _sign_state,
     _verify_state,
 )
@@ -91,35 +91,35 @@ def test_state_without_iat_accepted() -> None:
 
 
 def test_redirect_same_origin_allowed() -> None:
-    assert _is_allowed_redirect_uri("https://app.example.com/callback", "https://app.example.com")
+    assert _matches_canonical_origin("https://app.example.com/callback", "https://app.example.com")
 
 
 def test_redirect_same_origin_with_path_allowed() -> None:
-    assert _is_allowed_redirect_uri(
+    assert _matches_canonical_origin(
         "https://app.example.com/auth/callback", "https://app.example.com/"
     )
 
 
 def test_redirect_different_host_rejected() -> None:
-    assert not _is_allowed_redirect_uri("https://evil.com/callback", "https://app.example.com")
+    assert not _matches_canonical_origin("https://evil.com/callback", "https://app.example.com")
 
 
 def test_redirect_different_scheme_rejected() -> None:
-    assert not _is_allowed_redirect_uri(
+    assert not _matches_canonical_origin(
         "http://app.example.com/callback", "https://app.example.com"
     )
 
 
 def test_redirect_no_canonical_url_rejects_all() -> None:
-    assert not _is_allowed_redirect_uri("https://app.example.com/callback", "")
+    assert not _matches_canonical_origin("https://app.example.com/callback", "")
 
 
 def test_redirect_relative_uri_rejected() -> None:
-    assert not _is_allowed_redirect_uri("/callback", "https://app.example.com")
+    assert not _matches_canonical_origin("/callback", "https://app.example.com")
 
 
 def test_redirect_different_port_rejected() -> None:
-    assert not _is_allowed_redirect_uri(
+    assert not _matches_canonical_origin(
         "https://app.example.com:9999/callback", "https://app.example.com"
     )
 

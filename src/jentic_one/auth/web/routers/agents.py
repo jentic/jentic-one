@@ -25,6 +25,7 @@ from jentic_one.auth.web.schemas.agents import (
     ApiKeyInfoResponse,
     ApiKeyResponse,
     ClaimRequest,
+    ClientCredentialsResponse,
     DenyRequest,
     ToolkitBindingListResponse,
     ToolkitBindingResponse,
@@ -282,6 +283,24 @@ async def generate_agent_api_key(
     """Generate a new API key for an active agent. Rotates any existing key."""
     key = await auth_svc.register_api_key(agent_id, identity=identity)
     return ApiKeyResponse(key=key)
+
+
+@router.post("/agents/{agent_id}:generate-client-credentials", status_code=200)
+async def generate_agent_client_credentials(
+    agent_id: str,
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    auth_svc: AgentAuthService = Depends(get_agent_auth_service),
+) -> ClientCredentialsResponse:
+    """Generate OAuth client credentials for an active agent.
+
+    Returns client_id (the agent's ID) and client_secret (shown once). The
+    credentials can be used with the client_credentials grant at /oauth/token
+    to obtain access tokens for headless agent authentication.
+
+    Rotates any existing client secret.
+    """
+    secret = await auth_svc.register_client_secret(agent_id, identity=identity)
+    return ClientCredentialsResponse(client_id=agent_id, client_secret=secret)
 
 
 @router.post("/agents/{agent_id}:revoke-api-key", status_code=204)

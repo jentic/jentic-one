@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Response
 
+from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.assertion_service import AssertionService
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import InvalidGrantError
@@ -43,6 +44,10 @@ def get_sa_auth_service(ctx: Context = Depends(get_ctx)) -> ServiceAccountAuthSe
     return ServiceAccountAuthService(ctx)
 
 
+def get_agent_auth_service(ctx: Context = Depends(get_ctx)) -> AgentAuthService:
+    return AgentAuthService(ctx)
+
+
 def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
     return AuthorizeService(ctx)
 
@@ -53,6 +58,7 @@ async def token_endpoint(
     token_svc: TokenService = Depends(get_token_service),
     assertion_svc: AssertionService = Depends(get_assertion_service),
     sa_auth_svc: ServiceAccountAuthService = Depends(get_sa_auth_service),
+    agent_auth_svc: AgentAuthService = Depends(get_agent_auth_service),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> TokenResponse:
     """Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens."""
@@ -87,14 +93,14 @@ async def token_endpoint(
     if body.grant_type == _CLIENT_CREDENTIALS_GRANT:
         if not body.client_id or not body.client_secret:
             raise InvalidGrantError("client_id and client_secret are required")
-        access_token, refresh_token = await sa_auth_svc.authenticate_client_credentials(
-            body.client_id, body.client_secret
+        access_token, refresh_token, expires_in = await _authenticate_client_credentials(
+            body.client_id, body.client_secret, sa_auth_svc, agent_auth_svc
         )
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
-            expires_in=sa_auth_svc.access_ttl_seconds,
+            expires_in=expires_in,
         )
 
     if body.grant_type != "refresh_token":
@@ -110,6 +116,27 @@ async def token_endpoint(
         token_type="bearer",
         expires_in=token_svc.access_ttl_seconds,
     )
+
+
+async def _authenticate_client_credentials(
+    client_id: str,
+    client_secret: str,
+    sa_auth_svc: ServiceAccountAuthService,
+    agent_auth_svc: AgentAuthService,
+) -> tuple[str, str, int]:
+    """Try service account auth first, then agent auth."""
+    try:
+        access_token, refresh_token = await sa_auth_svc.authenticate_client_credentials(
+            client_id, client_secret
+        )
+        return access_token, refresh_token, sa_auth_svc.access_ttl_seconds
+    except InvalidGrantError:
+        pass
+
+    access_token, refresh_token = await agent_auth_svc.authenticate_client_credentials(
+        client_id, client_secret
+    )
+    return access_token, refresh_token, agent_auth_svc.access_ttl_seconds
 
 
 @router.post("/oauth/mint")

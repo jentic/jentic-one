@@ -1,10 +1,17 @@
-"""Agent authentication: API key and client secret generation."""
+"""Agent authentication: API key, client secret generation, and client_credentials grant."""
 
 from __future__ import annotations
 
+import hmac
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.admin.repos import AgentCredentialRepository, AgentRepository, AuditRepository
+from jentic_one.admin.repos import (
+    ActorScopeGrantRepository,
+    AgentCredentialRepository,
+    AgentRepository,
+    AuditRepository,
+)
 from jentic_one.auth.services.crypto import (
     generate_agent_api_key,
     generate_client_secret,
@@ -12,21 +19,33 @@ from jentic_one.auth.services.crypto import (
 )
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
+    InvalidGrantError,
     InvalidTransitionError,
     NoApiKeyError,
 )
 from jentic_one.auth.services.schemas.api_key_info import ApiKeyHistoryEntry, ApiKeyInfo
-from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.auth.services.token_service import TokenService
+from jentic_one.shared.audit import (
+    AuditAction,
+    AuditTargetType,
+    record_audit,
+    record_audit_best_effort,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorStatus, AuditReason
+from jentic_one.shared.models import ActorStatus, ActorType, AuditReason
 
 
 class AgentAuthService:
-    """Handles credential generation for agents (API keys and client secrets)."""
+    """Handles credential generation and client_credentials auth for agents."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+        self._token_svc = TokenService(ctx)
+
+    @property
+    def access_ttl_seconds(self) -> int:
+        return self._token_svc.access_ttl_seconds
 
     async def register_api_key(self, agent_id: str, *, identity: Identity) -> str:
         """Generate and store a new API key. Returns the plaintext (shown once)."""
@@ -152,3 +171,41 @@ class AgentAuthService:
             raise InvalidTransitionError(agent_id, agent.status, "generate-api-key")
         if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
             raise ActorNotFoundError(agent_id)
+
+    async def authenticate_client_credentials(
+        self, client_id: str, client_secret: str
+    ) -> tuple[str, str]:
+        """Verify agent client_id + client_secret, issue an access+refresh pair.
+
+        The client_id is the agent's ID (agt_...). Returns (access_token, refresh_token).
+        Raises InvalidGrantError on authentication failure.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agent = await AgentRepository.get_by_id(session, client_id)
+            if agent is None or agent.status != ActorStatus.ACTIVE:
+                raise InvalidGrantError("invalid_client")
+
+            cred = await AgentCredentialRepository.get_by_agent_id(session, client_id)
+            if cred is None or cred.client_secret_hash is None:
+                raise InvalidGrantError("invalid_client")
+
+            if not hmac.compare_digest(hash_secret(client_secret), cred.client_secret_hash):
+                raise InvalidGrantError("invalid_client")
+
+            grants = await ActorScopeGrantRepository.list_for_actor(
+                session, client_id, actor_type=ActorType.AGENT
+            )
+            scopes = [g.scope for g in grants]
+
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.LOGIN,
+            target_type=AuditTargetType.SESSION,
+            target_id=client_id,
+            actor_type=ActorType.AGENT,
+            actor_id=client_id,
+            reason="client credentials grant",
+            origin=None,
+        )
+
+        return await self._token_svc.issue_pair(client_id, ActorType.AGENT, scopes)

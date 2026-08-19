@@ -131,3 +131,14 @@ class ToolkitBindRequest(BaseModel):
     """Request body for binding a toolkit."""
 
     toolkit_id: str = Field(min_length=1, max_length=255)
+
+
+class ClientCredentialsResponse(BaseModel):
+    """Response containing OAuth client credentials (shown once).
+
+    The client_id is the agent's ID. The client_secret is shown only at
+    generation time and cannot be retrieved later.
+    """
+
+    client_id: str
+    client_secret: str
