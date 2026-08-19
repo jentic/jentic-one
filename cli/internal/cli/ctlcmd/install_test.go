@@ -49,6 +49,34 @@ func TestResolveStackBuildRef(t *testing.T) {
 	})
 }
 
+// TestShouldBuildNonRelease pins the Docker path's auto-build decision: a
+// NON-RELEASE CLI build (dev / main / a branch / a commit) with no explicit
+// image pin builds the server from source (no matching published image exists,
+// and pulling the last release would pair a newer CLI with an older server); a
+// real semver release pulls the published :X.Y.Z image, and any explicit image
+// pin (--image-tag / $JENTIC_APP_IMAGE_TAG) always means "pull exactly this".
+func TestShouldBuildNonRelease(t *testing.T) {
+	cases := []struct {
+		version     string
+		imagePinned bool
+		want        bool
+	}{
+		{"main", false, true},
+		{"dev", false, true},
+		{"cli-v2-release", false, true},
+		{"9a858218", false, true},
+		{"v0.31.1", false, false}, // real release -> pull the published image
+		{"0.31.1", false, false},  // v-less semver is still a release
+		{"main", true, false},     // explicit image pin overrides the build
+		{"v0.31.1", true, false},  // release + pin still pulls the pin
+	}
+	for _, c := range cases {
+		if got := shouldBuildNonRelease(c.version, c.imagePinned); got != c.want {
+			t.Errorf("shouldBuildNonRelease(%q, %v) = %v, want %v", c.version, c.imagePinned, got, c.want)
+		}
+	}
+}
+
 // TestRecordManifestStackRef verifies that a build-local install records the
 // ref the stack was really built from (Draft.StackRef), while other paths keep
 // recording the CLI version. Without this, the first successful install would
