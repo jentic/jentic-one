@@ -35,7 +35,7 @@ func newSearchCmd(app *App) *cobra.Command {
 			"Output defaults to JSON when stdout is not a TTY (agent-friendly);\n" +
 			"use --json to force JSON on a terminal.",
 		Example: "  jentic search \"list users\"\n" +
-			"  jentic search -q \"create payment\" --api stripe.com/api/v1 --limit 5\n" +
+			"  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n" +
 			"  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -50,7 +50,7 @@ func newSearchCmd(app *App) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&opts.query, "query", "q", "", "search query (alternative to positional arg)")
-	cmd.Flags().StringSliceVar(&opts.apis, "api", nil, "restrict to these APIs (vendor/name/version; repeatable)")
+	cmd.Flags().StringSliceVar(&opts.apis, "api", nil, "restrict to these APIs (vendor[/name[/version]], as shown in search hits and `jentic apis list`; repeatable)")
 	cmd.Flags().IntVar(&opts.limit, "limit", 10, "max results per page (1-100)")
 	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "pagination cursor from a previous response")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "follow pagination and return all results")

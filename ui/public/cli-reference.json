@@ -809,7 +809,7 @@
           "use": "search \u003cquery\u003e",
           "short": "Search for operations by natural-language query",
           "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
-          "example": "  jentic search \"list users\"\n  jentic search -q \"create payment\" --api stripe.com/api/v1 --limit 5\n  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
+          "example": "  jentic search \"list users\"\n  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -822,7 +822,7 @@
               "name": "api",
               "type": "stringSlice",
               "default": "[]",
-              "usage": "restrict to these APIs (vendor/name/version; repeatable)"
+              "usage": "restrict to these APIs (vendor[/name[/version]], as shown in search hits and `jentic apis list`; repeatable)"
             },
             {
               "name": "base-url",
