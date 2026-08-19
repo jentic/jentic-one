@@ -1,0 +1,46 @@
+exit: 0
+--- stdout ---
+{
+  "data": [
+    {
+      "_links": {
+        "inspect": ""
+      },
+      "api": {
+        "host": "acme.com",
+        "name": "pets",
+        "vendor": "acme",
+        "version": "v1"
+      },
+      "description": "",
+      "method": "GET",
+      "name": "List Pets",
+      "operation_id": "op1",
+      "relevance_score": 0.9,
+      "type": "operation",
+      "url": "/pets"
+    },
+    {
+      "_links": {
+        "inspect": ""
+      },
+      "api": {
+        "host": "acme.com",
+        "name": "pets",
+        "vendor": "acme",
+        "version": "v1"
+      },
+      "description": "",
+      "method": "POST",
+      "name": "Create Pet",
+      "operation_id": "op2",
+      "relevance_score": 0.8,
+      "type": "operation",
+      "url": "/pets"
+    }
+  ],
+  "has_more": false,
+  "schema_version": "1"
+}
+--- stderr ---
+

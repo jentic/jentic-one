@@ -213,7 +213,15 @@ func unquoteYAML(v string) string {
 // YAML embedded in the body does not truncate the frontmatter early.
 func splitFrontmatter(src string) (body string, fm map[string]string) {
 	fm = map[string]string{}
-	s := strings.TrimLeft(src, "\n")
+	// Normalize CRLF/CR to LF up front. These files are `go:embed`'d from the
+	// repo mirror, and a Windows checkout (core.autocrlf) can embed CRLF bytes;
+	// without this the `---\n` fence match below fails and every skill parses as
+	// "missing name" (the Windows CI failure). .gitattributes also pins these to
+	// LF, but normalizing here keeps the parser robust regardless of how the
+	// bytes arrive (the backend serves the same content too).
+	s := strings.ReplaceAll(strings.ReplaceAll(src, "\r\n", "\n"), "\r", "\n")
+	src = s
+	s = strings.TrimLeft(s, "\n")
 	if !strings.HasPrefix(s, "---\n") {
 		return src, fm
 	}

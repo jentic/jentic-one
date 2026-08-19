@@ -205,7 +205,7 @@ from a different backend than this deployment.
 
 ## Quickstart (agent onboarding)
 
-Prefer the `jentic` CLI where available: your operator runs `jentic bootstrap`
+Prefer the `jentic` CLI where available: your operator runs `jentic setup`
 (registers this agent, waits for human approval, installs the skill), then you
 drive `jentic search` → `jentic inspect` → `jentic execute`. The raw HTTP
 sequence is:

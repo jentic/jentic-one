@@ -27,9 +27,10 @@ allow. See `docs/security/hardening.md` before using real credentials.
 
 **Register and reach a first call:**
 
-1. `jentic bootstrap --base-url <control-plane URL>` creates the agent identity, waits for an
-   operator to approve it, and installs the agent skill. (`jentic register --base-url …` is the
-   registration-only path; without `--base-url` both fall back to the configured base URL or
+1. `jentic setup --url <control-plane URL>` creates the agent identity, waits for an
+   operator to approve it, and installs the agent skill. (`jentic register --url …` is the
+   registration-only path — identity only, no skills; without `--url` both fall back to the
+   configured base URL or
    `http://127.0.0.1:8000`, and prompt for it on an interactive terminal.)
    Report the wait to the user: on a single-operator install they are the operator, and they
    approve the agent in the UI at `/app`.

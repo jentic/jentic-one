@@ -39,7 +39,7 @@ service_error_handler = make_service_error_handler(_ERROR_MAP)
 # A transient DB failure that survives the in-transaction retry budget (e.g. a
 # SQLite write-lock outlasting busy_timeout on the token-mint path) is infra,
 # not a client fault: map it to a retryable 503 so CLIs/clients can back off,
-# rather than a bare 500 that aborts `jentic bootstrap`.
+# rather than a bare 500 that aborts `jentic setup`.
 _DB_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     DatabaseUnavailableError: (503, "database_unavailable"),
 }

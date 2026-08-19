@@ -19,6 +19,7 @@ from jentic_one.control.web.schemas.access_requests import (
     AccessRequestResponse,
     AmendRequest,
     DecideRequest,
+    DuplicatePendingProblem,
     EvaluationCheckResponse,
     EvaluationResponse,
 )
@@ -89,7 +90,22 @@ def _to_response(view: AccessRequestView) -> AccessRequestResponse:
     )
 
 
-@router.post("/access-requests", status_code=202, summary="File access request")
+@router.post(
+    "/access-requests",
+    status_code=202,
+    summary="File access request",
+    responses={
+        409: {
+            "description": "A pending request already exists for the same resource.",
+            "model": DuplicatePendingProblem,
+            "content": {
+                "application/problem+json": {
+                    "schema": {"$ref": "#/components/schemas/DuplicatePendingProblem"}
+                }
+            },
+        }
+    },
+)
 async def file_access_request(
     body: AccessRequestFileRequest,
     identity: Identity = get_current_identity(),
