@@ -14,6 +14,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
+	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -62,6 +63,14 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 		fmt.Fprintln(a.Out, st.Dim.Render("Connect this machine to a Jentic install; an operator approves it, then tokens mint."))
 		if vals.Name == "" {
 			vals.Name = defaultIdentityName()
+		}
+		// Prefill the install-URL field with the local-install default so a user
+		// who just ran a local install can confirm with Enter instead of retyping
+		// the well-known loopback URL. It stays fully editable (a remote install
+		// types over it), and because the default is loopback the broker field
+		// stays hidden and the broker is seeded automatically.
+		if vals.URL == "" {
+			vals.URL = config.DefaultBaseURL
 		}
 		if err := promptOnboarding(&vals.URL, &vals.Name, &vals.BrokerURL); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
@@ -284,7 +293,7 @@ func promptOnboarding(installURL, name, brokerURL *string) error {
 	return prompt.NewForm(
 		huh.NewGroup(
 			prompt.Input().Title("Jentic install URL").
-				Description("The control-plane URL this agent registers with and talks to.").
+				Description("The control-plane URL this agent registers with and talks to.\nDefaults to a local install — edit it for a remote one.").
 				Value(installURL).Validate(notEmptyField("url")),
 			prompt.Input().Title("Agent name").
 				Description("Identity name, shown to the operator approving this agent.").
