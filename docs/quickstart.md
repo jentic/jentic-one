@@ -59,15 +59,20 @@ stored and how one credential is shared across an API's operations.
 Give the agent its own identity. From the machine that will run the agent:
 
 ```bash
-jentic register --url http://127.0.0.1:8000
+jentic register
 ```
+
+`register` defaults to the local install (`http://127.0.0.1:8000`) and seeds the
+local broker for you, so on a local setup you can just confirm the prefilled URL
+with Enter. (Prefer to be explicit, or scripting it? `jentic register --url
+http://127.0.0.1:8000` is equivalent.)
 
 This generates an Ed25519 keypair and registers the agent through dynamic client
 registration. **`register` then blocks, waiting for an operator to approve the
 agent.** On a single-operator install you are the operator: approve the pending
 agent in the UI at `/app`, and the command completes automatically once the
 agent is active. Re-running `register` is idempotent. (Registering with a
-**remote** deployment instead? Pass `--broker-url` too — see the
+**remote** deployment instead? Pass `--url` and `--broker-url` — see the
 [CLI README](../cli/README.md#usage).)
 
 ## 5. Grant access

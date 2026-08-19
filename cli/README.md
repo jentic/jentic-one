@@ -33,14 +33,29 @@ cobra definitions (`make cli-reference`) and rendered in the platform docs —
 open `/app/docs` on your deployment (Reference → CLI). This README covers
 building, onboarding, and operating; it does not duplicate per-flag docs.
 
-**New here?** Run `jenticctl install` to set up locally. Then, if you're a person
-setting up a local agent, run `jentic setup` to create one (isolated account +
-registration + skills); if you're an agent that doesn't have a profile yet, run
-`jentic register`.
+**New here?** Two paths, depending on where the Jentic server lives:
 
-**Connecting to a remote Jentic server?** You don't need `jenticctl` or a local
-install at all — the `jentic` binary is self-contained (it links none of the
-installer/lifecycle code; enforced by an arch test) and one command onboards it:
+**Local install** (stand up jentic-one on your own machine, then connect to it):
+
+```bash
+# 1. Install the CLI + stand up the local stack. The one-liner installs the
+#    binaries and flows straight into the `jenticctl install` wizard, which
+#    brings the server up on http://127.0.0.1:8000:
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+
+# 2. Connect this machine — that's it. `register` defaults to the local install
+#    (http://127.0.0.1:8000) and seeds the local broker for you, so just confirm:
+jentic register
+```
+
+(Setting up a local **coding agent**? Run `jentic setup` instead of `jentic
+register` — it does the registration above *plus* an isolated account and the
+agent skills.)
+
+**Remote server** (connect to a Jentic server someone else is running): you
+don't need `jenticctl` or a local install at all — the `jentic` binary is
+self-contained (it links none of the installer/lifecycle code; enforced by an
+arch test) and one command onboards it:
 
 ```bash
 jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
@@ -193,6 +208,8 @@ Notes:
 
 ```bash
 # Connect this machine to a Jentic install, browse the catalog, execute an operation.
+jentic register                                       # local install (defaults to 127.0.0.1, seeds the broker)
+# …or, for a remote server:
 jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
 jentic catalog
 jentic access whoami                                  # a fresh agent is bound to no APIs
@@ -208,7 +225,7 @@ jentic execute <operation>
 > environment:
 >
 > ```bash
-> jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example
+> jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
 > ```
 >
 > (`jentic env add <env> --url <URL> --broker-url <URL> --force` does the same
@@ -218,14 +235,17 @@ jentic execute <operation>
 ## Local setup
 
 Running against a **local** install (the stack `jenticctl install` stands up on
-`127.0.0.1`) has two rules that trip people up. Both are handled for you if you
-follow the commands below.
+`127.0.0.1`) has two rules that trip people up. Bare `jentic register` handles
+both for you (it defaults to `http://127.0.0.1:8000` and seeds the broker); the
+rules below matter only if you pass `--url` explicitly.
 
 1. **Use `127.0.0.1`, not `localhost`.** The token-exchange assertion's audience
    is compared byte-for-byte against the backend's `auth.canonical_base_url`,
    which is `http://127.0.0.1:8000` for a local install. Registering with
    `--url http://localhost:8000` signs the wrong audience and every token
-   exchange fails with `invalid_grant` — even after you approve the agent.
+   exchange fails with `invalid_grant` — even after you approve the agent. (The
+   prefilled default and bare `jentic register` already use `127.0.0.1`, so this
+   only bites if you type `localhost` yourself.)
 
 2. **The local broker is plain HTTP on port 8100.** `jentic execute` targets
    the broker at `https://127.0.0.1:8100` by default; against a local http
@@ -234,7 +254,12 @@ follow the commands below.
    seeds it automatically when the control-plane URL is loopback.
 
 ```bash
-# One command: creates the environment/identity/context, seeds broker_url, registers.
+# One command connects this machine. `register` defaults to the local install
+# URL (http://127.0.0.1:8000) and seeds broker_url for you — just press Enter to
+# confirm the prefilled URL:
+jentic register
+
+# (Non-interactive / scripts: pass it explicitly.)
 jentic register --url http://127.0.0.1:8000
 
 # Approve the agent in the console, then:
