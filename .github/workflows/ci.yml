@@ -675,72 +675,26 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
+          # setup-go's built-in cache is keyed only on go.sum and is immutable
+          # per key, so on a busy branch it restores a GOCACHE that predates the
+          # branch's own code and every run recompiles near-cold (~60s builds
+          # that take ~3s warm). The explicit sha-keyed cache below saves an
+          # updated build cache on every run instead.
+          cache: false
+
+      - name: Go module + build cache (sha-keyed, incremental)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-cli-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-cli-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-
+            go-cli-${{ runner.os }}-
 
       - name: Build
         run: go build ./...
-
-      # CLI-V2 Phase 9 (impl/9.0 §9.1 W2): the CLI must build for every OS we ship
-      # binaries for. macOS + Linux already cross-compile; Windows regressed once
-      # on a Unix-only syscall (config.lockConfig), so gate it here — a future
-      # unguarded syscall can never silently break the Windows/macOS binary again.
-      - name: Cross-compile (windows/amd64, darwin/arm64)
-        run: |
-          GOOS=windows GOARCH=amd64 go build ./...
-          GOOS=darwin  GOARCH=arm64 go build ./...
-
-      # Pipeline review F3/C1: lint the GoReleaser config on the PR, not at tag
-      # time. A malformed archive/ldflag/cask stanza otherwise stays invisible
-      # until a real release. Pure config check, no build.
-      - name: GoReleaser config valid
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          args: check
-          workdir: cli
-
-      # WIN-4 (cli-review2 windows-build): guard the *published artifact shape*,
-      # not just `go build` — and doubles as pipeline review F3/C2 (a full
-      # GoReleaser snapshot build dry-run on the PR). A broken archive stanza (e.g. dropping `windows`
-      # from goos, or mis-formatting the zip override) compiles fine but only
-      # surfaces at tag time. Run a snapshot goreleaser build (no sign/sbom/
-      # publish) and assert the windows `.zip` exists and contains `jentic.exe`
-      # (and only jentic — jenticctl is not shipped for Windows, WIN-6). Scoped
-      # to the same cli/** path filter as this job, so docs-only PRs skip it.
-      - name: GoReleaser artifact smoke (windows .zip shape)
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          args: release --snapshot --clean --skip=sign,sbom,publish
-          workdir: cli
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Assert windows zip contains jentic.exe only
-        run: |
-          set -euo pipefail
-          # This job sets defaults.run.working-directory: cli, and the
-          # goreleaser step above runs with workdir: cli too, so goreleaser
-          # writes to cli/dist — which from THIS step's cwd (also cli) is just
-          # ./dist. (The old `cli/dist` here resolved to cli/cli/dist and always
-          # missed.) Fall back to cli/dist in case a future default change moves
-          # this step's cwd back to the repo root.
-          dist=""
-          for d in dist cli/dist; do
-            [ -d "$d" ] && { dist="$d"; break; }
-          done
-          test -n "${dist}" || { echo "::error::goreleaser produced no dist dir"; pwd; ls -la . || true; exit 1; }
-          echo "artifact dir: ${dist}"
-          zip="$(ls "${dist}"/jentic_*_windows_amd64.zip 2>/dev/null | head -n1 || true)"
-          test -n "${zip}" || { echo "::error::no windows amd64 zip emitted by goreleaser"; ls -la "${dist}" || true; exit 1; }
-          echo "found windows archive: ${zip}"
-          contents="$(unzip -Z1 "${zip}")"
-          echo "${contents}"
-          echo "${contents}" | grep -qx 'jentic.exe' || { echo "::error::windows zip is missing jentic.exe"; exit 1; }
-          if echo "${contents}" | grep -qi 'jenticctl'; then
-            echo "::error::windows zip must NOT ship jenticctl (WIN-6)"; exit 1
-          fi
-          # linux/darwin tarballs must still be produced (byte-shape invariant).
-          ls "${dist}"/jentic_*_linux_amd64.tar.gz "${dist}"/jenticctl_*_linux_amd64.tar.gz >/dev/null
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9
@@ -804,6 +758,110 @@ jobs:
             echo '::error::ui/public/cli-reference.json is out of date. Run `make cli-reference` and commit.'
             exit 1
           fi
+
+  # Release-artifact guards, split out of the `cli` job so they run in
+  # PARALLEL with lint/test/gen-checks instead of serializing ~7 minutes onto
+  # the run's critical path: `goreleaser release --snapshot` has no target
+  # filter (Pro feature), so the smoke below compiles the full 10-target
+  # release matrix (jenticctl×4 + jentic×6) with -trimpath — by far the most
+  # expensive CLI step. Same path gating as the `cli` job.
+  cli-artifact-smoke:
+    name: Go CLI release artifact smoke
+    needs: [changes]
+    if: needs.changes.outputs.cli == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          # See the `cli` job: sha-keyed cache below instead of the immutable
+          # go.sum-keyed one, so warm runs reuse the -trimpath build cache.
+          cache: false
+
+      - name: Go module + build cache (sha-keyed, incremental)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          # Distinct prefix from the `cli` job: these builds use -trimpath +
+          # release ldflags, so the cache contents don't overlap — separate
+          # entries keep both caches small and avoid save-key collisions.
+          key: go-cli-smoke-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-cli-smoke-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-
+            go-cli-smoke-${{ runner.os }}-
+
+      # CLI-V2 Phase 9 (impl/9.0 §9.1 W2): the CLI must build for every OS we ship
+      # binaries for. macOS + Linux already cross-compile; Windows regressed once
+      # on a Unix-only syscall (config.lockConfig), so gate it here — a future
+      # unguarded syscall can never silently break the Windows/macOS binary again.
+      # Kept alongside the goreleaser smoke (which only builds the two cmd/
+      # binaries' dependency graphs) because `go build ./...` covers ALL
+      # packages, including ones not yet reachable from a shipped binary.
+      - name: Cross-compile (windows/amd64, darwin/arm64)
+        run: |
+          GOOS=windows GOARCH=amd64 go build ./...
+          GOOS=darwin  GOARCH=arm64 go build ./...
+
+      # Pipeline review F3/C1: lint the GoReleaser config on the PR, not at tag
+      # time. A malformed archive/ldflag/cask stanza otherwise stays invisible
+      # until a real release. Pure config check, no build.
+      - name: GoReleaser config valid
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check
+          workdir: cli
+
+      # WIN-4 (cli-review2 windows-build): guard the *published artifact shape*,
+      # not just `go build` — and doubles as pipeline review F3/C2 (a full
+      # GoReleaser snapshot build dry-run on the PR). A broken archive stanza (e.g. dropping `windows`
+      # from goos, or mis-formatting the zip override) compiles fine but only
+      # surfaces at tag time. Run a snapshot goreleaser build (no sign/sbom/
+      # publish) and assert the windows `.zip` exists and contains `jentic.exe`
+      # (and only jentic — jenticctl is not shipped for Windows, WIN-6). Scoped
+      # to the same cli/** path filter as this job, so docs-only PRs skip it.
+      - name: GoReleaser artifact smoke (windows .zip shape)
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,sbom,publish
+          workdir: cli
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assert windows zip contains jentic.exe only
+        run: |
+          set -euo pipefail
+          # This job sets defaults.run.working-directory: cli, and the
+          # goreleaser step above runs with workdir: cli too, so goreleaser
+          # writes to cli/dist — which from THIS step's cwd (also cli) is just
+          # ./dist. (The old `cli/dist` here resolved to cli/cli/dist and always
+          # missed.) Fall back to cli/dist in case a future default change moves
+          # this step's cwd back to the repo root.
+          dist=""
+          for d in dist cli/dist; do
+            [ -d "$d" ] && { dist="$d"; break; }
+          done
+          test -n "${dist}" || { echo "::error::goreleaser produced no dist dir"; pwd; ls -la . || true; exit 1; }
+          echo "artifact dir: ${dist}"
+          zip="$(ls "${dist}"/jentic_*_windows_amd64.zip 2>/dev/null | head -n1 || true)"
+          test -n "${zip}" || { echo "::error::no windows amd64 zip emitted by goreleaser"; ls -la "${dist}" || true; exit 1; }
+          echo "found windows archive: ${zip}"
+          contents="$(unzip -Z1 "${zip}")"
+          echo "${contents}"
+          echo "${contents}" | grep -qx 'jentic.exe' || { echo "::error::windows zip is missing jentic.exe"; exit 1; }
+          if echo "${contents}" | grep -qi 'jenticctl'; then
+            echo "::error::windows zip must NOT ship jenticctl (WIN-6)"; exit 1
+          fi
+          # linux/darwin tarballs must still be produced (byte-shape invariant).
+          ls "${dist}"/jentic_*_linux_amd64.tar.gz "${dist}"/jenticctl_*_linux_amd64.tar.gz >/dev/null
 
   installer:
     name: Installer script tests
@@ -953,7 +1011,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer, e2e-install]
+    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -969,6 +1027,7 @@ jobs:
             ${{ needs.ui-e2e-realbackend.result }}
             ${{ needs.smoke-packaging.result }}
             ${{ needs.cli.result }}
+            ${{ needs.cli-artifact-smoke.result }}
             ${{ needs.installer.result }}
             ${{ needs.e2e-install.result }}
         run: |
