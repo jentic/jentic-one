@@ -267,7 +267,10 @@ func classifyTokenError(resp *http.Response) error {
 		// back as 400 invalid_grant, but it is NOT a pending approval — polling
 		// will never clear it. Distinguish on the backend's detail text so the
 		// register wait loop stops with an actionable audience-mismatch hint
-		// instead of hanging (QA-9). Pending approvals carry no such phrasing.
+		// instead of hanging (QA-9). The shipped backend emits a distinct
+		// "Agent is not active yet (pending approval)" for a signature-verified
+		// pending agent (auth/services/assertion_service.py), which contains
+		// none of the assertion-failure phrases and so lands on PendingError.
 		if isAssertionInvalidDetail(detail) {
 			return &AssertionInvalidError{Detail: detail}
 		}
