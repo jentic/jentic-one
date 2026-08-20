@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ctl/generated"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
+	"gopkg.in/yaml.v3"
 )
 
 // TestResolveStackBuildRef pins the ref-resolution chain for --build-local
@@ -226,6 +228,65 @@ func TestInstallCmdBindsNoTelemetryFlags(t *testing.T) {
 	if !sawOtherSchemaFlag {
 		t.Fatalf("no non-telemetry schema flags bound at all — exclusion test would be vacuous")
 	}
+}
+
+func TestStampTelemetryDecisionRendersEndToEnd(t *testing.T) {
+	// The consent decision must survive all the way into the rendered
+	// jentic-one.yaml exactly as finishInstall produces it: stamp → Render.
+	// Opt-in ships enabled + a fresh id + the host's OS family; opt-out (over a
+	// previously opted-in config) ships enabled:false and nothing else — no
+	// declined id, no environment detail.
+	t.Run("opt-in", func(t *testing.T) {
+		draft := install.NewDraft()
+		stampTelemetryDecision(draft, true)
+
+		tel := renderedTelemetry(t, draft)
+		if tel["enabled"] != true {
+			t.Errorf("telemetry.enabled = %v, want true", tel["enabled"])
+		}
+		id, _ := tel["instance_id"].(string)
+		if id == "" {
+			t.Errorf("telemetry.instance_id missing or empty, want a generated uuid")
+		}
+		if tel["host_os"] != runtime.GOOS {
+			t.Errorf("telemetry.host_os = %v, want %v", tel["host_os"], runtime.GOOS)
+		}
+	})
+
+	t.Run("opt-out over reused id", func(t *testing.T) {
+		draft := install.NewDraft()
+		draft.TelemetryInstanceID = "inst-declined-id"
+		stampTelemetryDecision(draft, false)
+
+		tel := renderedTelemetry(t, draft)
+		if tel["enabled"] != false {
+			t.Errorf("telemetry.enabled = %v, want false", tel["enabled"])
+		}
+		for _, key := range []string{"instance_id", "host_os"} {
+			if v, ok := tel[key]; ok {
+				t.Errorf("telemetry.%s = %v, want absent on opt-out", key, v)
+			}
+		}
+	})
+}
+
+// renderedTelemetry runs the draft through the real Render() (the same call
+// finishInstall makes) and returns the parsed telemetry block.
+func renderedTelemetry(t *testing.T, draft *install.Draft) map[string]any {
+	t.Helper()
+	data, err := draft.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var out map[string]any
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	tel, ok := out["telemetry"].(map[string]any)
+	if !ok {
+		t.Fatalf("rendered config has no telemetry block: %v", out["telemetry"])
+	}
+	return tel
 }
 
 func TestReuseInstallSecretsFromLiveConfig(t *testing.T) {

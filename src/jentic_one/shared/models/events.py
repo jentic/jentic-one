@@ -221,15 +221,16 @@ class HostOs(StrEnum):
     def resolve(cls, configured: str | None) -> "HostOs":
         """Prefer the install-time config value, else detect at runtime.
 
-        ``configured`` is the raw ``telemetry.host_os`` string; a value outside
-        the closed set degrades to OTHER rather than falling back to runtime
-        detection — a stamped-but-garbled value must not silently become the
-        container's OS.
+        ``configured`` is the raw ``telemetry.host_os`` string; surrounding
+        whitespace is forgiven (a quoted hand-edit like ``" darwin "``), but a
+        value outside the closed set degrades to OTHER rather than falling back
+        to runtime detection — a stamped-but-garbled value must not silently
+        become the container's OS.
         """
-        if configured is None or configured == "":
+        if configured is None or not configured.strip():
             return cls.current()
         try:
-            return cls(configured.lower())
+            return cls(configured.strip().lower())
         except ValueError:
             return cls.OTHER
 

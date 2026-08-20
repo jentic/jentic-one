@@ -94,8 +94,13 @@ observability:
 # config omits this block sends nothing. The onboarding CLI writes `enabled`
 # explicitly (a yes-default prompt). `instance_id` seeds the durable admin-DB
 # identity row on first boot (null → generated and persisted on first startup).
+# `host_os` is the operator's OS family (linux/darwin/windows), stamped by the
+# CLI at install time; set it when hand-rolling a Docker deployment, otherwise
+# runtime detection reports the *container's* OS (always linux). Sent exactly
+# once, on the one-time instance_initialized event.
 # Manual local opt-in pointing at a configurable ingest gateway.
 # telemetry:
 #   enabled: true
 #   instance_id: change-me-to-a-uuid
+#   host_os: linux
 #   endpoint: https://api.jentic.com/api/v1

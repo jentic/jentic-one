@@ -1852,7 +1852,10 @@ func (j *StateBackendConfig) UnmarshalJSON(value []byte) error {
 // or hand-rolled) sends nothing. The onboarding CLI writes “enabled“
 // explicitly (a yes-default “[Y]/n“ prompt) so the on-by-default UX lives in
 // the prompt, not the code default. “instance_id“ seeds the durable admin-DB
-// identity row on first startup for opted-in instances.
+// identity row on first startup for opted-in instances. “host_os“ is the
+// operator's OS family, stamped by the CLI at install time so a Docker-run
+// instance reports the host's OS rather than the container's; sent exactly once,
+// on the one-time “instance_initialized“ event.
 type TelemetryConfig struct {
 	// Enabled corresponds to the JSON schema field "enabled".
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`

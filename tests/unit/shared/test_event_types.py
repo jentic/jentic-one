@@ -63,6 +63,9 @@ def test_host_os_current_on_this_machine_is_a_member() -> None:
         # back to the container's OS.
         ("freebsd", HostOs.OTHER),
         ("garbage!!", HostOs.OTHER),
+        # Surrounding whitespace (quoted hand-edits like ' darwin ') is forgiven.
+        (" darwin ", HostOs.DARWIN),
+        ("linux\n", HostOs.LINUX),
     ],
 )
 def test_host_os_resolve_prefers_config_value(configured: str, expected: HostOs) -> None:
@@ -71,7 +74,7 @@ def test_host_os_resolve_prefers_config_value(configured: str, expected: HostOs)
         assert HostOs.resolve(configured) is expected
 
 
-@pytest.mark.parametrize("absent", [None, ""])
+@pytest.mark.parametrize("absent", [None, "", "   ", "\t\n"])
 def test_host_os_resolve_falls_back_to_runtime_detection(absent: str | None) -> None:
     """Hand-rolled configs without a stamp fall back to platform.system()."""
     with patch("jentic_one.shared.models.events.platform.system", return_value="Darwin"):
