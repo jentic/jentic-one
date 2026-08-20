@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/binder"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
+	"github.com/jentic/jentic-one/cli/internal/cli/ctl/generated"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 )
@@ -152,6 +154,77 @@ func TestStampTelemetryDecisionOptOutGeneratesNoID(t *testing.T) {
 	}
 	if draft.TelemetryInstanceID != "" {
 		t.Errorf("TelemetryInstanceID = %q, want empty on opt-out", draft.TelemetryInstanceID)
+	}
+}
+
+func TestStampTelemetryDecisionOptOutClearsReusedID(t *testing.T) {
+	// A reinstall over an opted-in config pre-seeds the old instance id
+	// (reuseInstallSecrets) BEFORE the consent gate runs. If the user then
+	// declines, the identifier they declined under must not be written back
+	// to disk — the stamp clears it so render can't emit it.
+	draft := install.NewDraft()
+	draft.TelemetryInstanceID = "inst-declined-id"
+
+	stampTelemetryDecision(draft, false)
+
+	if draft.TelemetryEnabled {
+		t.Errorf("TelemetryEnabled = true, want false")
+	}
+	if draft.TelemetryInstanceID != "" {
+		t.Errorf("TelemetryInstanceID = %q, want cleared on opt-out", draft.TelemetryInstanceID)
+	}
+}
+
+func TestConsentInteractiveHeadlessNeverPrompts(t *testing.T) {
+	// --defaults/--answers promise a non-interactive install; the consent
+	// prompt must not render even when stdin happens to be a TTY (an operator
+	// at a terminal, or CI that allocates a pty) — otherwise the install hangs
+	// on the confirm.
+	cases := []struct {
+		name string
+		opts installOptions
+		tty  bool
+		want bool
+	}{
+		{"wizard path with TTY prompts", installOptions{}, true, true},
+		{"wizard path without TTY stays silent", installOptions{}, false, false},
+		{"--defaults never prompts, even on a TTY", installOptions{defaults: true}, true, false},
+		{"--answers never prompts, even on a TTY", installOptions{answersFile: "a.yaml"}, true, false},
+		{"--defaults without TTY stays silent", installOptions{defaults: true}, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := consentInteractive(&tc.opts, tc.tty); got != tc.want {
+				t.Errorf("consentInteractive = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInstallCmdBindsNoTelemetryFlags(t *testing.T) {
+	// The telemetry block is owned by the dedicated consent flow: no
+	// schema-overlay flag may touch it. A hidden --telemetry-enabled would
+	// flip the gate AFTER stampTelemetryDecision/Render, bypassing consent and
+	// shipping enabled-without-instance_id/host_os (in Docker the backend
+	// would then report the container's OS).
+	cmd := newInstallCmd(testApp(t))
+
+	sawOtherSchemaFlag := false
+	for _, path := range binder.LeafPaths(&generated.BackendConfig{}) {
+		name := strings.ReplaceAll(strings.ReplaceAll(path, ".", "-"), "_", "-")
+		flag := cmd.Flags().Lookup(name)
+		if strings.HasPrefix(path, "telemetry.") {
+			if flag != nil {
+				t.Errorf("--%s is bound; telemetry leaves must be excluded from schema flags", name)
+			}
+			continue
+		}
+		if flag != nil {
+			sawOtherSchemaFlag = true
+		}
+	}
+	if !sawOtherSchemaFlag {
+		t.Fatalf("no non-telemetry schema flags bound at all — exclusion test would be vacuous")
 	}
 }
 

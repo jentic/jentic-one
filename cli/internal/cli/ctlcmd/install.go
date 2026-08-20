@@ -139,7 +139,7 @@ func newInstallCmd(app *app) *cobra.Command {
 		panic(fmt.Sprintf("install: cannot resolve sensitive config paths: %v", err))
 	}
 	binder.BindFlagsWithOptions(cmd, opts.backendCfg, binder.BindOptions{
-		Exclude: sensitive,
+		Exclude: excludeConsentOwned(sensitive, opts.backendCfg),
 		Hidden:  true,
 	})
 
@@ -229,7 +229,9 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 	// configuration, before the config is rendered so the decision lands in the
 	// generated jentic-one.yaml (the file the app actually reads). Persisted so
 	// re-installs skip it. Non-interactive (CI / no TTY) first run defaults OFF.
-	proceed, enabled, err := a.ensureTelemetryConsent(term.IsTerminal(os.Stdin.Fd()))
+	// The headless --defaults/--answers path never prompts even on a TTY — its
+	// contract is "no interaction", so it keeps any saved choice / defaults OFF.
+	proceed, enabled, err := a.ensureTelemetryConsent(consentInteractive(opts, term.IsTerminal(os.Stdin.Fd())))
 	if err != nil {
 		return err
 	}
@@ -435,12 +437,34 @@ func (a *app) runConfigForm(cmd *cobra.Command, opts *installOptions) (ctl.Setti
 		return nil, err
 	}
 	formCfg := &generated.BackendConfig{}
-	form := binder.BuildDynamicForm(formCfg, binder.FormOptions{Exclude: sensitive})
+	excluded := excludeConsentOwned(sensitive, formCfg)
+	form := binder.BuildDynamicForm(formCfg, binder.FormOptions{Exclude: excluded})
 	if err := install.RunForm(form); err != nil {
 		return nil, fmt.Errorf("config form: %w", err)
 	}
 	// Only leaves the operator actually set (non-zero) become overrides.
-	return ctl.Settings(binder.NonZeroOverrides(formCfg, sensitive)), nil
+	return ctl.Settings(binder.NonZeroOverrides(formCfg, excluded)), nil
+}
+
+// excludeConsentOwned extends the sensitive-path Exclude set with every leaf of
+// the telemetry section. The telemetry block is owned end-to-end by the
+// dedicated consent flow (prompt → stampTelemetryDecision → render, which also
+// stamps instance_id and host_os): a schema-overlay flag or form field that
+// flipped `telemetry.enabled` after rendering would bypass consent and ship an
+// enabled config with no instance id and no host_os stamp — under the
+// recommended Docker install the backend would then misreport the container's
+// OS, exactly the failure the host_os stamp exists to prevent.
+func excludeConsentOwned(sensitive map[string]bool, target interface{}) map[string]bool {
+	out := make(map[string]bool, len(sensitive)+4)
+	for path := range sensitive {
+		out[path] = true
+	}
+	for _, path := range binder.LeafPaths(target) {
+		if path == "telemetry" || strings.HasPrefix(path, "telemetry.") {
+			out[path] = true
+		}
+	}
+	return out
 }
 
 // countLeaves returns the number of scalar leaves in a nested override map, for a
@@ -895,14 +919,26 @@ func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath 
 // opted-in install gets a stable opaque instance id (seeds the durable
 // admin-DB identity row on first boot); an id pre-seeded from a prior config
 // (reuseInstallSecrets) is kept so re-consenting preserves the same telemetry
-// identity — its stability contract; an opted-out install writes an explicit
-// `enabled: false` (never a leftover id — render ignores the id when
-// disabled).
+// identity — its stability contract. An opted-out install writes an explicit
+// `enabled: false` and CLEARS any pre-seeded id: the user declined, so the
+// identifier they declined under must not be written back to disk.
 func stampTelemetryDecision(draft *install.Draft, enabled bool) {
 	draft.TelemetryEnabled = enabled
-	if enabled && draft.TelemetryInstanceID == "" {
+	if !enabled {
+		draft.TelemetryInstanceID = ""
+		return
+	}
+	if draft.TelemetryInstanceID == "" {
 		draft.TelemetryInstanceID = uuid.NewString()
 	}
+}
+
+// consentInteractive reports whether the telemetry consent prompt may render.
+// The headless --defaults/--answers path must never prompt (its contract is
+// "non-interactive", and a TTY-attached `install --defaults` would otherwise
+// hang on the confirm); outside it, prompt only when stdin is a real TTY.
+func consentInteractive(opts *installOptions, stdinIsTTY bool) bool {
+	return !(opts.defaults || opts.answersFile != "") && stdinIsTTY
 }
 
 // reuseInstallSecrets pre-seeds draft with the secret fields from an existing
