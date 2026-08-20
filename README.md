@@ -230,7 +230,9 @@ Full reference: [`cli/README.md`](cli/README.md).
   the telemetry block stays silent. When enabled, it sends a small, fixed set of anonymous
   events. Each event is a closed schema — `{id, version, event, actor_type?, tags?, ts}` —
   where `event` and `actor_type` are fixed enums and `tags` are fixed labels, never free text,
-  so the payload has no room for credentials, request data, or PII. This is enforced in CI by
+  so the payload has no room for credentials, request data, or PII. The OS family
+  (`linux`/`darwin`/`windows`/`other`) is sent exactly once, as a tag on the one-time
+  `instance_initialized` event. This is enforced in CI by
   [`tests/arch/test_telemetry_no_pii.py`](tests/arch/test_telemetry_no_pii.py).
 - **Observability is self-hosted.** Metrics and tracing exporters emit to an
   OpenTelemetry/Prometheus endpoint you configure.

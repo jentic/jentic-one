@@ -26,7 +26,7 @@ from jentic_one.admin.core.schema.instance_identity import InstanceIdentity
 from jentic_one.shared.config import AppConfig, TelemetryConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models.events import EventType
+from jentic_one.shared.models.events import EventType, HostOs
 from jentic_one.shared.telemetry.sink import get_active_sink
 from jentic_one.shared.web.app_factory import _start_telemetry, _stop_telemetry
 
@@ -89,6 +89,17 @@ async def test_first_startup_emits_initialized_and_booted_once_each(
 
     assert await _count_events(admin_db, EventType.INSTANCE_INITIALIZED) == 1
     assert await _count_events(admin_db, EventType.INSTANCE_BOOTED) == 1
+
+    # The one-time event carries the OS family tag (and only that) — the OS is
+    # never attached to any other event.
+    async with admin_db.session() as session:
+        result = await session.execute(
+            select(Event).where(Event.type == EventType.INSTANCE_INITIALIZED)
+        )
+        initialized = result.scalar_one()
+        assert initialized.data["tags"] == [str(HostOs.current())]
+        booted = await session.execute(select(Event).where(Event.type == EventType.INSTANCE_BOOTED))
+        assert not (booted.scalar_one().data or {}).get("tags")
 
 
 async def test_second_startup_reboots_without_reinitializing(

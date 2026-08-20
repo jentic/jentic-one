@@ -28,7 +28,7 @@ from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
@@ -366,12 +366,15 @@ async def _start_telemetry(
 
     async with ctx.admin_db.transaction() as session:
         if created:
+            # The OS family rides only on this one-time event (see HostOs) —
+            # every later event carries just the opaque id.
             await emit_event_best_effort(
                 session,
                 type=EventType.INSTANCE_INITIALIZED,
                 severity=EventSeverity.INFO,
                 summary="Instance initialized",
                 created_by=None,
+                tags={HostOs.current()},
             )
         await emit_event_best_effort(
             session,

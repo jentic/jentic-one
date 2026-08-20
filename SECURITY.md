@@ -45,8 +45,10 @@ Jentic One is designed so that **credentials never leave the data plane**:
 - Jentic One does **not** send telemetry by default. Anonymous product telemetry
   is **opt-in** (`telemetry.enabled: true`); when enabled it sends a small, fixed,
   closed-schema event set — `{id, version, event, actor_type?, tags?, ts}`, where
-  `event`/`actor_type` are fixed enums and `tags` are fixed labels — with no
-  credentials, request data, or PII. Observability exporters are self-hosted.
+  `event`/`actor_type` are fixed enums and `tags` are fixed labels (e.g. the OS
+  family `linux`/`darwin`/`windows`/`other`, sent once on the one-time
+  `instance_initialized` event) — with no credentials, request data, or PII.
+  Observability exporters are self-hosted.
 
 > **Most important operator guidance:** the "credentials never leave the data
 > plane" guarantee holds on the network, but **not** when the agent runs as the

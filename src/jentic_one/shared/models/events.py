@@ -1,5 +1,6 @@
 """Event-related enums shared across modules."""
 
+import platform
 from enum import StrEnum
 
 
@@ -186,9 +187,35 @@ class ImportFailReason(StrEnum):
     FETCH = "fetch"
 
 
+class HostOs(StrEnum):
+    """Closed-enum tag naming the host OS family, sent exactly once.
+
+    Attached only to ``instance_initialized`` — the one-time event emitted the
+    moment the opaque instance id is first created — so the OS rides on a single
+    request per install and never again. ``current()`` collapses anything
+    unrecognised to ``OTHER``, so no free-form platform string can reach the
+    wire. Note: inside a container this reports the container's OS (effectively
+    always ``linux``), not the host machine's.
+    """
+
+    LINUX = "linux"
+    DARWIN = "darwin"
+    WINDOWS = "windows"
+    OTHER = "other"
+
+    @classmethod
+    def current(cls) -> "HostOs":
+        """Classify the running platform into the closed set."""
+        system = platform.system().lower()
+        try:
+            return cls(system)
+        except ValueError:
+            return cls.OTHER
+
+
 #: Union of every closed-enum tag type. A tag on the wire is always a member of
 #: one of these — there is deliberately no free-form variant.
-EventTag = ErrorSource | SpecSource | ImportFailReason
+EventTag = ErrorSource | SpecSource | ImportFailReason | HostOs
 
 
 #: Which closed-enum tag type each event may carry. ``emit_event`` validates
@@ -200,4 +227,5 @@ EVENT_TAGS: dict[str, type[StrEnum]] = {
     EventType.CREDENTIAL_REFRESH_FAILED: ErrorSource,
     EventType.IMPORT_COMPLETED: SpecSource,
     EventType.IMPORT_FAILED: ImportFailReason,
+    EventType.INSTANCE_INITIALIZED: HostOs,
 }
