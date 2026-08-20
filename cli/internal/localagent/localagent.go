@@ -1,7 +1,7 @@
 // Package localagent holds the OS-level primitives behind `jentic run`: the
 // known coding-agent descriptors, and the helpers that probe/grant/launch as a
 // dedicated agent user. It is deliberately free of any cobra/config coupling so
-// the command layer (internal/cmd) stays a thin orchestrator over these.
+// the command layer (internal/cli/*) stays a thin orchestrator over these.
 //
 // The security model this implements is documented in
 // docs/security/local-agent/local-agent-isolation.md: the agent runs as its own
@@ -178,14 +178,33 @@ func DefaultHomeDir(agentUser string) string {
 	return "/opt/" + agentUser
 }
 
-// AgentConfigDir returns the agent's own jentic config directory (~/.jentic
-// inside the agent's home). This is the single source of truth for a self-user
-// agent's platform identity — the operator's config only references it (see
-// config.LocalAgent.ConfigDir). It matches the default JENTIC_HOME layout
-// (<home>/.jentic) so the agent, running as itself, finds its identity with no
-// extra configuration.
+// AgentConfigDir returns the agent's own LEGACY jentic config directory
+// (~/.jentic inside the agent's home) — the V1 home of a self-user agent's
+// platform identity, matching the default JENTIC_HOME layout. Current releases
+// export the agent's identity into its home's XDG store instead; this remains
+// only as the legacy entry in AgentIdentityDirs so reset keeps clearing it.
 func AgentConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, ".jentic")
+}
+
+// AgentIdentityDirs returns every agent-home location that holds the agent's
+// own jentic identity — the registration, tokens, and Ed25519 signing key:
+//
+//   - <home>/.config/jentic       (context export: minimal config + key)
+//   - <home>/.local/state/jentic  (context export: tokens)
+//   - <home>/.jentic              (legacy V1 identity/profiles)
+//
+// `jentic reset` removes all of them even when the home is KEPT, so credential
+// material handed to the agent never survives a teardown in the re-owned home,
+// and a later `jentic setup` that reuses the home can't resurrect a
+// torn-down registration. Every path is a fixed join under the (validated)
+// home, so the list is safe to hand to a privileged rm.
+func AgentIdentityDirs(homeDir string) []string {
+	return []string{
+		filepath.Join(homeDir, ".config", "jentic"),
+		filepath.Join(homeDir, ".local", "state", "jentic"),
+		AgentConfigDir(homeDir),
+	}
 }
 
 // AgentLocalBinDir returns the agent's own ~/.local/bin — the home-local
@@ -228,6 +247,10 @@ type AccountStep struct {
 // the directory; the operator ACL is an inherited `chmod +a` allow. Linux:
 // `useradd -m` creates the home in one step, then two `setfacl` calls lay down
 // the operator's access ACL and a matching default ACL for future contents.
+//
+// Note that sysadminctl can REFUSE the add yet still exit 0 (e.g. "User with
+// full name '…' already exists"), so callers must verify the account actually
+// exists afterwards (UserExists) rather than trusting the step's exit code.
 func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 	if runtime.GOOS == "darwin" {
 		return []AccountStep{
@@ -235,7 +258,7 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 				What: "create the agent account",
 				//nolint:gosec // operator/agentUser/homeDir are config-derived account names and a resolved path.
 				Cmd: exec.Command("sudo", "sysadminctl", "-addUser", agentUser,
-					"-fullName", operator+" Local Agent", "-home", homeDir, "-password", "-"),
+					"-fullName", AccountFullName(operator, agentUser), "-home", homeDir, "-password", "-"),
 			},
 			{
 				What: "create the agent's home directory",
@@ -265,6 +288,18 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 			Cmd:  GrantOperatorHomeCmd(operator, homeDir),
 		},
 	}
+}
+
+// AccountFullName is the display (full) name recorded for the agent account on
+// macOS. It MUST be unique per account name, not merely per operator: macOS Open
+// Directory refuses a duplicate full name, so a constant "<operator> Local Agent"
+// made every SECOND agent account for the same operator (any custom name) collide
+// with the first's record — and sysadminctl reports that refusal on stderr while
+// still exiting 0, so the collision surfaced only as a cascade of "unknown user"
+// failures much later. Embedding the account name (which the OS already
+// guarantees unique) makes the full name collision-free by construction.
+func AccountFullName(operator, agentUser string) string {
+	return agentUser + " (jentic agent of " + operator + ")"
 }
 
 // GrantOperatorHomeCmd gives the operator RECURSIVE, inherited read/write on the
@@ -566,7 +601,7 @@ func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
 // tree. It is run when setting up the agent account, and matters most when the
 // home ALREADY EXISTS: a prior `jentic reset` that kept the home re-owned it to
 // the operator (ReownHomeCmd), and `createhomedir` only creates missing files —
-// it never reclaims ownership of existing content. Without this, a re-bootstrap
+// it never reclaims ownership of existing content. Without this, a re-run of setup
 // over that home leaves .claude/.aws/etc. operator-owned, so the agent can read
 // but not WRITE them (fresh-config screens, provider token-cache failures,
 // EACCES transcript writes). It mirrors ReownHomeCmd's `-Rf`: a macOS home carries
@@ -600,15 +635,22 @@ func DeleteHomeCmd(homeDir string) *exec.Cmd {
 	return exec.Command("sudo", "rm", "-rf", homeDir) //nolint:gosec // homeDir is a resolved, config-recorded path; deletion is explicitly confirmed by the caller.
 }
 
-// RemoveAgentIdentityCmd permanently removes the agent's own jentic config dir
-// (its ~/.jentic — the reference-model home of the agent's platform identity: the
-// registration, tokens, and signing key). `jentic reset` runs it even when the
-// agent's home is KEPT, so a later `jentic bootstrap` that reuses the same home
-// can't resurrect a torn-down (now-archived) agent registration from a stale
-// ~/.jentic. It is a no-op when the dir is absent. Runs as root because the dir is
-// owned by the agent account (and is settled before the home re-own/delete step).
-func RemoveAgentIdentityCmd(configDir string) *exec.Cmd {
-	return exec.Command("sudo", "rm", "-rf", configDir) //nolint:gosec // configDir is the config-recorded agent ~/.jentic path.
+// RemoveAgentIdentityCmd permanently removes the agent's own jentic identity
+// dirs (see AgentIdentityDirs: the exported XDG config/state trees plus the
+// legacy ~/.jentic — registration, tokens, and signing key). `jentic reset`
+// runs it even when the agent's home is KEPT, so a later `jentic setup`
+// that reuses the same home can't resurrect a torn-down (now-archived) agent
+// registration, and no credential material outlives the account in the
+// re-owned home. `rm -f` makes absent dirs a no-op. Runs as root because the
+// dirs are owned by the agent account (and are settled before the home
+// re-own/delete step). Returns nil when there is nothing to remove. `--` ends
+// option parsing so a path can never be mistaken for an rm flag.
+func RemoveAgentIdentityCmd(dirs []string) *exec.Cmd {
+	if len(dirs) == 0 {
+		return nil
+	}
+	args := append([]string{"rm", "-rf", "--"}, dirs...)
+	return exec.Command("sudo", args...) //nolint:gosec // dirs are fixed joins under the validated, config-recorded agent home.
 }
 
 // RemoveAgentProfileCmd deletes a single profile directory (key, tokens, metadata)
@@ -646,7 +688,7 @@ func SudoersRule(operator, agentUser string) string {
 
 // InstallSudoersCmd adds operator's passwordless-launch rule for agentUser to the
 // shared /etc/sudoers.d/jentic-agent drop-in. It is OPTIONAL and gated on explicit
-// operator consent (bootstrap's passwordless prompt): without it, every `jentic
+// operator consent (setup's passwordless prompt): without it, every `jentic
 // run` prompts for the operator's password (cached per-terminal ~5 min); with it,
 // the operator can become the agent user (to launch it) with no prompt.
 //
@@ -740,16 +782,32 @@ func agentBashArgs(agentUser, snippet string) []string {
 // typically inside the operator's now-700 home, which the agent user cannot
 // read — inheriting it makes bash spew `getcwd: Permission denied` before the
 // snippet even runs. "/" is traversable by everyone.
+//
+// The environment is the curated launchEnv allowlist, NOT the operator's full
+// environment — the same env the confined launch hands to sudo. This is what
+// keeps the binary PROBE truthful: sudo's env_reset preserves the caller's
+// PATH unless sudoers sets secure_path (macOS's default sudoers sets none), so
+// an inherited environment leaks the OPERATOR's PATH into the agent's shell —
+// `command -v <binary>` then resolves the operator's copy under the operator's
+// (agent-unreachable) home, the provisioning flow is skipped as "already
+// installed", and the launch (which does use the curated env) dies with
+// `exec: <binary>: not found`. Probing with the launch's own environment makes
+// the probe answer the question the launch will actually ask. It also stops
+// operator-exported secrets from riding into agent-side commands.
 func agentCmd(agentUser, snippet string) *exec.Cmd {
 	cmd := exec.Command("sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted / a fixed literal.
 	cmd.Dir = "/"
+	cmd.Env = launchEnv()
 	return cmd
 }
 
-// agentCmdContext is agentCmd with a cancellation context (for the launch).
+// agentCmdContext is agentCmd with a cancellation context. It carries the same
+// curated launchEnv environment — see agentCmd for why the probe/launch envs
+// must match.
 func agentCmdContext(ctx context.Context, agentUser, snippet string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted.
 	cmd.Dir = "/"
+	cmd.Env = launchEnv()
 	return cmd
 }
 
@@ -963,6 +1021,67 @@ func VerifyManagedHome(agentUser, recordedHome string) error {
 			agentUser, actual, recordedHome)
 	}
 	return nil
+}
+
+// HomeClaimedBy returns the name of an existing OS account, OTHER than agentUser,
+// whose recorded home directory is exactly homeDir — or "" when no other account
+// claims it. It is the guard in front of CREATING an account: the account-setup
+// form prefixes the home from the DEFAULT name, so an operator who edits the name
+// but not the home (or hand-edits config) can point a brand-new account at an
+// EXISTING agent account's live home — and the create path (unlike reuse, which
+// goes through VerifyManagedHome) would then stamp operator ACLs over that home
+// and chown it wholesale to the new account. Refusing when another account claims
+// the home closes that.
+//
+// Enumeration shells to the platform account database (`dscl . -list /Users
+// NFSHomeDirectory` on macOS, `getent passwd` on Linux). It is best-effort in the
+// safe direction for a pure lookup: an enumeration failure returns "" (no claim
+// found) rather than blocking setup, because the post-create UserExists
+// verification still backstops a create that the OS refused.
+func HomeClaimedBy(ctx context.Context, agentUser, homeDir string) string {
+	target := filepath.Clean(homeDir)
+	for name, home := range accountHomes(ctx) {
+		if name != agentUser && filepath.Clean(home) == target {
+			return name
+		}
+	}
+	return ""
+}
+
+// accountHomes enumerates the OS account database as a name→home map, returning
+// nil on any failure (see HomeClaimedBy for why that is the safe direction).
+func accountHomes(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	if runtime.GOOS == "darwin" {
+		data, err := exec.CommandContext(ctx, "dscl", ".", "-list", "/Users", "NFSHomeDirectory").Output()
+		if err != nil {
+			return nil
+		}
+		// Each line is "<name><spaces><home>"; the home may itself contain
+		// spaces, so split off the FIRST field as the name and rejoin the rest
+		// as the home. This is robust to variable dscl column spacing and to a
+		// name that happens to be a prefix of its home path (a plain TrimPrefix
+		// would mangle those).
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			out[fields[0]] = strings.Join(fields[1:], " ")
+		}
+		return out
+	}
+	data, err := exec.CommandContext(ctx, "getent", "passwd").Output()
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) >= 6 && parts[0] != "" {
+			out[parts[0]] = parts[5]
+		}
+	}
+	return out
 }
 
 // CopyBinaryCmd copies the operator's binary at src into the agent user's

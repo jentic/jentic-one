@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.31.1](https://github.com/jentic/jentic-one/compare/v0.31.0...v0.31.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* **docs:** repair the agent onboarding front door and add a drift guard ([#1071](https://github.com/jentic/jentic-one/issues/1071)) ([148b122](https://github.com/jentic/jentic-one/commit/148b122f8adebf5b61ba44c516c5977d4399e95f))
+* **registry:** Flow-3 concurrency follow-ups — A4b supersede target + notify durability ([#940](https://github.com/jentic/jentic-one/issues/940), [#941](https://github.com/jentic/jentic-one/issues/941)) ([#1048](https://github.com/jentic/jentic-one/issues/1048)) ([535d1e3](https://github.com/jentic/jentic-one/commit/535d1e3c15d3873aa55368ca0c54035b7a23b742))
+* **registry:** rollback base state-fidelity ([#939](https://github.com/jentic/jentic-one/issues/939)) + auth layering guard ([#938](https://github.com/jentic/jentic-one/issues/938)) ([#1047](https://github.com/jentic/jentic-one/issues/1047)) ([a7f8b9b](https://github.com/jentic/jentic-one/commit/a7f8b9b40252613ac1127ca02b00c6e9983fa245))
+* **security:** patch util-linux CVE-2026-53615 in the app image base ([#1060](https://github.com/jentic/jentic-one/issues/1060)) ([7b212e2](https://github.com/jentic/jentic-one/commit/7b212e2ed8e7d4349b166d2f706c36ede3e74a5e))
+
+
+### Refactors
+
+* **registry:** search-strategy shadowing guard ([#958](https://github.com/jentic/jentic-one/issues/958)) + sha-less spec_digest collision ([#780](https://github.com/jentic/jentic-one/issues/780)) ([#1045](https://github.com/jentic/jentic-one/issues/1045)) ([9eaec98](https://github.com/jentic/jentic-one/commit/9eaec98880ebc7e006cb607b10b9a5098a1d587e))
+
+
+### Documentation
+
+* add llms.txt, and an install-and-use section to AGENTS.md ([#1052](https://github.com/jentic/jentic-one/issues/1052)) ([087b800](https://github.com/jentic/jentic-one/commit/087b800c8aafaca1c57462440b4cd2b156b149f0))
+* **readme:** fix first-run admin flow guides ([#1068](https://github.com/jentic/jentic-one/issues/1068)) ([96c4e7b](https://github.com/jentic/jentic-one/commit/96c4e7b92053367367e1b8af6de5c05dffa30bf2))
+* **readme:** rewrite the front door for discovery and first-run success ([#1051](https://github.com/jentic/jentic-one/issues/1051)) ([59eff46](https://github.com/jentic/jentic-one/commit/59eff465f0bd772d4d40ac64932f346604d6c44f))
+
+
+### Build System
+
+* **deps-dev:** bump @testing-library/user-event ([#1073](https://github.com/jentic/jentic-one/issues/1073)) ([91c6445](https://github.com/jentic/jentic-one/commit/91c6445eb0547320708c2e4f57b44a17de196c78))
+* **deps-dev:** bump globals from 17.9.0 to 17.11.0 in /ui ([#1074](https://github.com/jentic/jentic-one/issues/1074)) ([5f9f07f](https://github.com/jentic/jentic-one/commit/5f9f07fbd7ee60e904dac1021012337d740e150a))
+
 ## [0.31.0](https://github.com/jentic/jentic-one/compare/v0.30.3...v0.31.0) (2026-08-14)
 
 

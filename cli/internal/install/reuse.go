@@ -35,6 +35,18 @@ type reuseConfigView struct {
 	Admin       reuseAdminView       `yaml:"admin"`
 	Credentials reuseCredentialsView `yaml:"credentials"`
 	Telemetry   reuseTelemetryView   `yaml:"telemetry"`
+	Databases   reuseDatabasesView   `yaml:"databases"`
+}
+
+// reuseDatabasesView reads just the registry entry's password: render.go
+// writes the same credential to all three surface entries, and POSTGRES_PASSWORD
+// only applies at initdb — an existing db volume keeps its original password
+// forever, so a reinstall must carry it over or the freshly generated one
+// (secrets.go) locks the stack out of its own database (#992).
+type reuseDatabasesView struct {
+	Registry struct {
+		Password string `yaml:"password"`
+	} `yaml:"registry"`
 }
 
 type reuseAuthView struct {
@@ -120,6 +132,16 @@ func ReuseSecrets(d *Draft, path string) (bool, error) {
 	}
 	if s := view.Credentials.Connect.StateSecret; s != "" {
 		d.ConnectStateSecret = s
+		reused = true
+	}
+
+	// Managed-Postgres password: the db volume was initialized with the prior
+	// config's password and POSTGRES_PASSWORD is initdb-only, so a reinstall
+	// over live data must keep it (see reuseDatabasesView). FillSecrets only
+	// fills blank fields, so a value here wins over fresh generation; the
+	// wizard can still overwrite it deliberately.
+	if s := view.Databases.Registry.Password; s != "" {
+		d.PGPassword = s
 		reused = true
 	}
 

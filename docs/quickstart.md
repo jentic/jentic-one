@@ -32,7 +32,7 @@ public [Jentic API Directory](https://github.com/jentic/jentic-public-apis) with
 the catalog browser:
 
 ```bash
-jentic catalog search stripe   # find an API in the public directory
+jentic catalog search httpbin   # find an API in the public directory (used in step 6)
 ```
 
 `jentic catalog` opens an interactive browser to search the public directory and
@@ -59,14 +59,21 @@ stored and how one credential is shared across an API's operations.
 Give the agent its own identity. From the machine that will run the agent:
 
 ```bash
-jentic register --base-url http://127.0.0.1:8000
+jentic register
 ```
+
+`register` defaults to the local install (`http://127.0.0.1:8000`) and seeds the
+local broker for you, so on a local setup you can just confirm the prefilled URL
+with Enter. (Prefer to be explicit, or scripting it? `jentic register --url
+http://127.0.0.1:8000` is equivalent.)
 
 This generates an Ed25519 keypair and registers the agent through dynamic client
 registration. **`register` then blocks, waiting for an operator to approve the
 agent.** On a single-operator install you are the operator: approve the pending
 agent in the UI at `/app`, and the command completes automatically once the
-agent is active. Re-running `register` is idempotent.
+agent is active. Re-running `register` is idempotent. (Registering with a
+**remote** deployment instead? Pass `--url` and `--broker-url` — see the
+[CLI README](../cli/README.md#usage).)
 
 ## 5. Grant access
 
@@ -76,8 +83,8 @@ first-match. An agent reaches only the operations it has been approved for, and
 asking for more is a reviewable request rather than a silent widening:
 
 ```bash
-jentic access request <operation>   # file a request the operator can review
-jentic access status                # check whether it has been granted
+jentic access request --toolkit httpbin.org/httpbin   # file a request the operator can review
+jentic access status <request-id>                     # check whether it has been granted
 ```
 
 ## 6. Make the call
@@ -87,8 +94,12 @@ Find an operation, inspect it, and run it through the Broker:
 ```bash
 jentic search get             # find an imported operation
 jentic inspect <operation>    # see its method, params and schemas
-jentic execute GET:/get --json
+jentic execute GET:https://httpbin.org/get --json
 ```
+
+The `execute` target is the operation's full upstream URL (the same form `search`
+and `inspect` report) or its operation_id — the Broker is a forward proxy, not a
+path router.
 
 The Broker checks the agent's permissions, attaches the stored credential after
 the permission check, forwards the request, and writes an audit record. The

@@ -2,6 +2,7 @@ package install
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -493,10 +494,15 @@ func RenderStartWarning(err error) string {
 // RunMigrations applies Alembic migrations for all databases using the freshly
 // built venv interpreter, pointed at the generated config. Output is streamed to
 // w. The runner is cwd-independent (it loads packaged migration scripts).
-func RunMigrations(w io.Writer, venvPython, configPath string) error {
+//
+// ctx is threaded through to exec.CommandContext (F2, review round-3 #7) so a
+// Ctrl-C during a long migration cancels the Python child instead of orphaning it
+// — which, against a live DB mid-rollback, is the worst input to the rollback
+// path. Callers hold the command's signal-cancelled context; pass it here.
+func RunMigrations(ctx context.Context, w io.Writer, venvPython, configPath string) error {
 	fmt.Fprintf(w, "\n$ JENTIC_CONFIG_FILE=%s %s -m jentic_one.migrations.run\n",
 		configPath, venvPython)
-	cmd := exec.Command(venvPython, "-m", "jentic_one.migrations.run")
+	cmd := exec.CommandContext(ctx, venvPython, "-m", "jentic_one.migrations.run")
 	cmd.Env = append(os.Environ(), "JENTIC_CONFIG_FILE="+configPath)
 	cmd.Stdout = w
 	cmd.Stderr = w

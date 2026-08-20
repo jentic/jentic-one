@@ -113,18 +113,21 @@ Six steps from a running instance to a response from a real API.
 
 1. **Create your admin account** at `/setup` (the wizard opens this automatically, or run
    `jenticctl setup` to do it from the terminal).
-2. **Import an API** from the [Jentic API Directory](https://github.com/jentic/jentic-public-apis),
-   or upload your own specification.
+2. **Import an API** from the [Jentic API Directory](https://github.com/jentic/jentic-public-apis)
+   (e.g. `httpbin.org`, used in step 6), or upload your own specification.
 3. **Store a credential** for that API. It is encrypted at rest and is never returned to a
    caller.
-4. **Register the agent:** `jentic register`. Registration waits for an operator to approve the
+4. **Register the agent:** `jentic register` (add `--base-url <URL>` when the agent runs on a
+   different machine). Registration waits for an operator to approve the
    agent. On a single-operator install, approve it in the UI and the command completes.
 5. **Grant access** by binding the agent to a toolkit. A rule-less binding blocks everything;
    the default is deny.
-6. **Make the call:** `jentic execute GET:/get --json`.
+6. **Make the call:** `jentic execute GET:https://httpbin.org/get --json` — the operation's
+   full URL, as returned by `jentic search`/`jentic inspect`.
 
 Full walkthrough: [docs/quickstart.md](docs/quickstart.md). To have a coding agent install and
-register itself, see [AGENTS.md](AGENTS.md).
+register itself, see [AGENTS.md](AGENTS.md); [llms.txt](llms.txt) is the machine-readable index
+of these docs for assistants evaluating the project.
 
 ## How it works
 
@@ -175,10 +178,10 @@ for APIs that already have one.
 ## CLI reference
 
 ```bash
-jenticctl install                 # interactive wizard: config + install (local venv or Docker)
-jentic register                   # mint an agent identity, then wait for operator approval
-jentic catalog search stripe      # find an API in the directory
-jentic execute GET:/get --json    # run a call through the Broker with the credential injected
+jenticctl install                                    # interactive wizard: config + install (local venv or Docker)
+jentic register                                      # mint an agent identity, then wait for operator approval
+jentic catalog search stripe                         # find an API in the directory
+jentic execute GET:https://httpbin.org/get --json    # run a call through the Broker with the credential injected
 ```
 
 Full reference: [`cli/README.md`](cli/README.md).
@@ -191,6 +194,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | ----- | ------ |
 | [Local development setup](docs/development/local-setup.md) | Running a stack on your machine |
 | [Credentials and toolkits](docs/credentials-and-toolkits.md) | Storing a credential and binding an agent to it |
+| [Local coding agents](docs/local-agent.md) | Run Claude Code, Codex, Cursor, or Hermes as an isolated Unix user with `jentic run` — flow, examples, grants, and troubleshooting |
 | [CLI reference](cli/README.md) | Every `jenticctl` and `jentic` command |
 
 **Running it somewhere real**
@@ -200,6 +204,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | [Security hardening](docs/security/hardening.md) | Deployment-tier ladder and production checklist. Read before using real credentials. |
 | [Build & deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, kind, observability |
 | [Self-hosted containers + external Postgres](deploy/README.md#self-hosted-containers--external-postgres) | Production-shaped deployment without Kubernetes |
+| [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, why there is no MCP endpoint, and how to run both (or migrate) without silent cross-talk |
 
 **Reference**
 

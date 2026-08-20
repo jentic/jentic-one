@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from jentic_one.control.web.schemas.permission_rules import BasePermissionRuleSchema
 from jentic_one.shared.permissions.matching import MatchMode
 from jentic_one.shared.schemas import ServedApiRef
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 # --- Request models ---
 
@@ -175,7 +176,7 @@ class ToolkitCreateResponse(BaseModel):
     """Create response: toolkit + api_key shown once."""
 
     toolkit: ToolkitResponse
-    api_key: str
+    api_key: str = Field(json_schema_extra=SENSITIVE)
     warnings: list[BindingWarningSchema] = Field(
         default_factory=list,
         description=(
@@ -210,7 +211,7 @@ class ToolkitKeyCreateResponse(BaseModel):
     """Create response: key + plaintext shown once."""
 
     key: ToolkitKeyResponse
-    api_key: str
+    api_key: str = Field(json_schema_extra=SENSITIVE)
 
 
 class ToolkitKeyListResponse(BaseModel):

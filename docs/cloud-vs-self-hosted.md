@@ -7,7 +7,7 @@ especially for an AI agent (or its operator) that has used both:
 | --- | --- | --- |
 | Where it runs | Hosted by Jentic — dashboard at `app.jentic.com`, API at `api.jentic.com` | Your infrastructure (laptop, VM, Kubernetes) |
 | How agents connect | Remote **MCP server** (`https://api.jentic.com/mcp`) configured in the agent runtime with a workspace API key | **`jentic` CLI + generated skill** (or the raw HTTP flow) — see below |
-| Agent identity | Workspace API key | Per-agent Ed25519 keypair via dynamic client registration (`jentic register` / `jentic bootstrap`) |
+| Agent identity | Workspace API key | Per-agent Ed25519 keypair via dynamic client registration (`jentic register` / `jentic setup`) |
 | Dashboard | `app.jentic.com` | The bundled UI on your deployment (`/app`) |
 | Data | Jentic-hosted workspace | Stays on your infrastructure; stored secrets are decrypted only inside your Broker at execution time |
 
@@ -26,7 +26,7 @@ it cannot work.
 
 The supported integration paths for agents are:
 
-1. **CLI + skill (recommended).** Your operator runs `jentic bootstrap` — it
+1. **CLI + skill (recommended).** Your operator runs `jentic setup` — it
    registers the agent identity, waits for human approval, and installs the
    onboarding skill into detected agent runtimes (Claude Code, Cursor, Codex,
    Hermes, or a generic `AGENTS.md`). The skill teaches the agent to drive
@@ -59,8 +59,9 @@ half the tools are talking to a different product.
   Claude Desktop's `claude_desktop_config.json`, Cursor's MCP settings): a
   URL on `api.jentic.com` is the cloud platform. A self-hosted install is
   never behind an MCP entry.
-- **CLI** — `jentic profile list` prints each profile's `base_url`; local
-  installs point at your own host (e.g. `http://127.0.0.1:8000`).
+- **CLI** — `jentic env list` prints each environment's `base_url` (and
+  `broker_url`); `jentic context view` shows the active one. Local installs
+  point at your own host (e.g. `http://127.0.0.1:8000`).
 
 **Rule of thumb:** pick one surface per task and stay on it. If you work
 against the self-hosted install, use the `jentic` CLI for everything, and
@@ -74,6 +75,6 @@ answer from the wrong backend.
    catalog state does not transfer from the cloud workspace.
 3. Re-enter credentials in your deployment's dashboard — secrets cannot be
    exported from the cloud platform (nor from Jentic One; that's the point).
-4. Register your agents against the local install (`jentic bootstrap`).
+4. Register your agents against the local install (`jentic setup`).
 5. Remove the cloud MCP server entry from your agent runtime's config to
    avoid the split-brain scenario above.

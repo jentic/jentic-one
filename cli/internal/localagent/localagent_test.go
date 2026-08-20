@@ -94,7 +94,7 @@ func TestCreateAccountCmds(t *testing.T) {
 				t.Error("macOS operator-grant step must be BestEffort (SIP/TCC-protected home files can't be ACLed)")
 			}
 		}
-		// The operator grant must carry add_subdirectory: bootstrap writes the agent
+		// The operator grant must carry add_subdirectory: setup writes the agent
 		// identity by `mkdir <home>/.jentic` as the operator, and the macOS "write"
 		// shorthand omits add_subdirectory on a directory (files ok, mkdir EACCES).
 		if !strings.Contains(all, "add_subdirectory") {
@@ -340,6 +340,31 @@ func TestCanRunAsAgentCmdShape(t *testing.T) {
 	}
 }
 
+// TestAgentIdentityDirs pins the identity-scrub surface `jentic reset` removes
+// from a kept home: the exported XDG config/state trees plus the legacy
+// ~/.jentic, every one a strict descendant of the agent's home so the list is
+// safe to hand to a privileged rm.
+func TestAgentIdentityDirs(t *testing.T) {
+	home := "/Users/Shared/alice-local-agent"
+	got := AgentIdentityDirs(home)
+	want := []string{
+		filepath.Join(home, ".config", "jentic"),
+		filepath.Join(home, ".local", "state", "jentic"),
+		filepath.Join(home, ".jentic"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("AgentIdentityDirs = %v, want %v", got, want)
+	}
+	for i, dir := range want {
+		if got[i] != dir {
+			t.Errorf("AgentIdentityDirs[%d] = %q, want %q", i, got[i], dir)
+		}
+		if filepath.Clean(got[i]) == filepath.Clean(home) || !IsUnderHome(home, got[i]) {
+			t.Errorf("AgentIdentityDirs[%d] = %q must be a strict descendant of %q", i, got[i], home)
+		}
+	}
+}
+
 // TestTeardownCmdShape guards the reset primitives: every one is sudo-fronted and
 // names the agent user (and, where relevant, the target path) so a reset can't
 // silently no-op. TraverseRevokeCmd must mirror TraverseGrantCmd's target.
@@ -355,7 +380,7 @@ func TestTeardownCmdShape(t *testing.T) {
 		{"traverse-revoke", TraverseRevokeCmd("alice-local-agent", home).Args, home, true},
 		{"reown-home", ReownHomeCmd("alice", homeDir).Args, homeDir, false},
 		{"delete-home", DeleteHomeCmd(homeDir).Args, homeDir, false},
-		{"remove-identity", RemoveAgentIdentityCmd(homeDir + "/.jentic").Args, homeDir + "/.jentic", false},
+		{"remove-identity", RemoveAgentIdentityCmd(AgentIdentityDirs(homeDir)).Args, homeDir + "/.jentic", false},
 		{"remove-sudoers", RemoveSudoersCmd("alice-local-agent").Args, "", true},
 		{"delete-account", DeleteAccountCmd("alice-local-agent").Args, "", true},
 	}
@@ -864,6 +889,52 @@ func TestVerifyManagedHome(t *testing.T) {
 	}
 	if err := VerifyManagedHome(me.Username, AgentHomeRoot()+"/"+me.Username); err == nil {
 		t.Error("expected a home mismatch against an existing account to be refused")
+	}
+}
+
+// TestAccountFullName guards the collision-freedom of the macOS display name:
+// Open Directory refuses a duplicate full name (and sysadminctl reports that
+// refusal while exiting 0), so two DIFFERENT account names for the same operator
+// must never map to the same full name — the old constant "<operator> Local
+// Agent" did exactly that and broke every second agent account.
+func TestAccountFullName(t *testing.T) {
+	a := AccountFullName("alice", "alice-local-agent")
+	b := AccountFullName("alice", "alice-agent-2")
+	if a == b {
+		t.Fatalf("full names for different account names must differ, both %q", a)
+	}
+	if !strings.Contains(a, "alice-local-agent") {
+		t.Errorf("full name %q should embed the account name for uniqueness", a)
+	}
+	// The create step must actually use the per-account full name.
+	if runtime.GOOS == "darwin" {
+		joined := strings.Join(CreateAccountCmds("alice", "alice-agent-2", DefaultHomeDir("alice-agent-2"))[0].Cmd.Args, " ")
+		if !strings.Contains(joined, AccountFullName("alice", "alice-agent-2")) {
+			t.Errorf("sysadminctl step must carry the per-account full name: %s", joined)
+		}
+	}
+}
+
+// TestHomeClaimedBy exercises the create-path guard against pointing a NEW
+// account at a home some other existing account already claims, using the real
+// account database (the current user is guaranteed to exist and record a home).
+func TestHomeClaimedBy(t *testing.T) {
+	me, err := user.Current()
+	if err != nil || me.Username == "" || me.HomeDir == "" {
+		t.Skip("cannot resolve current user")
+	}
+	ctx := context.Background()
+	// Another account's recorded home is claimed.
+	if got := HomeClaimedBy(ctx, "nope-no-such-agent-xyz", me.HomeDir); got != me.Username {
+		t.Errorf("HomeClaimedBy(other, %q) = %q, want %q", me.HomeDir, got, me.Username)
+	}
+	// The account's OWN home is not a conflict (that is the reuse path).
+	if got := HomeClaimedBy(ctx, me.Username, me.HomeDir); got != "" {
+		t.Errorf("HomeClaimedBy(self, own home) = %q, want \"\"", got)
+	}
+	// A home nobody records is unclaimed.
+	if got := HomeClaimedBy(ctx, "nope-no-such-agent-xyz", "/nowhere/definitely-unclaimed-xyz"); got != "" {
+		t.Errorf("HomeClaimedBy(unclaimed) = %q, want \"\"", got)
 	}
 }
 

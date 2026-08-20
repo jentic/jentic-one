@@ -34,7 +34,7 @@ ordinary flow.
 
 4. **Profiles: human-owned vs agent-account-owned.** The human's own profiles
    stay in `~/.jentic/profiles`. Once the account exists, **newly
-   registered/bootstrapped agent identities are written into the shared agent
+   identities from register/setup are written into the shared agent
    home** (`<config_dir>/profiles`), chowned to the agent. The operator side
    keeps only the account-level `config_dir` pointer; `discoverProfiles` scans it
    (no per-profile bookkeeping). If humans later gain their own multi-profile
@@ -43,14 +43,14 @@ ordinary flow.
 5. **`<agent>` selects the binary; the checked-out profile selects identity.**
    - `jentic run <agent>` — `<agent>` (claude, …) picks the *binary/descriptor*
      only.
-   - **Registering/bootstrapping a profile checks it out** (makes it the agent
+   - **Registering (or running setup for) a profile checks it out** (makes it the agent
      account's currently-selected profile). It does **not** change the human
      operator's own `default_profile`.
    - `jentic run` **injects `JENTIC_PROFILE` = the checked-out agent profile**
      into the confined session, so the launched agent uses whatever profile is
      checked out without the human passing a flag. Storage: the checked-out
      profile is the agent home's own `default_profile`
-     (`<config_dir>/config.yaml`), which register/bootstrap already writes when
+     (`<config_dir>/config.yaml`), which register/setup already writes when
      it targets the agent home; the operator's `default_profile` is a separate
      file and is left untouched.
    - `jentic run --profile <name>` overrides for one invocation (validated
@@ -82,7 +82,7 @@ from the checked-out profile (or `--profile`). `--list-grants`/`--revoke`/
 `--grant` operate on the account.
 
 **Phase 3 — Registration lands in the shared home (done).** `register` +
-`bootstrap` become account-aware beyond "created in this run": when the account
+`setup` become account-aware beyond "created in this run": when the account
 exists, a new identity is written into `<config_dir>/profiles`, chowned to the
 agent, and **checked out** (agent-home default). A pre-existing operator-owned
 profile of the same name is translated over first (see Phase 1). The operator

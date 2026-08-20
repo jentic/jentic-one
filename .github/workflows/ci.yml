@@ -2,9 +2,19 @@ name: CI
 
 on:
   push:
+    # Trunk CI only. Do NOT add `cli-v2-*` here: the stacked-PR chain gets full CI
+    # via the pull_request trigger below, and adding the feature branches to `push`
+    # too would fire a SECOND, redundant run per commit (and, because most jobs are
+    # gated `|| github.event_name == 'push'`, that push run also skips the path
+    # filters and runs the entire matrix).
     branches: [main]
   pull_request:
-    branches: [main]
+    # `main` for normal PRs; `cli-v2-*` so the CLI-V2 stacked-PR chain (each phase's
+    # PR is based on the previous phase's branch, not main) still gets full CI.
+    # GitHub reads this pull_request filter from the PR's BASE branch, so a PR based
+    # on cli-v2-phase-0 only triggers this workflow if cli-v2-phase-0's own ci.yml
+    # lists that base pattern here.
+    branches: [main, 'cli-v2-*']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,6 +37,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       openapi-client: ${{ steps.filter.outputs.openapi-client }}
       installer: ${{ steps.filter.outputs.installer }}
+      e2e-install: ${{ steps.filter.outputs.e2e-install }}
     steps:
       - uses: actions/checkout@v7
 
@@ -57,6 +68,10 @@ jobs:
               - 'ui/public/broker-openapi.json'
               - 'tools/**'
               - 'docs/reference/**'
+              # tests/arch/test_config_schema_conformance.py drift-gates the
+              # exported backend config schema against the Pydantic models, so
+              # a hand-edit to the artifact must run the suite (GEN-10).
+              - 'config/config-schema.json'
             integration-tests:
               - 'src/**'
               - 'tests/integration/**'
@@ -75,9 +90,29 @@ jobs:
               # The cli job drift-checks the generated CLI reference the docs
               # SPA renders, so hand-edits to the artifact must run it too.
               - 'ui/public/cli-reference.json'
+              # check-cli-gen / check-ctl-gen regenerate the Go client and
+              # installer config bindings FROM these backend-owned sources — a
+              # PR that changes only a spec/schema (without touching cli/)
+              # would otherwise merge with a stale generated client and break
+              # the post-merge main run (the exact #1013 incident; GEN-3).
+              - 'openapi/control/**'
+              - 'openapi/broker/**'
+              - 'config/config-schema.json'
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'
+            e2e-install:
+              # CLI-V2 Phase 9 (impl/9.0 §9.4): the cross-OS install + smoke
+              # matrix. The Linux leg does a real Docker install; macOS/Windows
+              # build + offline-smoke the binaries. Any input that changes the
+              # binaries, the installer, or the smoke contract must re-run it.
+              - 'cli/**'
+              - 'tools/install.sh'
+              - 'deploy/docker/**'
+              - 'docker/**'
+              - 'src/jentic_one/migrations/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
             openapi-client:
               # Inputs that can change the generated UI client. The committed
               # spec (ui/openapi.json) is the codegen input — a spec change from
@@ -433,6 +468,10 @@ jobs:
     # SPA is served and API 404s preserved. DB-free, so it's cheap.
     # Later: when real UI flows exist (login, lists), graduate to a true e2e
     # job (Playwright + Postgres) and keep this as the fast packaging gate.
+    #
+    # NOTE (pipeline review F2/A1): this wheel is a PACKAGING TEST ONLY — it is
+    # never published. The container image (release.yml `publish-image`) is the
+    # sole supported backend distribution; there is no `pip install jentic-one`.
     if: needs.changes.outputs.packaging == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -636,7 +675,23 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
+          # setup-go's built-in cache is keyed only on go.sum and is immutable
+          # per key, so on a busy branch it restores a GOCACHE that predates the
+          # branch's own code and every run recompiles near-cold (~60s builds
+          # that take ~3s warm). The explicit sha-keyed cache below saves an
+          # updated build cache on every run instead.
+          cache: false
+
+      - name: Go module + build cache (sha-keyed, incremental)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-cli-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-cli-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-
+            go-cli-${{ runner.os }}-
 
       - name: Build
         run: go build ./...
@@ -649,6 +704,45 @@ jobs:
 
       - name: Test (race)
         run: go test -race ./...
+
+      # CLI-V2 Phase 1 (themes/cli-v2/impl/2.1): the typed OpenAPI clients and
+      # their spec companions under client/generated/ are generated from the two
+      # committed specs (openapi/{control,broker}). This regenerates them and
+      # fails on any diff, so `client/generated == codegen(committed specs)` — a
+      # spec change that lands without a regen is caught here rather than as a
+      # runtime surprise. Mirrors the openapi-client-drift job's posture for the
+      # UI client.
+      - name: Generated CLI client up to date
+        run: make check-cli-gen
+
+      # CLI-V2 Phase 6 (themes/cli-v2/impl/6.0): jenticctl's installer flags,
+      # wizard, and doctor are generated from the backend config schema
+      # (config/config-schema.json, itself drift-gated in the backend job).
+      # This re-vendors the schema and regenerates the Go struct, failing on any
+      # diff — the cli-side half of the AppConfig → schema → BackendConfig chain,
+      # mirroring check-cli-gen's posture for the OpenAPI clients.
+      - name: Generated installer config up to date
+        run: make check-ctl-gen
+
+      # Phase 0 CLI-V2 guardrails (themes/cli-v2/impl/0.0): architectural
+      # boundary tests and the V1 characterization (golden) contract. Both are
+      # already covered by `go test -race ./...` above, but naming them as an
+      # explicit step surfaces guardrail failures distinctly in the CI log
+      # (mirrors the backend job's `make test-arch`).
+      - name: Architecture & golden guardrails
+        run: |
+          make test-arch
+          make test-golden
+
+      # External-consumer contract (themes/cli-v2/impl/1.1 §1, impl/7.0 §1): a
+      # throwaway out-of-tree module `go get`s the SDK, imports client/..., and
+      # must build with a dependency graph free of cobra/charmbracelet/internal.
+      # This is the concrete "usable from outside easily" guarantee — stronger
+      # than the arch import-scan because it exercises the real build graph an
+      # external user resolves, so an internal/ or UI-dep leak into client/ fails
+      # here at dependency-resolution time.
+      - name: Public SDK external-consumer contract
+        run: make test-sdk-consumer
 
       # ui/public/cli-reference.json (rendered by the docs SPA as "Reference →
       # CLI") is generated from the cobra command tree by `make cli-reference`.
@@ -665,6 +759,110 @@ jobs:
             exit 1
           fi
 
+  # Release-artifact guards, split out of the `cli` job so they run in
+  # PARALLEL with lint/test/gen-checks instead of serializing ~7 minutes onto
+  # the run's critical path: `goreleaser release --snapshot` has no target
+  # filter (Pro feature), so the smoke below compiles the full 10-target
+  # release matrix (jenticctl×4 + jentic×6) with -trimpath — by far the most
+  # expensive CLI step. Same path gating as the `cli` job.
+  cli-artifact-smoke:
+    name: Go CLI release artifact smoke
+    needs: [changes]
+    if: needs.changes.outputs.cli == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          # See the `cli` job: sha-keyed cache below instead of the immutable
+          # go.sum-keyed one, so warm runs reuse the -trimpath build cache.
+          cache: false
+
+      - name: Go module + build cache (sha-keyed, incremental)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          # Distinct prefix from the `cli` job: these builds use -trimpath +
+          # release ldflags, so the cache contents don't overlap — separate
+          # entries keep both caches small and avoid save-key collisions.
+          key: go-cli-smoke-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-cli-smoke-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-
+            go-cli-smoke-${{ runner.os }}-
+
+      # CLI-V2 Phase 9 (impl/9.0 §9.1 W2): the CLI must build for every OS we ship
+      # binaries for. macOS + Linux already cross-compile; Windows regressed once
+      # on a Unix-only syscall (config.lockConfig), so gate it here — a future
+      # unguarded syscall can never silently break the Windows/macOS binary again.
+      # Kept alongside the goreleaser smoke (which only builds the two cmd/
+      # binaries' dependency graphs) because `go build ./...` covers ALL
+      # packages, including ones not yet reachable from a shipped binary.
+      - name: Cross-compile (windows/amd64, darwin/arm64)
+        run: |
+          GOOS=windows GOARCH=amd64 go build ./...
+          GOOS=darwin  GOARCH=arm64 go build ./...
+
+      # Pipeline review F3/C1: lint the GoReleaser config on the PR, not at tag
+      # time. A malformed archive/ldflag/cask stanza otherwise stays invisible
+      # until a real release. Pure config check, no build.
+      - name: GoReleaser config valid
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check
+          workdir: cli
+
+      # WIN-4 (cli-review2 windows-build): guard the *published artifact shape*,
+      # not just `go build` — and doubles as pipeline review F3/C2 (a full
+      # GoReleaser snapshot build dry-run on the PR). A broken archive stanza (e.g. dropping `windows`
+      # from goos, or mis-formatting the zip override) compiles fine but only
+      # surfaces at tag time. Run a snapshot goreleaser build (no sign/sbom/
+      # publish) and assert the windows `.zip` exists and contains `jentic.exe`
+      # (and only jentic — jenticctl is not shipped for Windows, WIN-6). Scoped
+      # to the same cli/** path filter as this job, so docs-only PRs skip it.
+      - name: GoReleaser artifact smoke (windows .zip shape)
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,sbom,publish
+          workdir: cli
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assert windows zip contains jentic.exe only
+        run: |
+          set -euo pipefail
+          # This job sets defaults.run.working-directory: cli, and the
+          # goreleaser step above runs with workdir: cli too, so goreleaser
+          # writes to cli/dist — which from THIS step's cwd (also cli) is just
+          # ./dist. (The old `cli/dist` here resolved to cli/cli/dist and always
+          # missed.) Fall back to cli/dist in case a future default change moves
+          # this step's cwd back to the repo root.
+          dist=""
+          for d in dist cli/dist; do
+            [ -d "$d" ] && { dist="$d"; break; }
+          done
+          test -n "${dist}" || { echo "::error::goreleaser produced no dist dir"; pwd; ls -la . || true; exit 1; }
+          echo "artifact dir: ${dist}"
+          zip="$(ls "${dist}"/jentic_*_windows_amd64.zip 2>/dev/null | head -n1 || true)"
+          test -n "${zip}" || { echo "::error::no windows amd64 zip emitted by goreleaser"; ls -la "${dist}" || true; exit 1; }
+          echo "found windows archive: ${zip}"
+          contents="$(unzip -Z1 "${zip}")"
+          echo "${contents}"
+          echo "${contents}" | grep -qx 'jentic.exe' || { echo "::error::windows zip is missing jentic.exe"; exit 1; }
+          if echo "${contents}" | grep -qi 'jenticctl'; then
+            echo "::error::windows zip must NOT ship jenticctl (WIN-6)"; exit 1
+          fi
+          # linux/darwin tarballs must still be produced (byte-shape invariant).
+          ls "${dist}"/jentic_*_linux_amd64.tar.gz "${dist}"/jenticctl_*_linux_amd64.tar.gz >/dev/null
+
   installer:
     name: Installer script tests
     needs: [changes]
@@ -680,10 +878,140 @@ jobs:
       - name: Run installer tests
         run: bash tests/tools/install_test.sh
 
+  # CLI-V2 Phase 9 (impl/9.0 §9.4): cross-platform install + smoke matrix.
+  #   - ubuntu-24.04:  full headless Docker install + live-stack smoke (deep).
+  #   - macos-latest:  build via install.sh (no chain-install) + offline smoke.
+  #   - windows-latest: build the binaries + offline smoke (install.sh is
+  #                     WSL-only, so native Windows is build + agent-surface).
+  # The offline smoke asserts the binary/agent contract that holds with no
+  # server; the Linux leg additionally proves the real install path.
+  e2e-install:
+    name: E2E install & smoke (${{ matrix.os }})
+    needs: [changes]
+    if: needs.changes.outputs.e2e-install == 'true' || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      # ---- Build the binaries (all OSes) ----
+      - name: Build binaries
+        working-directory: cli
+        run: make build
+
+      # ---- Win/mac: run the OS-sensitive Go tests (OPS-21) ----
+      # The full race/unit/golden/arch suite runs only on Ubuntu (the `cli`
+      # job). The packages whose behavior forks by GOOS — process liveness/
+      # terminate (`internal/proc`), `jenticctl stop`, and the local-agent
+      # launcher/degrade path — must also execute on Windows and macOS so a
+      # GOOS-specific regression (e.g. OPS-20's Windows signal semantics) fails
+      # CI here instead of silently on a user's machine. Ubuntu already covers
+      # these in the `cli` job, so this leg is Win/mac only.
+      - name: OS-sensitive Go tests (Windows/macOS)
+        if: runner.os != 'Linux'
+        working-directory: cli
+        run: go test ./internal/proc/... ./internal/cli/ctlcmd/... ./internal/cli/localagentcmd/...
+
+      # ---- Windows: build + offline smoke (install.sh is WSL-only) ----
+      # `shell: pwsh` already runs this block in PowerShell; invoke the script
+      # with the call operator and re-propagate its exit code. (A nested
+      # `pwsh -File ...` swallows the inner script's failure — an unhandled
+      # error there left $LASTEXITCODE unset and the job passed spuriously.)
+      - name: Offline smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "${{ github.workspace }}/cli/tests/e2e/smoke.ps1" "${{ github.workspace }}/cli"
+          exit $LASTEXITCODE
+
+      # ---- macOS: exercise install.sh's build/PATH path, then offline smoke ----
+      - name: Build via install.sh (macOS, no chain-install)
+        if: runner.os == 'macOS'
+        env:
+          JENTIC_NO_INSTALL: "1" # build + PATH only; do not chain into `jenticctl install`
+        run: bash tools/install.sh || true # tolerate PATH-rc edits failing on the runner; the smoke uses the built binaries directly
+
+      - name: Offline smoke (macOS)
+        if: runner.os == 'macOS'
+        run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli"
+
+      # ---- Linux: full headless Docker install, then live-stack smoke ----
+      # This leg is hard-gating: it exercises the real `jenticctl install` deep
+      # Docker path end to end. It relies on the install-hardening now owned by
+      # this branch (ported from the deleted old-CLI #998): schema bootstrap runs
+      # idempotently inside the Alembic migration runner (no fragile run-once
+      # docker-entrypoint-initdb.d script, so a half-init volume can heal), the
+      # managed Postgres is NOT published to the host by default, and every
+      # published port is bound to the draft host (loopback by default) — so the
+      # assertions below hold on a stock runner.
+      - name: Headless Docker install (Linux)
+        id: linux_install
+        if: runner.os == 'Linux'
+        run: ./cli/jenticctl install --defaults --no-wizard
+
+      - name: DB logs on install failure (Linux)
+        if: runner.os == 'Linux' && failure() && steps.linux_install.outcome == 'failure'
+        run: |
+          echo "::group::db container logs"
+          docker compose -p jentic -f "$HOME/.jentic/docker-compose.yaml" logs db || true
+          echo "::endgroup::"
+
+      - name: Stack is healthy (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              echo "app healthy after ${i}s"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::app did not become healthy"
+          docker compose -p jentic -f "$HOME/.jentic/docker-compose.yaml" logs || true
+          exit 1
+
+      - name: Published ports honour the loopback bind (Linux, #992)
+        if: runner.os == 'Linux'
+        run: |
+          # The generated compose binds published ports to the draft host
+          # (127.0.0.1 by default), so nothing must be listening on 0.0.0.0/*.
+          for port in 8000 8100; do
+            if ss -tln "sport = :$port" | grep -E "0\.0\.0\.0:$port|\*:$port"; then
+              echo "::error::port $port is listening on all interfaces despite the loopback default"
+              ss -tlnp; exit 1
+            fi
+          done
+
+      - name: Doctor is clean (Linux)
+        if: runner.os == 'Linux'
+        run: ./cli/jenticctl doctor
+
+      - name: Live-stack smoke (Linux)
+        if: runner.os == 'Linux'
+        run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli" --live http://127.0.0.1:8000
+
+      # Offline smoke ALWAYS runs on Linux and IS hard-gating — it proves the
+      # binaries + agent surface work regardless of the Docker-stack install.
+      - name: Offline smoke (Linux)
+        if: runner.os == 'Linux'
+        run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli"
+
+      - name: Teardown (Linux)
+        if: always() && runner.os == 'Linux'
+        run: docker compose -p jentic -f "$HOME/.jentic/docker-compose.yaml" down -v || true
+
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer]
+    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -699,7 +1027,9 @@ jobs:
             ${{ needs.ui-e2e-realbackend.result }}
             ${{ needs.smoke-packaging.result }}
             ${{ needs.cli.result }}
+            ${{ needs.cli-artifact-smoke.result }}
             ${{ needs.installer.result }}
+            ${{ needs.e2e-install.result }}
         run: |
           for r in $RESULTS; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then

@@ -1,0 +1,27 @@
+exit: 0
+--- stdout ---
+{
+  "data": [
+    {
+      "api": {
+        "host": "",
+        "name": "api",
+        "vendor": "stripe.com",
+        "version": "v1"
+      },
+      "created_at": "",
+      "current_revision_id": "r1",
+      "description": "",
+      "display_name": "",
+      "icon_url": "",
+      "operation_count": 12,
+      "revision_count": 0,
+      "security_schemes": null,
+      "updated_at": ""
+    }
+  ],
+  "has_more": false,
+  "schema_version": "1"
+}
+--- stderr ---
+
