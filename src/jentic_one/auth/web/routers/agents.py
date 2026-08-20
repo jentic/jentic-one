@@ -25,8 +25,8 @@ from jentic_one.auth.web.schemas.agents import (
     ApiKeyInfoResponse,
     ApiKeyResponse,
     ClaimRequest,
-    ClientCredentialsResponse,
     DenyRequest,
+    JwksUpdateRequest,
     ToolkitBindingListResponse,
     ToolkitBindingResponse,
     ToolkitBindRequest,
@@ -285,22 +285,21 @@ async def generate_agent_api_key(
     return ApiKeyResponse(key=key)
 
 
-@router.post("/agents/{agent_id}:generate-client-credentials", status_code=200)
-async def generate_agent_client_credentials(
+@router.put("/agents/{agent_id}/jwks", status_code=200)
+async def update_agent_jwks(
     agent_id: str,
+    body: JwksUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
-    auth_svc: AgentAuthService = Depends(get_agent_auth_service),
-) -> ClientCredentialsResponse:
-    """Generate OAuth client credentials for an active agent.
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> AgentResponse:
+    """Update an agent's JWKS (public keys for JWT-bearer authentication).
 
-    Returns client_id (the agent's ID) and client_secret (shown once). The
-    credentials can be used with the client_credentials grant at /oauth/token
-    to obtain access tokens for headless agent authentication.
-
-    Rotates any existing client secret.
+    The JWKS must contain at least one Ed25519 public key and must not contain
+    any private key material. This enables the agent to authenticate via
+    JWT-bearer assertions signed with the corresponding private key.
     """
-    secret = await auth_svc.register_client_secret(agent_id, identity=identity)
-    return ClientCredentialsResponse(client_id=agent_id, client_secret=secret)
+    view = await agent_svc.update_jwks(agent_id, jwks=body.jwks, identity=identity)
+    return _agent_response(view)
 
 
 @router.post("/agents/{agent_id}:revoke-api-key", status_code=204)

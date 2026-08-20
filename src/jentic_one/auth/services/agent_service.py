@@ -29,6 +29,7 @@ from jentic_one.auth.services.errors import (
     ToolkitBindingConflictError,
     ToolkitBindingNotFoundError,
 )
+from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
@@ -551,6 +552,42 @@ class AgentService:
                 )
         except DatabaseIntegrityError:
             raise InvalidOwnerError(update_data.get("owner_id") or "") from None
+        return AgentView.model_validate(agent)
+
+    async def update_jwks(
+        self,
+        agent_id: str,
+        *,
+        jwks: dict[str, object],
+        identity: Identity,
+    ) -> AgentView:
+        """Update an agent's JWKS (public keys for JWT-bearer authentication).
+
+        The agent must be active (not pending, disabled, or archived). The JWKS
+        is validated to ensure it contains at least one Ed25519 public key and
+        no private key material.
+        """
+        validate_jwks(jwks)
+        async with self._ctx.admin_db.transaction() as session:
+            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+            if agent is None:
+                raise ActorNotFoundError(agent_id)
+            if agent.status != ActorStatus.ACTIVE:
+                raise InvalidTransitionError(agent_id, agent.status, "update_jwks")
+            before_jwks = agent.jwks
+            agent.jwks = jwks
+            await session.flush()
+            await record_audit(
+                session,
+                action=AuditAction.UPDATE,
+                target_type=AuditTargetType.AGENT,
+                target_id=agent_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before={"jwks": "[redacted]" if before_jwks else None},
+                after={"jwks": "[redacted]"},
+                origin=identity.origin.value,
+            )
         return AgentView.model_validate(agent)
 
     async def _check_transition(

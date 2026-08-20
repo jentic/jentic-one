@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
@@ -133,12 +133,11 @@ class ToolkitBindRequest(BaseModel):
     toolkit_id: str = Field(min_length=1, max_length=255)
 
 
-class ClientCredentialsResponse(BaseModel):
-    """Response containing OAuth client credentials (shown once).
+class JwksUpdateRequest(BaseModel):
+    """Request body for updating an agent's JWKS (public keys).
 
-    The client_id is the agent's ID. The client_secret is shown only at
-    generation time and cannot be retrieved later.
+    The JWKS must contain at least one Ed25519 public key and must not
+    contain any private key material.
     """
 
-    client_id: str
-    client_secret: str
+    jwks: dict[str, Any] = Field(description="JWKS containing public keys")
