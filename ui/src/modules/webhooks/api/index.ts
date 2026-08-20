@@ -8,6 +8,7 @@ export {
 	useWebhookEndpoints,
 	useWebhookDeliveries,
 	useCreateWebhookEndpoint,
+	useUpdateWebhookEndpoint,
 	useDeleteWebhookEndpoint,
 	useRotateWebhookSecret,
 	useSendTestEvent,
@@ -16,7 +17,7 @@ export {
 } from '@/modules/webhooks/api/hooks';
 
 export { WebhooksApiError } from '@/modules/webhooks/api/client';
-export type { CreateEndpointParams } from '@/modules/webhooks/api/client';
+export type { CreateEndpointParams, UpdateEndpointParams } from '@/modules/webhooks/api/client';
 
 export type {
 	CreatedEndpoint,

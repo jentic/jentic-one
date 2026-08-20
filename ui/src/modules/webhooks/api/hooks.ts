@@ -25,7 +25,9 @@ import {
 	resendDelivery,
 	rotateSecret,
 	sendTestEvent,
+	updateEndpoint,
 	type CreateEndpointParams,
+	type UpdateEndpointParams,
 } from '@/modules/webhooks/api/client';
 import type {
 	CreatedEndpoint,
@@ -95,6 +97,34 @@ export function useCreateWebhookEndpoint() {
 			});
 		},
 		onError: (e) => notifyError(e, 'Failed to create the webhook endpoint.'),
+	});
+}
+
+/**
+ * Update an endpoint's configuration (name, target URL, event types, active).
+ *
+ * Unlike create/rotate this involves **no secret**, so it caches nothing
+ * sensitive and shows an ordinary success toast. Invalidates both the list and
+ * the single-endpoint slice so the edited row repaints wherever it is read.
+ */
+export function useUpdateWebhookEndpoint() {
+	const qc = useQueryClient();
+	return useMutation<
+		WebhookEndpointEntity,
+		unknown,
+		{ endpointId: string; changes: UpdateEndpointParams }
+	>({
+		mutationFn: ({ endpointId, changes }) => updateEndpoint(endpointId, changes),
+		onSuccess: (endpoint) => {
+			qc.invalidateQueries({ queryKey: webhookKeys.endpoint(endpoint.id) });
+			qc.invalidateQueries({ queryKey: webhookKeys.endpoints() });
+			toast({
+				title: 'Webhook endpoint updated',
+				description: `Saved changes to ${endpoint.name}.`,
+				variant: 'success',
+			});
+		},
+		onError: (e) => notifyError(e, 'Failed to update the webhook endpoint.'),
 	});
 }
 

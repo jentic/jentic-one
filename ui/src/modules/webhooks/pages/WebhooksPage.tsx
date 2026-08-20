@@ -43,6 +43,7 @@ export default function WebhooksPage() {
 	const canWrite = usePermission('webhooks:write');
 
 	const [createOpen, setCreateOpen] = useState(false);
+	const [editTarget, setEditTarget] = useState<WebhookEndpointEntity | null>(null);
 	const [relayGuideOpen, setRelayGuideOpen] = useState(false);
 	const [rotateTarget, setRotateTarget] = useState<WebhookEndpointEntity | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<WebhookEndpointEntity | null>(null);
@@ -74,15 +75,17 @@ export default function WebhooksPage() {
 				title="Webhooks"
 				subtitle="Push platform events out to a URL you own."
 				actions={
-					<div className="flex items-center gap-2">
+					<div className="flex flex-wrap items-center justify-end gap-2">
 						<Button variant="secondary" onClick={() => setRelayGuideOpen(true)}>
 							<BookOpen className="h-4 w-4" />
-							Relay guide
+							<span className="hidden sm:inline">Relay guide</span>
+							<span className="sm:hidden">Guide</span>
 						</Button>
 						{canWrite && (
 							<Button variant="primary" onClick={() => setCreateOpen(true)}>
 								<Plus className="h-4 w-4" />
-								New endpoint
+								<span className="hidden sm:inline">New endpoint</span>
+								<span className="sm:hidden">New</span>
 							</Button>
 						)}
 						<PageHelp
@@ -180,10 +183,9 @@ export default function WebhooksPage() {
 									What are outbound webhooks?
 								</h2>
 								<p className="text-muted-foreground mb-4 text-sm leading-relaxed">
-									Instead of an external system polling Jentic One for changes,
-									Jentic One POSTs a signed event to a URL you own the moment
-									something happens — so you can route it into Slack, PagerDuty or
-									anywhere else.
+									When something happens, Jentic One POSTs a signed event to a URL
+									you own — so you can route it into Slack, PagerDuty or anywhere
+									else without polling.
 								</p>
 								<ol className="grid gap-3 sm:grid-cols-3">
 									<li className="border-border bg-muted/30 rounded-lg border p-3">
@@ -192,8 +194,7 @@ export default function WebhooksPage() {
 											1. Jentic notifies you
 										</p>
 										<p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
-											A credential expires or an execution fails, and Jentic
-											POSTs a signed event to your target URL.
+											A signed event is POSTed to your target URL.
 										</p>
 									</li>
 									<li className="border-border bg-muted/30 rounded-lg border p-3">
@@ -202,8 +203,7 @@ export default function WebhooksPage() {
 											2. Your relay verifies it
 										</p>
 										<p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
-											A small service you run checks the HMAC signature and
-											rejects anything that doesn&apos;t match.
+											A small service you run checks the signature.
 										</p>
 									</li>
 									<li className="border-border bg-muted/30 rounded-lg border p-3">
@@ -212,8 +212,7 @@ export default function WebhooksPage() {
 											3. It forwards on
 										</p>
 										<p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
-											Your relay reshapes the event and sends it to the real
-											destination.
+											Your relay reshapes it and sends it to the destination.
 										</p>
 									</li>
 								</ol>
@@ -231,6 +230,7 @@ export default function WebhooksPage() {
 						<WebhookEndpointTable
 							endpoints={data ?? []}
 							canWrite={canWrite}
+							onEdit={setEditTarget}
 							onRotate={setRotateTarget}
 							onDelete={setDeleteTarget}
 							onCreate={() => setCreateOpen(true)}
@@ -240,9 +240,14 @@ export default function WebhooksPage() {
 			)}
 
 			<WebhookEndpointCreateSheet
-				open={createOpen}
-				onClose={() => setCreateOpen(false)}
+				open={createOpen || editTarget !== null}
+				endpoint={editTarget}
+				onClose={() => {
+					setCreateOpen(false);
+					setEditTarget(null);
+				}}
 				onCreated={handleCreated}
+				onUpdated={() => setEditTarget(null)}
 				onOpenRelayGuide={() => setRelayGuideOpen(true)}
 			/>
 
@@ -275,9 +280,8 @@ export default function WebhooksPage() {
 
 			{!canWrite && (
 				<p className="text-muted-foreground text-sm">
-					You have read-only access to webhooks. Creating, rotating, testing, or deleting
-					an endpoint requires the <code className="font-mono">webhooks:write</code>{' '}
-					permission.
+					You have read-only access. Creating, editing, rotating, or deleting an endpoint
+					requires <code className="font-mono">webhooks:write</code>.
 				</p>
 			)}
 		</PageShell>

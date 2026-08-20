@@ -9,6 +9,7 @@
  * Response-code contract (verified against the real backend on :8100):
  *   POST   /webhooks/endpoints                → 201 + endpoint + one-time secret
  *   GET    /webhooks/endpoints[/{id}]         → 200
+ *   PATCH  /webhooks/endpoints/{id}           → 200 + endpoint (never a secret)
  *   DELETE /webhooks/endpoints/{id}           → 204 no body (callers refetch)
  *   GET    /webhooks/endpoints/{id}/deliveries → 200
  *   POST   .../{id}:rotate-secret             → 200 + the new secret, once
@@ -95,6 +96,49 @@ export async function createEndpoint(params: CreateEndpointParams): Promise<Crea
 		return { endpoint: endpointToEntity(res.endpoint), secret: res.secret };
 	} catch (error) {
 		throw toWebhooksError(error, 'Failed to create the webhook endpoint.');
+	}
+}
+
+/**
+ * Fields an edit may change. All optional so this stays a partial update; the
+ * backend leaves any omitted field untouched. Deliberately has no secret field —
+ * editing configuration never touches signing authority (that is rotation).
+ */
+export interface UpdateEndpointParams {
+	name?: string;
+	targetUrl?: string | null;
+	eventTypes?: string[];
+	active?: boolean;
+}
+
+/**
+ * Update an endpoint's configuration. Returns the endpoint in its post-edit
+ * shape (never a secret). Only the fields present on `params` are sent, so an
+ * omitted field is left as-is — and an empty `eventTypes` array is a real value
+ * (subscribe to every relayable type), distinct from omitting it.
+ */
+export async function updateEndpoint(
+	endpointId: string,
+	params: UpdateEndpointParams,
+): Promise<WebhookEndpointEntity> {
+	const requestBody: {
+		name?: string;
+		target_url?: string | null;
+		event_types?: string[];
+		active?: boolean;
+	} = {};
+	if (params.name !== undefined) requestBody.name = params.name;
+	if (params.targetUrl !== undefined) {
+		requestBody.target_url = params.targetUrl?.trim() ? params.targetUrl.trim() : null;
+	}
+	if (params.eventTypes !== undefined) requestBody.event_types = params.eventTypes;
+	if (params.active !== undefined) requestBody.active = params.active;
+
+	try {
+		const res = await WebhooksService.updateEndpoint({ endpointId, requestBody });
+		return endpointToEntity(res);
+	} catch (error) {
+		throw toWebhooksError(error, 'Failed to update the webhook endpoint.');
 	}
 }
 

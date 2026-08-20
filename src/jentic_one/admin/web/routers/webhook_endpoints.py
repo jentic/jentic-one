@@ -23,6 +23,7 @@ from jentic_one.admin.web.schemas.webhooks import (
     WebhookEndpointCreateRequest,
     WebhookEndpointListResponse,
     WebhookEndpointResponse,
+    WebhookEndpointUpdateRequest,
     WebhookSecretRotatedResponse,
     WebhookSecretRotateRequest,
     WebhookTestQueuedResponse,
@@ -103,6 +104,35 @@ async def get_endpoint(
 ) -> WebhookEndpointResponse:
     """Inspect one endpoint."""
     return _endpoint_response(await service.get(endpoint_id))
+
+
+@router.patch(
+    "/webhooks/endpoints/{endpoint_id}",
+    summary="Update a webhook endpoint",
+    description=(
+        "Partially updates an endpoint's configuration — its name, target URL, "
+        "event-type subscription, or active state. Only the fields supplied are "
+        "changed. Requires the privileged `webhooks:write` scope, and the change "
+        "is audited. **Never** touches or returns the signing secret; rotation is "
+        "the separate flow for that. Changing `event_types` affects only future "
+        "fan-out, not deliveries already queued."
+    ),
+)
+async def update_endpoint(
+    endpoint_id: str,
+    payload: WebhookEndpointUpdateRequest,
+    identity: Identity = get_current_identity(required_permissions=[WEBHOOKS_WRITE]),
+    service: WebhookEndpointService = Depends(get_webhook_endpoint_service),
+) -> WebhookEndpointResponse:
+    """Apply a partial update, returning the endpoint without any secret."""
+    # Pass only the fields the caller actually sent so an omitted field is left
+    # untouched — sending ``event_types: []`` (subscribe to all) must be
+    # distinguishable from omitting it (leave the subscription as-is).
+    changes: dict[str, object] = {
+        field: getattr(payload, field) for field in payload.model_fields_set
+    }
+    endpoint = await service.update(endpoint_id, identity=identity, **changes)  # type: ignore[arg-type]
+    return _endpoint_response(endpoint)
 
 
 @router.delete(

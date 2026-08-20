@@ -9,6 +9,7 @@
  *
  *   POST   /webhooks/endpoints                 → 201 + endpoint + one-time secret
  *   GET    /webhooks/endpoints                 → 200, never any secret material
+ *   PATCH  /webhooks/endpoints/{id}            → 200 + endpoint, never a secret
  *   DELETE /webhooks/endpoints/{id}            → 204 no body
  *   POST   .../{id}:rotate-secret              → 200 + a NEW secret
  *   POST   .../{id}:test                       → 202
@@ -147,6 +148,34 @@ export const webhooksHandlers = [
 	http.get('/webhooks/endpoints/:id', ({ params }) => {
 		const row = endpoints.find((e) => e.endpoint_id === params.id);
 		if (!row) return HttpResponse.json({ detail: 'Not found' }, { status: 404 });
+		return HttpResponse.json(row);
+	}),
+
+	// PATCH is a partial update: only the fields present in the body are applied,
+	// so an omitted field is left as-is. Never touches secrets and never returns
+	// one — editing config is orthogonal to signing authority (that is rotate).
+	http.patch('/webhooks/endpoints/:id', async ({ params, request }) => {
+		const row = endpoints.find((e) => e.endpoint_id === params.id);
+		if (!row) return HttpResponse.json({ detail: 'Not found' }, { status: 404 });
+		const body = (await request.json()) as Partial<{
+			name: string;
+			target_url: string | null;
+			event_types: string[];
+			active: boolean;
+		}>;
+		if ('target_url' in body) {
+			const url = body.target_url;
+			if (!url) return badRequest('A notification endpoint requires a target_url.');
+			if (!url.startsWith('http://') && !url.startsWith('https://')) {
+				return badRequest('target_url must be an http(s) URL.');
+			}
+			row.target_url = url;
+		}
+		if ('name' in body && body.name !== undefined) row.name = body.name;
+		if ('event_types' in body && body.event_types !== undefined) {
+			row.event_types = body.event_types;
+		}
+		if ('active' in body && body.active !== undefined) row.active = body.active;
 		return HttpResponse.json(row);
 	}),
 

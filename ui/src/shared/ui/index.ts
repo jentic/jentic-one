@@ -6,6 +6,9 @@ export { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@/shared/ui/C
 export { DetailSection, EmptyRow } from '@/shared/ui/DetailSection';
 export type { DetailSectionProps, SectionActionProps } from '@/shared/ui/DetailSection';
 
+export { Disclosure } from '@/shared/ui/Disclosure';
+export type { DisclosureProps } from '@/shared/ui/Disclosure';
+
 export { AuditTrailCard } from '@/shared/ui/AuditTrailCard';
 export type { AuditTrailCardProps, AuditTrailEntry } from '@/shared/ui/AuditTrailCard';
 

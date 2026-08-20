@@ -29,6 +29,33 @@ class WebhookEndpointCreateRequest(BaseModel):
     )
 
 
+class WebhookEndpointUpdateRequest(BaseModel):
+    """Partial update for a webhook endpoint (PATCH semantics).
+
+    Every field is optional: only the fields actually present in the request are
+    applied, and an omitted field is left unchanged. Deliberately carries **no**
+    secret field — editing configuration must never touch signing authority,
+    which is the separate rotation flow. An explicit empty ``event_types`` list is
+    meaningful (subscribe to every relayable type), which is why the caller must
+    distinguish "omitted" from "empty" via the request's set fields.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    target_url: str | None = Field(
+        default=None,
+        max_length=2048,
+        description="The URL signed events are POSTed to. Must be an http(s) URL.",
+    )
+    event_types: list[str] | None = Field(
+        default=None,
+        description="Event types to subscribe to. Empty means all relayable types.",
+    )
+    active: bool | None = Field(
+        default=None,
+        description="Whether the endpoint receives deliveries. Set false to pause it.",
+    )
+
+
 class WebhookEndpointResponse(BaseModel):
     """A webhook endpoint. Deliberately carries no secret material."""
 

@@ -201,6 +201,7 @@ export type { WebhookEndpointCreatedResponse } from './models/WebhookEndpointCre
 export type { WebhookEndpointCreateRequest } from './models/WebhookEndpointCreateRequest';
 export type { WebhookEndpointListResponse } from './models/WebhookEndpointListResponse';
 export type { WebhookEndpointResponse } from './models/WebhookEndpointResponse';
+export type { WebhookEndpointUpdateRequest } from './models/WebhookEndpointUpdateRequest';
 export type { WebhookSecretRotatedResponse } from './models/WebhookSecretRotatedResponse';
 export type { WebhookSecretRotateRequest } from './models/WebhookSecretRotateRequest';
 export type { WebhookTestQueuedResponse } from './models/WebhookTestQueuedResponse';

@@ -89,6 +89,38 @@ class WebhookEndpointRepository:
         ]
 
     @staticmethod
+    async def update(
+        session: AsyncSession,
+        endpoint_id: str,
+        *,
+        name: str | None = None,
+        target_url: str | None = None,
+        event_types: list[str] | None = None,
+        active: bool | None = None,
+    ) -> WebhookEndpoint | None:
+        """Apply a partial update to an endpoint's configuration.
+
+        Only fields passed as non-``None`` are written, which is what makes this
+        a PATCH: an omitted field is left exactly as it was. Deliberately touches
+        no secret column — editing configuration must never affect signing
+        authority, which is the separate rotation flow. Returns ``None`` when the
+        endpoint does not exist so the caller can raise the not-found error.
+        """
+        endpoint = await session.get(WebhookEndpoint, endpoint_id)
+        if endpoint is None:
+            return None
+        if name is not None:
+            endpoint.name = name
+        if target_url is not None:
+            endpoint.target_url = target_url
+        if event_types is not None:
+            endpoint.event_types = event_types
+        if active is not None:
+            endpoint.active = active
+        await session.flush()
+        return endpoint
+
+    @staticmethod
     async def deactivate(session: AsyncSession, endpoint_id: str) -> None:
         """Mark an endpoint inactive — used when a target answers ``410 Gone``."""
         await session.execute(

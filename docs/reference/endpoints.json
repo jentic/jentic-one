@@ -3778,6 +3778,32 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
+        "webhooks:write": [
+          "webhooks:read"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "updateEndpoint",
+      "path": "/webhooks/endpoints/{endpoint_id}",
+      "public": false,
+      "required_scopes": [
+        "webhooks:write"
+      ],
+      "summary": "Update a webhook endpoint",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
         "webhooks:read": []
       },
       "method": "GET",
@@ -4947,5 +4973,5 @@
     ],
     "total": 33
   },
-  "total": 167
+  "total": 168
 }

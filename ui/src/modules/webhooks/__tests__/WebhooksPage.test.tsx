@@ -181,7 +181,92 @@ describe('WebhooksPage', () => {
 		const dialog = await screen.findByRole('dialog');
 		// The guide must quote the real Standard-Webhooks headers and envelope.
 		expect(within(dialog).getByText('webhook-signature')).toBeInTheDocument();
+		// The relay code is collapsed behind a disclosure — open it, then assert the
+		// verifier uses a constant-time comparison.
+		await user.click(within(dialog).getByText(/Show the relay code/i));
 		expect(within(dialog).getByText(/hmac\.compare_digest/i)).toBeInTheDocument();
+	});
+
+	it('edits an endpoint: opens prefilled, changes event types, and saves', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await waitForWriteAffordances();
+
+		const card = await cardFor('slack-ops-alerts');
+		await user.click(within(card).getByRole('button', { name: 'Edit' }));
+
+		// The edit sheet opens pre-filled from the endpoint, not blank.
+		const nameField = screen.getByLabelText('Name') as HTMLInputElement;
+		await waitFor(() => expect(nameField.value).toBe('slack-ops-alerts'));
+		expect((screen.getByLabelText('Target URL') as HTMLInputElement).value).toBe(
+			'https://hooks.example.com/services/T000/B000/XXXX',
+		);
+		// Its current subscription is reflected in the picker.
+		expect(screen.getByRole('checkbox', { name: 'Credential expired' })).toHaveAttribute(
+			'aria-checked',
+			'true',
+		);
+		expect(screen.getByRole('checkbox', { name: 'Execution failed' })).toHaveAttribute(
+			'aria-checked',
+			'true',
+		);
+
+		// Drop one event type and rename, then save.
+		await user.click(screen.getByRole('checkbox', { name: 'Credential expired' }));
+		await user.clear(nameField);
+		await user.type(nameField, 'slack-ops-renamed');
+		await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+		// No secret is ever revealed on an edit.
+		await waitFor(() => {
+			const row = webhooksStoreEndpoints().find((e) => e.name === 'slack-ops-renamed');
+			expect(row).toBeDefined();
+			expect(row?.event_types).toEqual(['execution.failed']);
+		});
+		expect(screen.queryByText(/only time this secret is shown/i)).toBeNull();
+		expect(await screen.findByText('slack-ops-renamed')).toBeInTheDocument();
+	});
+
+	it('can pause an endpoint by toggling active off in the edit sheet', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await waitForWriteAffordances();
+
+		const card = await cardFor('slack-ops-alerts');
+		await user.click(within(card).getByRole('button', { name: 'Edit' }));
+
+		await user.click(screen.getByRole('checkbox', { name: 'Endpoint active' }));
+		await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+		await waitFor(() => {
+			const row = webhooksStoreEndpoints().find((e) => e.name === 'slack-ops-alerts');
+			expect(row?.active).toBe(false);
+		});
+	});
+
+	it('opens a blank form for New endpoint even after editing an existing one', async () => {
+		// Regression: the shared create/edit sheet used to keep the edited
+		// endpoint's values when reopened via New endpoint, because create mode
+		// never cleared the draft the edit had seeded.
+		const user = userEvent.setup();
+		renderPage();
+		await waitForWriteAffordances();
+
+		// Edit an existing endpoint (seeds the form), then dismiss without saving.
+		const card = await cardFor('slack-ops-alerts');
+		await user.click(within(card).getByRole('button', { name: 'Edit' }));
+		const nameField = screen.getByLabelText('Name') as HTMLInputElement;
+		await waitFor(() => expect(nameField.value).toBe('slack-ops-alerts'));
+		await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+		// Now open the create sheet — it must be blank, not carrying the edit.
+		await user.click(screen.getByRole('button', { name: /New endpoint/i }));
+		expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('');
+		expect((screen.getByLabelText('Target URL') as HTMLInputElement).value).toBe('');
+		expect(screen.getByRole('checkbox', { name: 'Credential expired' })).toHaveAttribute(
+			'aria-checked',
+			'false',
+		);
 	});
 
 	it('expands an endpoint to show its delivery log, including a dead-lettered row', async () => {
@@ -237,9 +322,10 @@ describe('WebhooksPage', () => {
 		await screen.findByText('slack-ops-alerts');
 
 		expect(screen.queryByRole('button', { name: /New endpoint/i })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Rotate secret' })).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Send test' })).toBeNull();
-		expect(screen.getByText(/read-only access to webhooks/i)).toBeInTheDocument();
+		expect(screen.getByText(/read-only access/i)).toBeInTheDocument();
 	});
 });

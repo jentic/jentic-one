@@ -142,6 +142,16 @@ async def test_rotating_a_secret_requires_webhooks_write(
     assert response.status_code == 403
 
 
+async def test_updating_an_endpoint_requires_webhooks_write(
+    writer: AsyncClient, reader: AsyncClient, clean_webhooks: None
+) -> None:
+    """Editing an endpoint is a mutation, so read access must not reach it."""
+    created = await _create_notification(writer)
+    endpoint_id = created["endpoint"]["endpoint_id"]
+    response = await reader.patch(f"{ENDPOINTS_PATH}/{endpoint_id}", json={"name": "nope"})
+    assert response.status_code == 403
+
+
 async def test_unauthenticated_management_request_is_rejected(
     integration_context: Context, clean_webhooks: None
 ) -> None:
@@ -232,6 +242,55 @@ async def test_delete_then_get_is_404(writer: AsyncClient, clean_webhooks: None)
     assert deleted.status_code == 204
 
     assert (await writer.get(f"{ENDPOINTS_PATH}/{endpoint_id}")).status_code == 404
+
+
+# --- update ------------------------------------------------------------------
+
+
+async def test_update_changes_fields_and_returns_no_secret(
+    writer: AsyncClient, clean_webhooks: None
+) -> None:
+    """A happy-path edit returns the new shape and never any secret material."""
+    created = await _create_notification(writer)
+    endpoint_id = created["endpoint"]["endpoint_id"]
+
+    response = await writer.patch(
+        f"{ENDPOINTS_PATH}/{endpoint_id}",
+        json={
+            "name": "renamed-ops",
+            "target_url": "https://receiver.test/new-hook",
+            "event_types": ["execution.failed"],
+            "active": False,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == "renamed-ops"
+    assert body["target_url"] == "https://receiver.test/new-hook"
+    assert body["event_types"] == ["execution.failed"]
+    assert body["active"] is False
+
+    # The update response is a plain endpoint projection — no secret in any form.
+    assert created["secret"] not in response.text
+    assert "secret_encrypted" not in response.text
+    assert "secret_hash" not in response.text
+    assert "secret" not in body
+
+
+async def test_update_rejects_a_bad_target_url(writer: AsyncClient, clean_webhooks: None) -> None:
+    created = await _create_notification(writer)
+    endpoint_id = created["endpoint"]["endpoint_id"]
+
+    response = await writer.patch(
+        f"{ENDPOINTS_PATH}/{endpoint_id}",
+        json={"target_url": "file:///etc/passwd"},
+    )
+    assert response.status_code == 400, response.text
+
+
+async def test_update_unknown_endpoint_is_404(writer: AsyncClient, clean_webhooks: None) -> None:
+    response = await writer.patch(f"{ENDPOINTS_PATH}/whep_missing", json={"name": "ghost"})
+    assert response.status_code == 404, response.text
 
 
 # --- deliveries ---------------------------------------------------------------

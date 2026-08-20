@@ -157,9 +157,151 @@ async def test_delete_is_audited(
         assert result.scalars().first() is not None
 
 
+# --- update ------------------------------------------------------------------
+
+
+async def test_update_changes_fields_and_is_audited(
+    integration_context: Context, admin_db: DatabaseSession, clean_webhooks: None
+) -> None:
+    """A happy-path edit: name, target_url, event_types and active all change."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="before-edit",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+        event_types=["credential.expired"],
+    )
+
+    updated = await service.update(
+        created.endpoint.id,
+        identity=OPERATOR,
+        name="after-edit",
+        target_url="https://receiver.test/new-hook",
+        event_types=["execution.failed", "access_request.filed"],
+        active=False,
+    )
+
+    assert updated.name == "after-edit"
+    assert updated.target_url == "https://receiver.test/new-hook"
+    assert updated.event_types == ["execution.failed", "access_request.filed"]
+    assert updated.active is False
+
+    # Re-read to prove it persisted, not just mutated in memory.
+    refetched = await service.get(created.endpoint.id)
+    assert refetched.name == "after-edit"
+    assert refetched.active is False
+
+    async with admin_db.session() as session:
+        result = await session.execute(
+            select(AuditEntry).where(
+                AuditEntry.target_id == created.endpoint.id,
+                AuditEntry.action == AuditAction.UPDATE,
+            )
+        )
+        entry = result.scalars().first()
+    assert entry is not None, "an edit must be audited"
+    assert "secret" not in str(entry.after).lower(), "no secret material in the audit log"
+
+
+async def test_partial_update_leaves_omitted_fields_untouched(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    """PATCH semantics: an omitted field keeps its current value."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="partial",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+        event_types=["credential.expired"],
+    )
+
+    # Change only the name.
+    await service.update(created.endpoint.id, identity=OPERATOR, name="renamed")
+
+    refetched = await service.get(created.endpoint.id)
+    assert refetched.name == "renamed"
+    assert refetched.target_url == "https://receiver.test/hook", "target_url untouched"
+    assert refetched.event_types == ["credential.expired"], "subscription untouched"
+    assert refetched.active is True, "active untouched"
+
+
+async def test_update_to_empty_event_types_subscribes_to_all(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    """An explicit empty list means "subscribe to everything", not "leave as-is"."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="widen",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+        event_types=["credential.expired"],
+    )
+
+    await service.update(created.endpoint.id, identity=OPERATOR, event_types=[])
+
+    refetched = await service.get(created.endpoint.id)
+    assert refetched.event_types == [], "empty means all relayable types"
+
+
+async def test_update_rejects_a_bad_target_url(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="guarded",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+    )
+
+    with pytest.raises(InvalidInputError, match="http"):
+        await service.update(
+            created.endpoint.id,
+            identity=OPERATOR,
+            target_url="file:///etc/passwd",
+        )
+
+    # The bad edit must not have partially applied.
+    refetched = await service.get(created.endpoint.id)
+    assert refetched.target_url == "https://receiver.test/hook"
+
+
+async def test_update_unknown_endpoint_raises_not_found(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    service = WebhookEndpointService(integration_context)
+    with pytest.raises(WebhookEndpointNotFoundError):
+        await service.update("whep_nope", identity=OPERATOR, name="ghost")
+
+
+async def test_update_never_affects_the_signing_secret(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    """Editing configuration must leave signing authority exactly as it was."""
+    service = WebhookEndpointService(integration_context)
+    secrets = WebhookSecretService(integration_context)
+    created = await service.create(
+        name="secret-stable",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+    )
+
+    before = await service.get(created.endpoint.id)
+    before_encrypted = before.secret_encrypted
+    assert secrets.resolve_secrets(before) == [created.secret]
+
+    await service.update(
+        created.endpoint.id,
+        identity=OPERATOR,
+        name="secret-stable-renamed",
+        target_url="https://receiver.test/elsewhere",
+    )
+
+    after = await service.get(created.endpoint.id)
+    assert after.secret_encrypted == before_encrypted, "the stored key is untouched"
+    assert secrets.resolve_secrets(after) == [created.secret], "the same secret still verifies"
+
+
 # --- rotation via the service ------------------------------------------------
-
-
 async def test_rotate_secret_returns_a_new_secret_and_audits(
     integration_context: Context, admin_db: DatabaseSession, clean_webhooks: None
 ) -> None:

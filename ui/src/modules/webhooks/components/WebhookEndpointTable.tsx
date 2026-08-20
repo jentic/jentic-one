@@ -18,6 +18,7 @@ import { DeliveryLogPanel } from '@/modules/webhooks/components/DeliveryLogPanel
 interface WebhookEndpointTableProps {
 	endpoints: WebhookEndpointEntity[];
 	canWrite: boolean;
+	onEdit: (endpoint: WebhookEndpointEntity) => void;
 	onRotate: (endpoint: WebhookEndpointEntity) => void;
 	onDelete: (endpoint: WebhookEndpointEntity) => void;
 	onCreate: () => void;
@@ -26,6 +27,7 @@ interface WebhookEndpointTableProps {
 export function WebhookEndpointTable({
 	endpoints,
 	canWrite,
+	onEdit,
 	onRotate,
 	onDelete,
 	onCreate,
@@ -59,7 +61,7 @@ export function WebhookEndpointTable({
 						key={endpoint.id}
 						className="border-border bg-card overflow-hidden rounded-xl border"
 					>
-						<div className="flex flex-wrap items-start justify-between gap-3 p-4">
+						<div className="flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
 							<div className="min-w-0 flex-1">
 								<div className="flex flex-wrap items-center gap-2">
 									<button
@@ -85,7 +87,7 @@ export function WebhookEndpointTable({
 										<dt className="text-muted-foreground tracking-wider uppercase">
 											Target URL
 										</dt>
-										<dd className="text-foreground mt-0.5 font-mono break-all">
+										<dd className="text-foreground mt-0.5 font-mono break-words">
 											{endpoint.targetUrl}
 										</dd>
 									</div>
@@ -104,7 +106,7 @@ export function WebhookEndpointTable({
 							</div>
 
 							{canWrite && (
-								<div className="flex shrink-0 flex-wrap gap-2">
+								<div className="flex flex-wrap gap-2 sm:shrink-0">
 									<Button
 										variant="secondary"
 										size="sm"
@@ -115,6 +117,13 @@ export function WebhookEndpointTable({
 										loading={sendTest.isPending}
 									>
 										Send test
+									</Button>
+									<Button
+										variant="secondary"
+										size="sm"
+										onClick={() => onEdit(endpoint)}
+									>
+										Edit
 									</Button>
 									<Button
 										variant="secondary"

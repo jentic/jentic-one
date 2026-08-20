@@ -39,6 +39,20 @@ from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 logger = structlog.get_logger(__name__)
 
 
+class _Unset:
+    """Sentinel distinguishing "field omitted" from an explicit ``None``/empty.
+
+    A PATCH must treat *not sending* ``event_types`` (leave the subscription
+    untouched) differently from sending ``[]`` (subscribe to everything), and the
+    same holds for a nullable ``target_url``. A plain ``None`` default cannot
+    express that difference, so an omitted field defaults to this sentinel and is
+    skipped when applying the update.
+    """
+
+
+_UNSET = _Unset()
+
+
 class CreatedEndpoint:
     """A newly created endpoint plus its one-time plaintext secret."""
 
@@ -98,6 +112,80 @@ class WebhookEndpointService:
                 created_by=identity.sub,
             )
             return CreatedEndpoint(endpoint, secret)
+
+    async def update(
+        self,
+        endpoint_id: str,
+        *,
+        identity: Identity,
+        name: str | None = None,
+        target_url: str | None | _Unset = _UNSET,
+        event_types: list[str] | None | _Unset = _UNSET,
+        active: bool | None = None,
+    ) -> WebhookEndpoint:
+        """Partially update an endpoint's configuration (audited).
+
+        Only fields the caller actually supplied are changed — an omitted field
+        (``_UNSET`` for the sentineled ones, ``None`` for the rest) is left as-is.
+        This edits configuration only: the signing secret is never touched or
+        returned, so a name/URL/subscription change cannot alter signing
+        authority (rotation remains the sole path for that).
+
+        Changing ``event_types`` only affects future fan-out. Deliveries already
+        queued for events that matched the old subscription stay queued — the
+        subscription filter is applied when an event is relayed, not
+        retroactively to the durable delivery queue.
+        """
+        self._validate_shape_for_update(target_url=target_url)
+
+        async with self._ctx.admin_db.transaction() as session:
+            existing = await WebhookEndpointRepository.get_by_id(session, endpoint_id)
+            if existing is None:
+                raise WebhookEndpointNotFoundError(endpoint_id)
+
+            before = {
+                "name": existing.name,
+                "target_url": existing.target_url,
+                "event_types": list(existing.event_types or []),
+                "active": existing.active,
+            }
+
+            resolved_event_types = None if isinstance(event_types, _Unset) else (event_types or [])
+
+            endpoint = await WebhookEndpointRepository.update(
+                session,
+                endpoint_id,
+                name=name,
+                target_url=None if isinstance(target_url, _Unset) else target_url,
+                event_types=resolved_event_types,
+                active=active,
+            )
+            if endpoint is None:  # pragma: no cover - guarded by the get above
+                raise WebhookEndpointNotFoundError(endpoint_id)
+
+            after = {
+                "name": endpoint.name,
+                "target_url": endpoint.target_url,
+                "event_types": list(endpoint.event_types or []),
+                "active": endpoint.active,
+            }
+            await AuditRepository.record(
+                session,
+                action=AuditAction.UPDATE,
+                target_type=AuditTargetType.WEBHOOK_ENDPOINT,
+                target_id=endpoint_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before=before,
+                after=after,
+            )
+
+            logger.info(
+                "webhook_endpoint_updated",
+                endpoint_id=endpoint_id,
+                updated_by=identity.sub,
+            )
+            return endpoint
 
     async def list_all(self) -> list[WebhookEndpoint]:
         async with self._ctx.admin_db.session() as session:
@@ -231,6 +319,23 @@ class WebhookEndpointService:
         """Reject configurations that cannot be safe or cannot work."""
         if not target_url:
             raise InvalidInputError("A notification endpoint requires a target_url.")
+        self._validate_url_scheme(target_url)
+
+    def _validate_shape_for_update(self, *, target_url: str | None | _Unset) -> None:
+        """Validate a PATCH's ``target_url`` with the same rules as create.
+
+        A PATCH may omit ``target_url`` (``_UNSET``) to leave it untouched, but if
+        it *is* supplied it must satisfy exactly the create constraints — a
+        notification endpoint still needs a real http(s) URL to POST to, so
+        clearing it or setting a bad scheme is refused here just as at create.
+        """
+        if isinstance(target_url, _Unset):
+            return
+        if not target_url:
+            raise InvalidInputError("A notification endpoint requires a target_url.")
+        self._validate_url_scheme(target_url)
+
+    def _validate_url_scheme(self, target_url: str) -> None:
         # Only the scheme is checked here; the address itself is validated at
         # send time by the SSRF-guarding egress transport, which is the only
         # place that can do it correctly (DNS can change after this check).

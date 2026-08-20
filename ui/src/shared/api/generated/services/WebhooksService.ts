@@ -7,6 +7,7 @@ import type { WebhookEndpointCreatedResponse } from '../models/WebhookEndpointCr
 import type { WebhookEndpointCreateRequest } from '../models/WebhookEndpointCreateRequest';
 import type { WebhookEndpointListResponse } from '../models/WebhookEndpointListResponse';
 import type { WebhookEndpointResponse } from '../models/WebhookEndpointResponse';
+import type { WebhookEndpointUpdateRequest } from '../models/WebhookEndpointUpdateRequest';
 import type { WebhookSecretRotatedResponse } from '../models/WebhookSecretRotatedResponse';
 import type { WebhookSecretRotateRequest } from '../models/WebhookSecretRotateRequest';
 import type { WebhookTestQueuedResponse } from '../models/WebhookTestQueuedResponse';
@@ -131,6 +132,37 @@ export class WebhooksService {
             path: {
                 'endpoint_id': endpointId,
             },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Update a webhook endpoint
+     * Partially updates an endpoint's configuration — its name, target URL, event-type subscription, or active state. Only the fields supplied are changed. Requires the privileged `webhooks:write` scope, and the change is audited. **Never** touches or returns the signing secret; rotation is the separate flow for that. Changing `event_types` affects only future fan-out, not deliveries already queued.
+     * @returns WebhookEndpointResponse Successful Response
+     * @throws ApiError
+     */
+    public static updateEndpoint({
+        endpointId,
+        requestBody,
+    }: {
+        endpointId: string,
+        requestBody: WebhookEndpointUpdateRequest,
+    }): CancelablePromise<WebhookEndpointResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/webhooks/endpoints/{endpoint_id}',
+            path: {
+                'endpoint_id': endpointId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

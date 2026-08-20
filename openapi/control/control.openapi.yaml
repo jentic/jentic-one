@@ -5643,6 +5643,47 @@ components:
       - created_at
       title: WebhookEndpointResponse
       type: object
+    WebhookEndpointUpdateRequest:
+      description: |-
+        Partial update for a webhook endpoint (PATCH semantics).
+
+        Every field is optional: only the fields actually present in the request are
+        applied, and an omitted field is left unchanged. Deliberately carries **no**
+        secret field — editing configuration must never touch signing authority,
+        which is the separate rotation flow. An explicit empty ``event_types`` list is
+        meaningful (subscribe to every relayable type), which is why the caller must
+        distinguish "omitted" from "empty" via the request's set fields.
+      properties:
+        active:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          description: Whether the endpoint receives deliveries. Set false to pause it.
+          title: Active
+        event_types:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: Event types to subscribe to. Empty means all relayable types.
+          title: Event Types
+        name:
+          anyOf:
+          - maxLength: 255
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Name
+        target_url:
+          anyOf:
+          - maxLength: 2048
+            type: string
+          - type: 'null'
+          description: The URL signed events are POSTed to. Must be an http(s) URL.
+          title: Target Url
+      title: WebhookEndpointUpdateRequest
+      type: object
     WebhookSecretRotateRequest:
       description: Request body for rotating an endpoint secret.
       properties:
@@ -17564,6 +17605,76 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a webhook endpoint
+      tags:
+      - Webhooks
+    patch:
+      description: Partially updates an endpoint's configuration — its name, target URL, event-type subscription, or active state. Only the fields supplied are changed. Requires the privileged `webhooks:write` scope, and the change is audited. **Never** touches or returns the signing secret; rotation is the separate flow for that. Changing `event_types` affects only future fan-out, not deliveries already queued.
+      operationId: updateEndpoint
+      parameters:
+      - in: path
+        name: endpoint_id
+        required: true
+        schema:
+          title: Endpoint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookEndpointUpdateRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Update a webhook endpoint
       tags:
       - Webhooks
   /webhooks/endpoints/{endpoint_id}/deliveries:
