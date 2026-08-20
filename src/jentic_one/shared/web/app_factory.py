@@ -28,7 +28,7 @@ from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
@@ -373,12 +373,19 @@ async def _start_telemetry(
                 summary="Instance initialized",
                 created_by=None,
             )
+        # The OS family rides on every boot event (see HostOs) so the
+        # dimension self-heals: a lost POST or a config moved to another
+        # machine is corrected on the next startup, matching how comparable
+        # products (n8n, GitLab, Grafana) report environment facts. Prefer
+        # the install-time value the CLI stamped on the host; in Docker,
+        # runtime detection would report the container's Linux.
         await emit_event_best_effort(
             session,
             type=EventType.INSTANCE_BOOTED,
             severity=EventSeverity.INFO,
             summary="Instance booted",
             created_by=None,
+            tags={HostOs.resolve(cfg.host_os)},
         )
 
     return loop, task, client

@@ -134,6 +134,19 @@ func collectLeaves(target interface{}) []leaf {
 	return leaves
 }
 
+// LeafPaths returns the dotted path of every scalar leaf of the nested config
+// struct, in walk order. Callers use it to build Exclude sets for a whole
+// section (e.g. everything under `telemetry.`) without duplicating the leaf
+// walk that BindFlags and the form generator share.
+func LeafPaths(target interface{}) []string {
+	leaves := collectLeaves(target)
+	out := make([]string, 0, len(leaves))
+	for _, lf := range leaves {
+		out = append(out, lf.path)
+	}
+	return out
+}
+
 // BindOptions tune BindFlags for the installer's needs (impl/6.0): Exclude drops
 // leaves entirely (sensitive secret-bearing paths never become flags), and Hidden
 // registers the flags but marks them hidden so they work yet stay out of --help

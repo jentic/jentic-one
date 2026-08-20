@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from jentic_one.shared.events import emit_event
-from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventType, SpecSource
+from jentic_one.shared.models.events import (
+    ErrorSource,
+    EventSeverity,
+    EventType,
+    HostOs,
+    SpecSource,
+)
 from jentic_one.shared.telemetry.events import TelemetryEventName
 
 
@@ -82,6 +88,30 @@ async def test_all_valid_tags_forwarded_to_sink() -> None:
     assert set(forwarded) == {ErrorSource.AUTH_JENTIC, ErrorSource.AUTH_THIRDPARTY_FORBIDDEN}
     stored_data = create.call_args.kwargs["data"]
     assert set(stored_data["tags"]) == {"auth_jentic", "auth_thirdparty_forbidden"}
+
+
+@pytest.mark.asyncio
+async def test_host_os_tag_stored_and_forwarded_on_instance_booted() -> None:
+    """The per-boot instance_booted event carries the HostOs tag to the sink."""
+    sink = _RecordingSink(enabled=True)
+    create = _fake_create()
+
+    with (
+        patch("jentic_one.shared.events.EventRepository.create", create),
+        patch("jentic_one.shared.events.get_active_sink", return_value=sink),
+    ):
+        await emit_event(
+            session=AsyncMock(),
+            type=EventType.INSTANCE_BOOTED,
+            severity=EventSeverity.INFO,
+            summary="Instance booted",
+            created_by=None,
+            tags={HostOs.current()},
+        )
+
+    stored_data = create.call_args.kwargs["data"]
+    assert stored_data["tags"] == [str(HostOs.current())]
+    assert sink.records == [(TelemetryEventName.INSTANCE_BOOTED, (HostOs.current(),), None)]
 
 
 @pytest.mark.asyncio
