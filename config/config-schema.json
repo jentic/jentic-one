@@ -1194,6 +1194,18 @@
           "title": "Flush Interval S",
           "type": "number"
         },
+        "host_os": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Host Os"
+        },
         "instance_id": {
           "anyOf": [
             {
