@@ -938,7 +938,8 @@ func stampTelemetryDecision(draft *install.Draft, enabled bool) {
 // "non-interactive", and a TTY-attached `install --defaults` would otherwise
 // hang on the confirm); outside it, prompt only when stdin is a real TTY.
 func consentInteractive(opts *installOptions, stdinIsTTY bool) bool {
-	return !(opts.defaults || opts.answersFile != "") && stdinIsTTY
+	headless := opts.defaults || opts.answersFile != ""
+	return !headless && stdinIsTTY
 }
 
 // reuseInstallSecrets pre-seeds draft with the secret fields from an existing
