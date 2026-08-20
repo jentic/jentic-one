@@ -44,6 +44,8 @@ def _ctx(sample_config_dict: dict[str, Any], **entitlement: Any) -> Context:
     cfg["entitlement"] = {
         "enabled": True,
         "product_code": "prod-abc",
+        # Default pricing model is contract, which requires the product ID.
+        "license_sku": "prod-id-abc",
         # Fast refresher cadence so the flip tests finish in milliseconds.
         "refresh_interval_seconds": 0,
         **entitlement,

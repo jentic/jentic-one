@@ -1010,26 +1010,31 @@ Marketplace values overlay carries the env form):
 ```yaml
 entitlement:
   enabled: true
-  product_code: "<from the Marketplace portal>"   # required when enabled
+  product_code: "<product code from the Marketplace portal>"  # required when enabled
   region: "us-east-1"
-  pricing_model: usage        # usage (default) | contract
+  pricing_model: contract     # contract (default — the live listing) | usage
   refresh_interval_seconds: 3600
   grace_period_seconds: 86400
-  # contract pricing only:
-  # license_sku: "<ProductSKU from the listing>"
-  # license_dimension: "<entitlement dimension name>"
+  # contract pricing (the live listing):
+  license_sku: "<product ID from the portal>"   # NOT the product code — the
+                                                # portal issues both; this is
+                                                # CheckoutLicense ProductSKU
+  license_dimensions: ["users", "executions"]   # the listing's dimensions;
+                                                # env form takes CSV
 ```
 
 Env form: `JENTIC__ENTITLEMENT__ENABLED=true`,
-`JENTIC__ENTITLEMENT__PRODUCT_CODE=…`, etc.
+`JENTIC__ENTITLEMENT__PRODUCT_CODE=…`,
+`JENTIC__ENTITLEMENT__LICENSE_SKU=…`,
+`JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS=users,executions`, etc.
 
 **IAM**: the task role (ECS/Fargate) or IRSA role (EKS) needs, depending on
 `pricing_model`:
 
 | Pricing model | Required permission |
 | ------------- | ------------------- |
+| `contract` (default) | `license-manager:CheckoutLicense` (+ `license-manager:GetLicense`, `license-manager:ListReceivedLicenses` for debugging) |
 | `usage` | `aws-marketplace:RegisterUsage` |
-| `contract` | `license-manager:CheckoutLicense` (+ `license-manager:GetLicense`, `license-manager:ListReceivedLicenses` for debugging) |
 
 Credentials resolve from the standard runtime sources — static
 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env, the ECS/Fargate container

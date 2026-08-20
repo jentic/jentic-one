@@ -573,7 +573,9 @@ def test_entitlement_defaults_off(config_file: Path):
     config = load_config(config_file)
     assert config.entitlement.enabled is False
     assert config.entitlement.product_code is None
-    assert config.entitlement.pricing_model == "usage"
+    # The live listing is contract-priced, hence the default.
+    assert config.entitlement.pricing_model == "contract"
+    assert config.entitlement.license_dimensions == []
 
 
 def test_entitlement_enabled_requires_product_code():
@@ -590,6 +592,8 @@ def test_entitlement_env_override_round_trip(config_file: Path):
     env = {
         "JENTIC__ENTITLEMENT__ENABLED": "true",
         "JENTIC__ENTITLEMENT__PRODUCT_CODE": "prod-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_SKU": "prod-id-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS": "users,executions",
         "JENTIC__ENTITLEMENT__REGION": "eu-west-1",
         "JENTIC__ENTITLEMENT__REFRESH_INTERVAL_SECONDS": "600",
     }
@@ -597,5 +601,7 @@ def test_entitlement_env_override_round_trip(config_file: Path):
         config = load_config(config_file)
     assert config.entitlement.enabled is True
     assert config.entitlement.product_code == "prod-abc123"
+    assert config.entitlement.license_sku == "prod-id-abc123"
+    assert config.entitlement.license_dimensions == ["users", "executions"]
     assert config.entitlement.region == "eu-west-1"
     assert config.entitlement.refresh_interval_seconds == 600

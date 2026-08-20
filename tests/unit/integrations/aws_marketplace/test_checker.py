@@ -45,7 +45,13 @@ def _checker(
     **entitlement: Any,
 ) -> EntitlementChecker:
     cfg = dict(sample_config_dict)
-    cfg["entitlement"] = {"enabled": True, "product_code": "prod-abc", **entitlement}
+    cfg["entitlement"] = {
+        "enabled": True,
+        "product_code": "prod-abc",
+        # Default pricing model is contract, which requires the product ID.
+        "license_sku": "prod-id-abc",
+        **entitlement,
+    }
     return EntitlementChecker(AppConfig.model_validate(cfg), client=client)
 
 

@@ -44,12 +44,17 @@ app:
   enabled: true
   image:
     repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>/jentic-one-app"
-  # Entitlement gate wiring (plan PR 4). DO NOT uncomment until the deployed
-  # image ships the entitlement config: AppConfig rejects unknown config
-  # sections (extra="forbid"), so these env vars crash older images at boot.
+  # Entitlement gate wiring (plan PR 4). The listing is contract-priced with
+  # dimensions `users` + `executions` (decided 2026-08-20); `contract` is the
+  # config default so only the IDs need filling in. DO NOT uncomment until the
+  # deployed image ships the entitlement config: AppConfig rejects unknown
+  # config sections (extra="forbid"), so these env vars crash older images at
+  # boot.
   # extraEnv:
   #   JENTIC__ENTITLEMENT__ENABLED: "true"
-  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product-code from the portal>"
+  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
 
 broker:
   enabled: true
@@ -57,7 +62,9 @@ broker:
     repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>/jentic-one-app"
   # extraEnv:  # same caveat as app.extraEnv above
   #   JENTIC__ENTITLEMENT__ENABLED: "true"
-  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product-code from the portal>"
+  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
 
 registry:
   enabled: false

@@ -45,6 +45,7 @@ def entitled_context(web_config: AppConfig) -> Context:
     config = web_config.model_copy(deep=True)
     config.entitlement.enabled = True
     config.entitlement.product_code = "prod-webtest"
+    config.entitlement.license_sku = "prod-id-webtest"  # contract default needs it
     return Context(config)
 
 

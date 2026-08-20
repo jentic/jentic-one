@@ -25,6 +25,9 @@ def _config(**overrides: object) -> EntitlementConfig:
         "enabled": True,
         "product_code": "prod-abc123",
         "region": "us-east-1",
+        # Transport-level tests use the simpler metering variant; contract
+        # tests override explicitly (the *config* default is "contract").
+        "pricing_model": "usage",
     }
     values.update(overrides)
     return EntitlementConfig.model_validate(values)
@@ -80,7 +83,11 @@ async def test_register_usage_request_shape(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.asyncio
 async def test_checkout_license_request_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     transport, seen = _capture(200)
-    config = _config(pricing_model="contract", license_sku="sku-1", license_dimension="Nodes")
+    config = _config(
+        pricing_model="contract",
+        license_sku="prod-id-1",
+        license_dimensions=["users", "executions"],
+    )
     client, _ = _client_pair(transport, config, monkeypatch)
 
     verdict = await client.check()
@@ -91,8 +98,11 @@ async def test_checkout_license_request_shape(monkeypatch: pytest.MonkeyPatch) -
     assert request.headers["x-amz-target"] == "AWSLicenseManager.CheckoutLicense"
     body = json.loads(request.content)
     assert body["CheckoutType"] == "PROVISIONAL"
-    assert body["ProductSKU"] == "sku-1"
-    assert body["Entitlements"] == [{"Name": "Nodes", "Unit": "None"}]
+    assert body["ProductSKU"] == "prod-id-1"
+    assert body["Entitlements"] == [
+        {"Name": "users", "Unit": "None"},
+        {"Name": "executions", "Unit": "None"},
+    ]
     assert body["ClientToken"]
 
 
@@ -131,7 +141,7 @@ async def test_error_type_verdict_mapping(
     )
     overrides: dict[str, object] = {"pricing_model": pricing_model}
     if pricing_model == "contract":
-        overrides["license_sku"] = "sku-1"
+        overrides["license_sku"] = "prod-id-1"
     client, _ = _client_pair(transport, _config(**overrides), monkeypatch)
 
     assert await client.check() is expected
@@ -192,7 +202,9 @@ def test_build_selects_variant_and_service() -> None:
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
 
     usage = build_license_client(_config(), http)
-    contract = build_license_client(_config(pricing_model="contract", license_sku="sku-1"), http)
+    contract = build_license_client(
+        _config(pricing_model="contract", license_sku="prod-id-1"), http
+    )
 
     assert isinstance(usage, MeteringLicenseClient)
     assert isinstance(contract, LicenseManagerClient)

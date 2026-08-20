@@ -642,17 +642,12 @@
           "title": "Grace Period Seconds",
           "type": "integer"
         },
-        "license_dimension": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "License Dimension"
+        "license_dimensions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "License Dimensions",
+          "type": "array"
         },
         "license_sku": {
           "anyOf": [
@@ -667,7 +662,7 @@
           "title": "License Sku"
         },
         "pricing_model": {
-          "default": "usage",
+          "default": "contract",
           "enum": [
             "usage",
             "contract"

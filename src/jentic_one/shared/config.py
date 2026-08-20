@@ -897,16 +897,25 @@ class EntitlementConfig(BaseModel):
     # the container product is created. Required whenever ``enabled``.
     product_code: str | None = None
     region: str = "us-east-1"
-    # Which paid listing model the check calls: ``usage`` → Metering Service
-    # ``RegisterUsage`` (hourly/usage pricing); ``contract`` → License Manager
-    # ``CheckoutLicense`` (contract pricing, needs ``license_sku``).
-    pricing_model: Literal["usage", "contract"] = "usage"
+    # Which paid listing model the check calls: ``contract`` → License Manager
+    # ``CheckoutLicense`` (needs ``license_sku``); ``usage`` → Metering Service
+    # ``RegisterUsage`` (hourly/usage pricing). The live listing is contract
+    # priced (decided 2026-08-20), hence the default; the usage variant is kept
+    # until the listing is public in case the model changes during review.
+    pricing_model: Literal["usage", "contract"] = "contract"
     refresh_interval_seconds: int = 3600
     grace_period_seconds: int = 86400
-    # Contract pricing only (License Manager); unused for usage pricing:
+    # Contract pricing only (License Manager); unused for usage pricing.
+    # This is the Marketplace **product ID** from the portal (CheckoutLicense
+    # ``ProductSKU``) — NOT the product code above; the portal issues both.
     license_sku: str | None = None
-    # Contract pricing only: the entitlement dimension name from the listing.
-    license_dimension: str | None = None
+    # Contract pricing only: the listing's entitlement dimension keys the gate
+    # checks out (all must be granted by the buyer's license). The live listing
+    # defines ``users`` and ``executions``. Accepts a YAML list or a
+    # comma-separated string (env: JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS).
+    license_dimensions: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
+        default_factory=list
+    )
     # Test-only endpoint override (same posture as ``TelemetryConfig.endpoint``):
     # points the client at a stub server for deployed-gate rehearsal —
     # moto/LocalStack do not implement these AWS APIs. Not for operators.

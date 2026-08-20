@@ -195,7 +195,14 @@ class MeteringLicenseClient(_BaseLicenseClient):
 
 
 class LicenseManagerClient(_BaseLicenseClient):
-    """Contract pricing: License Manager ``CheckoutLicense`` (provisional)."""
+    """Contract pricing: License Manager ``CheckoutLicense`` (provisional).
+
+    ``ProductSKU`` is the Marketplace **product ID** from the portal
+    (``config.license_sku``), not the product code. The checkout lists every
+    configured dimension (``config.license_dimensions`` — the live listing
+    defines ``users`` and ``executions``); License Manager grants the checkout
+    only if the buyer's license covers all of them, so one call gates on both.
+    """
 
     service = "license-manager"
     target = "AWSLicenseManager.CheckoutLicense"
@@ -205,9 +212,14 @@ class LicenseManagerClient(_BaseLicenseClient):
         return f"https://license-manager.{self._config.region}.amazonaws.com/"
 
     def _body(self) -> dict[str, object]:
-        entitlements: list[dict[str, str]] = []
-        if self._config.license_dimension:
-            entitlements.append({"Name": self._config.license_dimension, "Unit": "None"})
+        # "Unit": "None" matches boolean-style entitlements. The live listing's
+        # counted dimensions may instead require Unit "Count" + a Value — verify
+        # against `aws license-manager list-received-licenses` from the
+        # subscribed test account during the ENTITLEMENT_REAL_AWS smoke and
+        # adjust here if the checkout rejects the shape.
+        entitlements: list[dict[str, str]] = [
+            {"Name": dimension, "Unit": "None"} for dimension in self._config.license_dimensions
+        ]
         return {
             "CheckoutType": "PROVISIONAL",
             "ProductSKU": self._config.license_sku,

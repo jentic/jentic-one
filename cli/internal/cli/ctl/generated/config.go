@@ -983,8 +983,8 @@ type EntitlementConfig struct {
 	// GracePeriodSeconds corresponds to the JSON schema field "grace_period_seconds".
 	GracePeriodSeconds int `json:"grace_period_seconds,omitempty,omitzero" yaml:"grace_period_seconds,omitempty" mapstructure:"grace_period_seconds,omitempty"`
 
-	// LicenseDimension corresponds to the JSON schema field "license_dimension".
-	LicenseDimension interface{} `json:"license_dimension,omitempty,omitzero" yaml:"license_dimension,omitempty" mapstructure:"license_dimension,omitempty"`
+	// LicenseDimensions corresponds to the JSON schema field "license_dimensions".
+	LicenseDimensions []string `json:"license_dimensions,omitempty,omitzero" yaml:"license_dimensions,omitempty" mapstructure:"license_dimensions,omitempty"`
 
 	// LicenseSku corresponds to the JSON schema field "license_sku".
 	LicenseSku interface{} `json:"license_sku,omitempty,omitzero" yaml:"license_sku,omitempty" mapstructure:"license_sku,omitempty"`
@@ -1004,8 +1004,6 @@ type EntitlementConfig struct {
 }
 
 type EntitlementConfigEndpoint_0 *string
-
-type EntitlementConfigLicenseDimension_0 *string
 
 type EntitlementConfigLicenseSku_0 *string
 
@@ -1059,7 +1057,7 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 		plain.GracePeriodSeconds = 86400
 	}
 	if v, ok := raw["pricing_model"]; !ok || v == nil {
-		plain.PricingModel = "usage"
+		plain.PricingModel = "contract"
 	}
 	if v, ok := raw["refresh_interval_seconds"]; !ok || v == nil {
 		plain.RefreshIntervalSeconds = 3600
