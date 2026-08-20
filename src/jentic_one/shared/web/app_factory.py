@@ -367,14 +367,16 @@ async def _start_telemetry(
     async with ctx.admin_db.transaction() as session:
         if created:
             # The OS family rides only on this one-time event (see HostOs) —
-            # every later event carries just the opaque id.
+            # every later event carries just the opaque id. Prefer the
+            # install-time value the CLI stamped on the host; in Docker,
+            # runtime detection would report the container's Linux.
             await emit_event_best_effort(
                 session,
                 type=EventType.INSTANCE_INITIALIZED,
                 severity=EventSeverity.INFO,
                 summary="Instance initialized",
                 created_by=None,
-                tags={HostOs.current()},
+                tags={HostOs.resolve(cfg.host_os)},
             )
         await emit_event_best_effort(
             session,

@@ -21,6 +21,7 @@ from jentic_one.shared.config import (
     EgressConfig,
     EncryptionConfig,
     RuntimeConfig,
+    TelemetryConfig,
     _csv_to_list,
     _deep_merge,
     _env_overrides,
@@ -563,3 +564,29 @@ def test_egress_empty_string_produces_empty_list():
 def test_csv_to_list_rejects_non_string_non_list():
     with pytest.raises(TypeError, match="expected list or comma-separated string"):
         _csv_to_list(123)
+
+
+def test_telemetry_host_os_defaults_to_none():
+    """Hand-rolled configs (no CLI stamp) leave host_os unset → runtime fallback."""
+    assert TelemetryConfig().host_os is None
+
+
+def test_telemetry_host_os_from_yaml(tmp_path: Path):
+    minimal = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "telemetry": {"enabled": True, "host_os": "darwin"},
+    }
+    path = tmp_path / "telemetry.yaml"
+    path.write_text(yaml.dump(minimal))
+    config = load_config(path)
+    assert config.telemetry.host_os == "darwin"
+
+
+def test_telemetry_host_os_env_override(config_file: Path):
+    with patch.dict(os.environ, {"JENTIC__TELEMETRY__HOST_OS": "windows"}):
+        config = load_config(config_file)
+    assert config.telemetry.host_os == "windows"

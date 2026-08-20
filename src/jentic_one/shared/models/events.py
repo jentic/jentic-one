@@ -192,10 +192,15 @@ class HostOs(StrEnum):
 
     Attached only to ``instance_initialized`` — the one-time event emitted the
     moment the opaque instance id is first created — so the OS rides on a single
-    request per install and never again. ``current()`` collapses anything
-    unrecognised to ``OTHER``, so no free-form platform string can reach the
-    wire. Note: inside a container this reports the container's OS (effectively
-    always ``linux``), not the host machine's.
+    request per install and never again.
+
+    Detection order matters because the recommended install runs the backend in
+    Docker, where ``platform.system()`` reports the *container's* kernel
+    (always Linux), not the operator's machine. The onboarding CLI runs on the
+    host, so it stamps ``telemetry.host_os`` (from Go's ``runtime.GOOS``) into
+    the generated config; ``resolve`` prefers that and only falls back to
+    runtime detection for hand-rolled configs. Anything unrecognised collapses
+    to ``OTHER``, so no free-form platform string can reach the wire.
     """
 
     LINUX = "linux"
@@ -209,6 +214,22 @@ class HostOs(StrEnum):
         system = platform.system().lower()
         try:
             return cls(system)
+        except ValueError:
+            return cls.OTHER
+
+    @classmethod
+    def resolve(cls, configured: str | None) -> "HostOs":
+        """Prefer the install-time config value, else detect at runtime.
+
+        ``configured`` is the raw ``telemetry.host_os`` string; a value outside
+        the closed set degrades to OTHER rather than falling back to runtime
+        detection — a stamped-but-garbled value must not silently become the
+        container's OS.
+        """
+        if configured is None or configured == "":
+            return cls.current()
+        try:
+            return cls(configured.lower())
         except ValueError:
             return cls.OTHER
 

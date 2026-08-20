@@ -819,6 +819,13 @@ class TelemetryConfig(BaseModel):
 
     enabled: bool = False
     instance_id: str | None = None
+    host_os: str | None = None
+    """Host OS family stamped at install time by the onboarding CLI (from Go's
+    ``runtime.GOOS``): the recommended install runs the app in Docker, where
+    runtime detection would always report the container's Linux instead of the
+    operator's machine. ``None`` (hand-rolled config) falls back to runtime
+    detection. Consumed once, on the one-time ``instance_initialized`` telemetry
+    event; values outside the closed ``HostOs`` enum degrade to ``other``."""
     endpoint: str = "https://api.jentic.com/api/v1"
     """Ingest endpoint for telemetry events. Not intended for operator override —
     this is a hardcoded Jentic service URL. Exposed in config only for internal

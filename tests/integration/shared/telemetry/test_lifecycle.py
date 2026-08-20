@@ -38,6 +38,10 @@ pytestmark = pytest.mark.integration
 _ENABLED_TELEMETRY = TelemetryConfig(
     enabled=True,
     instance_id="lifecycle-test-instance",
+    # Deliberately different from this machine's real OS: proves the CLI's
+    # install-time stamp wins over runtime detection (the Docker case, where
+    # detection would report the container's Linux).
+    host_os="windows",
     endpoint="http://127.0.0.1:1",
     flush_interval_s=3600.0,
 )
@@ -90,14 +94,15 @@ async def test_first_startup_emits_initialized_and_booted_once_each(
     assert await _count_events(admin_db, EventType.INSTANCE_INITIALIZED) == 1
     assert await _count_events(admin_db, EventType.INSTANCE_BOOTED) == 1
 
-    # The one-time event carries the OS family tag (and only that) — the OS is
+    # The one-time event carries the OS family tag (and only that) — sourced
+    # from the config stamp, not this machine's runtime platform. The OS is
     # never attached to any other event.
     async with admin_db.session() as session:
         result = await session.execute(
             select(Event).where(Event.type == EventType.INSTANCE_INITIALIZED)
         )
         initialized = result.scalar_one()
-        assert initialized.data["tags"] == [str(HostOs.current())]
+        assert initialized.data["tags"] == [str(HostOs.WINDOWS)]
         booted = await session.execute(select(Event).where(Event.type == EventType.INSTANCE_BOOTED))
         assert not (booted.scalar_one().data or {}).get("tags")
 

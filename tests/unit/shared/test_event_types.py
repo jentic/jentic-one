@@ -51,6 +51,33 @@ def test_host_os_current_on_this_machine_is_a_member() -> None:
     assert HostOs.current() in set(HostOs)
 
 
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        # Install-time CLI stamp (runtime.GOOS values) wins over runtime detection.
+        ("linux", HostOs.LINUX),
+        ("darwin", HostOs.DARWIN),
+        ("windows", HostOs.WINDOWS),
+        ("Darwin", HostOs.DARWIN),
+        # A stamped-but-unknown value degrades to OTHER — never silently falls
+        # back to the container's OS.
+        ("freebsd", HostOs.OTHER),
+        ("garbage!!", HostOs.OTHER),
+    ],
+)
+def test_host_os_resolve_prefers_config_value(configured: str, expected: HostOs) -> None:
+    """resolve() uses the install-time config stamp when present."""
+    with patch("jentic_one.shared.models.events.platform.system", return_value="Linux"):
+        assert HostOs.resolve(configured) is expected
+
+
+@pytest.mark.parametrize("absent", [None, ""])
+def test_host_os_resolve_falls_back_to_runtime_detection(absent: str | None) -> None:
+    """Hand-rolled configs without a stamp fall back to platform.system()."""
+    with patch("jentic_one.shared.models.events.platform.system", return_value="Darwin"):
+        assert HostOs.resolve(absent) is HostOs.DARWIN
+
+
 def test_host_os_allowed_only_on_instance_initialized() -> None:
     """HostOs is the tag type for the one-time instance_initialized event only."""
     assert EVENT_TAGS[EventType.INSTANCE_INITIALIZED] is HostOs

@@ -3,6 +3,7 @@ package install
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strconv"
 
 	"gopkg.in/yaml.v3"
@@ -132,9 +133,25 @@ type searchOut struct {
 // from this generated jentic-one.yaml, so an absent block would leave telemetry
 // OFF regardless of what the user answered. instance_id is written only when the
 // user opted in (seeding the durable admin-DB identity row on first boot).
+// host_os records the operator's machine (runtime.GOOS) at install time — the
+// recommended install runs the app in Docker, where the backend's own runtime
+// detection would always see the container's Linux instead of the host.
 type telemetryOut struct {
 	Enabled    bool   `yaml:"enabled"`
 	InstanceID string `yaml:"instance_id,omitempty"`
+	HostOS     string `yaml:"host_os,omitempty"`
+}
+
+// hostOSFor returns the operator's OS family for the telemetry block, or ""
+// (omitted) when the user opted out — an opted-out config carries no
+// environment detail at all, mirroring how instance_id is only written on
+// consent. runtime.GOOS values ("linux", "darwin", "windows") match the
+// backend's closed HostOs enum; anything else degrades to "other" backend-side.
+func hostOSFor(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	return runtime.GOOS
 }
 
 type configOut struct {
@@ -270,6 +287,7 @@ func (d *Draft) toConfig() configOut {
 		Telemetry: telemetryOut{
 			Enabled:    d.TelemetryEnabled,
 			InstanceID: d.TelemetryInstanceID,
+			HostOS:     hostOSFor(d.TelemetryEnabled),
 		},
 	}
 
