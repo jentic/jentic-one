@@ -617,6 +617,90 @@
       "title": "EncryptionKey",
       "type": "object"
     },
+    "EntitlementConfig": {
+      "description": "AWS Marketplace license gate for the Marketplace-listed deployment.\n\nPowers the entitlement checker (``integrations/aws_marketplace``): on\nstartup — and every ``refresh_interval_seconds`` after — the process asks\nAWS whether this deployment's Marketplace subscription is still active, and\nlocks the HTTP surface (503, health excepted) when it definitively is not.\nDefaults to **OFF**: a non-Marketplace install that omits this block runs\nexactly as before — nothing is wired, no AWS call is ever made.\n\nFailure posture: an *unreachable* or *erroring* AWS API is never grounds\nfor lockout by itself — the last definitive verdict holds for\n``grace_period_seconds`` before the gate fails closed. Only an explicit\n\"not entitled\" answer from AWS locks out immediately.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        },
+        "grace_period_seconds": {
+          "default": 86400,
+          "title": "Grace Period Seconds",
+          "type": "integer"
+        },
+        "license_dimension": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License Dimension"
+        },
+        "license_sku": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License Sku"
+        },
+        "pricing_model": {
+          "default": "usage",
+          "enum": [
+            "usage",
+            "contract"
+          ],
+          "title": "Pricing Model",
+          "type": "string"
+        },
+        "product_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Code"
+        },
+        "refresh_interval_seconds": {
+          "default": 3600,
+          "title": "Refresh Interval Seconds",
+          "type": "integer"
+        },
+        "region": {
+          "default": "us-east-1",
+          "title": "Region",
+          "type": "string"
+        }
+      },
+      "title": "EntitlementConfig",
+      "type": "object"
+    },
     "IdempotencyConfig": {
       "description": "``Idempotency-Key`` replay store (§07, PR-E/1 slim).\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory\ndefault; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are later §07 slices.",
       "properties": {
@@ -1404,6 +1488,9 @@
     },
     "databases": {
       "$ref": "#/$defs/DatabasesConfig"
+    },
+    "entitlement": {
+      "$ref": "#/$defs/EntitlementConfig"
     },
     "ingest": {
       "$ref": "#/$defs/IngestConfig"
