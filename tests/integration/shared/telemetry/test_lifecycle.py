@@ -94,17 +94,17 @@ async def test_first_startup_emits_initialized_and_booted_once_each(
     assert await _count_events(admin_db, EventType.INSTANCE_INITIALIZED) == 1
     assert await _count_events(admin_db, EventType.INSTANCE_BOOTED) == 1
 
-    # The one-time event carries the OS family tag (and only that) — sourced
+    # The per-boot event carries the OS family tag (and only that) — sourced
     # from the config stamp, not this machine's runtime platform. The OS is
     # never attached to any other event.
     async with admin_db.session() as session:
-        result = await session.execute(
+        result = await session.execute(select(Event).where(Event.type == EventType.INSTANCE_BOOTED))
+        booted = result.scalar_one()
+        assert booted.data["tags"] == [str(HostOs.WINDOWS)]
+        initialized = await session.execute(
             select(Event).where(Event.type == EventType.INSTANCE_INITIALIZED)
         )
-        initialized = result.scalar_one()
-        assert initialized.data["tags"] == [str(HostOs.WINDOWS)]
-        booted = await session.execute(select(Event).where(Event.type == EventType.INSTANCE_BOOTED))
-        assert not (booted.scalar_one().data or {}).get("tags")
+        assert not (initialized.scalar_one().data or {}).get("tags")
 
 
 async def test_second_startup_reboots_without_reinitializing(
@@ -124,6 +124,13 @@ async def test_second_startup_reboots_without_reinitializing(
     # The identity row is the dedupe: only the first boot performs the insert.
     assert await _count_events(admin_db, EventType.INSTANCE_INITIALIZED) == 1
     assert await _count_events(admin_db, EventType.INSTANCE_BOOTED) == 2
+
+    # The OS tag rides on EVERY boot (self-healing: a lost first request or a
+    # config moved to another machine is corrected on the next startup).
+    async with admin_db.session() as session:
+        result = await session.execute(select(Event).where(Event.type == EventType.INSTANCE_BOOTED))
+        for booted in result.scalars():
+            assert booted.data["tags"] == [str(HostOs.WINDOWS)]
 
 
 async def test_shutdown_drains_the_flush_queue(

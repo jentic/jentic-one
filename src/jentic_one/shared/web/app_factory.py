@@ -366,24 +366,26 @@ async def _start_telemetry(
 
     async with ctx.admin_db.transaction() as session:
         if created:
-            # The OS family rides only on this one-time event (see HostOs) —
-            # every later event carries just the opaque id. Prefer the
-            # install-time value the CLI stamped on the host; in Docker,
-            # runtime detection would report the container's Linux.
             await emit_event_best_effort(
                 session,
                 type=EventType.INSTANCE_INITIALIZED,
                 severity=EventSeverity.INFO,
                 summary="Instance initialized",
                 created_by=None,
-                tags={HostOs.resolve(cfg.host_os)},
             )
+        # The OS family rides on every boot event (see HostOs) so the
+        # dimension self-heals: a lost POST or a config moved to another
+        # machine is corrected on the next startup, matching how comparable
+        # products (n8n, GitLab, Grafana) report environment facts. Prefer
+        # the install-time value the CLI stamped on the host; in Docker,
+        # runtime detection would report the container's Linux.
         await emit_event_best_effort(
             session,
             type=EventType.INSTANCE_BOOTED,
             severity=EventSeverity.INFO,
             summary="Instance booted",
             created_by=None,
+            tags={HostOs.resolve(cfg.host_os)},
         )
 
     return loop, task, client

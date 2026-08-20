@@ -188,11 +188,15 @@ class ImportFailReason(StrEnum):
 
 
 class HostOs(StrEnum):
-    """Closed-enum tag naming the host OS family, sent exactly once.
+    """Closed-enum tag naming the host OS family, sent once per boot.
 
-    Attached only to ``instance_initialized`` — the one-time event emitted the
-    moment the opaque instance id is first created — so the OS rides on a single
-    request per install and never again.
+    Attached only to ``instance_booted`` — the lifecycle event emitted on every
+    startup — so the OS rides on one request per boot under the same opaque
+    instance id, and on no other event. Per-boot (rather than once-ever)
+    matches how comparable products report environment facts (n8n's "Instance
+    started", GitLab's Service Ping, Grafana's usage report) and lets the
+    dimension self-heal: a lost request or a config moved to another machine
+    is corrected on the next boot.
 
     Detection order matters because the recommended install runs the backend in
     Docker, where ``platform.system()`` reports the *container's* kernel
@@ -249,5 +253,5 @@ EVENT_TAGS: dict[str, type[StrEnum]] = {
     EventType.CREDENTIAL_REFRESH_FAILED: ErrorSource,
     EventType.IMPORT_COMPLETED: SpecSource,
     EventType.IMPORT_FAILED: ImportFailReason,
-    EventType.INSTANCE_INITIALIZED: HostOs,
+    EventType.INSTANCE_BOOTED: HostOs,
 }

@@ -273,7 +273,7 @@ func TestRenderTelemetryOptedIn(t *testing.T) {
 		t.Errorf("telemetry.instance_id = %v, want inst-abc-123", tel["instance_id"])
 	}
 	// The CLI runs on the operator's machine, so runtime.GOOS here IS the host
-	// OS — stamping it is what keeps the backend's one-time OS report accurate
+	// OS — stamping it is what keeps the backend's per-boot OS report accurate
 	// when the app itself runs inside Docker (where it would detect linux).
 	if tel["host_os"] != runtime.GOOS {
 		t.Errorf("telemetry.host_os = %v, want %v", tel["host_os"], runtime.GOOS)

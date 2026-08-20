@@ -820,8 +820,8 @@ class TelemetryConfig(BaseModel):
     the prompt, not the code default. ``instance_id`` seeds the durable admin-DB
     identity row on first startup for opted-in instances. ``host_os`` is the
     operator's OS family, stamped by the CLI at install time so a Docker-run
-    instance reports the host's OS rather than the container's; sent exactly once,
-    on the one-time ``instance_initialized`` event.
+    instance reports the host's OS rather than the container's; sent once per
+    boot, on the ``instance_booted`` event.
     """
 
     enabled: bool = False
@@ -831,7 +831,7 @@ class TelemetryConfig(BaseModel):
     ``runtime.GOOS``): the recommended install runs the app in Docker, where
     runtime detection would always report the container's Linux instead of the
     operator's machine. ``None`` (hand-rolled config) falls back to runtime
-    detection. Consumed once, on the one-time ``instance_initialized`` telemetry
+    detection. Consumed once per boot, on the ``instance_booted`` telemetry
     event; values outside the closed ``HostOs`` enum degrade to ``other``."""
     endpoint: str = "https://api.jentic.com/api/v1"
     """Ingest endpoint for telemetry events. Not intended for operator override —

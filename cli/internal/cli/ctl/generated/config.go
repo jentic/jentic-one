@@ -1854,8 +1854,8 @@ func (j *StateBackendConfig) UnmarshalJSON(value []byte) error {
 // the prompt, not the code default. “instance_id“ seeds the durable admin-DB
 // identity row on first startup for opted-in instances. “host_os“ is the
 // operator's OS family, stamped by the CLI at install time so a Docker-run
-// instance reports the host's OS rather than the container's; sent exactly once,
-// on the one-time “instance_initialized“ event.
+// instance reports the host's OS rather than the container's; sent once per
+// boot, on the “instance_booted“ event.
 type TelemetryConfig struct {
 	// Enabled corresponds to the JSON schema field "enabled".
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`

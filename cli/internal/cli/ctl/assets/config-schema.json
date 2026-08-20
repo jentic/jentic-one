@@ -1177,7 +1177,7 @@
       "type": "object"
     },
     "TelemetryConfig": {
-      "description": "Anonymous product-telemetry settings (issue #446).\n\nDefaults to **OFF**: an instance whose config omits this block (non-onboarded\nor hand-rolled) sends nothing. The onboarding CLI writes ``enabled``\nexplicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in\nthe prompt, not the code default. ``instance_id`` seeds the durable admin-DB\nidentity row on first startup for opted-in instances. ``host_os`` is the\noperator's OS family, stamped by the CLI at install time so a Docker-run\ninstance reports the host's OS rather than the container's; sent exactly once,\non the one-time ``instance_initialized`` event.",
+      "description": "Anonymous product-telemetry settings (issue #446).\n\nDefaults to **OFF**: an instance whose config omits this block (non-onboarded\nor hand-rolled) sends nothing. The onboarding CLI writes ``enabled``\nexplicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in\nthe prompt, not the code default. ``instance_id`` seeds the durable admin-DB\nidentity row on first startup for opted-in instances. ``host_os`` is the\noperator's OS family, stamped by the CLI at install time so a Docker-run\ninstance reports the host's OS rather than the container's; sent once per\nboot, on the ``instance_booted`` event.",
       "properties": {
         "enabled": {
           "default": false,

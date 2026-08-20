@@ -81,8 +81,8 @@ def test_host_os_resolve_falls_back_to_runtime_detection(absent: str | None) -> 
         assert HostOs.resolve(absent) is HostOs.DARWIN
 
 
-def test_host_os_allowed_only_on_instance_initialized() -> None:
-    """HostOs is the tag type for the one-time instance_initialized event only."""
-    assert EVENT_TAGS[EventType.INSTANCE_INITIALIZED] is HostOs
-    others = {k: v for k, v in EVENT_TAGS.items() if k != EventType.INSTANCE_INITIALIZED}
+def test_host_os_allowed_only_on_instance_booted() -> None:
+    """HostOs is the tag type for the per-boot instance_booted event only."""
+    assert EVENT_TAGS[EventType.INSTANCE_BOOTED] is HostOs
+    others = {k: v for k, v in EVENT_TAGS.items() if k != EventType.INSTANCE_BOOTED}
     assert HostOs not in others.values()

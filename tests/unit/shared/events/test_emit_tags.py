@@ -91,8 +91,8 @@ async def test_all_valid_tags_forwarded_to_sink() -> None:
 
 
 @pytest.mark.asyncio
-async def test_host_os_tag_stored_and_forwarded_on_instance_initialized() -> None:
-    """The one-time instance_initialized event carries the HostOs tag to the sink."""
+async def test_host_os_tag_stored_and_forwarded_on_instance_booted() -> None:
+    """The per-boot instance_booted event carries the HostOs tag to the sink."""
     sink = _RecordingSink(enabled=True)
     create = _fake_create()
 
@@ -102,16 +102,16 @@ async def test_host_os_tag_stored_and_forwarded_on_instance_initialized() -> Non
     ):
         await emit_event(
             session=AsyncMock(),
-            type=EventType.INSTANCE_INITIALIZED,
+            type=EventType.INSTANCE_BOOTED,
             severity=EventSeverity.INFO,
-            summary="Instance initialized",
+            summary="Instance booted",
             created_by=None,
             tags={HostOs.current()},
         )
 
     stored_data = create.call_args.kwargs["data"]
     assert stored_data["tags"] == [str(HostOs.current())]
-    assert sink.records == [(TelemetryEventName.INSTANCE_INITIALIZED, (HostOs.current(),), None)]
+    assert sink.records == [(TelemetryEventName.INSTANCE_BOOTED, (HostOs.current(),), None)]
 
 
 @pytest.mark.asyncio

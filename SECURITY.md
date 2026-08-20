@@ -46,8 +46,8 @@ Jentic One is designed so that **credentials never leave the data plane**:
   is **opt-in** (`telemetry.enabled: true`); when enabled it sends a small, fixed,
   closed-schema event set — `{id, version, event, actor_type?, tags?, ts}`, where
   `event`/`actor_type` are fixed enums and `tags` are fixed labels (e.g. the OS
-  family `linux`/`darwin`/`windows`/`other`, sent once on the one-time
-  `instance_initialized` event) — with no credentials, request data, or PII.
+  family `linux`/`darwin`/`windows`/`other`, sent once per boot on the
+  `instance_booted` event) — with no credentials, request data, or PII.
   Observability exporters are self-hosted.
 
 > **Most important operator guidance:** the "credentials never leave the data
