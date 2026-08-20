@@ -223,7 +223,7 @@ func TestSbplPathEscaping(t *testing.T) {
 // agent socket and act as the operator.
 func TestConfineLaunchCmdUnsetsSensitiveEnv(t *testing.T) {
 	cmd := ConfineLaunchCmd(context.Background(), "alice-local-agent", "/usr/bin/claude",
-		"", "/Users/Shared/alice-local-agent", "", nil, nil)
+		"", "/Users/Shared/alice-local-agent", nil, nil)
 	// The snippet is the last sudo arg (…-c <snippet>).
 	snippet := cmd.Args[len(cmd.Args)-1]
 	for _, v := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO"} {
@@ -244,7 +244,7 @@ func TestConfineLaunchCmdUnsetsSensitiveEnv(t *testing.T) {
 // matches the sudoers NOPASSWD rule exactly.
 func TestConfineLaunchCmdUsesAbsoluteShell(t *testing.T) {
 	cmd := ConfineLaunchCmd(context.Background(), "alice-local-agent", "/usr/bin/claude",
-		"", "/Users/Shared/alice-local-agent", "", nil, nil)
+		"", "/Users/Shared/alice-local-agent", nil, nil)
 
 	// argv shape: sudo -u <user> -H <shell> -c <snippet> — the shell is the
 	// third-to-last arg and must be the absolute agentLaunchShell.
@@ -596,8 +596,18 @@ func TestConfinementAvailableAgreesWithMissingPrereqs(t *testing.T) {
 // of the confinement model) and reads the sysctl value when it is present.
 func TestUnprivilegedUserNSProbe(t *testing.T) {
 	orig := usernsClonePath
-	t.Cleanup(func() { usernsClonePath = orig })
+	origAA := apparmorUserNSRestrictPath
+	origMax := maxUserNamespacesPath
+	t.Cleanup(func() {
+		usernsClonePath = orig
+		apparmorUserNSRestrictPath = origAA
+		maxUserNamespacesPath = origMax
+	})
 	dir := t.TempDir()
+	// Point the two Ubuntu-24.04 knobs at absent paths so this test isolates the
+	// legacy clone knob (M2 knobs get their own test below); absent = no opinion.
+	apparmorUserNSRestrictPath = filepath.Join(dir, "no-apparmor")
+	maxUserNamespacesPath = filepath.Join(dir, "no-max")
 
 	// Knob absent → enabled (not gated on this kernel).
 	usernsClonePath = filepath.Join(dir, "does-not-exist")
@@ -630,6 +640,65 @@ func TestUnprivilegedUserNSProbe(t *testing.T) {
 	}
 	if unprivilegedUserNSEnabled() {
 		t.Error("an unreadable knob must fail closed (treated as disabled)")
+	}
+}
+
+// TestUnprivilegedUserNSProbeAppArmorAndMax pins M2 (review round-3 #6): the
+// probe must also honour the Ubuntu 23.10+/24.04 AppArmor restriction and the
+// max_user_namespaces cap, which the legacy unprivileged_userns_clone knob is
+// blind to. A box where the clone knob is absent/enabled but AppArmor restricts
+// (or the cap is 0) must report unavailable so the operator gets the curated
+// prereq message instead of a raw bwrap denial.
+func TestUnprivilegedUserNSProbeAppArmorAndMax(t *testing.T) {
+	orig := usernsClonePath
+	origAA := apparmorUserNSRestrictPath
+	origMax := maxUserNamespacesPath
+	t.Cleanup(func() {
+		usernsClonePath = orig
+		apparmorUserNSRestrictPath = origAA
+		maxUserNamespacesPath = origMax
+	})
+	dir := t.TempDir()
+
+	// Baseline: clone absent, AppArmor absent, max absent → enabled.
+	usernsClonePath = filepath.Join(dir, "clone-absent")
+	apparmorUserNSRestrictPath = filepath.Join(dir, "aa-absent")
+	maxUserNamespacesPath = filepath.Join(dir, "max-absent")
+	if !unprivilegedUserNSEnabled() {
+		t.Fatal("clone/AppArmor/max all absent should be enabled")
+	}
+
+	// AppArmor restriction = 1 disables it, even with the legacy knob absent —
+	// this is the exact Ubuntu 24.04 case the legacy probe missed.
+	apparmorUserNSRestrictPath = filepath.Join(dir, "aa")
+	if err := os.WriteFile(apparmorUserNSRestrictPath, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if unprivilegedUserNSEnabled() {
+		t.Error("apparmor_restrict_unprivileged_userns=1 must disable (Ubuntu 24.04)")
+	}
+	// AppArmor restriction = 0 → no opinion (back to enabled).
+	if err := os.WriteFile(apparmorUserNSRestrictPath, []byte("0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !unprivilegedUserNSEnabled() {
+		t.Error("apparmor_restrict_unprivileged_userns=0 must not disable")
+	}
+
+	// max_user_namespaces = 0 disables outright.
+	maxUserNamespacesPath = filepath.Join(dir, "max")
+	if err := os.WriteFile(maxUserNamespacesPath, []byte("0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if unprivilegedUserNSEnabled() {
+		t.Error("max_user_namespaces=0 must disable")
+	}
+	// A positive cap → no opinion.
+	if err := os.WriteFile(maxUserNamespacesPath, []byte("15000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !unprivilegedUserNSEnabled() {
+		t.Error("a positive max_user_namespaces must not disable")
 	}
 }
 

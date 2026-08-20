@@ -99,6 +99,7 @@ func (d *Draft) sourceSteps(configPath string, setup SetupState) []Step {
 	// unless a live probe found an admin already exists (re-install over an
 	// existing DB), in which case sign-in is the next step instead.
 	steps = append(steps, firstAdminStep(setup, d.BaseURL()))
+	steps = append(steps, connectAgentStep(d.BaseURL()))
 	return steps
 }
 
@@ -136,7 +137,23 @@ func (d *Draft) dockerSteps(setup SetupState) []Step {
 	// No-credential first-run applies to the Docker path too: create the first
 	// admin once the stack is up (or sign in if the DB already has one).
 	steps = append(steps, firstAdminStep(setup, d.BaseURL()))
+	steps = append(steps, connectAgentStep(d.BaseURL()))
 	return steps
+}
+
+// connectAgentStep tells the operator how to attach an agent to the install they
+// just stood up. It uses d.BaseURL() (always 127.0.0.1, never localhost) because
+// the token-exchange audience is an exact-string match against the backend's
+// canonical_base_url — `--url http://localhost:...` would fail with invalid_grant.
+// register also seeds the environment's broker_url for a loopback install, so
+// `jentic execute` works without any extra broker flags.
+func connectAgentStep(baseURL string) Step {
+	return Step{
+		Title: "Connect an agent (use 127.0.0.1, not localhost)",
+		Commands: []string{
+			"jentic register --url " + baseURL,
+		},
+	}
 }
 
 // FirstRunNote is the post-install reminder for the no-credential first-run

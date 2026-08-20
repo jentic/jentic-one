@@ -161,6 +161,25 @@ JENTIC_INSTALL_DIR="${JENTIC_INSTALL_DIR:-$HOME/.jentic/bin}"
 JENTIC_GO_VERSION="${JENTIC_GO_VERSION:-1.26.2}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
+# JENTIC_INSTALL_METHOD selects how the binaries are obtained:
+#   auto   (default) prefer a verified prebuilt download when the resolved ref is
+#          a published release tag with matching assets; otherwise build from
+#          source (forks / dev refs / no assets).
+#   binary force the download path; error out if no matching release asset.
+#   source force the from-source build (the historical behaviour).
+JENTIC_INSTALL_METHOD="${JENTIC_INSTALL_METHOD:-auto}"
+
+# JENTIC_INSTALL_BINARIES selects which binaries the download path fetches:
+#   jentic (default for downloads) the agent CLI only — most users need only this.
+#   both   also fetch jenticctl (installer/lifecycle). The from-source path always
+#          builds both regardless of this knob.
+JENTIC_INSTALL_BINARIES="${JENTIC_INSTALL_BINARIES:-jentic}"
+
+# cosign keyless-signing identity, mirrored from docs/releasing.md and the Go
+# updater (cli/internal/update/download.go). Used to verify checksums.txt.sig.
+COSIGN_CERT_IDENTITY_REGEXP="https://github.com/${JENTIC_REPO}/.*"
+COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+
 # Minimum Go version required to build the CLI (mirrors the `go` directive in
 # cli/go.mod). Keep this in sync with that directive.
 GO_MIN_MAJOR=1
@@ -172,6 +191,10 @@ GO_MIN_MINOR=25
 CTL_BINARY="jenticctl"
 API_BINARY="jentic"
 BINARY_NAMES=("$CTL_BINARY" "$API_BINARY")
+# INSTALL_SET is the set actually installed/linked/verified this run. The source
+# path builds both; the download path narrows it to the selected binaries (see
+# download_selected_binaries). Populated by main() before install_binary.
+INSTALL_SET=("$CTL_BINARY" "$API_BINARY")
 TOOLCHAIN_DIR="$HOME/.jentic/toolchain"
 WORKDIR=""
 STATE_DIR=""
@@ -317,12 +340,34 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
+# check_prereqs probes ALL base tools and reports the full missing set in one
+# failure, rather than dying on the first (so a user with two missing tools
+# doesn't have to re-run to discover the second).
 check_prereqs() {
-  need git
-  need curl
-  need tar
-  need mktemp
-  need uname
+  local missing="" tool
+  for tool in git curl tar mktemp uname; do
+    command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+  done
+  if [ -n "$missing" ]; then
+    die "required command(s) not found:$missing"
+  fi
+}
+
+# plan_summary prints a short "here's what this will do" preamble before any
+# download or build, mirroring the RenderPreflight checklist `jenticctl install`
+# shows. It states the from-source reality and warns before the ~150 MB Go
+# toolchain fetch when no suitable `go` is present.
+plan_summary() {
+  printf '\n  %s%sInstall plan%s\n' "$C_BOLD" "$C_BRAND" "$C_RESET" >&2
+  printf '    %s•%s builds %s + %s from source into %s\n' \
+    "$C_DIM" "$C_RESET" "$CTL_BINARY" "$API_BINARY" "$JENTIC_INSTALL_DIR" >&2
+  printf '    %s•%s prerequisites checked: git curl tar mktemp uname%s\n' \
+    "$C_DIM" "$C_RESET" "" >&2
+  if ! go_is_recent_enough; then
+    printf '    %s•%s %sno suitable Go found — will download ~150 MB toolchain to %s%s\n' \
+      "$C_DIM" "$C_RESET" "$C_YELLOW" "$TOOLCHAIN_DIR" "$C_RESET" >&2
+  fi
+  printf '\n' >&2
 }
 
 # --- platform detection -----------------------------------------------------
@@ -516,6 +561,166 @@ fetch_source() {
   ok "Source ready ${C_DIM}(${BUILT_COMMIT})${C_RESET}"
 }
 
+# --- download mode ----------------------------------------------------------
+# The download path fetches the verified, prebuilt release archives goreleaser
+# publishes (cli/.goreleaser.yaml per-binary archives) instead of compiling from
+# source. It reuses install_binary / PATH-wiring / write_manifest unchanged —
+# only the "produce the binaries in $WORKDIR" step differs.
+
+# download_selected_binaries prints the binary names the download path should
+# fetch, honouring JENTIC_INSTALL_BINARIES (jentic-only default; `both` adds
+# jenticctl). Kept a function so main() and the manifest logic agree.
+download_selected_binaries() {
+  case "$JENTIC_INSTALL_BINARIES" in
+    both) printf '%s\n%s\n' "$API_BINARY" "$CTL_BINARY" ;;
+    *)    printf '%s\n' "$API_BINARY" ;;
+  esac
+}
+
+# asset_name <binary> prints the release archive filename for the current
+# OS/ARCH, byte-identical to the Go update.AssetName helper and the goreleaser
+# name_template (`<binary>_{{.Version}}_{{.Os}}_{{.Arch}}`). goreleaser's
+# {{.Version}} is the tag WITHOUT the leading `v`, so we strip it. windows would
+# switch to .zip, but the installer refuses Windows in detect_platform, so every
+# path here is .tar.gz.
+asset_name() {
+  local binary="$1" ver="${JENTIC_REF#v}"
+  printf '%s_%s_%s_%s.tar.gz' "$binary" "$ver" "$OS" "$ARCH"
+}
+
+# release_asset_url <asset> prints the GitHub release download URL for an asset
+# of the resolved tag.
+release_asset_url() {
+  printf 'https://github.com/%s/releases/download/%s/%s' "$JENTIC_REPO" "$JENTIC_REF" "$1"
+}
+
+# curl_asset <url> <dest> downloads a release asset. Fails (non-zero) on any
+# HTTP error. Attaches the GitHub token only for github.com URLs, via an
+# in-memory header — never on disk, matching the clone path's token hygiene.
+curl_asset() {
+  local url="$1" dest="$2"
+  local -a auth=()
+  if [ -n "$GITHUB_TOKEN" ]; then
+    case "$url" in
+      https://github.com/*|https://*.githubusercontent.com/*)
+        auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}") ;;
+    esac
+  fi
+  # ${auth[@]+…} guard: macOS stock bash 3.2 treats an EMPTY array expansion as
+  # an unbound variable under `set -u` (same idiom as the git_auth call sites).
+  curl -fSL ${auth[@]+"${auth[@]}"} -o "$dest" -- "$url"
+}
+
+# sha256_file <path> prints the lowercase hex sha256 of a file, using whichever
+# tool is present (sha256sum on Linux, shasum -a 256 on macOS).
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# verify_checksum <asset> <archive_path> <checksums_path> enforces the sha256
+# gate FAIL-CLOSED: it greps the asset's own line out of checksums.txt and
+# compares that exact expected digest. A missing line (grep finds nothing) is a
+# hard error — never a vacuous pass (the trap `sha256sum --check --ignore-missing`
+# falls into).
+verify_checksum() {
+  local asset="$1" archive="$2" sums="$3"
+  local expected actual
+  expected="$(awk -v f="$asset" '$2 == f || $2 == "*"f {print $1; exit}' "$sums")"
+  if [ -z "$expected" ]; then
+    die "checksums.txt has no entry for ${asset} — refusing to install unverified bytes"
+  fi
+  actual="$(sha256_file "$archive")"
+  if [ "$expected" != "$actual" ]; then
+    die "checksum mismatch for ${asset}: expected ${expected}, got ${actual} — aborting"
+  fi
+}
+
+# verify_cosign <checksums> <sig> <cert> verifies the release signature over
+# checksums.txt when cosign is on PATH. cosign absent → loud warning but the
+# sha256 gate above already held. cosign present but verification fails → hard
+# error (fail-closed). Mirrors docs/releasing.md and the Go updater.
+verify_cosign() {
+  local sums="$1" sig="$2" cert="$3"
+  if ! command -v cosign >/dev/null 2>&1; then
+    warn "cosign not found — signature NOT verified (sha256 verified). Install cosign to verify the release signature."
+    return 0
+  fi
+  if ! cosign verify-blob \
+        --certificate "$cert" \
+        --signature "$sig" \
+        --certificate-identity-regexp "$COSIGN_CERT_IDENTITY_REGEXP" \
+        --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+        "$sums" >/dev/null 2>&1; then
+    die "cosign signature verification failed for checksums.txt — aborting"
+  fi
+  ok "cosign signature verified"
+}
+
+# release_assets_exist reports (0/non-zero) whether the resolved tag has the
+# expected jentic archive published — the gate `auto` uses to choose download vs
+# source. A HEAD against the archive URL is enough; we don't download here.
+release_assets_exist() {
+  local url
+  url="$(release_asset_url "$(asset_name "$API_BINARY")")"
+  local -a auth=()
+  if [ -n "$GITHUB_TOKEN" ]; then
+    auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  fi
+  # Same empty-array-under-`set -u` guard as curl_asset (macOS bash 3.2).
+  curl -fsSL ${auth[@]+"${auth[@]}"} -I -o /dev/null -- "$url" 2>/dev/null
+}
+
+# download_binaries fetches + verifies the selected release archives and unpacks
+# their binaries into $WORKDIR (the same location build() writes to), so the
+# downstream install_binary/verify/manifest steps are identical to the source
+# path. Fail-closed: any checksum/signature problem aborts.
+download_binaries() {
+  step "Downloading verified release binaries"
+  WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/jentic-install.XXXXXX")"
+  local dl="$WORKDIR/dl"
+  mkdir -p "$dl"
+
+  # checksums.txt + its cosign sig/cert cover ALL archives in the release.
+  local sums="$dl/checksums.txt" sig="$dl/checksums.txt.sig" cert="$dl/checksums.txt.pem"
+  if ! spin "Fetching checksums.txt" curl_asset "$(release_asset_url checksums.txt)" "$sums"; then
+    die "failed to download checksums.txt for ${JENTIC_REF} — is it a published release?"
+  fi
+  # Signature/cert are best-effort to fetch; verify_cosign decides enforcement.
+  curl_asset "$(release_asset_url checksums.txt.sig)" "$sig" 2>/dev/null || true
+  curl_asset "$(release_asset_url checksums.txt.pem)" "$cert" 2>/dev/null || true
+  if [ -s "$sig" ] && [ -s "$cert" ]; then
+    verify_cosign "$sums" "$sig" "$cert"
+  else
+    warn "release signature/cert not available — verified sha256 only"
+  fi
+
+  local name asset archive
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    asset="$(asset_name "$name")"
+    archive="$dl/$asset"
+    if ! spin "Fetching ${asset}" curl_asset "$(release_asset_url "$asset")" "$archive"; then
+      die "failed to download ${asset} — no matching release asset for ${OS}/${ARCH}"
+    fi
+    verify_checksum "$asset" "$archive" "$sums"
+    if ! tar -xzf "$archive" -C "$WORKDIR" "$name" 2>/dev/null; then
+      # Fall back to extracting whatever binary the archive contains, then
+      # rename — but the archives are single-binary and named after it, so the
+      # explicit member above is the normal path.
+      die "archive ${asset} did not contain expected binary ${name}"
+    fi
+    chmod 0755 "$WORKDIR/$name" 2>/dev/null || true
+    ok "Verified ${C_BOLD}${name}${C_RESET} ${C_DIM}(sha256 ok)${C_RESET}"
+  done < <(download_selected_binaries)
+
+  BUILT_COMMIT="none"
+  rm -rf "$dl"
+}
+
 # --- build ------------------------------------------------------------------
 # Built and installed binaries live at deterministic, name-derived paths:
 # built    -> $WORKDIR/<name>
@@ -527,7 +732,7 @@ installed_binary_path() { printf '%s/%s' "$JENTIC_INSTALL_DIR" "$1"; }
 
 build() {
   step "Building ${CTL_BINARY} + ${API_BINARY}"
-  local pkg="github.com/jentic/jentic-one/cli/internal/cmd"
+  local pkg="github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
   local date_now
   date_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -562,7 +767,7 @@ install_binary() {
   mkdir -p "$JENTIC_INSTALL_DIR"
 
   local name src dest
-  for name in "${BINARY_NAMES[@]}"; do
+  for name in "${INSTALL_SET[@]}"; do
     src="$(built_binary_path "$name")"
     dest="$(installed_binary_path "$name")"
     install -m 0755 "$src" "$dest" 2>/dev/null || {
@@ -570,7 +775,13 @@ install_binary() {
     }
     ok "Installed ${name} ${C_DIM}->${C_RESET} ${dest}"
   done
-  INSTALLED_PATH="$(installed_binary_path "$CTL_BINARY")"
+  # Primary path for the manifest/chain: jenticctl when it's in the set,
+  # otherwise the first installed binary (jentic-only download).
+  if printf '%s\n' "${INSTALL_SET[@]}" | grep -qx "$CTL_BINARY"; then
+    INSTALLED_PATH="$(installed_binary_path "$CTL_BINARY")"
+  else
+    INSTALLED_PATH="$(installed_binary_path "${INSTALL_SET[0]}")"
+  fi
 
   # If the install dir isn't already on PATH, make it reachable. First try
   # symlinking both binaries into a conventional dir that's already on PATH
@@ -601,7 +812,7 @@ link_into_path() {
   for dir in "/usr/local/bin" "$HOME/.local/bin"; do
     if path_contains "$dir" && [ -w "$dir" ]; then
       linked=1
-      for name in "${BINARY_NAMES[@]}"; do
+      for name in "${INSTALL_SET[@]}"; do
         target="$(installed_binary_path "$name")"
         if ln -sf "$target" "$dir/${name}"; then
           ok "Linked ${dir}/${name} ${C_DIM}->${C_RESET} ${target}"
@@ -754,7 +965,7 @@ manifest_field() {
 verify() {
   step "Verifying"
   local name path
-  for name in "${BINARY_NAMES[@]}"; do
+  for name in "${INSTALL_SET[@]}"; do
     path="$(installed_binary_path "$name")"
     if "$path" --version >/dev/null 2>&1; then
       ok "$("$path" --version | head -n 1)"
@@ -765,10 +976,29 @@ verify() {
 }
 
 banner() {
-  printf '\n  %s%s✓ %s + %s installed%s\n\n' \
-    "$C_BOLD" "$C_GREEN" "$CTL_BINARY" "$API_BINARY" "$C_RESET" >&2
-  printf '  %sjenticctl%s  %s\n' "$C_DIM" "$C_RESET" "$(installed_binary_path "$CTL_BINARY")" >&2
-  printf '  %sjentic%s     %s\n' "$C_DIM" "$C_RESET" "$(installed_binary_path "$API_BINARY")" >&2
+  local has_ctl=0
+  printf '%s\n' "${INSTALL_SET[@]}" | grep -qx "$CTL_BINARY" && has_ctl=1
+
+  if [ "$has_ctl" = 1 ]; then
+    printf '\n  %s%s✓ %s + %s installed%s\n\n' \
+      "$C_BOLD" "$C_GREEN" "$CTL_BINARY" "$API_BINARY" "$C_RESET" >&2
+    printf '  %sjenticctl%s  %s\n' "$C_DIM" "$C_RESET" "$(installed_binary_path "$CTL_BINARY")" >&2
+    printf '  %sjentic%s     %s\n' "$C_DIM" "$C_RESET" "$(installed_binary_path "$API_BINARY")" >&2
+  else
+    printf '\n  %s%s✓ %s installed%s\n\n' \
+      "$C_BOLD" "$C_GREEN" "$API_BINARY" "$C_RESET" >&2
+    printf '  %sjentic%s     %s\n' "$C_DIM" "$C_RESET" "$(installed_binary_path "$API_BINARY")" >&2
+  fi
+
+  # next-step string differs by what we installed: with jenticctl the natural
+  # next step is standing up the local stack; a jentic-only download is meant to
+  # talk to a REMOTE server, so point at `jentic register`.
+  local next_cmd next_note
+  if [ "$has_ctl" = 1 ]; then
+    next_cmd="jenticctl install"; next_note="# configure & onboard the stack"
+  else
+    next_cmd="jentic register --url https://<server>"; next_note="# connect to a remote jentic server"
+  fi
 
   # If the install dir is on PATH now (either it always was, or we symlinked
   # into an on-PATH dir), the binaries are reachable by name — say so quietly.
@@ -776,13 +1006,13 @@ banner() {
   # them reachable, distinguishing the "we edited your rc" case from the pure
   # manual one so the instruction matches reality.
   if path_contains "$JENTIC_INSTALL_DIR" || [ "${PATH_LINKED:-0}" = 1 ]; then
-    printf '  %snext%s       %sjenticctl install%s %s# configure & onboard the stack%s\n' \
-      "$C_DIM" "$C_RESET" "$C_BRAND" "$C_RESET" "$C_DIM" "$C_RESET" >&2
+    printf '  %snext%s       %s%s%s %s%s%s\n' \
+      "$C_DIM" "$C_RESET" "$C_BRAND" "$next_cmd" "$C_RESET" "$C_DIM" "$next_note" "$C_RESET" >&2
     return
   fi
 
-  printf '\n  %s%s! %sjenticctl%s / %sjentic%s are not on your PATH yet.%s\n' \
-    "$C_BOLD" "$C_YELLOW" "$C_RESET$C_BOLD" "$C_YELLOW$C_BOLD" "$C_RESET$C_BOLD" "$C_YELLOW$C_BOLD" "$C_RESET" >&2
+  printf '\n  %s%s! the installed binaries are not on your PATH yet.%s\n' \
+    "$C_BOLD" "$C_YELLOW" "$C_RESET" >&2
   if [ "${RC_UPDATED:-0}" = 1 ] || [ "${RC_ALREADY_HAD_PATH:-0}" = 1 ]; then
     printf '  Your shell profile has been updated. Restart your terminal, or run:\n\n' >&2
   else
@@ -790,8 +1020,8 @@ banner() {
     printf '  restart your terminal. For this shell right now, run:\n\n' >&2
   fi
   printf '    %sexport PATH="%s:$PATH"%s\n\n' "$C_BOLD" "$JENTIC_INSTALL_DIR" "$C_RESET" >&2
-  printf '  %sthen%s       %sjenticctl install%s %s# configure & onboard the stack%s\n' \
-    "$C_DIM" "$C_RESET" "$C_BRAND" "$C_RESET" "$C_DIM" "$C_RESET" >&2
+  printf '  %sthen%s       %s%s%s %s%s%s\n' \
+    "$C_DIM" "$C_RESET" "$C_BRAND" "$next_cmd" "$C_RESET" "$C_DIM" "$next_note" "$C_RESET" >&2
 }
 
 # --- chain into the stack wizard --------------------------------------------
@@ -806,12 +1036,31 @@ banner() {
 chain_install() {
   [ "${JENTIC_NO_INSTALL:-0}" = 1 ] && return 1
 
+  # No jenticctl in the install set (jentic-only download) — nothing to chain
+  # into. The banner tells the user how to use `jentic` against a remote server.
+  if ! printf '%s\n' "${INSTALL_SET[@]}" | grep -qx "$CTL_BINARY"; then
+    return 1
+  fi
+
   local stdin_src
   if [ -t 0 ]; then
     stdin_src="inherit"
   elif [ -t 1 ] && [ -r /dev/tty ]; then
     stdin_src="/dev/tty"
   else
+    # No interactive terminal (CI, or `curl ... | sh` with stdout not a TTY).
+    # Do NOT block on a wizard that can't read input. Print the exact
+    # non-interactive next step and the opt-out so the run is actionable, then
+    # let main() fall through to banner(). The headless server command is
+    # `jenticctl install --defaults` (NOT --no-wizard: that flag only skips the
+    # post-install "continue to guided setup?" prompt, it does not make install
+    # itself non-interactive).
+    printf '\n  %s%s! No interactive terminal — skipping the guided stack setup.%s\n' \
+      "$C_BOLD" "$C_YELLOW" "$C_RESET" >&2
+    printf '  Configure the stack non-interactively with:\n\n' >&2
+    printf '    %s%s install --defaults%s\n\n' "$C_BOLD" "$CTL_BINARY" "$C_RESET" >&2
+    printf '  %s(or set JENTIC_NO_INSTALL=1 to stop after installing the binaries.)%s\n' \
+      "$C_DIM" "$C_RESET" >&2
     return 1
   fi
 
@@ -828,16 +1077,111 @@ chain_install() {
   exec "$(installed_binary_path "$CTL_BINARY")" install
 }
 
+# resolve_ref_for_download resolves JENTIC_REF to the latest release tag when
+# unset, using a bare `git ls-remote --tags` (git is a checked prereq). Unlike
+# fetch_source's resolve_default_ref it does not fall back to `main` — a download
+# needs a real release tag with published assets; if none resolves it returns
+# non-zero so main() can fall back to the source build. Honors GITHUB_TOKEN for
+# private forks via an in-memory http.extraheader (no on-disk token).
+resolve_ref_for_download() {
+  [ -n "$JENTIC_REF" ] && return 0
+  local clone_url="https://github.com/${JENTIC_REPO}.git"
+  local -a git_auth=()
+  if [ -n "$GITHUB_TOKEN" ]; then
+    local basic
+    basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+    git_auth=(-c "http.extraheader=Authorization: Basic ${basic}")
+  fi
+  local ls_out tag
+  if ls_out="$(git -c "credential.helper=" ${git_auth[@]+"${git_auth[@]}"} \
+        ls-remote --tags "$clone_url" 'v*' 2>/dev/null)" \
+      && tag="$(printf '%s\n' "$ls_out" | highest_release_tag)"; then
+    JENTIC_REF="$tag"
+    return 0
+  fi
+  return 1
+}
+
+# provision_via_download attempts the download path end to end: resolve the tag,
+# narrow INSTALL_SET to the selected binaries, fetch+verify+unpack into $WORKDIR.
+# Returns 0 on success (main() then runs the shared install/verify/manifest
+# steps). Returns non-zero WITHOUT installing anything when the download can't
+# proceed (no release tag, or `auto` and no published asset) so the caller can
+# fall back to source — unless the method was forced to `binary`, in which case
+# an unmet precondition is fatal (die).
+provision_via_download() {
+  local forced="$1"   # 1 when JENTIC_INSTALL_METHOD=binary (no source fallback)
+  if ! resolve_ref_for_download; then
+    if [ "$forced" = 1 ]; then
+      die "JENTIC_INSTALL_METHOD=binary but no release tag resolved in ${JENTIC_REPO} (set JENTIC_REF=<tag>)"
+    fi
+    return 1
+  fi
+  if [ "$forced" != 1 ] && ! release_assets_exist; then
+    # auto mode, tag has no matching asset (fork / unreleased) — fall back.
+    return 1
+  fi
+  # Narrow the installed/verified set to the download selection.
+  INSTALL_SET=()
+  local n
+  while IFS= read -r n; do [ -n "$n" ] && INSTALL_SET+=("$n"); done < <(download_selected_binaries)
+  download_binaries
+}
+
+# --- jentic home ------------------------------------------------------------
+# ensure_private_home creates the jentic home (~/.jentic) owner-only, or
+# TIGHTENS an existing looser one to 0700. `jenticctl install` bind-mounts a
+# world-writable (0777) logs dir under it for the container's uid and ASSERTS
+# the parent is 0700 (SEC-6) before creating it. The bare `mkdir -p` calls in
+# this script (bin/, toolchain/, the manifest) would otherwise create ~/.jentic
+# with the umask default (0755) first — making the chained `jenticctl install`
+# fail on every fresh machine. Best-effort: a chmod failure only warns, and the
+# Go side still fails closed on the invariant.
+ensure_private_home() {
+  local home_dir="${JENTIC_HOME:-$HOME/.jentic}"
+  mkdir -p "$home_dir" 2>/dev/null || true
+  if [ -d "$home_dir" ] && ! chmod 700 "$home_dir" 2>/dev/null; then
+    warn "could not chmod 700 ${home_dir} — 'jenticctl install' may refuse to create its logs dir there"
+  fi
+}
+
 # --- main -------------------------------------------------------------------
 main() {
   logo
   check_prereqs
+  ensure_private_home
   STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jentic-install-state.XXXXXX")"
   STEP_LOG="$STATE_DIR/step.log"
   detect_platform
-  ensure_go
-  fetch_source
-  build
+
+  # Decide the acquisition method. `binary` forces download (fatal if no asset);
+  # `source` forces the historical from-source build; `auto` prefers a verified
+  # download when a release asset exists and falls back to source otherwise.
+  local used_download=0
+  case "$JENTIC_INSTALL_METHOD" in
+    binary)
+      if provision_via_download 1; then used_download=1; fi
+      ;;
+    source)
+      : # fall through to source build below
+      ;;
+    auto|"")
+      if provision_via_download 0; then used_download=1; fi
+      ;;
+    *)
+      die "unknown JENTIC_INSTALL_METHOD='${JENTIC_INSTALL_METHOD}' (expected: auto | binary | source)"
+      ;;
+  esac
+
+  if [ "$used_download" != 1 ]; then
+    # Source path: build BOTH binaries (INSTALL_SET already defaults to both).
+    INSTALL_SET=("${BINARY_NAMES[@]}")
+    plan_summary
+    ensure_go
+    fetch_source
+    build
+  fi
+
   install_binary
   write_manifest
   verify

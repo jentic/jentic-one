@@ -246,7 +246,9 @@ func (d *Draft) dbEntryFor(schema string) dbEntry {
 // toConfig translates the Draft into the typed output config.
 func (d *Draft) toConfig() configOut {
 	// The container must bind all interfaces so the published port is reachable
-	// from the host; the local path keeps the user-chosen bind host.
+	// from the host; the local path keeps the user-chosen bind host. The user's
+	// answer is NOT discarded on the Docker path: it becomes the host-IP prefix
+	// of the compose port publishes instead (Draft.PublishHost — see #992).
 	serverHost := d.ServerHost
 	if d.IsDocker() {
 		serverHost = "0.0.0.0"

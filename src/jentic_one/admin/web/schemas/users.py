@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from jentic_one.admin.web.schemas.permissions import Permissions
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 
 class UserResponse(BaseModel):
@@ -48,7 +49,7 @@ class UserCreatedResponse(BaseModel):
     """Response after user creation including invite token."""
 
     user: UserResponse
-    invite_token: str
+    invite_token: str = Field(json_schema_extra=SENSITIVE)
     invite_expires_at: datetime
 
 
@@ -63,5 +64,5 @@ class UserListResponse(BaseModel):
 class InviteIssuedResponse(BaseModel):
     """Response when an invite token is issued."""
 
-    token: str
+    token: str = Field(json_schema_extra=SENSITIVE)
     expires_at: datetime

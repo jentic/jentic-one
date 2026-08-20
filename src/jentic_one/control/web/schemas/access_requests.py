@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Literal
 
+from jentic.problem_details import ProblemDetail
 from pydantic import BaseModel, Field, model_validator
 
 from jentic_one.control.web.schemas.permission_rules import BasePermissionRuleSchema
@@ -226,3 +227,28 @@ class AccessRequestListResponse(BaseModel):
     data: list[AccessRequestResponse]
     has_more: bool
     next_cursor: str | None = None
+
+
+class DuplicatePendingProblem(ProblemDetail):
+    """RFC 9457 Problem Details for a 409 on ``POST /access-requests``.
+
+    Filing a request whose target already has a pending request is refused with
+    a 409 whose body carries two extension members on top of the standard
+    Problem Details shape, so a client can attach to the existing request rather
+    than re-file. These are emitted at runtime by the access-request error hook
+    (``control/web/errors.py``); this model documents them in the OpenAPI spec so
+    the generated SDK exposes a typed 409
+    (``FileAccessRequestHTTPResp.ApplicationproblemJSON409``) instead of forcing
+    callers to parse the raw body (ARCH-21 Step 0).
+    """
+
+    existing_request_id: str = Field(
+        description=(
+            "The id of the pending access request that already covers the conflicting target."
+        ),
+        examples=["acr_01HXXY..."],
+    )
+    approve_url: str = Field(
+        description="Console URL to review/approve the existing pending request.",
+        examples=["https://app.jentic.com/access-requests/acr_01HXXY..."],
+    )

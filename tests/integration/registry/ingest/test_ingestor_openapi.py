@@ -27,6 +27,7 @@ from jentic_one.registry.ingest.pipeline.stage_registry import (
     register_pipeline_stage,
 )
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
+from jentic_one.registry.services.inspect.url_lookup import URLLookupService
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ApiRevisionSourceType
@@ -152,6 +153,89 @@ async def test_ingest_full_pipeline(
 
         url_entries = (await session.execute(select(OperationURLIndex))).unique().scalars().all()
         assert len(url_entries) >= 3
+
+
+async def test_ingest_trailing_slash_spec_produces_resolvable_index(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """A spec with trailing-slash paths ingests into a canonical, resolvable
+    URL index (#1085).
+
+    Django/DRF-style APIs (e.g. the Fantasy Premier League API) template every
+    path with a trailing slash. Pre-fix, the index baked the slash into the
+    regex while the lookup normalized it off the request, so every operation
+    of such an API failed discovery with ``operation_not_found``.
+    """
+    trailing_slash_spec = {
+        "openapi": "3.1.0",
+        "info": {"title": "FPL", "version": "1.0.0"},
+        "servers": [{"url": "https://fantasy.premierleague.com/api"}],
+        "paths": {
+            "/bootstrap-static/": {
+                "get": {
+                    "operationId": "bootstrapStatic",
+                    "responses": {"200": {"description": "ok"}},
+                },
+            },
+            "/element-summary/{elementId}/": {
+                "get": {
+                    "operationId": "elementSummary",
+                    "parameters": [
+                        {
+                            "name": "elementId",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"},
+                        }
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                },
+            },
+        },
+    }
+    spec = IngestSpecification(
+        spec_type=SpecType.OPENAPI,
+        api_identifier=ApiIdentifier(vendor="premierleague", name="fpl", version="1.0.0"),
+        sha="fpl1085",
+        content=trailing_slash_spec,
+        source_type=ApiRevisionSourceType.INLINE,
+        source_url=None,
+        source_filename="openapi.json",
+        submitted_by="test-harness",
+    )
+
+    ingestor = Ingestor(ingest_context)
+    result = await ingestor.ingest(spec, created_by="usr_test")
+    assert result.operation_count == 2
+
+    async with registry_db.session() as session:
+        entries = (await session.execute(select(OperationURLIndex))).unique().scalars().all()
+        # Stored templates and regexes are canonical (no trailing slash).
+        by_template = {e.path_template: e for e in entries}
+        assert set(by_template) == {
+            "/api/bootstrap-static",
+            "/api/element-summary/{elementId}",
+        }
+        assert by_template["/api/bootstrap-static"].path_regex == r"^/api/bootstrap\-static$"
+
+        revision_id = entries[0].revision_id
+        svc = URLLookupService(session)
+        for url in (
+            "https://fantasy.premierleague.com/api/bootstrap-static/",
+            "https://fantasy.premierleague.com/api/bootstrap-static",
+        ):
+            resolved = await svc.resolve(method="GET", url=url, revision_id=revision_id)
+            assert resolved is not None, f"unresolved: {url}"
+
+        resolved = await svc.resolve(
+            method="GET",
+            url="https://fantasy.premierleague.com/api/element-summary/42/",
+            revision_id=revision_id,
+        )
+        assert resolved is not None
+        assert resolved.path_params == {"elementId": "42"}
 
 
 async def test_ingest_warns_when_schemes_declared_but_nothing_resolves(
