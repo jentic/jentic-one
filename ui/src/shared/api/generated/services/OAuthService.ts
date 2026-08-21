@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { Body_consentSubmit } from '../models/Body_consentSubmit';
 import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
@@ -107,6 +108,55 @@ export class OAuthService {
                 'code': code,
                 'state': state,
             },
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Consent Page
+     * Display the OAuth consent screen.
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static consentPage({
+        consentToken,
+    }: {
+        consentToken: string,
+    }): CancelablePromise<string> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/oauth/consent',
+            query: {
+                'consent_token': consentToken,
+            },
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Consent Submit
+     * Process the consent form submission.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static consentSubmit({
+        formData,
+    }: {
+        formData: Body_consentSubmit,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/consent',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,

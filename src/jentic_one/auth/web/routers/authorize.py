@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html as html_mod
 import json
 import secrets
 import time
@@ -82,6 +83,19 @@ def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
 STATE_MAX_AGE_SECONDS = 600
 CONSENT_STATE_MAX_AGE_SECONDS = 300
 
+_FONTS_URL = (
+    "https://fonts.googleapis.com/css2"
+    "?family=Nunito+Sans:wght@400;500;600;700"
+    "&family=Sora:wght@600;700&display=swap"
+)
+_CHECK_SVG = (
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'"
+    " viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule="
+    "'evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-"
+    "1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1"
+    " 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E"
+)
+
 _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -90,7 +104,7 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
     <title>Authorize {app_name} | Jentic One</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;500;600;700&family=Sora:wght@600;700&display=swap" rel="stylesheet">
+    <link href="{fonts_url}" rel="stylesheet">
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
@@ -198,7 +212,7 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
             border-radius: 50%;
             margin-right: 12px;
             flex-shrink: 0;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E");
+            background-image: url("{check_svg}");
             background-size: 12px;
             background-repeat: no-repeat;
             background-position: center;
@@ -484,15 +498,18 @@ async def consent_page(
 
     scopes = [s.strip() for s in scope.split() if s.strip()]
     permission_items = "\n".join(
-        f"<li>{_scope_to_permission_description(s)}</li>" for s in scopes
+        f"<li>{html_mod.escape(_scope_to_permission_description(s))}</li>"
+        for s in scopes
     )
 
     html = _CONSENT_PAGE_TEMPLATE.format(
-        app_name=app_name,
-        app_description=app_description,
-        user_email=user_email,
+        app_name=html_mod.escape(app_name),
+        app_description=html_mod.escape(app_description),
+        user_email=html_mod.escape(user_email),
         permission_items=permission_items,
-        consent_token=consent_token,
+        consent_token=html_mod.escape(consent_token),
+        fonts_url=_FONTS_URL,
+        check_svg=_CHECK_SVG,
     )
     return HTMLResponse(content=html)
 

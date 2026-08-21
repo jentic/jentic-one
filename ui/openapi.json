@@ -2028,7 +2028,8 @@
           "toolkit_key",
           "credential_binding",
           "session",
-          "provider_config"
+          "provider_config",
+          "oauth_client"
         ],
         "title": "AuditTargetType",
         "type": "string"
@@ -2344,6 +2345,24 @@
           "message"
         ],
         "title": "BindingWarningSchema",
+        "type": "object"
+      },
+      "Body_consentSubmit": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "consent_token": {
+            "title": "Consent Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "consent_token",
+          "action"
+        ],
+        "title": "Body_consentSubmit",
         "type": "object"
       },
       "CatalogEntryLinksResponse": {
@@ -4217,6 +4236,22 @@
         "title": "JobResponse",
         "type": "object"
       },
+      "JwksUpdateRequest": {
+        "description": "Request body for updating an agent's JWKS (public keys).\n\nThe JWKS must contain at least one Ed25519 public key and must not\ncontain any private key material.",
+        "properties": {
+          "jwks": {
+            "additionalProperties": true,
+            "description": "JWKS containing public keys",
+            "title": "Jwks",
+            "type": "object"
+          }
+        },
+        "required": [
+          "jwks"
+        ],
+        "title": "JwksUpdateRequest",
+        "type": "object"
+      },
       "LoginRequest": {
         "description": "Credentials for login.",
         "properties": {
@@ -5014,6 +5049,247 @@
           "type"
         ],
         "title": "OAuth2UpdateRequest",
+        "type": "object"
+      },
+      "OAuthClientCreateRequest": {
+        "description": "Request body for creating an OAuth client.",
+        "examples": [
+          {
+            "description": "My application production deployment",
+            "name": "my-app-production",
+            "redirect_uris": [
+              "https://app.example.com/auth/callback"
+            ],
+            "require_consent": true
+          }
+        ],
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional description of the client.",
+            "title": "Description"
+          },
+          "name": {
+            "description": "Human-readable name for the client.",
+            "maxLength": 255,
+            "title": "Name",
+            "type": "string"
+          },
+          "redirect_uris": {
+            "description": "Allowed OAuth callback URLs. At least one required.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Redirect Uris",
+            "type": "array"
+          },
+          "require_consent": {
+            "default": true,
+            "description": "Whether to show a consent screen during authorization. Set to false for trusted first-party integrations.",
+            "title": "Require Consent",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "redirect_uris"
+        ],
+        "title": "OAuthClientCreateRequest",
+        "type": "object"
+      },
+      "OAuthClientListResponse": {
+        "description": "A list of OAuth clients.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/OAuthClientResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "OAuthClientListResponse",
+        "type": "object"
+      },
+      "OAuthClientResponse": {
+        "description": "An OAuth client in API responses.",
+        "examples": [
+          {
+            "active": true,
+            "client_id": "oc_abc123...",
+            "created_at": "2026-08-18T12:00:00Z",
+            "created_by": "usr_abc123",
+            "description": "My application production deployment",
+            "id": "oac_2NxYz...",
+            "name": "my-app-production",
+            "redirect_uris": [
+              "https://app.example.com/auth/callback"
+            ],
+            "require_consent": true
+          }
+        ],
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "client_id": {
+            "description": "Public client identifier used in OAuth flows.",
+            "title": "Client Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "description": "Internal ID (ksuid).",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redirect Uris",
+            "type": "array"
+          },
+          "require_consent": {
+            "description": "Whether a consent screen is shown during authorization.",
+            "title": "Require Consent",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "client_id",
+          "name",
+          "description",
+          "redirect_uris",
+          "active",
+          "require_consent",
+          "created_at",
+          "updated_at",
+          "created_by"
+        ],
+        "title": "OAuthClientResponse",
+        "type": "object"
+      },
+      "OAuthClientUpdateRequest": {
+        "description": "Request body for updating an OAuth client.",
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "redirect_uris": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uris"
+          },
+          "require_consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Require Consent"
+          }
+        },
+        "title": "OAuthClientUpdateRequest",
         "type": "object"
       },
       "OperationPreviewListResponse": {
@@ -10918,6 +11194,769 @@
         ]
       }
     },
+    "/admin/oauth-clients": {
+      "get": {
+        "description": "List all registered OAuth clients.",
+        "operationId": "listOauthClients",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_inactive",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Inactive",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClientListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List OAuth clients"
+      },
+      "post": {
+        "description": "Register a new OAuth client for third-party application integration.\n\nThe generated ``client_id`` is returned in the response and should be\nconfigured in the third-party application. No client_secret is issued —\nclients must use PKCE (S256) for authorization.",
+        "operationId": "createOauthClient",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthClientCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClientResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Register OAuth client"
+      }
+    },
+    "/admin/oauth-clients/{id}": {
+      "delete": {
+        "description": "Soft-delete an OAuth client by setting active=False.\n\nDeactivated clients can no longer initiate authorization flows.",
+        "operationId": "deactivateOauthClient",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Deactivate OAuth client"
+      },
+      "get": {
+        "description": "Get an OAuth client by its internal ID.",
+        "operationId": "getOauthClient",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClientResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get OAuth client"
+      },
+      "patch": {
+        "description": "Update an OAuth client's name, description, redirect_uris, or active status.",
+        "operationId": "updateOauthClient",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthClientUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClientResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Update OAuth client"
+      }
+    },
     "/agents": {
       "get": {
         "description": "List agents — scoped by identity via dynamic query scoping.",
@@ -11974,6 +13013,162 @@
           }
         ],
         "summary": "Get Agent Api Key History",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/agents/{agent_id}/jwks": {
+      "put": {
+        "description": "Update an agent's JWKS (public keys for JWT-bearer authentication).\n\nThe JWKS must contain at least one Ed25519 public key and must not contain\nany private key material. This enables the agent to authenticate via\nJWT-bearer assertions signed with the corresponding private key.",
+        "operationId": "updateAgentJwks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JwksUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Update Agent Jwks",
         "tags": [
           "Agents"
         ]
@@ -25156,6 +26351,225 @@
         },
         "security": [],
         "summary": "Authorize Oauth Callback",
+        "tags": [
+          "OAuth"
+        ]
+      }
+    },
+    "/oauth/consent": {
+      "get": {
+        "description": "Display the OAuth consent screen.",
+        "operationId": "consentPage",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "consent_token",
+            "required": true,
+            "schema": {
+              "title": "Consent Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Consent Page",
+        "tags": [
+          "OAuth"
+        ]
+      },
+      "post": {
+        "description": "Process the consent form submission.",
+        "operationId": "consentSubmit",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_consentSubmit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Consent Submit",
         "tags": [
           "OAuth"
         ]

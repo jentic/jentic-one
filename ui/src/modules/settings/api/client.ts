@@ -1,6 +1,6 @@
 /**
  * OAuth clients API client — wraps the admin /oauth-clients endpoints.
- * Uses direct fetch since the endpoints aren't in the generated OpenAPI client yet.
+ * TODO: migrate to generated DefaultService (endpoints now in OpenAPI spec).
  */
 import { getToken } from '@/shared/api';
 

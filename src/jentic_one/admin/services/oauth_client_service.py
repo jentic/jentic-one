@@ -23,7 +23,7 @@ class OAuthClientNotFoundError(NotFoundError):
 
 
 def _validate_redirect_uris(uris: list[str]) -> None:
-    """Validate that all redirect URIs are well-formed HTTPS URLs."""
+    """Validate that all redirect URIs are well-formed HTTPS URLs (http only for localhost)."""
     if not uris:
         raise InvalidInputError("at least one redirect_uri is required")
 
@@ -33,6 +33,10 @@ def _validate_redirect_uris(uris: list[str]) -> None:
             raise InvalidInputError(f"invalid redirect_uri: {uri}")
         if parsed.scheme not in ("https", "http"):
             raise InvalidInputError(f"redirect_uri must use https or http: {uri}")
+        if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
+            raise InvalidInputError(
+                f"http redirect_uri only allowed for localhost: {uri}"
+            )
 
 
 def _to_view(client: OAuthClient) -> OAuthClientView:
