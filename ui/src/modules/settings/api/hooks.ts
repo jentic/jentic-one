@@ -52,4 +52,14 @@ export function useDeactivateOAuthClient() {
 	});
 }
 
+export function useReactivateOAuthClient() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (id: string) => updateOAuthClient(id, { active: true }),
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: QUERY_KEY });
+		},
+	});
+}
+
 export type { OAuthClient, OAuthClientCreateInput, OAuthClientUpdateInput };

@@ -1,11 +1,22 @@
 import { useState } from 'react';
-import { Plus, Copy, Check, Trash2, Pencil } from 'lucide-react';
-import { Button, Dialog, Input, Label, PageHelp, Textarea, toast } from '@/shared/ui';
+import { Plus, Copy, Check, Trash2, Pencil, KeyRound, RotateCcw } from 'lucide-react';
+import {
+	Button,
+	Dialog,
+	EmptyState,
+	Input,
+	Label,
+	LoadingState,
+	PageHelp,
+	Textarea,
+	toast,
+} from '@/shared/ui';
 import {
 	useOAuthClients,
 	useCreateOAuthClient,
 	useUpdateOAuthClient,
 	useDeactivateOAuthClient,
+	useReactivateOAuthClient,
 	type OAuthClient,
 } from '@/modules/settings/api/hooks';
 
@@ -166,6 +177,7 @@ export function OAuthClientsSection() {
 
 	const { data: clients, isLoading, error, refetch } = useOAuthClients(showInactive);
 	const deactivateMutation = useDeactivateOAuthClient();
+	const reactivateMutation = useReactivateOAuthClient();
 
 	const handleDeactivate = async (): Promise<void> => {
 		if (!deleteTarget) return;
@@ -182,16 +194,32 @@ export function OAuthClientsSection() {
 		}
 	};
 
+	const handleReactivate = async (client: OAuthClient): Promise<void> => {
+		try {
+			await reactivateMutation.mutateAsync(client.id);
+			toast({ title: `${client.name} reactivated`, variant: 'success' });
+		} catch (err) {
+			toast({
+				title: 'Failed to reactivate client',
+				description: err instanceof Error ? err.message : undefined,
+				variant: 'error',
+			});
+		}
+	};
+
 	return (
-		<div>
-			<div className="mb-6 flex items-center justify-between">
-				<div>
-					<h2 className="text-foreground text-lg font-semibold">OAuth Clients</h2>
-					<p className="text-muted-foreground text-sm">
-						Manage third-party applications that can authenticate users via Jentic One.
+		<section>
+			<div className="mb-6 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+				<div className="min-w-0 flex-1">
+					<h2 className="text-foreground text-lg font-semibold tracking-tight">
+						OAuth Clients
+					</h2>
+					<p className="text-muted-foreground mt-0.5 text-sm">
+						Manage third-party applications that can authenticate users via Jentic
+						One.
 					</p>
 				</div>
-				<div className="flex items-center gap-2">
+				<div className="flex shrink-0 items-center gap-2 self-center">
 					<Button onClick={(): void => setCreateOpen(true)}>
 						<Plus className="h-4 w-4" />
 						Add client
@@ -236,17 +264,21 @@ export function OAuthClientsSection() {
 			</div>
 
 			{isLoading ? (
-				<p className="text-muted-foreground">Loading...</p>
+				<LoadingState message="Loading OAuth clients..." />
 			) : error ? (
 				<p className="text-destructive">Failed to load OAuth clients</p>
 			) : !clients?.length ? (
-				<div className="text-muted-foreground rounded-lg border border-dashed p-8 text-center">
-					<p>No OAuth clients registered yet.</p>
-					<Button className="mt-4" onClick={(): void => setCreateOpen(true)}>
-						<Plus className="mr-2 h-4 w-4" />
-						Create your first client
-					</Button>
-				</div>
+				<EmptyState
+					icon={<KeyRound className="h-6 w-6" />}
+					title="No OAuth clients"
+					description="Register an OAuth client to allow third-party applications to authenticate with Jentic One."
+					action={
+						<Button onClick={(): void => setCreateOpen(true)}>
+							<Plus className="mr-2 h-4 w-4" />
+							Create your first client
+						</Button>
+					}
+				/>
 			) : (
 				<div className="space-y-4">
 					{clients.map((client) => (
@@ -278,13 +310,24 @@ export function OAuthClientsSection() {
 									>
 										<Pencil className="h-4 w-4" />
 									</Button>
-									{client.active && (
+									{client.active ? (
 										<Button
 											variant="ghost"
 											size="sm"
 											onClick={(): void => setDeleteTarget(client)}
 										>
 											<Trash2 className="h-4 w-4" />
+										</Button>
+									) : (
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={(): void =>
+												void handleReactivate(client)
+											}
+											disabled={reactivateMutation.isPending}
+										>
+											<RotateCcw className="h-4 w-4" />
 										</Button>
 									)}
 								</div>
@@ -317,10 +360,17 @@ export function OAuthClientsSection() {
 				</div>
 			)}
 
-			<CreateEditDialog open={createOpen} onClose={(): void => setCreateOpen(false)} />
+			{createOpen && (
+				<CreateEditDialog
+					key="create"
+					open={createOpen}
+					onClose={(): void => setCreateOpen(false)}
+				/>
+			)}
 
 			{editClient && (
 				<CreateEditDialog
+					key={editClient.id}
 					open={!!editClient}
 					onClose={(): void => setEditClient(null)}
 					client={editClient}
@@ -349,7 +399,8 @@ export function OAuthClientsSection() {
 				>
 					<p className="text-muted-foreground">
 						This will prevent <strong>{deleteTarget.name}</strong> from initiating new
-						authorization flows. Existing sessions are not affected.
+						authorization flows. Existing sessions are not affected. You can
+						reactivate the client later if needed.
 					</p>
 					{deactivateMutation.error && (
 						<p className="text-destructive mt-2 text-sm">
@@ -360,6 +411,6 @@ export function OAuthClientsSection() {
 					)}
 				</Dialog>
 			)}
-		</div>
+		</section>
 	);
 }
