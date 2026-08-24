@@ -26,6 +26,7 @@ class OAuthClientRepository:
         redirect_uris: list[str],
         description: str | None = None,
         require_consent: bool = True,
+        allowed_scopes: list[str] | None = None,
         created_by: str | None,
     ) -> OAuthClient:
         """Create a new OAuth client with a generated client_id."""
@@ -35,6 +36,7 @@ class OAuthClientRepository:
             description=description,
             redirect_uris=redirect_uris,
             require_consent=require_consent,
+            allowed_scopes=allowed_scopes,
             created_by=created_by,
         )
         session.add(client)
@@ -71,6 +73,7 @@ class OAuthClientRepository:
         redirect_uris: list[str] | None = None,
         active: bool | None = None,
         require_consent: bool | None = None,
+        allowed_scopes: list[str] | None = None,
     ) -> OAuthClient | None:
         """Update an OAuth client. Returns None if not found."""
         client = await session.get(OAuthClient, id)
@@ -87,6 +90,8 @@ class OAuthClientRepository:
             client.active = active
         if require_consent is not None:
             client.require_consent = require_consent
+        if allowed_scopes is not None:
+            client.allowed_scopes = allowed_scopes
 
         await session.flush()
         return client

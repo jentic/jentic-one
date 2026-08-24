@@ -43,6 +43,11 @@ def upgrade() -> None:
         sa.Column("active", sa.Boolean(), nullable=False, server_default="true"),
         sa.Column("require_consent", sa.Boolean(), nullable=False, server_default="true"),
         sa.Column(
+            "allowed_scopes",
+            postgresql.ARRAY(sa.String(128)) if pg else sa.JSON(),
+            nullable=True,
+        ),
+        sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),

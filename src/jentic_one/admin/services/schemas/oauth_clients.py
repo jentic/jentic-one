@@ -15,6 +15,7 @@ class OAuthClientView(BaseModel):
     name: str
     description: str | None
     redirect_uris: list[str]
+    allowed_scopes: list[str] | None
     active: bool
     require_consent: bool
     created_at: datetime

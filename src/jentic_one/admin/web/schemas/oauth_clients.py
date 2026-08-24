@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,14 +28,20 @@ class OAuthClientCreateRequest(BaseModel):
     description: str | None = Field(
         default=None, description="Optional description of the client."
     )
-    redirect_uris: list[str] = Field(
+    redirect_uris: list[Annotated[str, Field(max_length=2048)]] = Field(
         description="Allowed OAuth callback URLs. At least one required.",
         min_length=1,
+        max_length=20,
     )
     require_consent: bool = Field(
         default=True,
         description="Whether to show a consent screen during authorization. "
         "Set to false for trusted first-party integrations.",
+    )
+    allowed_scopes: list[str] | None = Field(
+        default=None,
+        description="If set, restricts which scopes this client may request. "
+        "Null means all scopes are permitted.",
     )
 
 
@@ -43,9 +50,12 @@ class OAuthClientUpdateRequest(BaseModel):
 
     name: str | None = Field(default=None, max_length=255)
     description: str | None = None
-    redirect_uris: list[str] | None = Field(default=None, min_length=1)
+    redirect_uris: list[Annotated[str, Field(max_length=2048)]] | None = Field(
+        default=None, min_length=1, max_length=20
+    )
     active: bool | None = None
     require_consent: bool | None = None
+    allowed_scopes: list[str] | None = None
 
 
 class OAuthClientResponse(BaseModel):
@@ -75,6 +85,9 @@ class OAuthClientResponse(BaseModel):
     name: str
     description: str | None
     redirect_uris: list[str]
+    allowed_scopes: list[str] | None = Field(
+        description="Scopes this client may request. Null means unrestricted."
+    )
     active: bool
     require_consent: bool = Field(
         description="Whether a consent screen is shown during authorization."

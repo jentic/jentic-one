@@ -40,3 +40,6 @@ class OAuthClient(AuditableMixin, AdminBase):
     require_consent: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+    allowed_scopes: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(128)), nullable=True, default=None
+    )

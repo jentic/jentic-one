@@ -22,15 +22,29 @@ class OAuthClientNotFoundError(NotFoundError):
         self.id = id
 
 
+_MAX_REDIRECT_URIS = 20
+_MAX_REDIRECT_URI_LENGTH = 2048
+
+
 def _validate_redirect_uris(uris: list[str]) -> None:
     """Validate that all redirect URIs are well-formed HTTPS URLs (http only for localhost)."""
     if not uris:
         raise InvalidInputError("at least one redirect_uri is required")
+    if len(uris) > _MAX_REDIRECT_URIS:
+        raise InvalidInputError(f"at most {_MAX_REDIRECT_URIS} redirect_uris allowed")
 
     for uri in uris:
+        if len(uri) > _MAX_REDIRECT_URI_LENGTH:
+            raise InvalidInputError(
+                f"redirect_uri exceeds maximum length of {_MAX_REDIRECT_URI_LENGTH}"
+            )
         parsed = urlparse(uri)
         if not parsed.scheme or not parsed.netloc:
             raise InvalidInputError(f"invalid redirect_uri: {uri}")
+        if parsed.fragment:
+            raise InvalidInputError(
+                f"redirect_uri must not contain a fragment component: {uri}"
+            )
         if parsed.scheme not in ("https", "http"):
             raise InvalidInputError(f"redirect_uri must use https or http: {uri}")
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
@@ -46,6 +60,7 @@ def _to_view(client: OAuthClient) -> OAuthClientView:
         name=client.name,
         description=client.description,
         redirect_uris=list(client.redirect_uris),
+        allowed_scopes=list(client.allowed_scopes) if client.allowed_scopes else None,
         active=client.active,
         require_consent=client.require_consent,
         created_at=client.created_at,
@@ -67,6 +82,7 @@ class OAuthClientService:
         redirect_uris: list[str],
         description: str | None = None,
         require_consent: bool = True,
+        allowed_scopes: list[str] | None = None,
         identity: Identity,
     ) -> OAuthClientView:
         """Register a new OAuth client."""
@@ -79,6 +95,7 @@ class OAuthClientService:
                 redirect_uris=redirect_uris,
                 description=description,
                 require_consent=require_consent,
+                allowed_scopes=allowed_scopes,
                 created_by=identity.sub,
             )
             await record_audit(
@@ -131,6 +148,7 @@ class OAuthClientService:
         redirect_uris: list[str] | None = None,
         active: bool | None = None,
         require_consent: bool | None = None,
+        allowed_scopes: list[str] | None = None,
         identity: Identity,
     ) -> OAuthClientView:
         """Update an OAuth client."""
@@ -146,6 +164,7 @@ class OAuthClientService:
                 redirect_uris=redirect_uris,
                 active=active,
                 require_consent=require_consent,
+                allowed_scopes=allowed_scopes,
             )
             if client is None:
                 raise OAuthClientNotFoundError(id)

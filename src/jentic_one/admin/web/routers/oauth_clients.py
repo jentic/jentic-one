@@ -27,6 +27,7 @@ def _to_response(view: OAuthClientView) -> OAuthClientResponse:
         name=view.name,
         description=view.description,
         redirect_uris=view.redirect_uris,
+        allowed_scopes=view.allowed_scopes,
         active=view.active,
         require_consent=view.require_consent,
         created_at=view.created_at,
@@ -52,6 +53,7 @@ async def create_oauth_client(
         description=body.description,
         redirect_uris=body.redirect_uris,
         require_consent=body.require_consent,
+        allowed_scopes=body.allowed_scopes,
         identity=identity,
     )
     return _to_response(view)
@@ -102,6 +104,7 @@ async def update_oauth_client(
         redirect_uris=body.redirect_uris,
         active=body.active,
         require_consent=body.require_consent,
+        allowed_scopes=body.allowed_scopes,
         identity=identity,
     )
     return _to_response(view)
