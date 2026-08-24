@@ -192,12 +192,12 @@ func (a *Cmd) writeTaskSkillsDir(ad skillgen.Adapter, env skillgen.DetectEnv, sc
 		return len(skills), nil
 	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return 0, err
 	}
 	for _, ts := range skills {
 		target := filepath.Join(dir, ts.TaskID+".md")
-		if err := os.WriteFile(target, []byte(ts.Raw), 0o644); err != nil {
+		if err := os.WriteFile(target, []byte(ts.Raw), 0o644); err != nil { //nolint:gosec // skill files are meant to be read by other tools.
 			return 0, err
 		}
 	}
@@ -216,11 +216,11 @@ func (a *Cmd) writeTaskSkillsHermes(env skillgen.DetectEnv, scope skillgen.Scope
 
 	for _, ts := range skills {
 		dir := filepath.Join(base, ".hermes", "skills", "jentic-tasks", ts.TaskID)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return 0, err
 		}
 		target := filepath.Join(dir, "SKILL.md")
-		if err := os.WriteFile(target, []byte(ts.Raw), 0o644); err != nil {
+		if err := os.WriteFile(target, []byte(ts.Raw), 0o644); err != nil { //nolint:gosec // skill files are meant to be read by other tools.
 			return 0, err
 		}
 	}
@@ -241,12 +241,12 @@ func (a *Cmd) writeTaskSkillsAgents(ad skillgen.Adapter, env skillgen.DetectEnv,
 	}
 
 	dir := filepath.Dir(target)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return 0, err
 	}
 
 	var existing []byte
-	if data, err := os.ReadFile(target); err == nil {
+	if data, err := os.ReadFile(target); err == nil { //nolint:gosec // target is derived from adapter rules + env, not arbitrary input.
 		existing = data
 	}
 
@@ -259,7 +259,7 @@ func (a *Cmd) writeTaskSkillsAgents(ad skillgen.Adapter, env skillgen.DetectEnv,
 		out = strings.TrimRight(cleaned, "\n") + "\n\n" + content
 	}
 
-	if err := os.WriteFile(target, []byte(out), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(out), 0o644); err != nil { //nolint:gosec // skill files are meant to be read by other tools.
 		return 0, err
 	}
 	return len(skills), nil

@@ -573,11 +573,12 @@ func (a *Cmd) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *sk
 	if terr == nil && len(taskSkills) > 0 {
 		for _, t := range targets {
 			n, werr := a.writeTaskSkills(t.adapter, env, t.scope, taskSkills, opts.dryRun)
-			if werr != nil {
+			switch {
+			case werr != nil:
 				fmt.Fprintln(a.Out, "  "+theme.Warnf("%s task skills: %v", t.adapter.Operator(), werr))
-			} else if opts.dryRun {
+			case opts.dryRun:
 				fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s would install %d task skill(s)", t.adapter.Operator(), n))
-			} else {
+			default:
 				fmt.Fprintln(a.Out, "  "+theme.Successf("%-8s installed %d task skill(s)", t.adapter.Operator(), n))
 			}
 		}
