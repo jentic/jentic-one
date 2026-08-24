@@ -34,7 +34,8 @@ var configWriterAllowlist = map[string]bool{
 	"internal/config/manifest.go":         true, // install manifest
 	"internal/profile/store.go":           true, // profile state (atomic)
 	"internal/agentkey/key.go":            true, // Ed25519 key material (0600)
-	"internal/skillgen/apply.go":          true, // rendered skill files (atomic)
+	"internal/skillgen/apply.go":              true, // rendered skill files (atomic)
+	"internal/cli/localagentcmd/skills.go":    true, // task skill files written to agent runtime dirs
 	"internal/update/update.go":           true, // self-update binary swap (atomic)
 	"internal/update/download.go":         true, // extracts a verified release binary into the update stage dir (STATE, not config.yaml; sha256/cosign-verified before write)
 	"internal/install/start.go":           true, // pid file

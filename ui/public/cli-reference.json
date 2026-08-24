@@ -2616,6 +2616,93 @@
           ]
         },
         {
+          "name": "skills",
+          "path": "jentic skills",
+          "use": "skills [name]",
+          "short": "List or display embedded task skills",
+          "long": "skills lists all embedded task skills (step-by-step guides for common\nJentic platform operations). Pass a skill name to print its full content.\nUse \"skills init\" to install them into your agent's native layout.",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "json",
+              "type": "bool",
+              "default": "false",
+              "usage": "output as JSON array"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "init",
+              "path": "jentic skills init",
+              "use": "init [name]",
+              "short": "Install task skills into your agent's native layout",
+              "long": "init writes task-skill markdown files into each detected agent runtime's\nnative layout. Pass a skill name to install only that one.",
+              "example": "  jentic skills init\n  jentic skills init register-agent\n  jentic skills init --operator claude,cursor\n  jentic skills init --all --yes\n  jentic skills init --dry-run",
+              "flags": [
+                {
+                  "name": "all",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "target every supported operator"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "dry-run",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "print target paths without writing"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "operator",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "operators to target (repeatable or comma-separated)"
+                },
+                {
+                  "name": "scope",
+                  "type": "string",
+                  "usage": "placement scope: user or project (default: per-operator)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "yes",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "skip the interactive picker (use --operator/--all)"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "run",
           "path": "jentic run",
           "use": "run \u003cagent\u003e [path] [-- \u003cagent-args\u003e...]",

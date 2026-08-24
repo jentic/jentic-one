@@ -735,6 +735,40 @@ func TestMalformedHashIsRefreshableNotUserEdit(t *testing.T) {
 	}
 }
 
+func TestTaskSkillsLoadsEmbedded(t *testing.T) {
+	skills, err := TaskSkills("jentic")
+	if err != nil {
+		t.Fatalf("TaskSkills: %v", err)
+	}
+	if len(skills) < 5 {
+		t.Fatalf("expected at least 5 task skills, got %d", len(skills))
+	}
+	for _, ts := range skills {
+		if ts.Name == "" {
+			t.Errorf("task %q has empty Name", ts.TaskID)
+		}
+		if ts.Description == "" {
+			t.Errorf("task %q has empty Description", ts.TaskID)
+		}
+		if ts.Content == "" {
+			t.Errorf("task %q has empty Content", ts.TaskID)
+		}
+	}
+}
+
+func TestTaskSkillByID(t *testing.T) {
+	ts, err := TaskSkillByID("jentic", "register-agent")
+	if err != nil {
+		t.Fatalf("TaskSkillByID: %v", err)
+	}
+	if ts == nil {
+		t.Fatal("expected non-nil TaskSkill")
+	}
+	if ts.Name != "register-agent" {
+		t.Errorf("Name = %q, want %q", ts.Name, "register-agent")
+	}
+}
+
 // TestDescriptionRenderingPerOperator: claude/cursor emit the full description
 // verbatim; hermes adapts canonical to its <=60-char one-sentence rule but
 // emits the freeform description in full.
