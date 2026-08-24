@@ -12,7 +12,8 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, Form, Query, Request
+import structlog
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
@@ -31,21 +32,53 @@ from jentic_one.shared.auth.permission_catalog import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
 
+logger = structlog.get_logger(__name__)
+
 router = APIRouter()
+
+_RATE_LIMIT_RPM = 30
+_RATE_LIMIT_WINDOW = 60.0
+_ip_request_log: dict[str, list[float]] = {}
+
+
+def _check_rate_limit(request: Request) -> None:
+    """Lightweight per-IP rate limiter for unauthenticated authorization endpoints."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    window_start = now - _RATE_LIMIT_WINDOW
+
+    timestamps = _ip_request_log.get(ip, [])
+    timestamps = [t for t in timestamps if t > window_start]
+    if len(timestamps) >= _RATE_LIMIT_RPM:
+        raise HTTPException(status_code=429, detail="Too many requests")
+    timestamps.append(now)
+    _ip_request_log[ip] = timestamps
+
+_ALLOWED_CANONICAL_PATHS: frozenset[str] = frozenset(
+    {
+        "/oauth/callback",
+        "/auth/callback",
+        "/app/oauth/callback",
+        "/app/auth/callback",
+    }
+)
 
 
 def _matches_canonical_origin(redirect_uri: str, canonical_base_url: str) -> bool:
-    """Check if redirect_uri matches the platform's canonical origin."""
+    """Check if redirect_uri matches the platform's canonical origin and an allowed path."""
     if not canonical_base_url:
         return False
     parsed_redirect = urlparse(redirect_uri)
     parsed_canonical = urlparse(canonical_base_url)
     if not parsed_redirect.scheme or not parsed_redirect.netloc:
         return False
-    return (
-        parsed_redirect.scheme == parsed_canonical.scheme
-        and parsed_redirect.netloc == parsed_canonical.netloc
-    )
+    if (
+        parsed_redirect.scheme != parsed_canonical.scheme
+        or parsed_redirect.netloc != parsed_canonical.netloc
+    ):
+        return False
+    normalised_path = parsed_redirect.path.rstrip("/")
+    return normalised_path in _ALLOWED_CANONICAL_PATHS
 
 
 async def _is_allowed_redirect_uri(
@@ -67,6 +100,19 @@ async def _is_allowed_redirect_uri(
         return False
 
     return redirect_uri in client.redirect_uris
+
+
+async def _get_client_allowed_scopes(
+    client_id: str, ctx: Context
+) -> frozenset[str] | None:
+    """Return allowed scopes for a registered client, or None for first-party."""
+    async with ctx.admin_db.session() as session:
+        client = await OAuthClientRepository.get_by_client_id(session, client_id)
+    if client is None:
+        return None
+    if hasattr(client, "allowed_scopes") and client.allowed_scopes:
+        return frozenset(client.allowed_scopes)
+    return None
 
 
 def _callback_uri(request: Request, canonical_base_url: str) -> str:
@@ -92,6 +138,13 @@ def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
 
 STATE_MAX_AGE_SECONDS = 600
 CONSENT_STATE_MAX_AGE_SECONDS = 300
+
+_CONSENT_SECURITY_HEADERS: dict[str, str] = {
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
 
 _FONTS_URL = (
     "https://fonts.googleapis.com/css2"
@@ -308,32 +361,64 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def _sign_state(payload: dict[str, str | None], secret: str) -> str:
-    """Encode and HMAC-sign state parameters for the IdP redirect."""
+def _sign_payload(
+    payload: dict[str, str | None], secret: str, *, purpose: str
+) -> str:
+    """Encode and HMAC-sign a payload with a purpose discriminator."""
+    payload["_purpose"] = purpose
     data = urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    sig = hmac.HMAC(secret.encode(), data.encode(), hashlib.sha256).hexdigest()[:32]
+    sig = hmac.HMAC(secret.encode(), data.encode(), hashlib.sha256).hexdigest()
     return f"{data}.{sig}"
 
 
-def _verify_state(state_str: str, secret: str) -> dict[str, str | None]:
-    """Verify and decode a signed state string."""
-    parts = state_str.rsplit(".", 1)
+def _verify_payload(
+    token_str: str, secret: str, *, purpose: str, max_age: int
+) -> dict[str, str | None]:
+    """Verify and decode a signed payload, checking purpose and TTL."""
+    parts = token_str.rsplit(".", 1)
     if len(parts) != 2:
-        raise InvalidGrantError("invalid state")
+        raise InvalidGrantError(f"invalid {purpose} token")
     data, sig = parts
-    expected = hmac.HMAC(secret.encode(), data.encode(), hashlib.sha256).hexdigest()[:32]
+    expected = hmac.HMAC(secret.encode(), data.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
-        raise InvalidGrantError("state signature invalid")
+        raise InvalidGrantError(f"{purpose} signature invalid")
     payload: dict[str, str | None] = json.loads(urlsafe_b64decode(data))
+    if payload.get("_purpose") != purpose:
+        raise InvalidGrantError(f"token purpose mismatch: expected {purpose}")
     iat = payload.get("iat")
     if iat is not None:
         age = time.time() - float(iat)
-        if age > STATE_MAX_AGE_SECONDS or age < 0:
-            raise InvalidGrantError("state expired")
+        if age > max_age or age < 0:
+            raise InvalidGrantError(f"{purpose} token expired")
     return payload
 
 
-@router.get("/authorize")
+# Consumed consent nonce tracking (in-memory; acceptable for single-instance or
+# sticky-session deploys; a shared cache backend would be needed for multi-instance).
+_consumed_consent_nonces: set[str] = set()
+_consumed_nonce_expiry: list[tuple[float, str]] = []
+_NONCE_GC_THRESHOLD = 1000
+
+
+def _consume_consent_nonce(nonce: str) -> bool:
+    """Attempt to consume a consent nonce. Returns False if already consumed."""
+    now = time.time()
+    if len(_consumed_nonce_expiry) > _NONCE_GC_THRESHOLD:
+        cutoff = now - CONSENT_STATE_MAX_AGE_SECONDS
+        expired = [n for t, n in _consumed_nonce_expiry if t < cutoff]
+        for n in expired:
+            _consumed_consent_nonces.discard(n)
+        _consumed_nonce_expiry[:] = [
+            (t, n) for t, n in _consumed_nonce_expiry if t >= cutoff
+        ]
+    if nonce in _consumed_consent_nonces:
+        return False
+    _consumed_consent_nonces.add(nonce)
+    _consumed_nonce_expiry.append((now, nonce))
+    return True
+
+
+@router.get("/authorize", dependencies=[Depends(_check_rate_limit)])
 async def authorize_endpoint(
     request: Request,
     response_type: str = Query(...),
@@ -353,6 +438,11 @@ async def authorize_endpoint(
     Otherwise returns an error (direct login requires a separate credential exchange).
     """
     if not await _is_allowed_redirect_uri(redirect_uri, client_id, ctx):
+        logger.warning(
+            "oauth_invalid_redirect_uri",
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+        )
         return RedirectResponse(url="/error?error=invalid_redirect_uri", status_code=302)
 
     if response_type != "code":
@@ -361,9 +451,24 @@ async def authorize_endpoint(
     if code_challenge_method != "S256":
         return _error_redirect(redirect_uri, "invalid_request", state, "only S256 is supported")
 
+    # Validate requested scopes against client's allowed scopes
+    allowed_scopes = await _get_client_allowed_scopes(client_id, ctx)
+    if allowed_scopes is not None:
+        requested = set(scope.split())
+        excess = requested - allowed_scopes - {"openid", "email", "profile"}
+        if excess:
+            logger.warning(
+                "oauth_scope_exceeds_client_allowlist",
+                client_id=client_id,
+                excess=sorted(excess),
+            )
+            return _error_redirect(
+                redirect_uri, "invalid_scope", state, "requested scopes exceed allowlist"
+            )
+
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
 
-    internal_state = _sign_state(
+    internal_state = _sign_payload(
         {
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -374,6 +479,7 @@ async def authorize_endpoint(
             "iat": str(int(time.time())),
         },
         ctx.config.admin.auth.jwt_secret.get_secret_value(),
+        purpose="state",
     )
 
     idp_url = authorize_svc.get_authorize_redirect_url(
@@ -394,6 +500,7 @@ async def authorize_endpoint(
     "/oauth/callback",
     operation_id="authorizeOauthCallback",
     name="authorize_oauth_callback",
+    dependencies=[Depends(_check_rate_limit)],
 )
 async def oauth_callback(
     request: Request,
@@ -404,8 +511,14 @@ async def oauth_callback(
 ) -> RedirectResponse:
     """External IdP callback — exchanges upstream code and issues platform auth code."""
     try:
-        params = _verify_state(state, ctx.config.admin.auth.jwt_secret.get_secret_value())
+        params = _verify_payload(
+            state,
+            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            purpose="state",
+            max_age=STATE_MAX_AGE_SECONDS,
+        )
     except InvalidGrantError:
+        logger.warning("oauth_callback_invalid_state")
         return RedirectResponse(url="/error?error=invalid_state", status_code=302)
 
     client_id = params.get("client_id", "")
@@ -427,16 +540,20 @@ async def oauth_callback(
             nonce=nonce,
         )
     except UserNotAdmittedError:
+        logger.warning("oauth_user_not_admitted", client_id=client_id)
         return RedirectResponse(url="/error?error=access_denied", status_code=302)
     except (InvalidGrantError, httpx.HTTPStatusError):
+        logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
         return RedirectResponse(url="/error?error=server_error", status_code=302)
 
     async with ctx.admin_db.session() as session:
         oauth_client = await OAuthClientRepository.get_by_client_id(session, client_id or "")
 
     if oauth_client is not None and oauth_client.require_consent:
-        consent_token = _sign_state(
+        consent_nonce = secrets.token_urlsafe(32)
+        consent_token = _sign_payload(
             {
+                "consent_nonce": consent_nonce,
                 "code": platform_code,
                 "redirect_uri": original_redirect_uri,
                 "original_state": original_state,
@@ -448,6 +565,7 @@ async def oauth_callback(
                 "iat": str(int(time.time())),
             },
             ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            purpose="consent",
         )
         return RedirectResponse(
             url=f"/oauth/consent?consent_token={consent_token}", status_code=302
@@ -505,20 +623,26 @@ def _scope_to_permission_description(scope: str) -> str | None:
     return f"Access: {scope}"
 
 
-@router.get("/oauth/consent", response_class=HTMLResponse)
+@router.get(
+    "/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(_check_rate_limit)]
+)
 async def consent_page(
     consent_token: str = Query(...),
     ctx: Context = Depends(get_ctx),
 ) -> HTMLResponse:
     """Display the OAuth consent screen."""
     try:
-        params = _verify_consent_state(
-            consent_token, ctx.config.admin.auth.jwt_secret.get_secret_value()
+        params = _verify_payload(
+            consent_token,
+            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            purpose="consent",
+            max_age=CONSENT_STATE_MAX_AGE_SECONDS,
         )
     except InvalidGrantError:
         return HTMLResponse(
             content="<html><body><h1>Invalid or expired consent request</h1></body></html>",
             status_code=400,
+            headers=_CONSENT_SECURITY_HEADERS,
         )
 
     app_name = params.get("client_name") or "Unknown Application"
@@ -546,10 +670,10 @@ async def consent_page(
         fonts_url=_FONTS_URL,
         check_svg=_CHECK_SVG,
     )
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
 
 
-@router.post("/oauth/consent")
+@router.post("/oauth/consent", dependencies=[Depends(_check_rate_limit)])
 async def consent_submit(
     consent_token: str = Form(...),
     action: str = Form(...),
@@ -557,19 +681,31 @@ async def consent_submit(
 ) -> RedirectResponse:
     """Process the consent form submission."""
     try:
-        params = _verify_consent_state(
-            consent_token, ctx.config.admin.auth.jwt_secret.get_secret_value()
+        params = _verify_payload(
+            consent_token,
+            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            purpose="consent",
+            max_age=CONSENT_STATE_MAX_AGE_SECONDS,
         )
     except InvalidGrantError:
+        logger.warning("oauth_consent_invalid_token")
+        return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+
+    consent_nonce = params.get("consent_nonce") or ""
+    if not _consume_consent_nonce(consent_nonce):
+        logger.warning("oauth_consent_nonce_replay", nonce=consent_nonce[:8])
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
 
     redirect_uri = params.get("redirect_uri") or ""
     original_state = params.get("original_state")
     platform_code = params.get("code") or ""
+    client_id = params.get("client_id") or ""
 
     if action == "deny":
+        logger.info("oauth_consent_denied", client_id=client_id)
         return _error_redirect(redirect_uri, "access_denied", original_state)
 
+    logger.info("oauth_consent_approved", client_id=client_id)
     redirect_params: dict[str, str] = {"code": platform_code}
     if original_state:
         redirect_params["state"] = original_state
@@ -578,24 +714,6 @@ async def consent_submit(
     return RedirectResponse(
         url=f"{redirect_uri}{separator}{urlencode(redirect_params)}", status_code=302
     )
-
-
-def _verify_consent_state(state_str: str, secret: str) -> dict[str, str | None]:
-    """Verify consent token with shorter TTL."""
-    parts = state_str.rsplit(".", 1)
-    if len(parts) != 2:
-        raise InvalidGrantError("invalid consent token")
-    data, sig = parts
-    expected = hmac.HMAC(secret.encode(), data.encode(), hashlib.sha256).hexdigest()[:32]
-    if not hmac.compare_digest(sig, expected):
-        raise InvalidGrantError("consent signature invalid")
-    payload: dict[str, str | None] = json.loads(urlsafe_b64decode(data))
-    iat = payload.get("iat")
-    if iat is not None:
-        age = time.time() - float(iat)
-        if age > CONSENT_STATE_MAX_AGE_SECONDS or age < 0:
-            raise InvalidGrantError("consent expired")
-    return payload
 
 
 def _error_redirect(

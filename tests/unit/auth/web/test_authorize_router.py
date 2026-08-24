@@ -14,8 +14,8 @@ from jentic_one.auth.web.routers.authorize import (
     STATE_MAX_AGE_SECONDS,
     _callback_uri,
     _matches_canonical_origin,
-    _sign_state,
-    _verify_state,
+    _sign_payload,
+    _verify_payload,
 )
 
 SECRET = "test-secret-key"
@@ -26,37 +26,37 @@ def test_sign_verify_roundtrip() -> None:
         "client_id": "c1",
         "redirect_uri": "https://app.example.com/cb",
     }
-    signed = _sign_state(payload, SECRET)
-    result = _verify_state(signed, SECRET)
+    signed = _sign_payload(payload, SECRET, purpose="state")
+    result = _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
     assert result["client_id"] == "c1"
     assert result["redirect_uri"] == "https://app.example.com/cb"
 
 
-def test_signature_length_is_128_bits() -> None:
+def test_signature_is_full_sha256() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_state(payload, SECRET)
+    signed = _sign_payload(payload, SECRET, purpose="state")
     sig = signed.rsplit(".", 1)[1]
-    assert len(sig) == 32
+    assert len(sig) == 64
 
 
 def test_invalid_signature_rejected() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_state(payload, SECRET)
+    signed = _sign_payload(payload, SECRET, purpose="state")
     tampered = signed[:-1] + ("a" if signed[-1] != "a" else "b")
-    with pytest.raises(InvalidGrantError, match="state signature invalid"):
-        _verify_state(tampered, SECRET)
+    with pytest.raises(InvalidGrantError, match="signature invalid"):
+        _verify_payload(tampered, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_wrong_secret_rejected() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_state(payload, SECRET)
-    with pytest.raises(InvalidGrantError, match="state signature invalid"):
-        _verify_state(signed, "wrong-secret")
+    signed = _sign_payload(payload, SECRET, purpose="state")
+    with pytest.raises(InvalidGrantError, match="signature invalid"):
+        _verify_payload(signed, "wrong-secret", purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_malformed_state_no_dot() -> None:
-    with pytest.raises(InvalidGrantError, match="invalid state"):
-        _verify_state("no-dot-here", SECRET)
+    with pytest.raises(InvalidGrantError, match="invalid state token"):
+        _verify_payload("no-dot-here", SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_expired_state_rejected() -> None:
@@ -64,63 +64,78 @@ def test_expired_state_rejected() -> None:
         "key": "value",
         "iat": str(int(time.time()) - STATE_MAX_AGE_SECONDS - 1),
     }
-    signed = _sign_state(payload, SECRET)
-    with pytest.raises(InvalidGrantError, match="state expired"):
-        _verify_state(signed, SECRET)
+    signed = _sign_payload(payload, SECRET, purpose="state")
+    with pytest.raises(InvalidGrantError, match="expired"):
+        _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_future_state_rejected() -> None:
     payload: dict[str, str | None] = {"key": "value", "iat": str(int(time.time()) + 100)}
-    signed = _sign_state(payload, SECRET)
-    with pytest.raises(InvalidGrantError, match="state expired"):
-        _verify_state(signed, SECRET)
+    signed = _sign_payload(payload, SECRET, purpose="state")
+    with pytest.raises(InvalidGrantError, match="expired"):
+        _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_state_within_ttl_accepted() -> None:
     payload: dict[str, str | None] = {"key": "value", "iat": str(int(time.time()) - 60)}
-    signed = _sign_state(payload, SECRET)
-    result = _verify_state(signed, SECRET)
+    signed = _sign_payload(payload, SECRET, purpose="state")
+    result = _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
     assert result["key"] == "value"
 
 
 def test_state_without_iat_accepted() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_state(payload, SECRET)
-    result = _verify_state(signed, SECRET)
+    signed = _sign_payload(payload, SECRET, purpose="state")
+    result = _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
     assert result["key"] == "value"
 
 
-def test_redirect_same_origin_allowed() -> None:
-    assert _matches_canonical_origin("https://app.example.com/callback", "https://app.example.com")
+def test_purpose_mismatch_rejected() -> None:
+    payload: dict[str, str | None] = {"key": "value"}
+    signed = _sign_payload(payload, SECRET, purpose="consent")
+    with pytest.raises(InvalidGrantError, match="purpose mismatch"):
+        _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
-def test_redirect_same_origin_with_path_allowed() -> None:
+def test_redirect_allowed_path_accepted() -> None:
     assert _matches_canonical_origin(
-        "https://app.example.com/auth/callback", "https://app.example.com/"
+        "https://app.example.com/oauth/callback", "https://app.example.com"
+    )
+
+
+def test_redirect_allowed_path_with_trailing_slash() -> None:
+    assert _matches_canonical_origin(
+        "https://app.example.com/auth/callback/", "https://app.example.com/"
+    )
+
+
+def test_redirect_disallowed_path_rejected() -> None:
+    assert not _matches_canonical_origin(
+        "https://app.example.com/evil/steal-code", "https://app.example.com"
     )
 
 
 def test_redirect_different_host_rejected() -> None:
-    assert not _matches_canonical_origin("https://evil.com/callback", "https://app.example.com")
+    assert not _matches_canonical_origin("https://evil.com/oauth/callback", "https://app.example.com")
 
 
 def test_redirect_different_scheme_rejected() -> None:
     assert not _matches_canonical_origin(
-        "http://app.example.com/callback", "https://app.example.com"
+        "http://app.example.com/oauth/callback", "https://app.example.com"
     )
 
 
 def test_redirect_no_canonical_url_rejects_all() -> None:
-    assert not _matches_canonical_origin("https://app.example.com/callback", "")
+    assert not _matches_canonical_origin("https://app.example.com/oauth/callback", "")
 
 
 def test_redirect_relative_uri_rejected() -> None:
-    assert not _matches_canonical_origin("/callback", "https://app.example.com")
+    assert not _matches_canonical_origin("/oauth/callback", "https://app.example.com")
 
 
 def test_redirect_different_port_rejected() -> None:
     assert not _matches_canonical_origin(
-        "https://app.example.com:9999/callback", "https://app.example.com"
+        "https://app.example.com:9999/oauth/callback", "https://app.example.com"
     )
 
 
@@ -147,8 +162,6 @@ class _FakeRequest:
 
 
 def test_callback_uri_prefers_canonical_origin_over_request_scheme() -> None:
-    # Behind a TLS-terminating proxy the request is plain http; the callback must
-    # still carry the canonical https origin so it matches what's registered.
     request = _FakeRequest("http://internal-host/oauth/callback")
     result = _callback_uri(cast("Request", request), "https://app.example.com")
     assert result == "https://app.example.com/oauth/callback"
