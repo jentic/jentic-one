@@ -18,6 +18,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
+from jentic_one.shared.auth.permission_catalog import (
+    AGENTS_READ,
+    AGENTS_WRITE,
+    ALL_PERMISSIONS,
+    CREDENTIALS_READ,
+    CREDENTIALS_WRITE,
+    TOOLKITS_READ,
+    TOOLKITS_WRITE,
+    compute_implies_transitive,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
 
@@ -459,20 +469,40 @@ async def error_page(error: str = Query(default="unknown_error")) -> dict[str, s
     return {"error": error}
 
 
-def _scope_to_permission_description(scope: str) -> str:
-    """Map OAuth scopes to human-readable permission descriptions."""
-    scope_descriptions = {
-        "openid": "View your basic profile information",
-        "email": "View your email address",
-        "profile": "View your profile details",
-        "agents:read": "View your agents",
-        "agents:write": "Create and manage agents on your behalf",
-        "toolkits:read": "View available toolkits",
-        "toolkits:write": "Manage toolkit configurations",
-        "credentials:read": "View stored credentials",
-        "credentials:write": "Manage stored credentials",
-    }
-    return scope_descriptions.get(scope, f"Access: {scope}")
+_HIDDEN_SCOPES: frozenset[str] = frozenset({"openid"})
+
+_OIDC_SCOPE_DESCRIPTIONS: dict[str, str] = {
+    "email": "View your email address",
+    "profile": "View your basic profile information",
+}
+
+_PLATFORM_SCOPE_DESCRIPTIONS: dict[str, str] = {
+    AGENTS_READ: "View agents",
+    AGENTS_WRITE: "Create and manage agents",
+    TOOLKITS_READ: "View toolkits",
+    TOOLKITS_WRITE: "Create and manage toolkits",
+    CREDENTIALS_READ: "View credential metadata",
+    CREDENTIALS_WRITE: "Create and manage credentials",
+}
+
+
+def _scope_to_permission_description(scope: str) -> str | None:
+    """Map OAuth scopes to human-readable permission descriptions.
+
+    Returns None for scopes that should not be displayed (e.g. openid).
+    Falls back to the permission catalog description for platform scopes,
+    or a generic label for completely unknown scopes.
+    """
+    if scope in _HIDDEN_SCOPES:
+        return None
+    if scope in _OIDC_SCOPE_DESCRIPTIONS:
+        return _OIDC_SCOPE_DESCRIPTIONS[scope]
+    if scope in _PLATFORM_SCOPE_DESCRIPTIONS:
+        return _PLATFORM_SCOPE_DESCRIPTIONS[scope]
+    perm = ALL_PERMISSIONS.get(scope)
+    if perm is not None:
+        return perm.description
+    return f"Access: {scope}"
 
 
 @router.get("/oauth/consent", response_class=HTMLResponse)
@@ -497,9 +527,14 @@ async def consent_page(
     scope = params.get("scope") or "openid"
 
     scopes = [s.strip() for s in scope.split() if s.strip()]
+    implied_by_others: set[str] = set()
+    for s in scopes:
+        implied_by_others.update(compute_implies_transitive(s))
+    visible_scopes = [s for s in scopes if s not in implied_by_others]
     permission_items = "\n".join(
-        f"<li>{html_mod.escape(_scope_to_permission_description(s))}</li>"
-        for s in scopes
+        f"<li>{html_mod.escape(desc)}</li>"
+        for s in visible_scopes
+        if (desc := _scope_to_permission_description(s)) is not None
     )
 
     html = _CONSENT_PAGE_TEMPLATE.format(
