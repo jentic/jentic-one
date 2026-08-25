@@ -9,8 +9,10 @@ from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.admin.web.deps import get_oauth_client_service
 from jentic_one.admin.web.schemas.oauth_clients import (
     OAuthClientCreateRequest,
+    OAuthClientCreateResponse,
     OAuthClientListResponse,
     OAuthClientResponse,
+    OAuthClientRotateSecretResponse,
     OAuthClientUpdateRequest,
 )
 from jentic_one.shared.auth.identity import Identity
@@ -41,14 +43,13 @@ async def create_oauth_client(
     body: OAuthClientCreateRequest,
     identity: Identity = get_current_identity(required_permissions=["org:admin"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
-) -> OAuthClientResponse:
+) -> OAuthClientCreateResponse:
     """Register a new OAuth client for third-party application integration.
 
-    The generated ``client_id`` is returned in the response and should be
-    configured in the third-party application. No client_secret is issued —
-    clients must use PKCE (S256) for authorization.
+    The generated ``client_id`` and ``client_secret`` are returned in the
+    response. The secret is shown only once — store it securely.
     """
-    view = await svc.create(
+    result = await svc.create(
         name=body.name,
         description=body.description,
         redirect_uris=body.redirect_uris,
@@ -56,7 +57,8 @@ async def create_oauth_client(
         allowed_scopes=body.allowed_scopes,
         identity=identity,
     )
-    return _to_response(view)
+    base = _to_response(result)
+    return OAuthClientCreateResponse(**base.model_dump(), client_secret=result.client_secret)
 
 
 @router.get("/admin/oauth-clients", summary="List OAuth clients")
@@ -108,6 +110,24 @@ async def update_oauth_client(
         identity=identity,
     )
     return _to_response(view)
+
+
+@router.post(
+    "/admin/oauth-clients/{id}/rotate-secret",
+    summary="Rotate client secret",
+    responses=not_found(),
+)
+async def rotate_oauth_client_secret(
+    id: str,
+    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    svc: OAuthClientService = Depends(get_oauth_client_service),
+) -> OAuthClientRotateSecretResponse:
+    """Generate a new client secret. The previous secret is immediately invalidated.
+
+    The new secret is shown only once — store it securely.
+    """
+    client_secret = await svc.rotate_secret(id, identity=identity)
+    return OAuthClientRotateSecretResponse(client_secret=client_secret)
 
 
 @router.delete(

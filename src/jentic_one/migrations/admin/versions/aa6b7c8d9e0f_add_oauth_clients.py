@@ -33,6 +33,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("client_id", sa.String(64), nullable=False),
+        sa.Column("client_secret_hash", sa.String(128), nullable=False),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column(

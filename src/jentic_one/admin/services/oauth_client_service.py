@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import secrets
 from urllib.parse import urlparse
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
+from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services.errors import InvalidInputError, NotFoundError
-from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
+from jentic_one.admin.services.schemas.oauth_clients import OAuthClientCreateResult, OAuthClientView
 from jentic_one.shared.audit import record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -80,15 +82,19 @@ class OAuthClientService:
         require_consent: bool = True,
         allowed_scopes: list[str] | None = None,
         identity: Identity,
-    ) -> OAuthClientView:
-        """Register a new OAuth client."""
+    ) -> OAuthClientCreateResult:
+        """Register a new OAuth client. Returns the one-time plaintext secret."""
         _validate_redirect_uris(redirect_uris)
+
+        client_secret = secrets.token_urlsafe(32)
+        secret_hash = hash_password(client_secret)
 
         async with self._ctx.admin_db.transaction() as session:
             client = await OAuthClientRepository.create(
                 session,
                 name=name,
                 redirect_uris=redirect_uris,
+                client_secret_hash=secret_hash,
                 description=description,
                 require_consent=require_consent,
                 allowed_scopes=allowed_scopes,
@@ -109,7 +115,8 @@ class OAuthClientService:
                 },
                 origin=identity.origin.value,
             )
-            return _to_view(client)
+            view = _to_view(client)
+            return OAuthClientCreateResult(**view.model_dump(), client_secret=client_secret)
 
     async def get(self, id: str) -> OAuthClientView:
         """Get an OAuth client by internal ID."""
@@ -206,6 +213,28 @@ class OAuthClientService:
                 after={"active": False},
                 origin=identity.origin.value,
             )
+
+    async def rotate_secret(self, id: str, *, identity: Identity) -> str:
+        """Generate a new client secret. Returns the one-time plaintext."""
+        client_secret = secrets.token_urlsafe(32)
+        secret_hash = hash_password(client_secret)
+
+        async with self._ctx.admin_db.transaction() as session:
+            client = await OAuthClientRepository.update_secret_hash(session, id, secret_hash)
+            if client is None:
+                raise OAuthClientNotFoundError(id)
+
+            await record_audit(
+                session,
+                action=AuditAction.UPDATE,
+                target_type=AuditTargetType.OAUTH_CLIENT,
+                target_id=id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                after={"secret_rotated": True},
+                origin=identity.origin.value,
+            )
+        return client_secret
 
     async def is_redirect_uri_allowed(self, client_id: str, redirect_uri: str) -> bool:
         """Check if a redirect_uri is allowed for a given client_id."""

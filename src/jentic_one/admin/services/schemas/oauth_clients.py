@@ -21,3 +21,9 @@ class OAuthClientView(BaseModel):
     created_at: datetime
     updated_at: datetime | None
     created_by: str | None
+
+
+class OAuthClientCreateResult(OAuthClientView):
+    """Returned on creation — includes the one-time plaintext client secret."""
+
+    client_secret: str

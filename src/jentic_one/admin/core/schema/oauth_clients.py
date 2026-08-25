@@ -11,11 +11,11 @@ from jentic_one.shared.db.ids import generate_ksuid
 
 
 class OAuthClient(AuditableMixin, AdminBase):
-    """A registered OAuth client that can initiate authorization flows.
+    """A registered confidential OAuth client that can initiate authorization flows.
 
     Third-party applications register here to receive authorization codes at
-    their own redirect URIs. No client_secret is stored — PKCE (S256) provides
-    sufficient security for public clients.
+    their own redirect URIs. Clients authenticate at the token endpoint with
+    a client_secret (argon2id hash stored) in addition to PKCE (S256).
     """
 
     __tablename__ = "oauth_clients"
@@ -31,6 +31,7 @@ class OAuthClient(AuditableMixin, AdminBase):
         server_default=func.generate_ksuid("oac"),
     )
     client_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    client_secret_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text(), nullable=True)
     redirect_uris: Mapped[list[str]] = mapped_column(ARRAY(String(2048)), nullable=False)

@@ -24,6 +24,7 @@ class OAuthClientRepository:
         *,
         name: str,
         redirect_uris: list[str],
+        client_secret_hash: str,
         description: str | None = None,
         require_consent: bool = True,
         allowed_scopes: list[str] | None = None,
@@ -32,6 +33,7 @@ class OAuthClientRepository:
         """Create a new OAuth client with a generated client_id."""
         client = OAuthClient(
             client_id=_generate_client_id(),
+            client_secret_hash=client_secret_hash,
             name=name,
             description=description,
             redirect_uris=redirect_uris,
@@ -40,6 +42,18 @@ class OAuthClientRepository:
             created_by=created_by,
         )
         session.add(client)
+        await session.flush()
+        return client
+
+    @staticmethod
+    async def update_secret_hash(
+        session: AsyncSession, id: str, secret_hash: str
+    ) -> OAuthClient | None:
+        """Update the client_secret_hash for secret rotation. Returns None if not found."""
+        client = await session.get(OAuthClient, id)
+        if client is None:
+            return None
+        client.client_secret_hash = secret_hash
         await session.flush()
         return client
 

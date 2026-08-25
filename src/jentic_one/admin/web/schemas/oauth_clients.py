@@ -99,6 +99,22 @@ class OAuthClientResponse(BaseModel):
     created_by: str | None
 
 
+class OAuthClientCreateResponse(OAuthClientResponse):
+    """Returned on creation — includes the one-time plaintext client secret."""
+
+    client_secret: str = Field(
+        description="The client secret. Shown only once at creation — store it securely."
+    )
+
+
+class OAuthClientRotateSecretResponse(BaseModel):
+    """Returned on secret rotation — the new one-time plaintext secret."""
+
+    client_secret: str = Field(
+        description="The new client secret. Store it securely; the previous secret is now invalid."
+    )
+
+
 class OAuthClientListResponse(BaseModel):
     """A list of OAuth clients."""
 
