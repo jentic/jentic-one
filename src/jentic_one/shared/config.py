@@ -818,11 +818,21 @@ class TelemetryConfig(BaseModel):
     or hand-rolled) sends nothing. The onboarding CLI writes ``enabled``
     explicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in
     the prompt, not the code default. ``instance_id`` seeds the durable admin-DB
-    identity row on first startup for opted-in instances.
+    identity row on first startup for opted-in instances. ``host_os`` is the
+    operator's OS family, stamped by the CLI at install time so a Docker-run
+    instance reports the host's OS rather than the container's; sent once per
+    boot, on the ``instance_booted`` event.
     """
 
     enabled: bool = False
     instance_id: str | None = None
+    host_os: str | None = None
+    """Host OS family stamped at install time by the onboarding CLI (from Go's
+    ``runtime.GOOS``): the recommended install runs the app in Docker, where
+    runtime detection would always report the container's Linux instead of the
+    operator's machine. ``None`` (hand-rolled config) falls back to runtime
+    detection. Consumed once per boot, on the ``instance_booted`` telemetry
+    event; values outside the closed ``HostOs`` enum degrade to ``other``."""
     endpoint: str = "https://api.jentic.com/api/v1"
     """Ingest endpoint for telemetry events. Not intended for operator override —
     this is a hardcoded Jentic service URL. Exposed in config only for internal

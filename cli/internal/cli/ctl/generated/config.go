@@ -1964,7 +1964,10 @@ func (j *StateBackendConfig) UnmarshalJSON(value []byte) error {
 // or hand-rolled) sends nothing. The onboarding CLI writes “enabled“
 // explicitly (a yes-default “[Y]/n“ prompt) so the on-by-default UX lives in
 // the prompt, not the code default. “instance_id“ seeds the durable admin-DB
-// identity row on first startup for opted-in instances.
+// identity row on first startup for opted-in instances. “host_os“ is the
+// operator's OS family, stamped by the CLI at install time so a Docker-run
+// instance reports the host's OS rather than the container's; sent once per
+// boot, on the “instance_booted“ event.
 type TelemetryConfig struct {
 	// Enabled corresponds to the JSON schema field "enabled".
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
@@ -1974,6 +1977,9 @@ type TelemetryConfig struct {
 
 	// FlushIntervalS corresponds to the JSON schema field "flush_interval_s".
 	FlushIntervalS float64 `json:"flush_interval_s,omitempty,omitzero" yaml:"flush_interval_s,omitempty" mapstructure:"flush_interval_s,omitempty"`
+
+	// HostOs corresponds to the JSON schema field "host_os".
+	HostOs interface{} `json:"host_os,omitempty,omitzero" yaml:"host_os,omitempty" mapstructure:"host_os,omitempty"`
 
 	// InstanceId corresponds to the JSON schema field "instance_id".
 	InstanceId interface{} `json:"instance_id,omitempty,omitzero" yaml:"instance_id,omitempty" mapstructure:"instance_id,omitempty"`
@@ -1987,6 +1993,8 @@ type TelemetryConfig struct {
 	// RequestTimeoutS corresponds to the JSON schema field "request_timeout_s".
 	RequestTimeoutS float64 `json:"request_timeout_s,omitempty,omitzero" yaml:"request_timeout_s,omitempty" mapstructure:"request_timeout_s,omitempty"`
 }
+
+type TelemetryConfigHostOs_0 *string
 
 type TelemetryConfigInstanceId_0 *string
 

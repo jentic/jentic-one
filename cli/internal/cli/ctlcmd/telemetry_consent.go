@@ -39,7 +39,8 @@ func (a *app) ensureTelemetryConsent(interactive bool) (proceed bool, enabled bo
 		}
 		fmt.Fprintln(a.Out, theme.Headingf("Telemetry"))
 		fmt.Fprintln(a.Out, theme.Dim.Render("Jentic One optionally sends anonymous usage events under a random instance ID. No"))
-		fmt.Fprintln(a.Out, theme.Dim.Render("hostnames, credentials, or personal data are ever included in the payload."))
+		fmt.Fprintln(a.Out, theme.Dim.Render("hostnames, credentials, or personal data are ever included in the payload. The OS"))
+		fmt.Fprintln(a.Out, theme.Dim.Render("family (linux/macOS/windows, anything else as \"other\") is reported on startup."))
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Dim.Render("As with any HTTPS request, IP addresses may appear in standard server logs but"))
 		fmt.Fprintln(a.Out, theme.Dim.Render("are never stored or persisted beyond that."))

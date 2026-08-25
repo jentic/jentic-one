@@ -26,7 +26,7 @@ from jentic_one.admin.core.schema.instance_identity import InstanceIdentity
 from jentic_one.shared.config import AppConfig, TelemetryConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models.events import EventType
+from jentic_one.shared.models.events import EventType, HostOs
 from jentic_one.shared.telemetry.sink import get_active_sink
 from jentic_one.shared.web.app_factory import _start_telemetry, _stop_telemetry
 
@@ -38,6 +38,10 @@ pytestmark = pytest.mark.integration
 _ENABLED_TELEMETRY = TelemetryConfig(
     enabled=True,
     instance_id="lifecycle-test-instance",
+    # Deliberately different from this machine's real OS: proves the CLI's
+    # install-time stamp wins over runtime detection (the Docker case, where
+    # detection would report the container's Linux).
+    host_os="windows",
     endpoint="http://127.0.0.1:1",
     flush_interval_s=3600.0,
 )
@@ -90,6 +94,18 @@ async def test_first_startup_emits_initialized_and_booted_once_each(
     assert await _count_events(admin_db, EventType.INSTANCE_INITIALIZED) == 1
     assert await _count_events(admin_db, EventType.INSTANCE_BOOTED) == 1
 
+    # The per-boot event carries the OS family tag (and only that) — sourced
+    # from the config stamp, not this machine's runtime platform. The OS is
+    # never attached to any other event.
+    async with admin_db.session() as session:
+        result = await session.execute(select(Event).where(Event.type == EventType.INSTANCE_BOOTED))
+        booted = result.scalar_one()
+        assert booted.data["tags"] == [str(HostOs.WINDOWS)]
+        initialized = await session.execute(
+            select(Event).where(Event.type == EventType.INSTANCE_INITIALIZED)
+        )
+        assert not (initialized.scalar_one().data or {}).get("tags")
+
 
 async def test_second_startup_reboots_without_reinitializing(
     integration_config: AppConfig, admin_db: DatabaseSession, clean_telemetry_state: None
@@ -108,6 +124,13 @@ async def test_second_startup_reboots_without_reinitializing(
     # The identity row is the dedupe: only the first boot performs the insert.
     assert await _count_events(admin_db, EventType.INSTANCE_INITIALIZED) == 1
     assert await _count_events(admin_db, EventType.INSTANCE_BOOTED) == 2
+
+    # The OS tag rides on EVERY boot (self-healing: a lost first request or a
+    # config moved to another machine is corrected on the next startup).
+    async with admin_db.session() as session:
+        result = await session.execute(select(Event).where(Event.type == EventType.INSTANCE_BOOTED))
+        for booted in result.scalars():
+            assert booted.data["tags"] == [str(HostOs.WINDOWS)]
 
 
 async def test_shutdown_drains_the_flush_queue(

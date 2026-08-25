@@ -1,5 +1,6 @@
 """Event-related enums shared across modules."""
 
+import platform
 from enum import StrEnum
 
 
@@ -186,9 +187,61 @@ class ImportFailReason(StrEnum):
     FETCH = "fetch"
 
 
+class HostOs(StrEnum):
+    """Closed-enum tag naming the host OS family, sent once per boot.
+
+    Attached only to ``instance_booted`` — the lifecycle event emitted on every
+    startup — so the OS rides on one request per boot under the same opaque
+    instance id, and on no other event. Per-boot (rather than once-ever)
+    matches how comparable products report environment facts (n8n's "Instance
+    started", GitLab's Service Ping, Grafana's usage report) and lets the
+    dimension self-heal: a lost request or a config moved to another machine
+    is corrected on the next boot.
+
+    Detection order matters because the recommended install runs the backend in
+    Docker, where ``platform.system()`` reports the *container's* kernel
+    (always Linux), not the operator's machine. The onboarding CLI runs on the
+    host, so it stamps ``telemetry.host_os`` (from Go's ``runtime.GOOS``) into
+    the generated config; ``resolve`` prefers that and only falls back to
+    runtime detection for hand-rolled configs. Anything unrecognised collapses
+    to ``OTHER``, so no free-form platform string can reach the wire.
+    """
+
+    LINUX = "linux"
+    DARWIN = "darwin"
+    WINDOWS = "windows"
+    OTHER = "other"
+
+    @classmethod
+    def current(cls) -> "HostOs":
+        """Classify the running platform into the closed set."""
+        system = platform.system().lower()
+        try:
+            return cls(system)
+        except ValueError:
+            return cls.OTHER
+
+    @classmethod
+    def resolve(cls, configured: str | None) -> "HostOs":
+        """Prefer the install-time config value, else detect at runtime.
+
+        ``configured`` is the raw ``telemetry.host_os`` string; surrounding
+        whitespace is forgiven (a quoted hand-edit like ``" darwin "``), but a
+        value outside the closed set degrades to OTHER rather than falling back
+        to runtime detection — a stamped-but-garbled value must not silently
+        become the container's OS.
+        """
+        if configured is None or not configured.strip():
+            return cls.current()
+        try:
+            return cls(configured.strip().lower())
+        except ValueError:
+            return cls.OTHER
+
+
 #: Union of every closed-enum tag type. A tag on the wire is always a member of
 #: one of these — there is deliberately no free-form variant.
-EventTag = ErrorSource | SpecSource | ImportFailReason
+EventTag = ErrorSource | SpecSource | ImportFailReason | HostOs
 
 
 #: Which closed-enum tag type each event may carry. ``emit_event`` validates
@@ -200,4 +253,5 @@ EVENT_TAGS: dict[str, type[StrEnum]] = {
     EventType.CREDENTIAL_REFRESH_FAILED: ErrorSource,
     EventType.IMPORT_COMPLETED: SpecSource,
     EventType.IMPORT_FAILED: ImportFailReason,
+    EventType.INSTANCE_BOOTED: HostOs,
 }
