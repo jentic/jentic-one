@@ -174,9 +174,9 @@ jobs:
       # runs with the registry credential on disk (same ordering rationale as
       # the cosign/syft installers above).
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # One `app` image serves every surface — the surface set is chosen at
       # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
