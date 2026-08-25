@@ -223,10 +223,10 @@ class NoteService:
         *,
         if_match: int | None = None,
         body: str | _Unset = UNSET,
-        type: str | None | _Unset = UNSET,
-        confidence: str | None | _Unset = UNSET,
-        source: str | None | _Unset = UNSET,
-        related_execution_id: str | None | _Unset = UNSET,
+        type: str | _Unset | None = UNSET,
+        confidence: str | _Unset | None = UNSET,
+        source: str | _Unset | None = UNSET,
+        related_execution_id: str | _Unset | None = UNSET,
         identity: Identity,
     ) -> NoteView:
         if not note_id.startswith("note_"):
