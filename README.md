@@ -30,8 +30,8 @@
 
 > [!NOTE]
 > **Public Beta.** Schemas and CLI commands can change between 0.x releases. Pin a version if
-> you need stability. Production use is not yet recommended. Contributions are welcome: see
-> [CONTRIBUTING.md](CONTRIBUTING.md) and the [open issues](https://github.com/jentic/jentic-one/issues).
+> you need stability. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+> [open issues](https://github.com/jentic/jentic-one/issues).
 
 ## What Jentic One is
 
@@ -61,7 +61,7 @@ Jentic One is self-hosted and licensed under Apache-2.0.
 | Not | Reason |
 | --- | ------ |
 | A workflow or orchestration engine | The Broker makes one governed upstream call per execution. An agent that needs multi-step orchestration composes calls itself. |
-| A secrets manager | It stores and injects the credentials it brokers. It does not replace Vault for your wider infrastructure. |
+| A general-purpose secrets manager | It stores credentials used for brokered API calls, not arbitrary application or infrastructure secrets. |
 | A hosted service | The open-source product runs in infrastructure you operate. |
 | Safe to run as the same OS user as your agent, with real credentials | API controls cannot stop a same-user process from reading the encryption key and database. See [Security](#security--telemetry). |
 
