@@ -993,6 +993,180 @@ The umbrella [`values.yaml`](helm/jentic-one/values.yaml) and
 carry inline warnings about this so the dev pattern can't silently leak
 into a prod values file.
 
+## AWS Marketplace
+
+Only relevant when deploying the AWS Marketplace container listing (values
+overlay: [`deploy/helm/values/aws-marketplace.yaml`](helm/values/aws-marketplace.yaml)).
+**Not a Marketplace customer? Leave `entitlement.enabled` unset — nothing
+activates**, no AWS call is ever made, and the app is byte-identical to a
+build without the gate.
+
+### Entitlement check
+
+Marketplace deployments verify their subscription with AWS at startup and
+every `refresh_interval_seconds` after. Config (env or config-file — the
+Marketplace values overlay carries the env form):
+
+```yaml
+entitlement:
+  enabled: true
+  product_code: "<product code from the Marketplace portal>"  # required when enabled
+  region: "us-east-1"
+  pricing_model: contract     # contract (default — the live listing) | usage
+  refresh_interval_seconds: 3600
+  grace_period_seconds: 86400
+  # contract pricing (the live listing):
+  license_sku: "<product ID from the portal>"   # NOT the product code — the
+                                                # portal issues both; this is
+                                                # CheckoutLicense ProductSKU
+  license_dimensions: ["users", "executions"]   # the listing's dimensions;
+                                                # env form takes CSV
+```
+
+Env form: `JENTIC__ENTITLEMENT__ENABLED=true`,
+`JENTIC__ENTITLEMENT__PRODUCT_CODE=…`,
+`JENTIC__ENTITLEMENT__LICENSE_SKU=…`,
+`JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS=users,executions`, etc.
+
+**IAM**: the task role (ECS/Fargate) or IRSA role (EKS) needs, depending on
+`pricing_model`:
+
+| Pricing model | Required permission |
+| ------------- | ------------------- |
+| `contract` (default) | `license-manager:CheckoutLicense` (+ `license-manager:GetLicense`, `license-manager:ListReceivedLicenses` for debugging) |
+| `usage` | `aws-marketplace:RegisterUsage` |
+
+Credentials resolve from the standard runtime sources — static
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env, the ECS/Fargate container
+credential endpoint, or EKS IRSA — no AWS SDK required in the image.
+
+### Lockout semantics
+
+- **Only an explicit "not entitled" answer from AWS locks the deployment
+  out** — at startup or at a periodic re-check. Locked out means every
+  request returns `503` (problem details,
+  `type: https://jentic.com/problems/not-entitled`), except:
+  - `/health`, `/<surface>/health`, `/ready` keep answering **200** with
+    `{"status": "not_entitled", "reason": …}` — orchestrator probes stay
+    green (the pod is healthy; the *license* isn't), and the health body is
+    where an operator learns why everything else is 503.
+  - `/instance` (backend identity) passes through.
+- **An unreachable or erroring AWS API never locks you out by itself**: the
+  last definitive verdict holds for `grace_period_seconds` (default 24h)
+  before the gate fails closed.
+- **Recovery needs no restart** — renewing the subscription flips the gate
+  open at the next re-check.
+
+Both the app and the broker run the gate (one image, every workload checks).
+
+### Marketplace publishing (maintainers)
+
+Publishing to the listing's ECR repos is automated but **dormant until two
+GitHub Actions repository *variables* exist** (Settings → Secrets and
+variables → Actions → Variables — variables, not secrets: none of these
+values are sensitive; the trust policy below is what protects the role):
+
+| Variable | Value |
+| -------- | ----- |
+| `MARKETPLACE_ECR_ROLE_ARN` | The IAM role below, e.g. `arn:aws:iam::<seller-account-id>:role/jentic-one-marketplace-publish` |
+| `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app` |
+| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` (only if the listing ships the bundled DB) |
+
+Once set:
+
+- every release ([`release.yml`](../.github/workflows/release.yml)
+  `publish-image`) copies the **signed GHCR index byte-identically** into the
+  Marketplace repo (same digest — asserted) and cosign-signs the ECR
+  reference too;
+- [`marketplace-mirror.yml`](../.github/workflows/marketplace-mirror.yml)
+  (weekly + manual dispatch) mirrors the bundled Postgres image
+  ([`postgres-mirror.Dockerfile`](docker/postgres-mirror.Dockerfile), digest
+  kept fresh by Dependabot) through the same Trivy gate.
+
+Publishing a new **listing version** stays a portal step (product → Request
+changes → *Add version*, pinning the pushed tag/digest); automate via the
+Marketplace Catalog API only after the manual loop has worked once.
+
+The IAM role lives in the **seller account** and trusts GitHub's OIDC
+provider — no long-lived AWS keys anywhere. Trust policy (create the
+`token.actions.githubusercontent.com` OIDC provider first if the account
+doesn't have it):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<seller-account-id>:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:jentic/jentic-one:ref:refs/tags/v*"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<seller-account-id>:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:jentic/jentic-one:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+```
+
+(The first statement covers the release workflow, which runs on `v*` tags;
+the second covers the scheduled/dispatched mirror workflow, which runs on
+`main`.)
+
+Permissions policy — ECR push scoped to the listing's repos, which live in
+AWS's Marketplace registry account and are granted to the seller through the
+portal (`aws-marketplace` actions may be required by newer portal setups; add
+`"aws-marketplace:*ChangeSet*"` only when automating Add version):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:CompleteLayerUpload",
+        "ecr:InitiateLayerUpload",
+        "ecr:PutImage",
+        "ecr:UploadLayerPart",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:DescribeImages"
+      ],
+      "Resource": [
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-app",
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-psql"
+      ]
+    }
+  ]
+}
+```
+
 ## What's deferred
 
 The build system was scaffolded with explicit gaps; these are intentional

@@ -20,6 +20,7 @@ from jentic_one.shared.config import (
     CredentialsConfig,
     EgressConfig,
     EncryptionConfig,
+    EntitlementConfig,
     RuntimeConfig,
     TelemetryConfig,
     _csv_to_list,
@@ -590,3 +591,44 @@ def test_telemetry_host_os_env_override(config_file: Path):
     with patch.dict(os.environ, {"JENTIC__TELEMETRY__HOST_OS": "windows"}):
         config = load_config(config_file)
     assert config.telemetry.host_os == "windows"
+
+
+# --- EntitlementConfig (AWS Marketplace license gate) -------------------------
+
+
+def test_entitlement_defaults_off(config_file: Path):
+    config = load_config(config_file)
+    assert config.entitlement.enabled is False
+    assert config.entitlement.product_code is None
+    # The live listing is contract-priced, hence the default.
+    assert config.entitlement.pricing_model == "contract"
+    assert config.entitlement.license_dimensions == []
+
+
+def test_entitlement_enabled_requires_product_code():
+    with pytest.raises(ValidationError, match=r"entitlement\.product_code"):
+        EntitlementConfig(enabled=True)
+
+
+def test_entitlement_contract_requires_sku():
+    with pytest.raises(ValidationError, match=r"entitlement\.license_sku"):
+        EntitlementConfig(enabled=True, product_code="prod-abc", pricing_model="contract")
+
+
+def test_entitlement_env_override_round_trip(config_file: Path):
+    env = {
+        "JENTIC__ENTITLEMENT__ENABLED": "true",
+        "JENTIC__ENTITLEMENT__PRODUCT_CODE": "prod-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_SKU": "prod-id-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS": "users,executions",
+        "JENTIC__ENTITLEMENT__REGION": "eu-west-1",
+        "JENTIC__ENTITLEMENT__REFRESH_INTERVAL_SECONDS": "600",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.entitlement.enabled is True
+    assert config.entitlement.product_code == "prod-abc123"
+    assert config.entitlement.license_sku == "prod-id-abc123"
+    assert config.entitlement.license_dimensions == ["users", "executions"]
+    assert config.entitlement.region == "eu-west-1"
+    assert config.entitlement.refresh_interval_seconds == 600

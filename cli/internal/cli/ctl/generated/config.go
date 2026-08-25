@@ -552,6 +552,9 @@ type ConfigSchemaJson struct {
 	// Databases corresponds to the JSON schema field "databases".
 	Databases DatabasesConfig `json:"databases" yaml:"databases" mapstructure:"databases"`
 
+	// Entitlement corresponds to the JSON schema field "entitlement".
+	Entitlement *EntitlementConfig `json:"entitlement,omitempty,omitzero" yaml:"entitlement,omitempty" mapstructure:"entitlement,omitempty"`
+
 	// Ingest corresponds to the JSON schema field "ingest".
 	Ingest *IngestConfig `json:"ingest,omitempty,omitzero" yaml:"ingest,omitempty" mapstructure:"ingest,omitempty"`
 
@@ -954,6 +957,115 @@ func (j *EncryptionKey) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	*j = EncryptionKey(plain)
+	return nil
+}
+
+// AWS Marketplace license gate for the Marketplace-listed deployment.
+//
+// Powers the entitlement checker (“integrations/aws_marketplace“): on
+// startup — and every “refresh_interval_seconds“ after — the process asks
+// AWS whether this deployment's Marketplace subscription is still active, and
+// locks the HTTP surface (503, health excepted) when it definitively is not.
+// Defaults to **OFF**: a non-Marketplace install that omits this block runs
+// exactly as before — nothing is wired, no AWS call is ever made.
+//
+// Failure posture: an *unreachable* or *erroring* AWS API is never grounds
+// for lockout by itself — the last definitive verdict holds for
+// “grace_period_seconds“ before the gate fails closed. Only an explicit
+// "not entitled" answer from AWS locks out immediately.
+type EntitlementConfig struct {
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// Endpoint corresponds to the JSON schema field "endpoint".
+	Endpoint interface{} `json:"endpoint,omitempty,omitzero" yaml:"endpoint,omitempty" mapstructure:"endpoint,omitempty"`
+
+	// GracePeriodSeconds corresponds to the JSON schema field "grace_period_seconds".
+	GracePeriodSeconds int `json:"grace_period_seconds,omitempty,omitzero" yaml:"grace_period_seconds,omitempty" mapstructure:"grace_period_seconds,omitempty"`
+
+	// LicenseDimensions corresponds to the JSON schema field "license_dimensions".
+	LicenseDimensions []string `json:"license_dimensions,omitempty,omitzero" yaml:"license_dimensions,omitempty" mapstructure:"license_dimensions,omitempty"`
+
+	// LicenseSku corresponds to the JSON schema field "license_sku".
+	LicenseSku interface{} `json:"license_sku,omitempty,omitzero" yaml:"license_sku,omitempty" mapstructure:"license_sku,omitempty"`
+
+	// PricingModel corresponds to the JSON schema field "pricing_model".
+	PricingModel EntitlementConfigPricingModel `json:"pricing_model,omitempty,omitzero" yaml:"pricing_model,omitempty" mapstructure:"pricing_model,omitempty"`
+
+	// ProductCode corresponds to the JSON schema field "product_code".
+	ProductCode interface{} `json:"product_code,omitempty,omitzero" yaml:"product_code,omitempty" mapstructure:"product_code,omitempty"`
+
+	// RefreshIntervalSeconds corresponds to the JSON schema field
+	// "refresh_interval_seconds".
+	RefreshIntervalSeconds int `json:"refresh_interval_seconds,omitempty,omitzero" yaml:"refresh_interval_seconds,omitempty" mapstructure:"refresh_interval_seconds,omitempty"`
+
+	// Region corresponds to the JSON schema field "region".
+	Region string `json:"region,omitempty,omitzero" yaml:"region,omitempty" mapstructure:"region,omitempty"`
+}
+
+type EntitlementConfigEndpoint_0 *string
+
+type EntitlementConfigLicenseSku_0 *string
+
+type EntitlementConfigPricingModel string
+
+const EntitlementConfigPricingModelContract EntitlementConfigPricingModel = "contract"
+const EntitlementConfigPricingModelUsage EntitlementConfigPricingModel = "usage"
+
+var enumValues_EntitlementConfigPricingModel = []interface{}{
+	"usage",
+	"contract",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *EntitlementConfigPricingModel) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_EntitlementConfigPricingModel {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_EntitlementConfigPricingModel, v)
+	}
+	*j = EntitlementConfigPricingModel(v)
+	return nil
+}
+
+type EntitlementConfigProductCode_0 *string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain EntitlementConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["grace_period_seconds"]; !ok || v == nil {
+		plain.GracePeriodSeconds = 86400
+	}
+	if v, ok := raw["pricing_model"]; !ok || v == nil {
+		plain.PricingModel = "contract"
+	}
+	if v, ok := raw["refresh_interval_seconds"]; !ok || v == nil {
+		plain.RefreshIntervalSeconds = 3600
+	}
+	if v, ok := raw["region"]; !ok || v == nil {
+		plain.Region = "us-east-1"
+	}
+	*j = EntitlementConfig(plain)
 	return nil
 }
 

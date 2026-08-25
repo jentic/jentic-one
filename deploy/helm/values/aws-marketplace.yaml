@@ -1,19 +1,20 @@
 # AWS Marketplace deployment values (container product listing).
 #
 # Overlay for the jentic-one umbrella chart when deploying from the AWS
-# Marketplace listing. Placeholders marked <…> are filled in when the listing
-# exists (plan PR 6): the Marketplace portal assigns the ECR registry path and
-# repository names when the product is created.
+# Marketplace listing. Remaining placeholders marked <…> are filled in as the
+# listing progresses (plan PR 6 / the release that pins the listing's tag).
+# The ECR registry path is portal-issued and recorded below (2026-08-25):
+# 709825985650 is AWS's shared Marketplace registry account; "jentic" is the
+# seller namespace assigned to this product.
 #
 # Marketplace rule of thumb: every image a deployment pulls must come from the
 # listing's ECR registry — no docker.io / ghcr.io pulls at install time.
 
 global:
   image:
-    # ECR registry path from the Marketplace portal, e.g.
-    # "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>". Used as the
-    # fallback for any service without an explicit image.repository.
-    registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>"
+    # ECR registry path from the Marketplace portal. Used as the fallback for
+    # any service without an explicit image.repository.
+    registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic"
     # Pin per release, per the listing's deployment instructions (the
     # Marketplace does not allow floating tags like :latest).
     tag: ""
@@ -43,21 +44,28 @@ global:
 app:
   enabled: true
   image:
-    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>/jentic-one-app"
-  # Entitlement gate wiring (plan PR 4). DO NOT uncomment until the deployed
-  # image ships the entitlement config: AppConfig rejects unknown config
-  # sections (extra="forbid"), so these env vars crash older images at boot.
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
+  # Entitlement gate wiring (plan PR 4). The listing is contract-priced with
+  # dimensions `users` + `executions` (decided 2026-08-20); `contract` is the
+  # config default so only the IDs need filling in. DO NOT uncomment until the
+  # deployed image ships the entitlement config: AppConfig rejects unknown
+  # config sections (extra="forbid"), so these env vars crash older images at
+  # boot.
   # extraEnv:
   #   JENTIC__ENTITLEMENT__ENABLED: "true"
-  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product-code from the portal>"
+  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
 
 broker:
   enabled: true
   image:
-    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>/jentic-one-app"
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
   # extraEnv:  # same caveat as app.extraEnv above
   #   JENTIC__ENTITLEMENT__ENABLED: "true"
-  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product-code from the portal>"
+  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
 
 registry:
   enabled: false
@@ -68,14 +76,15 @@ control:
 gateway:
   enabled: false
 
-# In-cluster Postgres from the ECR-mirrored image (plan PR 6 mirrors it).
+# In-cluster Postgres from the ECR-mirrored image (plan PR 6 mirrors it —
+# portal repo jentic/jentic-one-psql, created 2026-08-25).
 # RDS variant: set postgresql.enabled=false, global.postgresql.enabled=false,
 # and point global.databases.*.host at the RDS endpoint instead.
 postgresql:
   enabled: true
   image:
     registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com"
-    repository: "<seller>/postgresql"
+    repository: "jentic/jentic-one-psql"
     tag: "17.2.0-debian-12-r6"
   auth:
     username: postgres

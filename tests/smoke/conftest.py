@@ -297,6 +297,8 @@ def _skip_if_unreachable(request: pytest.FixtureRequest, base_url: str) -> None:
         # Real-AWS SigV4 tests: the signer-level tests need only AWS env vars
         # (no deployed stack); the broker E2E test does its own reachability skip.
         "tests.smoke.test_sigv4_real_aws",
+        # Real-AWS entitlement tests: env-gated, no deployed stack needed.
+        "tests.smoke.test_entitlement_real_aws",
     )
     if module_name in exempt_modules:
         return
