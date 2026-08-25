@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.32.0](https://github.com/jentic/jentic-one/compare/v0.31.1...v0.32.0) (2026-08-25)
+
+
+### Features
+
+* AWS Marketplace entitlement gate (plan PRs 3+4) ([#1041](https://github.com/jentic/jentic-one/issues/1041)) ([114e456](https://github.com/jentic/jentic-one/commit/114e456f258da1e4534548efadc93ec41b73104d))
+* **cli:** CLI V2 rebuild ([#1049](https://github.com/jentic/jentic-one/issues/1049)) ([#1094](https://github.com/jentic/jentic-one/issues/1094)) ([4e44f67](https://github.com/jentic/jentic-one/commit/4e44f677befedaacf644ca94174a6736b63f27e1))
+* **telemetry:** report OS family per boot on instance_booted ([#1101](https://github.com/jentic/jentic-one/issues/1101)) ([2c392ad](https://github.com/jentic/jentic-one/commit/2c392ad04adb988da5ded7c922d21e680ba27c34))
+
+
+### Bug Fixes
+
+* **install:** build the server from source for a non-release Docker install ([#1093](https://github.com/jentic/jentic-one/issues/1093)) ([0acd0a8](https://github.com/jentic/jentic-one/commit/0acd0a82cc33022c7e71762c5521c9e2ffffa7ba))
+* **registry:** accept canonical vendor/name/version slugs in search api filters ([#1083](https://github.com/jentic/jentic-one/issues/1083)) ([af5c094](https://github.com/jentic/jentic-one/commit/af5c094f711bff263399c1e0d8a92d25194d18e6)), closes [#1080](https://github.com/jentic/jentic-one/issues/1080)
+* **registry:** make trailing-slash paths matchable in the broker URL index ([#1096](https://github.com/jentic/jentic-one/issues/1096)) ([8b83d6d](https://github.com/jentic/jentic-one/commit/8b83d6d435f8a12781aaad1d09a31dd16e9cbb49)), closes [#1085](https://github.com/jentic/jentic-one/issues/1085)
+
+
+### Build System
+
+* **deps-dev:** bump @testing-library/user-event ([#1103](https://github.com/jentic/jentic-one/issues/1103)) ([4f7af70](https://github.com/jentic/jentic-one/commit/4f7af7069aa3671b984616db9abd4d07fbb98c12))
+* **deps-dev:** bump @types/pg ([#1104](https://github.com/jentic/jentic-one/issues/1104)) ([dcb9450](https://github.com/jentic/jentic-one/commit/dcb9450b2a22854a0a737eacd12704c6f414e74c))
+* **deps-dev:** bump the eslint group across 1 directory with 5 updates ([#1072](https://github.com/jentic/jentic-one/issues/1072)) ([3ab5469](https://github.com/jentic/jentic-one/commit/3ab54693ca1479c6659e40e1fe1b006a632664d4))
+* **deps-dev:** bump the vite group in /ui with 4 updates ([#1102](https://github.com/jentic/jentic-one/issues/1102)) ([4edfa3b](https://github.com/jentic/jentic-one/commit/4edfa3b0235fd17b282103e415dafa4793279c3e))
+* **deps:** bump lucide-react from 1.31.0 to 1.32.0 in /ui ([#1105](https://github.com/jentic/jentic-one/issues/1105)) ([3f21e2a](https://github.com/jentic/jentic-one/commit/3f21e2a0c5174a8c4b826c555165c203189e58cc))
+* **deps:** bump the python group with 19 updates ([#1107](https://github.com/jentic/jentic-one/issues/1107)) ([1d6a5c3](https://github.com/jentic/jentic-one/commit/1d6a5c39c0835a50e95288f7bbb29cb62ad2321c))
+
 ## [0.31.1](https://github.com/jentic/jentic-one/compare/v0.31.0...v0.31.1) (2026-08-18)
 
 
