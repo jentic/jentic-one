@@ -76,17 +76,15 @@ control:
 gateway:
   enabled: false
 
-# In-cluster Postgres from the ECR-mirrored image (plan PR 6 mirrors it).
-# NOTE: only jentic/jentic-one-app exists in the portal so far — the
-# jentic/postgresql repository must be added via Server products → Request
-# changes → Add repositories before PR 6 can push the mirror.
+# In-cluster Postgres from the ECR-mirrored image (plan PR 6 mirrors it —
+# portal repo jentic/jentic-one-psql, created 2026-08-25).
 # RDS variant: set postgresql.enabled=false, global.postgresql.enabled=false,
 # and point global.databases.*.host at the RDS endpoint instead.
 postgresql:
   enabled: true
   image:
     registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com"
-    repository: "jentic/postgresql"
+    repository: "jentic/jentic-one-psql"
     tag: "17.2.0-debian-12-r6"
   auth:
     username: postgres

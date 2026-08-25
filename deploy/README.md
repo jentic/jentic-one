@@ -1059,6 +1059,114 @@ credential endpoint, or EKS IRSA — no AWS SDK required in the image.
 
 Both the app and the broker run the gate (one image, every workload checks).
 
+### Marketplace publishing (maintainers)
+
+Publishing to the listing's ECR repos is automated but **dormant until two
+GitHub Actions repository *variables* exist** (Settings → Secrets and
+variables → Actions → Variables — variables, not secrets: none of these
+values are sensitive; the trust policy below is what protects the role):
+
+| Variable | Value |
+| -------- | ----- |
+| `MARKETPLACE_ECR_ROLE_ARN` | The IAM role below, e.g. `arn:aws:iam::<seller-account-id>:role/jentic-one-marketplace-publish` |
+| `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app` |
+| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` (only if the listing ships the bundled DB) |
+
+Once set:
+
+- every release ([`release.yml`](../.github/workflows/release.yml)
+  `publish-image`) copies the **signed GHCR index byte-identically** into the
+  Marketplace repo (same digest — asserted) and cosign-signs the ECR
+  reference too;
+- [`marketplace-mirror.yml`](../.github/workflows/marketplace-mirror.yml)
+  (weekly + manual dispatch) mirrors the bundled Postgres image
+  ([`postgres-mirror.Dockerfile`](docker/postgres-mirror.Dockerfile), digest
+  kept fresh by Dependabot) through the same Trivy gate.
+
+Publishing a new **listing version** stays a portal step (product → Request
+changes → *Add version*, pinning the pushed tag/digest); automate via the
+Marketplace Catalog API only after the manual loop has worked once.
+
+The IAM role lives in the **seller account** and trusts GitHub's OIDC
+provider — no long-lived AWS keys anywhere. Trust policy (create the
+`token.actions.githubusercontent.com` OIDC provider first if the account
+doesn't have it):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<seller-account-id>:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:jentic/jentic-one:ref:refs/tags/v*"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<seller-account-id>:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:jentic/jentic-one:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+```
+
+(The first statement covers the release workflow, which runs on `v*` tags;
+the second covers the scheduled/dispatched mirror workflow, which runs on
+`main`.)
+
+Permissions policy — ECR push scoped to the listing's repos, which live in
+AWS's Marketplace registry account and are granted to the seller through the
+portal (`aws-marketplace` actions may be required by newer portal setups; add
+`"aws-marketplace:*ChangeSet*"` only when automating Add version):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:CompleteLayerUpload",
+        "ecr:InitiateLayerUpload",
+        "ecr:PutImage",
+        "ecr:UploadLayerPart",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:DescribeImages"
+      ],
+      "Resource": [
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-app",
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-psql"
+      ]
+    }
+  ]
+}
+```
+
 ## What's deferred
 
 The build system was scaffolded with explicit gaps; these are intentional
