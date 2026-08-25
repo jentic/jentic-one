@@ -28,25 +28,21 @@ type FileConfig struct {
 	// BaseURL is the Jentic control-plane (auth surface) base URL used for agent
 	// registration and token minting.
 	BaseURL string `yaml:"base_url"`
-	// DefaultProfile selects which profile commands act on when none is given.
-	DefaultProfile string `yaml:"default_profile"`
 	// Broker is the would-be forward target (logged only in this POC).
 	Broker BrokerConfig `yaml:"broker"`
 	// Telemetry holds the user's telemetry consent decision. HasConsented
 	// records whether the user has been asked; Enabled records their answer.
 	// Both are written together so the CLI never re-prompts after a decision.
 	Telemetry TelemetryConfig `yaml:"telemetry"`
-	// Agent is the SINGLE dedicated Unix account every local coding agent runs
-	// under (one per human). It is the operator-side record of whether that
-	// account exists, where its home/identity live, and which directories it has
-	// been granted — paths and names only, never secrets. Nil until the operator
-	// has been through the agent-user decision at least once.
+	// Agent is the LEGACY location of the shared agent-account record. Current
+	// releases keep it in the XDG agent state (~/.config/jentic/agent-account.yaml
+	// — see AgentState); this field remains only so records written by older
+	// releases can be read (LoadAgentState's fallback) and adopted (the first
+	// MutateAgentState moves them across and clears this). Nothing writes it.
 	Agent *AgentAccount `yaml:"agent_account,omitempty"`
-	// SameUserNoticeSeen records that the operator has already been shown the
-	// one-time notice that `jentic run` is launching the agent same-user (no
-	// dedicated account, no confinement — the agent has the operator's own
-	// filesystem access). It is set the first time that unconfined path is taken so
-	// the security notice is shown once, not nagged on every launch.
+	// SameUserNoticeSeen is the LEGACY location of the one-time same-user launch
+	// notice flag. Like Agent it is read-only fallback state; the live flag is in
+	// the XDG agent state.
 	SameUserNoticeSeen bool `yaml:"same_user_notice_seen,omitempty"`
 
 	// Path records where the config was loaded from (empty if no file existed).
@@ -58,10 +54,12 @@ type FileConfig struct {
 // AgentAccount is the one dedicated Unix account all of this operator's local
 // coding agents share — the true credential boundary between the agents and the
 // operator's secrets. A human provisions it once; every `jentic run`, whatever
-// the agent binary or profile, goes through it. Nothing here is secret (the
-// agents' keys/tokens live in the account's own home), so it sits safely in the
-// operator's config, which is also the only place the grant list may live so the
-// agents can't edit their own access.
+// the agent binary, goes through it. Nothing here is secret (the agents' keys/
+// tokens live in the account's own home), so it sits safely in the operator's
+// XDG agent state (~/.config/jentic/agent-account.yaml — see AgentState), which
+// is also the only place the grant list may live: ~/.config/jentic is a
+// hard-banned grant target and sandbox-denied, so the agents can't edit their
+// own access.
 type AgentAccount struct {
 	// User is the OS account name `jentic run` sudo's to (<operator>-local-agent).
 	User string `yaml:"user"`
@@ -79,11 +77,13 @@ type AgentAccount struct {
 	// HomeDir is the account's home directory (the always-accessible working
 	// space; a session opens here unless a directory is granted).
 	HomeDir string `yaml:"home_dir,omitempty"`
-	// ConfigDir is a REFERENCE to the account's own ~/.jentic (typically
-	// <HomeDir>/.jentic), the single source of truth for the agents' registered
-	// identities and profiles. New agent registrations land there (owned by the
-	// agent); the operator's config keeps only this pointer. Empty until an
-	// account is created.
+	// ConfigDir is a LEGACY reference to the account's own ~/.jentic (typically
+	// <HomeDir>/.jentic) — the V1 home of the agents' registered identities and
+	// profiles. New accounts no longer record it (the agent's identity is
+	// exported into its home's own XDG store instead); it survives here so
+	// `jentic migrate` can rescue profiles from an old agent home and so reset
+	// keeps validating records written by older releases. Empty for accounts
+	// created by current releases.
 	ConfigDir string `yaml:"config_dir,omitempty"`
 	// GrantedDirs is the consolidated inventory of directories the account has
 	// been granted read/write access to (durable ACLs on disk). The ACLs are
@@ -110,14 +110,6 @@ func (c *FileConfig) ResolvedBaseURL() string {
 		return c.BaseURL
 	}
 	return DefaultBaseURL
-}
-
-// ResolvedDefaultProfile returns the configured default profile or the default.
-func (c *FileConfig) ResolvedDefaultProfile() string {
-	if c.DefaultProfile != "" {
-		return c.DefaultProfile
-	}
-	return DefaultProfile
 }
 
 // The Resolved* helpers below implement the precedence defaults < config.yaml <
@@ -163,19 +155,6 @@ func stripScheme(host string) string {
 	return host
 }
 
-// ResolvedProfileName resolves the profile to act on, in precedence order: the
-// flag if non-empty, else the JENTIC_PROFILE env var, else the configured
-// default profile (or the built-in default).
-func (c *FileConfig) ResolvedProfileName(flag string) string {
-	if flag != "" {
-		return flag
-	}
-	if env := os.Getenv(ProfileEnv); env != "" {
-		return env
-	}
-	return c.ResolvedDefaultProfile()
-}
-
 // ResolvedBaseURLOr resolves the control-plane base URL: the flag if non-empty,
 // otherwise the configured base URL (or the built-in default).
 func (c *FileConfig) ResolvedBaseURLOr(flag string) string {
@@ -215,9 +194,8 @@ func Load(paths Paths) (*FileConfig, error) {
 // The write is ATOMIC: it lands in a temp file in the same directory, fsyncs it,
 // then renames it over config.yaml (rename is atomic on POSIX). A crash mid-write
 // therefore leaves either the old file or the new one, never a half-written config
-// that would fail to parse and orphan the agent account record. Concurrent writers
-// should hold the lock via Mutate; the atomic rename here bounds the damage when
-// two writes race regardless.
+// that would fail to parse. Concurrent writers should hold the lock via Mutate;
+// the atomic rename here bounds the damage when two writes race regardless.
 func (c *FileConfig) Save(paths Paths) error {
 	if _, err := paths.Ensure(paths.Dir()); err != nil {
 		return err
@@ -271,13 +249,11 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 // Mutate performs a race-safe read-modify-write of config.yaml: it takes an
 // exclusive file lock, reloads the config from disk UNDER that lock (so it sees
 // any change a concurrent writer committed since the caller last loaded), applies
-// fn, and saves atomically before releasing the lock. Every path that changes the
-// persisted agent-account record — grant/revoke a directory, record or clear the
-// account — must go through this rather than the load-mutate-Save it did before,
-// where two concurrent `jentic run` grants could each load the same config, add
-// their own dir, and the second Save would drop the first's. fn receives the
+// fn, and saves atomically before releasing the lock. fn receives the
 // freshly-reloaded config and mutates it in place; the reloaded config is also
-// returned so callers can observe the committed result.
+// returned so callers can observe the committed result. (The agent-account
+// record that motivated this has moved to the XDG agent state — see
+// MutateAgentState, which follows the same discipline.)
 func Mutate(paths Paths, fn func(*FileConfig) error) (*FileConfig, error) {
 	if _, err := paths.Ensure(paths.Dir()); err != nil {
 		return nil, err
@@ -301,73 +277,13 @@ func Mutate(paths Paths, fn func(*FileConfig) error) (*FileConfig, error) {
 	return cfg, nil
 }
 
-// SetDefaultProfile loads config.yaml, sets default_profile to name, and saves.
-// It is the persisting half of `jentic profile use`.
-func SetDefaultProfile(paths Paths, name string) error {
-	_, err := Mutate(paths, func(cfg *FileConfig) error {
-		cfg.DefaultProfile = name
-		return nil
-	})
-	return err
-}
-
-// AgentAccount returns the configured agent account and whether one is recorded.
-// A nil Agent (no account ever set up) returns a zero value and false.
+// AgentAccount returns the LEGACY agent account recorded in this config and
+// whether one is present. Live reads go through AgentState (LoadAgentState);
+// this getter remains for the legacy fallback and for `jentic migrate`, which
+// rescues profiles from an old agent home via the recorded ConfigDir.
 func (c *FileConfig) AgentAccount() (AgentAccount, bool) {
 	if c.Agent == nil {
 		return AgentAccount{}, false
 	}
 	return *c.Agent, true
-}
-
-// HasAgentUser reports whether a dedicated Unix agent account has been
-// provisioned and is enabled. This is the single gate the rest of the CLI keys
-// off: false means behave exactly as for an operator with no agent account.
-func (c *FileConfig) HasAgentUser() bool {
-	return c.Agent != nil && c.Agent.AccountCreated && c.Agent.Enabled
-}
-
-// SetAgentAccount records (or replaces) the agent account entry. Callers Save
-// afterwards.
-func (c *FileConfig) SetAgentAccount(acct AgentAccount) {
-	a := acct
-	c.Agent = &a
-}
-
-// ClearAgentAccount removes the agent-account record entirely — used when a full
-// reset tears down the Unix account, its home, and every grant, so nothing in
-// config points at state that no longer exists. Callers Save afterwards.
-func (c *FileConfig) ClearAgentAccount() {
-	c.Agent = nil
-}
-
-// AddGrantedDir records dir against the agent account (idempotently) and returns
-// true if it was newly added. Returns false when no account exists. Callers Save
-// afterwards.
-func (c *FileConfig) AddGrantedDir(dir string) bool {
-	if c.Agent == nil {
-		return false
-	}
-	for _, d := range c.Agent.GrantedDirs {
-		if d == dir {
-			return false
-		}
-	}
-	c.Agent.GrantedDirs = append(c.Agent.GrantedDirs, dir)
-	return true
-}
-
-// RemoveGrantedDir drops dir from the agent account's grant inventory and
-// returns true if it was present. Callers Save afterwards.
-func (c *FileConfig) RemoveGrantedDir(dir string) bool {
-	if c.Agent == nil {
-		return false
-	}
-	for i, d := range c.Agent.GrantedDirs {
-		if d == dir {
-			c.Agent.GrantedDirs = append(c.Agent.GrantedDirs[:i], c.Agent.GrantedDirs[i+1:]...)
-			return true
-		}
-	}
-	return false
 }

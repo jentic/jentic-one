@@ -5,23 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 )
 
 const (
 	// DefaultBrokerScheme is the scheme of the broker target used by execute.
-	DefaultBrokerScheme = "https"
+	// Canonical value lives in the public SDK config package (ARCH-3); aliased
+	// here so CLI call sites keep using config.DefaultBrokerScheme unchanged.
+	DefaultBrokerScheme = sdkconfig.DefaultBrokerScheme
 	// DefaultBrokerHost is the host of the broker target used by execute. It is a
 	// bare host[:port] with no scheme — the scheme lives in DefaultBrokerScheme
 	// (and broker.scheme in config.yaml). Callers assemble the URL as
 	// scheme + "://" + host, so embedding a scheme here would double it.
-	DefaultBrokerHost = "127.0.0.1:8100"
+	// Canonical value lives in client/config (ARCH-3).
+	DefaultBrokerHost = sdkconfig.DefaultBrokerHost
 
 	// DefaultBaseURL is the Jentic control-plane (auth surface) base URL used for
-	// agent registration and token minting.
-	DefaultBaseURL = "http://127.0.0.1:8000"
-
-	// DefaultProfile is the profile name used when none is specified.
-	DefaultProfile = "default"
+	// agent registration and token minting. Canonical value lives in
+	// client/config (ARCH-3).
+	DefaultBaseURL = sdkconfig.DefaultBaseURL
 
 	// SPAMountPath is the URL prefix the web console (SPA) is served under. The
 	// server mounts the React app at /app (see shared/web/static.py), so every
@@ -37,11 +40,6 @@ const (
 
 	// HomeEnv overrides the root directory (mainly for tests and unusual setups).
 	HomeEnv = "JENTIC_HOME"
-
-	// ProfileEnv overrides the active profile for the current shell (AWS_PROFILE
-	// style). It sits between the --profile flag and config.yaml default_profile
-	// in precedence.
-	ProfileEnv = "JENTIC_PROFILE"
 
 	dataDirName     = "data"
 	logsDirName     = "logs"

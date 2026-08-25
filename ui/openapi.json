@@ -1089,7 +1089,8 @@
           "key": {
             "description": "The API key secret. Stored encrypted; never returned after create.",
             "title": "Key",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "location": {
             "$ref": "#/components/schemas/CredentialLocation",
@@ -1308,7 +1309,8 @@
                 "type": "null"
               }
             ],
-            "title": "Key"
+            "title": "Key",
+            "x-sensitive": true
           },
           "location": {
             "anyOf": [
@@ -2043,7 +2045,8 @@
           },
           "password": {
             "title": "Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "provider": {
             "default": "static",
@@ -2128,7 +2131,8 @@
                 "type": "null"
               }
             ],
-            "title": "Password"
+            "title": "Password",
+            "x-sensitive": true
           },
           "runtime_config": {
             "anyOf": [
@@ -2218,7 +2222,8 @@
           },
           "token": {
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "type": {
             "const": "bearer_token",
@@ -2293,7 +2298,8 @@
                 "type": "null"
               }
             ],
-            "title": "Token"
+            "title": "Token",
+            "x-sensitive": true
           },
           "type": {
             "const": "bearer_token",
@@ -2601,13 +2607,15 @@
             "maxLength": 128,
             "minLength": 1,
             "title": "Current Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "new_password": {
             "maxLength": 128,
             "minLength": 12,
             "title": "New Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -2624,7 +2632,8 @@
             "maxLength": 512,
             "minLength": 1,
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -2700,7 +2709,8 @@
             "maxLength": 128,
             "minLength": 12,
             "title": "Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -2719,7 +2729,8 @@
           "secret": {
             "additionalProperties": true,
             "title": "Secret",
-            "type": "object"
+            "type": "object",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -3076,6 +3087,149 @@
           "items"
         ],
         "title": "DecideRequest",
+        "type": "object"
+      },
+      "DuplicatePendingProblem": {
+        "description": "RFC 9457 Problem Details for a 409 on ``POST /access-requests``.\n\nFiling a request whose target already has a pending request is refused with\na 409 whose body carries two extension members on top of the standard\nProblem Details shape, so a client can attach to the existing request rather\nthan re-file. These are emitted at runtime by the access-request error hook\n(``control/web/errors.py``); this model documents them in the OpenAPI spec so\nthe generated SDK exposes a typed 409\n(``FileAccessRequestHTTPResp.ApplicationproblemJSON409``) instead of forcing\ncallers to parse the raw body (ARCH-21 Step 0).",
+        "examples": [
+          {
+            "detail": "The request body is missing one or more required fields.",
+            "errors": [
+              {
+                "detail": "Field 'name' is required.",
+                "pointer": "#/name"
+              }
+            ],
+            "instance": "/v2/capability-sets",
+            "status": 400,
+            "title": "Bad Request",
+            "type": "about:blank"
+          }
+        ],
+        "properties": {
+          "approve_url": {
+            "description": "Console URL to review/approve the existing pending request.",
+            "examples": [
+              "https://app.jentic.com/access-requests/acr_01HXXY..."
+            ],
+            "title": "Approve Url",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An optional provider-specific code for internal error taxonomy and observability correlation.",
+            "examples": [
+              "JENTIC-4001"
+            ],
+            "title": "Code"
+          },
+          "detail": {
+            "description": "A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.",
+            "examples": [
+              "The request body is missing required field 'name'."
+            ],
+            "maxLength": 4096,
+            "title": "Detail",
+            "type": "string"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ErrorItem"
+                },
+                "maxItems": 1000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.",
+            "title": "Errors"
+          },
+          "existing_request_id": {
+            "description": "The id of the pending access request that already covers the conflicting target.",
+            "examples": [
+              "acr_01HXXY..."
+            ],
+            "title": "Existing Request Id",
+            "type": "string"
+          },
+          "instance": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A URI reference identifying the specific occurrence of the problem. Typically the request path.",
+            "examples": [
+              "/v2/capability-sets"
+            ],
+            "title": "Instance"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The HTTP status code for this occurrence of the problem.",
+            "examples": [
+              400
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.",
+            "examples": [
+              "Bad Request"
+            ],
+            "title": "Title"
+          },
+          "type": {
+            "default": "about:blank",
+            "description": "A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.",
+            "examples": [
+              "about:blank"
+            ],
+            "maxLength": 1024,
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "existing_request_id",
+          "approve_url"
+        ],
+        "title": "DuplicatePendingProblem",
         "type": "object"
       },
       "EffectivePermission": {
@@ -3815,7 +3969,8 @@
         "properties": {
           "token": {
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "token_type_hint": {
             "anyOf": [
@@ -3903,7 +4058,8 @@
           },
           "token": {
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -4074,7 +4230,8 @@
             "maxLength": 128,
             "minLength": 1,
             "title": "Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -4089,7 +4246,8 @@
         "properties": {
           "access_token": {
             "title": "Access Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "expires_in": {
             "title": "Expires In",
@@ -4341,7 +4499,8 @@
         "properties": {
           "access_token": {
             "title": "Access Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "expires_in": {
             "title": "Expires In",
@@ -4679,7 +4838,8 @@
                 "type": "null"
               }
             ],
-            "title": "Client Secret"
+            "title": "Client Secret",
+            "x-sensitive": true
           },
           "grant_type": {
             "default": "client_credentials",
@@ -4781,7 +4941,8 @@
                 "type": "null"
               }
             ],
-            "title": "Client Secret"
+            "title": "Client Secret",
+            "x-sensitive": true
           },
           "name": {
             "anyOf": [
@@ -6230,13 +6391,15 @@
             "maxLength": 512,
             "minLength": 1,
             "title": "Invite Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "password": {
             "maxLength": 128,
             "minLength": 12,
             "title": "Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -6317,7 +6480,8 @@
                 "type": "null"
               }
             ],
-            "title": "Claim Token"
+            "title": "Claim Token",
+            "x-sensitive": true
           },
           "client_id": {
             "title": "Client Id",
@@ -6335,7 +6499,8 @@
           },
           "registration_access_token": {
             "title": "Registration Access Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "registration_client_uri": {
             "title": "Registration Client Uri",
@@ -6399,7 +6564,8 @@
         "properties": {
           "token": {
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "token_type_hint": {
             "anyOf": [
@@ -7048,7 +7214,8 @@
           "secret_access_key": {
             "description": "AWS secret access key. Stored encrypted; never returned after create.",
             "title": "Secret Access Key",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "server_variables": {
             "anyOf": [
@@ -7074,7 +7241,8 @@
               }
             ],
             "description": "Optional temporary-credential session token (STS). Expires; re-save when it does.",
-            "title": "Session Token"
+            "title": "Session Token",
+            "x-sensitive": true
           },
           "type": {
             "const": "sigv4",
@@ -7176,7 +7344,8 @@
                 "type": "null"
               }
             ],
-            "title": "Secret Access Key"
+            "title": "Secret Access Key",
+            "x-sensitive": true
           },
           "server_variables": {
             "anyOf": [
@@ -7201,7 +7370,8 @@
                 "type": "null"
               }
             ],
-            "title": "Session Token"
+            "title": "Session Token",
+            "x-sensitive": true
           },
           "type": {
             "const": "sigv4",
@@ -7227,7 +7397,8 @@
                 "type": "null"
               }
             ],
-            "title": "Assertion"
+            "title": "Assertion",
+            "x-sensitive": true
           },
           "client_id": {
             "anyOf": [
@@ -7249,7 +7420,8 @@
                 "type": "null"
               }
             ],
-            "title": "Client Secret"
+            "title": "Client Secret",
+            "x-sensitive": true
           },
           "code": {
             "anyOf": [
@@ -7297,7 +7469,8 @@
                 "type": "null"
               }
             ],
-            "title": "Refresh Token"
+            "title": "Refresh Token",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -7311,7 +7484,8 @@
         "properties": {
           "access_token": {
             "title": "Access Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "expires_in": {
             "title": "Expires In",
@@ -7326,7 +7500,8 @@
                 "type": "null"
               }
             ],
-            "title": "Id Token"
+            "title": "Id Token",
+            "x-sensitive": true
           },
           "refresh_token": {
             "anyOf": [
@@ -7337,7 +7512,8 @@
                 "type": "null"
               }
             ],
-            "title": "Refresh Token"
+            "title": "Refresh Token",
+            "x-sensitive": true
           },
           "token_type": {
             "default": "bearer",
@@ -7567,7 +7743,8 @@
         "properties": {
           "api_key": {
             "title": "Api Key",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "toolkit": {
             "$ref": "#/components/schemas/ToolkitResponse"
@@ -7789,7 +7966,8 @@
         "properties": {
           "api_key": {
             "title": "Api Key",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "key": {
             "$ref": "#/components/schemas/ToolkitKeyResponse"
@@ -8381,7 +8559,8 @@
           },
           "invite_token": {
             "title": "Invite Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "user": {
             "$ref": "#/components/schemas/UserResponse"
@@ -8794,7 +8973,7 @@
     },
     "summary": "HTTP surface of the Jentic platform's control plane — Core / Access (credentials, toolkits), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).",
     "title": "Jentic Control Plane API",
-    "version": "0.31.0"
+    "version": "0.31.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -9266,6 +9445,23 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/DuplicatePendingProblem"
+                }
+              }
+            },
+            "description": "A pending request already exists for the same resource."
           },
           "422": {
             "content": {

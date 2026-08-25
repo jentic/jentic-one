@@ -18,7 +18,8 @@ that install the charts. The whole thing is designed so that:
 deploy/
 ├── docker/                          # One Dockerfile per deployable
 │   ├── python-base.Dockerfile       # Shared multi-stage base (wheel build + runtime)
-│   ├── app.Dockerfile               # Combined image (registry+admin+control+auth)
+│   ├── app.Dockerfile               # Combined image (registry+admin+control+auth), single-arch local build
+│   ├── app.multiarch.Dockerfile     # Self-contained multi-arch (amd64+arm64) app image — the release/buildx path
 │   ├── registry.Dockerfile          # Registry surface only
 │   ├── admin.Dockerfile             # Admin surface only
 │   ├── control.Dockerfile           # Control surface only
@@ -87,6 +88,12 @@ This is the "no Kubernetes" topology: run the published container image on a
 VM (or any container host) against a **managed/external PostgreSQL**, injecting
 secrets from your own secrets manager. It's the smallest real deployment that
 is still production-shaped.
+
+> **The container image is the only supported backend distribution.** There is
+> no `pip install jentic-one`: the Python wheel is built in CI purely as a
+> packaging test (that the UI bundle force-includes correctly) and is never
+> published. Consume `ghcr.io/jentic/jentic-one-app` (pinned to a digest for
+> prod — see below), or build it locally from a checkout.
 
 > **Public Beta.** The same caveat as the repo front page applies: we don't
 > recommend production use yet. "Production-shaped" here means the topology
@@ -173,10 +180,12 @@ docker login ghcr.io                                   # or your registry
 make release-image REGISTRY=ghcr.io/<your-org>         # builds + pushes app image
 ```
 
-`make release-image` builds `deploy/docker/app.Dockerfile` and pushes
-`<REGISTRY>/jentic-one-app` tagged with the pyproject version and the short
-git SHA; `latest` only moves when the version is a stable `X.Y.Z` (same guard
-as CI).
+`make release-image` builds `deploy/docker/app.multiarch.Dockerfile` for
+`linux/amd64` + `linux/arm64` with `docker buildx` and pushes the multi-arch
+OCI index to `<REGISTRY>/jentic-one-app` tagged with the pyproject version and
+the short git SHA; `latest` only moves when the version is a stable `X.Y.Z`
+(same guard as CI). Requires a buildx builder (`docker buildx create --use`)
+and QEMU for the non-native arch leg.
 
 ### The three databases (one instance, three schemas)
 
@@ -984,6 +993,72 @@ The umbrella [`values.yaml`](helm/jentic-one/values.yaml) and
 carry inline warnings about this so the dev pattern can't silently leak
 into a prod values file.
 
+## AWS Marketplace
+
+Only relevant when deploying the AWS Marketplace container listing (values
+overlay: [`deploy/helm/values/aws-marketplace.yaml`](helm/values/aws-marketplace.yaml)).
+**Not a Marketplace customer? Leave `entitlement.enabled` unset — nothing
+activates**, no AWS call is ever made, and the app is byte-identical to a
+build without the gate.
+
+### Entitlement check
+
+Marketplace deployments verify their subscription with AWS at startup and
+every `refresh_interval_seconds` after. Config (env or config-file — the
+Marketplace values overlay carries the env form):
+
+```yaml
+entitlement:
+  enabled: true
+  product_code: "<product code from the Marketplace portal>"  # required when enabled
+  region: "us-east-1"
+  pricing_model: contract     # contract (default — the live listing) | usage
+  refresh_interval_seconds: 3600
+  grace_period_seconds: 86400
+  # contract pricing (the live listing):
+  license_sku: "<product ID from the portal>"   # NOT the product code — the
+                                                # portal issues both; this is
+                                                # CheckoutLicense ProductSKU
+  license_dimensions: ["users", "executions"]   # the listing's dimensions;
+                                                # env form takes CSV
+```
+
+Env form: `JENTIC__ENTITLEMENT__ENABLED=true`,
+`JENTIC__ENTITLEMENT__PRODUCT_CODE=…`,
+`JENTIC__ENTITLEMENT__LICENSE_SKU=…`,
+`JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS=users,executions`, etc.
+
+**IAM**: the task role (ECS/Fargate) or IRSA role (EKS) needs, depending on
+`pricing_model`:
+
+| Pricing model | Required permission |
+| ------------- | ------------------- |
+| `contract` (default) | `license-manager:CheckoutLicense` (+ `license-manager:GetLicense`, `license-manager:ListReceivedLicenses` for debugging) |
+| `usage` | `aws-marketplace:RegisterUsage` |
+
+Credentials resolve from the standard runtime sources — static
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env, the ECS/Fargate container
+credential endpoint, or EKS IRSA — no AWS SDK required in the image.
+
+### Lockout semantics
+
+- **Only an explicit "not entitled" answer from AWS locks the deployment
+  out** — at startup or at a periodic re-check. Locked out means every
+  request returns `503` (problem details,
+  `type: https://jentic.com/problems/not-entitled`), except:
+  - `/health`, `/<surface>/health`, `/ready` keep answering **200** with
+    `{"status": "not_entitled", "reason": …}` — orchestrator probes stay
+    green (the pod is healthy; the *license* isn't), and the health body is
+    where an operator learns why everything else is 503.
+  - `/instance` (backend identity) passes through.
+- **An unreachable or erroring AWS API never locks you out by itself**: the
+  last definitive verdict holds for `grace_period_seconds` (default 24h)
+  before the gate fails closed.
+- **Recovery needs no restart** — renewing the subscription flips the gate
+  open at the next re-check.
+
+Both the app and the broker run the gate (one image, every workload checks).
+
 ## What's deferred
 
 The build system was scaffolded with explicit gaps; these are intentional
@@ -1008,10 +1083,6 @@ and will be filled when the answers exist:
   and full re-runs strand untagged manifests; nothing prunes them yet. A
   scheduled `actions/delete-package-versions` for untagged + aged SHA tags
   is the likely shape.
-- **Multi-arch builds** — the published `app` image is single-arch (amd64)
-  today, which excludes arm64 hosts (Graviton/Ampere/Apple Silicon); switch
-  the `publish-image` job / `make release-image` to
-  `docker buildx build --platform linux/amd64,linux/arm64` when needed.
 - **Helm chart publishing** — chart is built locally; no OCI-registry push
   yet.
 - **Real Terraform env values** — cluster/namespace/ingress are TODO

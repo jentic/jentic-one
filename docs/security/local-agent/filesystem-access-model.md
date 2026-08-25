@@ -3,7 +3,7 @@
 > How the agent's Unix account and the operator's account reach — and are kept
 > out of — each other's files. This is the reference for the permission mechanics;
 > [`local-agent-isolation.md`](local-agent-isolation.md) is where they sit in the
-> `jentic run` / `bootstrap` / `reset` flows.
+> `jentic run` / `setup` / `reset` flows.
 
 The whole design rests on a dedicated, unprivileged Unix account for the agent,
 distinct from the operator's login user. Two directories then matter, and the
@@ -350,7 +350,7 @@ sudo setfacl -R -d -m u:"$OPERATOR":rwX "$AGENT_HOME"
 Why the operator needs it:
 
 - **Supervision** — the operator can inspect and manage what the agent produces.
-- **Bootstrap writes the agent's identity as the operator.** The platform
+- **Setup writes the agent's identity as the operator.** The platform
   identity is written by `mkdir <agent-home>/.jentic` **as the operator**, before
   ownership is handed to the agent — which is why the grant must carry
   `add_subdirectory` (the macOS `write` shorthand omits it) and the inherit bits

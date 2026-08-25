@@ -80,3 +80,23 @@ func TestNewRootCmdWiresErrStreamForRun(t *testing.T) {
 		t.Fatalf("error not written to injected Err stream; got %q", errBuf.String())
 	}
 }
+
+// TestRunRecoversPanicAsExit1 is the AGT-1 backstop: an escaped panic must not
+// crash with the Go runtime's exit 2 (which collides with the CLI's ExitDenied
+// taxonomy) — Run converts it to a diagnosable internal error on stderr, exit 1.
+func TestRunRecoversPanicAsExit1(t *testing.T) {
+	var errBuf bytes.Buffer
+	root := &cobra.Command{
+		Use:           "x",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          func(*cobra.Command, []string) error { panic("nil-deref stand-in") },
+	}
+	root.SetErr(&errBuf)
+	if got := core.Run(root); got != 1 {
+		t.Fatalf("Run(panicking command) = %d, want 1", got)
+	}
+	if !bytes.Contains(errBuf.Bytes(), []byte("internal error: nil-deref stand-in")) {
+		t.Fatalf("panic not reported on Err stream; got %q", errBuf.String())
+	}
+}

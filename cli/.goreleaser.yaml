@@ -23,30 +23,63 @@ builds:
     flags: [-trimpath]
     ldflags:
       - -s -w
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.version={{ .Version }}
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.commit={{ .Commit }}
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.date={{ .Date }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.version={{ .Version }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.commit={{ .Commit }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.date={{ .Date }}
   - id: jentic
     main: ./cmd/jentic
     binary: jentic
     env: [CGO_ENABLED=0]
-    goos: [linux, darwin]
+    # windows is jentic-only (jenticctl stays build-only / not shipped for
+    # Windows — its surface is Docker/compose lifecycle, WSL territory). arm64
+    # cross-compiles but is only smoke-tested on the amd64 windows-latest runner.
+    goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     mod_timestamp: "{{ .CommitTimestamp }}"
     flags: [-trimpath]
     ldflags:
       - -s -w
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.version={{ .Version }}
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.commit={{ .Commit }}
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.date={{ .Date }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.version={{ .Version }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.commit={{ .Commit }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.date={{ .Date }}
 
 archives:
-  - id: default
-    # Both binaries in one archive so the Homebrew cask ships both.
+  # Per-binary archives (not one bundling archive) so a user can download JUST
+  # the agent CLI (`jentic`), and so the Windows `jentic`-only zip is a clean
+  # additive entry rather than forcing jenticctl into a windows bundle.
+  # NOTE: keep these SEPARATE — jentic spans windows while jenticctl does not, so
+  # a shared archive would trip goreleaser's "different binary count per
+  # platform" (allow_different_binary_count) error. Do not recombine.
+  - id: jentic
+    ids: [jentic]
+    name_template: >-
+      jentic_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    # Windows ships a .zip containing jentic.exe (goreleaser appends .exe).
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+  - id: jenticctl
+    ids: [jenticctl]
+    name_template: >-
+      jenticctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+  # A THIRD, bundling archive carrying BOTH binaries for the Homebrew cask. A
+  # cask maps exactly one archive per OS/arch, so it can't consume the two
+  # per-binary archives above (that yields two darwin/amd64 archives → the "one
+  # tap can handle only one archive of an OS/Arch combination" error). This
+  # linux/darwin-only bundle is the cask's single source; direct downloaders use
+  # the per-binary archives. Windows is excluded (jenticctl isn't shipped there).
+  - id: cask
     ids: [jenticctl, jentic]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     formats: [tar.gz]
+    # jentic now also builds for windows (jenticctl doesn't), so this bundle
+    # would have 2 binaries on linux/darwin but 1 on windows. The cask only ever
+    # consumes the linux/darwin variants, so tell goreleaser the differing count
+    # is intentional rather than a footgun.
+    allow_different_binary_count: true
 
 checksum:
   name_template: checksums.txt
@@ -75,7 +108,7 @@ signs:
 
 homebrew_casks:
   - name: jentic
-    ids: [default]
+    ids: [cask]
     repository:
       owner: jentic
       name: homebrew-tap

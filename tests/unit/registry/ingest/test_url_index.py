@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from jentic_one.registry.core.url_index import (
     build_index_entry,
     build_path_regex,
@@ -10,6 +12,7 @@ from jentic_one.registry.core.url_index import (
     extract_param_names,
     normalise_host,
     normalize_path,
+    normalize_path_template,
     structural_regex,
 )
 
@@ -103,6 +106,91 @@ def test_normalize_path_trailing_slash_stripped() -> None:
 
 def test_normalize_path_root_preserved() -> None:
     assert normalize_path("/") == "/"
+
+
+@pytest.mark.parametrize(
+    ("template", "expected"),
+    [
+        # Trailing slash stripped, matching normalize_path on the request side (#1085).
+        ("/api/bootstrap-static/", "/api/bootstrap-static"),
+        ("/api/v1/", "/api/v1"),
+        # Slashes adjacent to parameter tokens are preserved.
+        ("/pets/{petId}", "/pets/{petId}"),
+        ("/users/{id}/", "/users/{id}"),
+        ("/users/{id}/posts/{postId}/", "/users/{id}/posts/{postId}"),
+        # RFC 6570 operator tokens survive verbatim.
+        ("/files/{+path}", "/files/{+path}"),
+        ("/files/{+path}/", "/files/{+path}"),
+        # Root is preserved, never emptied.
+        ("/", "/"),
+        # Literal normalization (percent-encoding, dot segments) still applies.
+        ("/foo%20bar/{id}", "/foo bar/{id}"),
+        ("/a/b/../c/{id}/", "/a/c/{id}"),
+        # Already-canonical templates pass through unchanged.
+        ("/v1/pets", "/v1/pets"),
+    ],
+)
+def test_normalize_path_template(template: str, expected: str) -> None:
+    assert normalize_path_template(template) == expected
+
+
+@pytest.mark.parametrize("template", ["/api/thing", "/api/thing/"])
+@pytest.mark.parametrize("request_path", ["/api/thing", "/api/thing/"])
+def test_index_entry_matches_all_trailing_slash_combinations(
+    template: str, request_path: str
+) -> None:
+    """The 4-quadrant matrix from #1085: template and request, each with and
+    without a trailing slash, must all resolve to a match."""
+    entry = build_index_entry("api.example.com", template, "https")
+    assert entry.path_regex.fullmatch(normalize_path(request_path))
+
+
+@pytest.mark.parametrize("template", ["/v1/pets/{petId}", "/v1/pets/{petId}/"])
+@pytest.mark.parametrize("request_path", ["/v1/pets/123", "/v1/pets/123/"])
+def test_index_entry_matches_parameterized_trailing_slash_combinations(
+    template: str, request_path: str
+) -> None:
+    entry = build_index_entry("api.example.com", template, "https")
+    match = entry.path_regex.fullmatch(normalize_path(request_path))
+    assert match
+    assert match.groupdict() == {"petId": "123"}
+
+
+def test_build_index_entry_trailing_slash_template_regression() -> None:
+    """The exact #1085 repro: a Fantasy Premier League trailing-slash path.
+
+    Before the fix the stored regex kept the trailing slash while the request
+    path lost it at lookup time, so the two could never agree.
+    """
+    entry = build_index_entry("fantasy.premierleague.com", "/api/bootstrap-static/", "https")
+    assert entry.path_pattern == "/api/bootstrap-static"
+    assert entry.path_regex.pattern == r"^/api/bootstrap\-static$"
+    assert entry.path_regex.fullmatch(normalize_path("/api/bootstrap-static/"))
+    assert entry.segment_count == count_segments(normalize_path("/api/bootstrap-static/"))
+
+
+def test_build_index_entry_stores_canonical_template() -> None:
+    """Every derived field comes from the canonical template, keeping the
+    stored pattern, regex, params, and segment count internally consistent."""
+    entry = build_index_entry("api.example.com", "/users/{id}/", "https")
+    assert entry.path_pattern == "/users/{id}"
+    assert entry.param_names == ["id"]
+    assert entry.segment_count == 2
+
+
+def test_build_index_entry_root_path() -> None:
+    entry = build_index_entry("api.example.com", "/", "https")
+    assert entry.path_pattern == "/"
+    assert entry.segment_count == 0
+    assert entry.path_regex.fullmatch(normalize_path("/"))
+
+
+def test_structural_regex_agrees_for_trailing_slash_variants() -> None:
+    """Dedup in BuildURLIndexStage keys on the canonical template, so `/a/`
+    and `/a` must collapse to one structural form."""
+    assert structural_regex(normalize_path_template("/v1/pets/{id}/")) == structural_regex(
+        normalize_path_template("/v1/pets/{id}")
+    )
 
 
 def test_expand_server_variables_none_default_preserves_placeholder() -> None:

@@ -66,9 +66,10 @@ jobs:
 
       # When release-please opens/updates its "chore(main): release X.Y.Z" PR,
       # the version bump can invalidate generated artifacts (the control-plane
-      # OpenAPI spec + the UI client derived from it). Regenerate them on the PR
-      # branch and push back so the Release PR is self-consistent and does not
-      # trip the openapi-client-drift / conformance gates when merged.
+      # OpenAPI spec + the UI client and Go CLI client derived from it).
+      # Regenerate them on the PR branch and push back so the Release PR is
+      # self-consistent and does not trip the openapi-client-drift /
+      # check-cli-gen / conformance gates when merged.
       - name: Set up toolchain
         if: ${{ steps.release.outputs.pr }}
         uses: astral-sh/setup-uv@v7
@@ -86,6 +87,15 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: ui/package-lock.json
+
+      # Needed for `make -C cli generate-api` below (oapi-codegen + specgen run
+      # via `go run`). Mirrors the cli job in ci.yml.
+      - name: Set up Go
+        if: ${{ steps.release.outputs.pr }}
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
 
       - name: Regenerate OpenAPI specs
         if: ${{ steps.release.outputs.pr }}
@@ -114,6 +124,12 @@ jobs:
           cd ui && npm ci && npm run codegen
           cd ..
 
+          # Refresh the Go CLI's vendored spec copies + generated clients from
+          # the bumped specs, or the check-cli-gen / check-vendored-specs drift
+          # gates fail on the Release PR (the spec's info.version is bumped
+          # above but the vendored client/generated/*/spec.yaml copies are not).
+          make -C cli generate-api
+
           # Attribute the commit to the release-please App's bot user (the token
           # actually pushing this), matching GitHub's <slug>[bot] convention:
           #   name  = <slug>[bot]
@@ -122,7 +138,7 @@ jobs:
           BOT_USER_ID="$(gh api "/users/${BOT_NAME}" --jq .id)"
           git config user.name "$BOT_NAME"
           git config user.email "${BOT_USER_ID}+${BOT_NAME}@users.noreply.github.com"
-          git add openapi/ ui/
+          git add openapi/ ui/ cli/client/generated/
 
           if ! git diff --staged --quiet; then
             git commit -m "chore(release-please): regenerate openapi specs for version bump"
