@@ -922,7 +922,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.20" },
     { name = "opentelemetry-exporter-prometheus", specifier = ">=0.44b0" },
     { name = "opentelemetry-instrumentation-asyncpg", specifier = ">=0.44b0" },
-    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.44b0" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.65b0" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.44b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.44b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20" },

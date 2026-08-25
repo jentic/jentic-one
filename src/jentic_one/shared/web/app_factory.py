@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
-import opentelemetry.instrumentation.fastapi as otel_fastapi
 import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -87,37 +86,6 @@ SURFACE_MODULES = {
 }
 
 _db_instrumented = False
-_otel_route_guard_installed = False
-
-
-def _install_otel_route_detail_guard() -> None:
-    """Stop OTel FastAPI instrumentation 500ing on partial route matches.
-
-    ``opentelemetry.instrumentation.fastapi._get_route_details`` walks
-    ``app.routes`` and reads ``route.path``. FastAPI now wraps ``include_router``
-    results in an opaque ``_IncludedRouter`` that has no ``path`` (the same quirk
-    handled in ``shared/web/static.py``). Upstream guards the ``Match.FULL``
-    branch with ``try/except AttributeError`` but not the ``Match.PARTIAL`` one,
-    so any request that path-matches an included router without matching a method
-    — a CORS ``OPTIONS`` preflight, a ``405`` — raises ``AttributeError`` and the
-    span-name extraction turns it into a ``500`` (verified on
-    ``opentelemetry-instrumentation-fastapi==0.63b1``). We wrap the function to
-    fall back to the request path. Idempotent; the global guard is process-wide.
-    """
-    global _otel_route_guard_installed
-    if _otel_route_guard_installed:
-        return
-
-    original: Any = otel_fastapi._get_route_details
-
-    def _safe_get_route_details(scope: dict[str, Any]) -> Any:
-        try:
-            return original(scope)
-        except AttributeError:
-            return scope.get("path")
-
-    otel_fastapi._get_route_details = _safe_get_route_details
-    _otel_route_guard_installed = True
 
 
 def attach_http_observability(app: FastAPI) -> None:
@@ -132,7 +100,6 @@ def attach_http_observability(app: FastAPI) -> None:
     `local-prom-app.yaml` overlay therefore sets `prometheus.io/path` to
     "/metrics/" with the trailing slash — keep them in sync.
     """
-    _install_otel_route_detail_guard()
     instrument_inbound_app(app)
 
     metrics_app = make_metrics_asgi_app()
