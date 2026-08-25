@@ -993,6 +993,72 @@ The umbrella [`values.yaml`](helm/jentic-one/values.yaml) and
 carry inline warnings about this so the dev pattern can't silently leak
 into a prod values file.
 
+## AWS Marketplace
+
+Only relevant when deploying the AWS Marketplace container listing (values
+overlay: [`deploy/helm/values/aws-marketplace.yaml`](helm/values/aws-marketplace.yaml)).
+**Not a Marketplace customer? Leave `entitlement.enabled` unset — nothing
+activates**, no AWS call is ever made, and the app is byte-identical to a
+build without the gate.
+
+### Entitlement check
+
+Marketplace deployments verify their subscription with AWS at startup and
+every `refresh_interval_seconds` after. Config (env or config-file — the
+Marketplace values overlay carries the env form):
+
+```yaml
+entitlement:
+  enabled: true
+  product_code: "<product code from the Marketplace portal>"  # required when enabled
+  region: "us-east-1"
+  pricing_model: contract     # contract (default — the live listing) | usage
+  refresh_interval_seconds: 3600
+  grace_period_seconds: 86400
+  # contract pricing (the live listing):
+  license_sku: "<product ID from the portal>"   # NOT the product code — the
+                                                # portal issues both; this is
+                                                # CheckoutLicense ProductSKU
+  license_dimensions: ["users", "executions"]   # the listing's dimensions;
+                                                # env form takes CSV
+```
+
+Env form: `JENTIC__ENTITLEMENT__ENABLED=true`,
+`JENTIC__ENTITLEMENT__PRODUCT_CODE=…`,
+`JENTIC__ENTITLEMENT__LICENSE_SKU=…`,
+`JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS=users,executions`, etc.
+
+**IAM**: the task role (ECS/Fargate) or IRSA role (EKS) needs, depending on
+`pricing_model`:
+
+| Pricing model | Required permission |
+| ------------- | ------------------- |
+| `contract` (default) | `license-manager:CheckoutLicense` (+ `license-manager:GetLicense`, `license-manager:ListReceivedLicenses` for debugging) |
+| `usage` | `aws-marketplace:RegisterUsage` |
+
+Credentials resolve from the standard runtime sources — static
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env, the ECS/Fargate container
+credential endpoint, or EKS IRSA — no AWS SDK required in the image.
+
+### Lockout semantics
+
+- **Only an explicit "not entitled" answer from AWS locks the deployment
+  out** — at startup or at a periodic re-check. Locked out means every
+  request returns `503` (problem details,
+  `type: https://jentic.com/problems/not-entitled`), except:
+  - `/health`, `/<surface>/health`, `/ready` keep answering **200** with
+    `{"status": "not_entitled", "reason": …}` — orchestrator probes stay
+    green (the pod is healthy; the *license* isn't), and the health body is
+    where an operator learns why everything else is 503.
+  - `/instance` (backend identity) passes through.
+- **An unreachable or erroring AWS API never locks you out by itself**: the
+  last definitive verdict holds for `grace_period_seconds` (default 24h)
+  before the gate fails closed.
+- **Recovery needs no restart** — renewing the subscription flips the gate
+  open at the next re-check.
+
+Both the app and the broker run the gate (one image, every workload checks).
+
 ## What's deferred
 
 The build system was scaffolded with explicit gaps; these are intentional
