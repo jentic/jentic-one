@@ -1,17 +1,32 @@
 # Release pipeline — runs on a vX.Y.Z tag (created by merging the release-please
-# Release PR). Two gated stages:
+# Release PR). Gated stages:
 #
-#   1. gate   — build the app + run every migration on a FRESH ephemeral SQLite
-#               DB (no Postgres, no real secrets — the bundled local-dev key) and
-#               assert /health serves the tag version. Nothing publishes if this
-#               fails.
-#   2. release — GoReleaser builds the signed, checksummed jenticctl + jentic
-#               binaries (cosign keyless via OIDC + syft SBOMs) and pushes the
-#               Homebrew cask. This is the install (see docs/releasing.md).
+#   1. gate          — build the app + run every migration on a FRESH ephemeral
+#                      SQLite DB (no Postgres, no real secrets — the bundled
+#                      local-dev key) and assert /health serves the tag version.
+#                      Nothing publishes if this fails.
+#   2. smoke         — the full Helm smoke matrix (combined / parts / broker /
+#                      +obs) on a kind cluster, reusing smoke-helm.yml. The same
+#                      matrix runs post-merge on main, but that run doesn't
+#                      block anything — this one does: a release cannot ship
+#                      while any deployment mode is red.
+#   3. publish-image — build the `app` container image and push it to GHCR
+#                      (ghcr.io/<owner>/jentic-one-app). One image serves every
+#                      surface via JENTIC__APPS; this is the image self-hosters
+#                      pull (see deploy/README.md "Self-hosted"). Needs gate +
+#                      smoke: the image is part of the release, so it must not
+#                      publish (nor move :latest) while any deployment mode is
+#                      red.
+#   4. release       — GoReleaser builds the signed, checksummed jenticctl +
+#                      jentic binaries (cosign keyless via OIDC + syft SBOMs) and
+#                      pushes the Homebrew cask. This is the install (see
+#                      docs/releasing.md). Needs gate + smoke + publish-image so
+#                      a release never half-ships (binaries without the image).
 #
 # Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
 # release assets here because we're already ON the tag (no downstream trigger
 # needed — release-please used the App token to make the tag that started us).
+# GITHUB_TOKEN also has packages:write for the GHCR push (scoped per-job).
 name: release
 
 on:
@@ -111,9 +126,282 @@ jobs:
             exit 1
           fi
 
+  smoke:
+    name: Helm smoke matrix
+    permissions:
+      contents: read
+    uses: ./.github/workflows/smoke-helm.yml
+
+  publish-image:
+    name: Publish app image to GHCR
+    # Needs smoke too: the image (and :latest) is part of the release, so it
+    # must not publish while any deployment mode is red — same bar as the
+    # binaries.
+    needs: [gate, smoke]
+    runs-on: ubuntu-latest
+    # Serialize image publishes across concurrently pushed tags so two runs
+    # can't interleave their :latest pushes (last-writer-wins is still the
+    # contract for :latest — digest pins are the real guarantee — but at least
+    # each run's push+sign sequence is atomic with respect to the other's).
+    concurrency:
+      group: release-publish-image
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write # push the app image to GHCR (ghcr.io/<owner>/jentic-one-app)
+      id-token: write # cosign keyless signing (fulcio/OIDC), mirroring the CLI binaries
+    steps:
+      - uses: actions/checkout@v7
+
+      # Install the third-party tooling BEFORE `docker login` writes the
+      # packages:write-scoped token to ~/.docker/config.json: a compromised
+      # installer action must never execute with the registry credential on
+      # disk (it could push — and with this job's id-token grant, even sign —
+      # a malicious image as this repo's release identity). Post-hooks run in
+      # reverse order, so login-action's logout also fires before the
+      # installers' post-steps. The Trivy scan below also installs a binary,
+      # which is why the login happens after build+scan, immediately before
+      # the first push.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
+      # Multi-arch (linux/amd64 + linux/arm64) needs QEMU (to emulate the
+      # non-native arch during the python-base build/uv steps) and a buildx
+      # builder. Set up BEFORE `docker login` so no third-party setup action
+      # runs with the registry credential on disk (same ordering rationale as
+      # the cosign/syft installers above).
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # One `app` image serves every surface — the surface set is chosen at
+      # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
+      # see deploy/README.md "Self-hosted"). A single published `app` image
+      # therefore covers the whole self-hosted app + broker topology.
+      #
+      # MULTI-ARCH: we build from deploy/docker/app.multiarch.Dockerfile (a
+      # self-contained inlining of the python-base stages — buildx can't resolve
+      # the bare `python-base:runtime` local tag per-arch that the single-arch
+      # app.Dockerfile uses). github.repository_owner preserves case but GHCR
+      # repos must be lower-case, so lower-case the owner for the image name.
+      #
+      # Trivy gates BEFORE any push: because a multi-arch index can't be
+      # `--load`ed into the local daemon, we first build each arch as a
+      # single-platform image loaded locally and scan EACH — dropping arm64 from
+      # the scan would silently ship an unscanned arch. buildx caches those
+      # layers, so the final multi-arch `--push` build below is nearly free.
+      - name: Resolve image name/version
+        id: build
+        run: |
+          set -euo pipefail
+          OWNER="$(tr '[:upper:]' '[:lower:]' <<<"${GITHUB_REPOSITORY_OWNER}")"
+          IMAGE="ghcr.io/${OWNER}/jentic-one-app"
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA="$(git rev-parse --short HEAD)"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build per-arch images for scanning (loaded locally)
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker buildx build -f deploy/docker/app.multiarch.Dockerfile \
+              --platform "linux/${arch}" \
+              -t "${IMAGE}:${VERSION}-${arch}" \
+              --load .
+          done
+
+      # CVE gate before anything is pushed — for EVERY shipped arch, not just
+      # amd64 (an index scan doesn't reliably cover each arch). Same policy as
+      # the ci.yml image-scan job: fixable HIGH/CRITICAL fail, overrides live in
+      # .trivyignore (CVE id + justification + expiry).
+      - name: Trivy image scan — amd64 (release gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}-amd64
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+      - name: Trivy image scan — arm64 (release gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}-arm64
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      # Login deliberately AFTER build + scan (see the installer-ordering
+      # comment above): no third-party tool runs with the registry
+      # credential on disk.
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build+push the MULTI-ARCH index in one step (buildx `--push` builds and
+      # pushes the OCI index atomically; a two-arch index cannot be `--load`ed).
+      # The layers were populated by the per-arch scan builds above, so this is a
+      # cache hit. The pushed INDEX digest (read from --metadata-file's
+      # containerimage.digest — `docker inspect RepoDigests` can't see an index
+      # that was never loaded locally) is the immutable pin cosign signs; tags
+      # float, deploy/README.md "Reproducibility" tells self-hosters to pin it.
+      - name: Build + push multi-arch index (version + SHA tags)
+        id: push
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          VERSION: ${{ steps.build.outputs.version }}
+          SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          set -euo pipefail
+          docker buildx build -f deploy/docker/app.multiarch.Dockerfile \
+            --platform linux/amd64,linux/arm64 \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:${SHA}" \
+            --metadata-file /tmp/bake-metadata.json \
+            --push .
+          DIGEST="$(jq -r '."containerimage.digest"' /tmp/bake-metadata.json)"
+          test -n "${DIGEST}" && [ "${DIGEST}" != "null" ]
+          echo "Image index digest: ${DIGEST}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # Sign the image and attach an SBOM attestation, mirroring what GoReleaser
+      # does for the CLI binaries (cosign keyless via the job's OIDC identity +
+      # syft SBOM). Both target the immutable digest, never a floating tag.
+      # Self-hosters verify with `cosign verify` (deploy/README.md "Verify the
+      # image signature").
+      # Sign the image and attach an SBOM attestation, mirroring what GoReleaser
+      # does for the CLI binaries (cosign keyless via the job's OIDC identity +
+      # syft SBOM). Both target the immutable INDEX digest, never a floating tag
+      # — cosign signing an OCI index covers every arch under it. Self-hosters
+      # verify with `cosign verify` (deploy/README.md "Verify the image signature").
+      - name: Sign the image and attest its SBOM (cosign keyless + syft)
+        env:
+          COSIGN_YES: "true"
+          IMAGE: ${{ steps.push.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign "${IMAGE}@${DIGEST}"
+          syft "${IMAGE}@${DIGEST}" -o spdx-json > sbom.spdx.json
+          cosign attest --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
+
+      # :latest moves LAST, only on stable releases (vX.Y.Z exactly, so a
+      # prerelease tag like v1.2.3-rc.1 can never hijack the tag self-hosters
+      # float on), and only after the digest above was signed — a red run
+      # anywhere earlier leaves :latest untouched. The multi-arch index was
+      # pushed by buildx and is NOT in the local daemon, so we retag it
+      # registry-side with `buildx imagetools create` (a manifest copy, no
+      # re-pull/re-push of layers) pointing :latest at the exact signed digest.
+      - name: Move :latest (stable releases only, after signing)
+        env:
+          IMAGE: ${{ steps.push.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+            echo "Moved ${IMAGE}:latest to ${IMAGE}@${DIGEST}"
+          else
+            echo "Prerelease tag — not moving :latest"
+          fi
+
+      # ---- AWS Marketplace ECR (container listing) -------------------------
+      # Copies the exact signed GHCR index into the Marketplace ECR repo and
+      # signs that copy. GHCR stays the source of truth; these steps run LAST
+      # so a Marketplace failure can never strand the GHCR half of the release
+      # (rerunning the job is idempotent: every step re-pushes the same
+      # digest-addressed content).
+      #
+      # Dormant until the repo VARIABLES (not secrets — none of these values
+      # are sensitive, see deploy/README.md "AWS Marketplace publishing") are
+      # set, so forks and pre-listing releases skip cleanly:
+      #   MARKETPLACE_ECR_ROLE_ARN — IAM role trusting GitHub's OIDC provider,
+      #                              scoped to this repo's release workflow
+      #   MARKETPLACE_ECR_IMAGE    — full repo URI from the Marketplace portal
+      #                              (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app)
+      #
+      # configure-aws-credentials is credential-issuing: it must stay after
+      # every third-party installer (same posture as the GHCR login above) and
+      # directly before the steps that use it.
+      - name: Configure AWS credentials (Marketplace ECR)
+        if: vars.MARKETPLACE_ECR_ROLE_ARN != '' && vars.MARKETPLACE_ECR_IMAGE != ''
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.MARKETPLACE_ECR_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Log in to Marketplace ECR
+        if: vars.MARKETPLACE_ECR_ROLE_ARN != '' && vars.MARKETPLACE_ECR_IMAGE != ''
+        env:
+          ECR_IMAGE: ${{ vars.MARKETPLACE_ECR_IMAGE }}
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin "${ECR_IMAGE%%/*}"
+
+      # `imagetools create` copies the multi-arch index registry-side (the
+      # index was pushed by buildx and is NOT in the local daemon; `docker
+      # tag`+`push` cannot ship it). The copy is byte-identical, so the ECR
+      # digest MUST equal the GHCR digest — asserted, because the digest is
+      # what the listing pins and what buyers `cosign verify`.
+      - name: Copy the signed index to Marketplace ECR
+        if: vars.MARKETPLACE_ECR_ROLE_ARN != '' && vars.MARKETPLACE_ECR_IMAGE != ''
+        id: ecr
+        env:
+          IMAGE: ${{ steps.push.outputs.image }}
+          VERSION: ${{ steps.push.outputs.version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          ECR_IMAGE: ${{ vars.MARKETPLACE_ECR_IMAGE }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create -t "${ECR_IMAGE}:${VERSION}" "${IMAGE}@${DIGEST}"
+          ECR_DIGEST="$(docker buildx imagetools inspect "${ECR_IMAGE}:${VERSION}" \
+            --format '{{json .Manifest.Digest}}' | jq -r .)"
+          echo "ECR index digest: ${ECR_DIGEST}"
+          if [ "${ECR_DIGEST}" != "${DIGEST}" ]; then
+            echo "::error::ECR digest (${ECR_DIGEST}) != GHCR digest (${DIGEST}) — copy was not byte-identical" >&2
+            exit 1
+          fi
+          echo "digest=${ECR_DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # Sign the ECR reference too: cosign signatures live NEXT TO the image
+      # in its registry, so the GHCR signature is invisible to a buyer pulling
+      # from ECR. Same identity, same digest, same SBOM predicate (generated
+      # by the GHCR sign step above).
+      - name: Sign the ECR image and attest its SBOM (cosign keyless + syft)
+        if: vars.MARKETPLACE_ECR_ROLE_ARN != '' && vars.MARKETPLACE_ECR_IMAGE != ''
+        env:
+          COSIGN_YES: "true"
+          ECR_IMAGE: ${{ vars.MARKETPLACE_ECR_IMAGE }}
+          DIGEST: ${{ steps.ecr.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign "${ECR_IMAGE}@${DIGEST}"
+          cosign attest --type spdxjson --predicate sbom.spdx.json "${ECR_IMAGE}@${DIGEST}"
+
   release:
     name: GoReleaser (signed CLI binaries)
-    needs: gate
+    # publish-image gates the binaries too: a release must not exist in a state
+    # where the CLI shipped but the container image it documents did not (or
+    # vice versa). If either publish half fails, the whole release run is red
+    # and gets re-run from the tag.
+    needs: [gate, smoke, publish-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write # attach artifacts to the GitHub Release
@@ -129,6 +417,14 @@ jobs:
         uses: sigstore/cosign-installer@v3
       - name: Install syft (SBOMs)
         uses: anchore/sbom-action/download-syft@v0
+      # Pipeline review F1/B3: re-assert source↔vendored spec byte-identity at
+      # release time, before GoReleaser builds anything. `check-cli-gen` is
+      # branch-CI path-gated, so a hotfix tag cut from a commit with a stale
+      # vendored client would otherwise embed a stale spec in the shipped
+      # binaries. This pure `diff` closes that hole unconditionally.
+      - name: Vendored specs match source (release gate)
+        run: make check-vendored-specs
+        working-directory: cli
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -141,6 +437,20 @@ jobs:
           # can be pushed cross-repo (GITHUB_TOKEN is scoped to THIS repo only).
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           COSIGN_YES: "true"
+      # Pipeline review F4/E1: the app image already asserts /health .version ==
+      # tag (gate job); mirror that for the CLI binaries so a bad ldflag stamp
+      # can't ship a binary whose `--version` disagrees with the tag. GoReleaser
+      # writes the amd64 linux binary under cli/dist/jentic_linux_amd64_v1/.
+      - name: Binary version matches tag
+        run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#v}"
+          bin="$(find dist -type f -name jentic -path '*linux_amd64*' | head -n1)"
+          test -n "${bin}" || { echo "::error::could not locate built jentic binary under cli/dist"; ls -R dist || true; exit 1; }
+          got="$("${bin}" --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+          echo "tag=${want} binary=${got}"
+          test "${got}" = "${want}" || { echo "::error::jentic --version (${got}) != tag (${want})"; exit 1; }
+        working-directory: cli
       # Mirror the app release tag onto the CLI's Go module path. The CLI lives in
       # a subdirectory (module github.com/jentic/jentic-one/cli), so `go get
       # .../cli@vX.Y.Z` only resolves if a `cli/vX.Y.Z` git tag exists. We point it

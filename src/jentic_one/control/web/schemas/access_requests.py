@@ -5,32 +5,18 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from jentic.problem_details import ProblemDetail
+from pydantic import BaseModel, Field, model_validator
+
+from jentic_one.control.web.schemas.permission_rules import BasePermissionRuleSchema
 
 # --- Request models ---
 
 
-class PermissionRuleSchema(BaseModel):
+class PermissionRuleSchema(BasePermissionRuleSchema):
     """Permission rule for an access request item."""
 
-    model_config = ConfigDict(extra="forbid")
-
     effect: Literal["allow", "deny", "require-approval"]
-    methods: list[str] | None = None
-    path: str | None = None
-    operations: list[str] | None = None
-
-    @model_validator(mode="after")
-    def _reject_condition_less_allow(self) -> PermissionRuleSchema:
-        # A condition-less `allow` (no methods, path, or operations) matches every
-        # request under the broker's first-match-wins evaluation — i.e. an
-        # unrestricted grant. Reject it so an approver can never grant blanket
-        # access by accident. A condition-less `deny`/`require-approval` stays
-        # valid: a catch-all deny is a legitimate default-deny construct.
-        if self.effect == "allow" and not (self.methods or self.path or self.operations):
-            msg = "An 'allow' rule must constrain at least one of methods, path, or operations"
-            raise ValueError(msg)
-        return self
 
 
 class CredentialSpecSchema(BaseModel):
@@ -52,7 +38,7 @@ class AccessRequestItemRequest(BaseModel):
     """
 
     resource_type: Literal["credential", "toolkit", "scope"]
-    action: Literal["bind", "grant"]
+    action: Literal["bind", "grant", "create", "provision"]
     resource_id: str | None = None
     resource_reference: dict[str, Any] | None = None
     to_type: str | None = None
@@ -73,10 +59,22 @@ class AccessRequestItemRequest(BaseModel):
         if has_id and has_ref:
             msg = "Provide exactly one of resource_id or resource_reference, not both"
             raise ValueError(msg)
-        # Only the (resource_type, action) pairs the effect applicator dispatches on
-        # are meaningful; reject combinations that would silently no-op (e.g.
-        # ("scope", "bind")) so a filer gets immediate feedback.
-        valid = {("credential", "bind"), ("toolkit", "bind"), ("scope", "grant")}
+        # Only the (resource_type, action) pairs the system understands are
+        # meaningful. Two families:
+        #   * enforced effects — the applicator dispatches on them at approval
+        #     (credential:bind, toolkit:bind, scope:grant).
+        #   * fulfilment intents — placeholders in a provisioning plan that a
+        #     human fulfils via the existing create endpoints; the applicator
+        #     never executes them (toolkit:create, credential:provision).
+        # Reject anything else (e.g. ("scope", "bind")) so a filer gets immediate
+        # feedback instead of a silent no-op.
+        valid = {
+            ("credential", "bind"),
+            ("toolkit", "bind"),
+            ("scope", "grant"),
+            ("toolkit", "create"),
+            ("credential", "provision"),
+        }
         if (self.resource_type, self.action) not in valid:
             msg = (
                 f"Unsupported resource_type/action combination: {self.resource_type}/{self.action}"
@@ -112,6 +110,7 @@ class AmendItemSchema(BaseModel):
     item_id: str
     rules: list[PermissionRuleSchema] | None = None
     resource_id: str | None = None
+    to_id: str | None = None
 
 
 class AmendRequest(BaseModel):
@@ -141,6 +140,33 @@ class AccessRequestItemResponse(BaseModel):
     decided_by: str | None = None
     decided_at: dt.datetime | None = None
     decision_reason: str | None = None
+    already_satisfied: bool | None = Field(
+        default=None,
+        description=(
+            "Whether this item's outcome is already in effect (the binding or "
+            "grant it asks for already exists), letting a reviewer approve "
+            "manually-fulfilled work instead of re-doing it in the wizard. "
+            "Populated on single-request GETs for pending credential:bind, "
+            "toolkit:bind, and scope:grant items; null when not computed "
+            "(list endpoints, decided items, fulfilment-only intents, an item "
+            "whose target cannot be determined, an ambiguous toolkit "
+            "reference — which approval would refuse as filed — or a "
+            "credential:bind whose credential is not visible to the caller). "
+            "Toolkit REFERENCES are resolved under the caller's visibility, "
+            "mirroring decide-time resolution, so False can also mean "
+            "'satisfied by a toolkit this caller cannot see'; explicit-id "
+            "targets are probed directly."
+        ),
+    )
+    already_satisfied_by: str | None = Field(
+        default=None,
+        description=(
+            "For a satisfied toolkit:bind, the id of the toolkit the agent is "
+            "already bound to — names the exact object so consumers can point "
+            "the operator at it. Null for other item types and whenever "
+            "already_satisfied is not true."
+        ),
+    )
 
 
 class EvaluationCheckResponse(BaseModel):
@@ -158,6 +184,25 @@ class EvaluationResponse(BaseModel):
     checks: list[EvaluationCheckResponse]
 
 
+class AccessRequestOwnerResponse(BaseModel):
+    """Display info for the filer's human owner (labelling only, not authorization).
+
+    Server-resolved from ``filer_owner_id`` (falling back to ``created_by``
+    when the former is null, mirroring what consumers render) so they don't
+    need ``users:read`` (or a roster fetch) just to label a row. Absent when
+    the id doesn't resolve to a user (service-account filers, purged rows) or
+    on mutation responses, which skip the enrichment.
+    """
+
+    id: str = Field(
+        description="The resolved owner's user id (filer_owner_id, or created_by when null)."
+    )
+    email: str = Field(description="The owner's email address.")
+    display_name: str | None = Field(
+        default=None, description="The owner's full name, when set on the profile."
+    )
+
+
 class AccessRequestResponse(BaseModel):
     """Response model for an access request envelope."""
 
@@ -171,6 +216,7 @@ class AccessRequestResponse(BaseModel):
     expires_at: dt.datetime
     created_by: str
     filer_owner_id: str | None = None
+    filer_owner: AccessRequestOwnerResponse | None = None
     items: list[AccessRequestItemResponse]
     evaluation: EvaluationResponse | None = None
 
@@ -181,3 +227,28 @@ class AccessRequestListResponse(BaseModel):
     data: list[AccessRequestResponse]
     has_more: bool
     next_cursor: str | None = None
+
+
+class DuplicatePendingProblem(ProblemDetail):
+    """RFC 9457 Problem Details for a 409 on ``POST /access-requests``.
+
+    Filing a request whose target already has a pending request is refused with
+    a 409 whose body carries two extension members on top of the standard
+    Problem Details shape, so a client can attach to the existing request rather
+    than re-file. These are emitted at runtime by the access-request error hook
+    (``control/web/errors.py``); this model documents them in the OpenAPI spec so
+    the generated SDK exposes a typed 409
+    (``FileAccessRequestHTTPResp.ApplicationproblemJSON409``) instead of forcing
+    callers to parse the raw body (ARCH-21 Step 0).
+    """
+
+    existing_request_id: str = Field(
+        description=(
+            "The id of the pending access request that already covers the conflicting target."
+        ),
+        examples=["acr_01HXXY..."],
+    )
+    approve_url: str = Field(
+        description="Console URL to review/approve the existing pending request.",
+        examples=["https://app.jentic.com/access-requests/acr_01HXXY..."],
+    )

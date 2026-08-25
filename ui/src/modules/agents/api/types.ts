@@ -149,6 +149,18 @@ export interface ToolkitBindingEntity {
 	boundAt: string;
 }
 
+/**
+ * A candidate toolkit for the agent-side "Bind toolkit" picker (#607). A small
+ * projection of the shared `ToolkitResponse` — the agents module keeps its own
+ * picker (module-boundary rule forbids importing the toolkits module), so it
+ * only needs id/name/active to render and filter the list.
+ */
+export interface LinkableToolkit {
+	toolkitId: string;
+	name: string;
+	active: boolean;
+}
+
 /** Result of generating an API key — the plaintext shown once. */
 export interface ApiKeyResult {
 	key: string;

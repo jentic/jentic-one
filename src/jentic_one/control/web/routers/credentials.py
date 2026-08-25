@@ -62,6 +62,7 @@ def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedRes
         type=view.type,
         name=view.name,
         api=APIReferenceResponse(vendor=api.vendor, name=api.name, version=api.version),
+        catalog_api_id=view.catalog_api_id,
         provider=view.provider,
         provider_account_ref=view.provider_account_ref,
         active=view.active,
@@ -118,6 +119,7 @@ async def create_credential(
             name=body.api.name,
             version=body.api.version,
         ),
+        catalog_api_id=body.api.catalog_api_id,
         provider=body.provider,
         server_variables=body.server_variables,
         token=getattr(body, "token", None),
@@ -132,6 +134,11 @@ async def create_credential(
         client_id=getattr(body, "client_id", None),
         client_secret=getattr(body, "client_secret", None),
         scopes=getattr(body, "scopes", None),
+        access_key_id=getattr(body, "access_key_id", None),
+        secret_access_key=getattr(body, "secret_access_key", None),
+        session_token=getattr(body, "session_token", None),
+        aws_region=getattr(body, "aws_region", None),
+        aws_service=getattr(body, "aws_service", None),
     )
     result = await svc.create(payload, identity=identity)
 
@@ -143,6 +150,7 @@ async def create_credential(
         type=result.type,
         name=result.name,
         api=redacted_api,
+        catalog_api_id=result.catalog_api_id,
         provider=result.provider,
         active=result.active,
         created_at=result.created_at,
@@ -308,6 +316,12 @@ async def update_credential(
         client_secret=getattr(body, "client_secret", None),
         token_url=getattr(body, "token_url", None),
         scopes=getattr(body, "scopes", None),
+        access_key_id=getattr(body, "access_key_id", None),
+        secret_access_key=getattr(body, "secret_access_key", None),
+        session_token=getattr(body, "session_token", None),
+        clear_session_token=getattr(body, "clear_session_token", False),
+        aws_region=getattr(body, "aws_region", None),
+        aws_service=getattr(body, "aws_service", None),
     )
     view = await svc.update(credential_id, payload, identity=identity)
     return _to_redacted_response(view)

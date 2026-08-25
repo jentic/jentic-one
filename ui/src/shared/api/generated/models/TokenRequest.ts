@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Token endpoint request (form body).
+ * Token endpoint request (JSON body — not RFC 6749 form-encoded).
  */
 export type TokenRequest = {
     assertion?: (string | null);

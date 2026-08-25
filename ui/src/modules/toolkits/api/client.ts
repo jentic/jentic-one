@@ -21,6 +21,9 @@ import {
 	AgentsService,
 	AuditService,
 	AuditTargetType,
+	ExecutionsService,
+	MonitoringService,
+	GroupBy,
 	type ToolkitResponse,
 	type ToolkitListResponse,
 	type ToolkitCreateRequest,
@@ -36,13 +39,18 @@ import {
 	type PermissionRuleListResponse,
 	type PermissionsPatchRequest,
 	type PermissionRuleSchema,
+	type PermissionTestRequest,
+	type PermissionTestResponse,
 	type ToolkitBindingResponse,
 	type AuditResponse,
+	type UsageResponse,
 } from '@/shared/api';
 import type {
 	BindableCredential,
 	CreatedToolkit,
 	ToolkitAgent,
+	ToolkitExecution,
+	ToolkitUsageSummary,
 } from '@/modules/toolkits/api/types';
 
 /**
@@ -251,6 +259,8 @@ export async function listBindableCredentials(): Promise<BindableCredential[]> {
 			name: c.name,
 			type: c.type,
 			vendor: c.api?.vendor ?? null,
+			apiName: c.api?.name ?? null,
+			catalogApiId: c.catalog_api_id ?? null,
 			provider: c.provider ?? null,
 		}));
 	} catch (error) {
@@ -303,6 +313,27 @@ export async function patchPermissions(
 	}
 }
 
+/**
+ * Dry-run a hypothetical request against the toolkit's vendor-pooled rules
+ * (`POST …/permissions:test`) — "what would the broker do?" without calling
+ * upstream. The response names which binding contributed the matching rule.
+ */
+export async function testPermissions(
+	toolkitId: string,
+	credentialId: string,
+	body: PermissionTestRequest,
+): Promise<PermissionTestResponse> {
+	try {
+		return await ToolkitPermissionsService.testToolkitPermissions({
+			toolkitId,
+			credentialId,
+			requestBody: body,
+		});
+	} catch (error) {
+		throw toToolkitsError(error, 'Failed to test the request against the rules.');
+	}
+}
+
 // --- Agent bindings (agent side, on the /agents router → AgentsService) ---
 
 /**
@@ -341,15 +372,6 @@ export async function listLinkableAgents(): Promise<ToolkitAgent[]> {
 		}));
 	} catch (error) {
 		throw toToolkitsError(error, 'Failed to load agents.');
-	}
-}
-
-export async function listAgentToolkits(agentId: string): Promise<ToolkitBindingResponse[]> {
-	try {
-		const res = await AgentsService.listAgentToolkits({ agentId });
-		return res.data;
-	} catch (error) {
-		throw toToolkitsError(error, "Failed to load the agent's toolkits.");
 	}
 }
 
@@ -399,5 +421,115 @@ export async function listToolkitAudit(toolkitId: string, limit = 25): Promise<A
 			return [];
 		}
 		throw toToolkitsError(error, 'Failed to load audit log.');
+	}
+}
+
+// --- Observability (admin monitoring endpoints, toolkit-scoped lens) --------
+
+/**
+ * Per-toolkit usage aggregation (`GET /monitoring/usage?toolkit_id=…`) —
+ * totals, success/fail split, latency percentiles, and time buckets for the
+ * KPI strip + Activity chart. Admin-gated (`org:admin`): 401/403 map to `null`
+ * so the observability surfaces hide gracefully for non-admins instead of
+ * erroring the whole detail page.
+ */
+export async function getToolkitUsage(
+	toolkitId: string,
+	opts: { sinceDays?: number } = {},
+): Promise<UsageResponse | null> {
+	const days = opts.sinceDays ?? 7;
+	// Ceiled to the NEXT minute: the aggregate's strict `< until` must include
+	// the current partial minute (#913) — flooring made fresh executions
+	// invisible here while the Activity feed already listed them.
+	const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
+	const since = until - days * 86_400;
+	try {
+		return await MonitoringService.getUsageStats({
+			toolkitId,
+			since,
+			until,
+			topLimit: 1,
+		});
+	} catch (error) {
+		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+			return null;
+		}
+		throw toToolkitsError(error, 'Failed to load toolkit usage.');
+	}
+}
+
+/**
+ * Recent executions for this toolkit (`GET /executions?toolkit_id=…`) — the
+ * Activity tab's feed. Projected to the minimal `ToolkitExecution` row shape;
+ * same 401/403 → `null` gating as `getToolkitUsage`. The full filterable log
+ * lives in Monitor (deep-linked via `?tab=executions&toolkit_id=…`).
+ */
+export async function listToolkitExecutions(
+	toolkitId: string,
+	opts: { limit?: number } = {},
+): Promise<ToolkitExecution[] | null> {
+	try {
+		const res = await ExecutionsService.listExecutions({
+			toolkitId,
+			limit: opts.limit ?? 10,
+		});
+		return res.data.map((row) => ({
+			execution_id: row.execution_id,
+			trace_id: row.trace_id,
+			status: row.status,
+			operation_id: row.operation_id ?? null,
+			api_label: row.api ? `${row.api.vendor}/${row.api.name}` : null,
+			actor_id: row.actor_id,
+			actor_type: row.actor_type,
+			http_status: row.http_status ?? null,
+			duration_ms: row.duration_ms ?? null,
+			error: row.error ?? null,
+			started_at: row.started_at,
+		}));
+	} catch (error) {
+		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+			return null;
+		}
+		throw toToolkitsError(error, 'Failed to load toolkit executions.');
+	}
+}
+
+/**
+ * Per-toolkit 7d usage summaries for the list page's card sparklines — ONE
+ * aggregation call (`GET /monitoring/usage?group_by=toolkit&top_limit=50`)
+ * joined onto the cards by toolkit id, instead of N per-card requests.
+ * Same admin gating as the other monitoring lenses (401/403 → `null`).
+ */
+export async function getUsageByToolkit(
+	opts: { sinceDays?: number } = {},
+): Promise<Record<string, ToolkitUsageSummary> | null> {
+	const days = opts.sinceDays ?? 7;
+	// Next-minute ceil — see getToolkitUsage (#913).
+	const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
+	try {
+		const res = await MonitoringService.getUsageStats({
+			since: until - days * 86_400,
+			until,
+			groupBy: GroupBy.TOOLKIT,
+			topLimit: 50,
+		});
+		const map: Record<string, ToolkitUsageSummary> = {};
+		for (const row of res.top) {
+			// Unattributed executions arrive with a null key; the list page can't
+			// join them onto a card, so they're dropped here.
+			if (!row.key) continue;
+			map[row.key] = {
+				total: row.total,
+				success: row.success,
+				failed: row.failed,
+				trend: row.trend,
+			};
+		}
+		return map;
+	} catch (error) {
+		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+			return null;
+		}
+		throw toToolkitsError(error, 'Failed to load toolkit usage.');
 	}
 }

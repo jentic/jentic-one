@@ -59,6 +59,9 @@ export type { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema 
 export { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema as PermissionRuleSchemaNS } from '@/shared/api/generated/models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
 export type { PermissionRuleListResponse } from '@/shared/api/generated/models/PermissionRuleListResponse';
 export type { PermissionsPatchRequest } from '@/shared/api/generated/models/PermissionsPatchRequest';
+export type { PermissionTestRequest } from '@/shared/api/generated/models/PermissionTestRequest';
+export type { PermissionTestResponse } from '@/shared/api/generated/models/PermissionTestResponse';
+export type { BindingWarningSchema } from '@/shared/api/generated/models/BindingWarningSchema';
 export type { ToolkitBindingResponse } from '@/shared/api/generated/models/ToolkitBindingResponse';
 export type { ToolkitBindingListResponse } from '@/shared/api/generated/models/ToolkitBindingListResponse';
 export type { ToolkitBindRequest } from '@/shared/api/generated/models/ToolkitBindRequest';
@@ -143,6 +146,8 @@ export type { BearerTokenCreateRequest } from '@/shared/api/generated/models/Bea
 export type { BearerTokenUpdateRequest } from '@/shared/api/generated/models/BearerTokenUpdateRequest';
 export type { OAuth2CreateRequest } from '@/shared/api/generated/models/OAuth2CreateRequest';
 export type { OAuth2UpdateRequest } from '@/shared/api/generated/models/OAuth2UpdateRequest';
+export type { Sigv4CreateRequest } from '@/shared/api/generated/models/Sigv4CreateRequest';
+export type { Sigv4UpdateRequest } from '@/shared/api/generated/models/Sigv4UpdateRequest';
 export type { APIReference } from '@/shared/api/generated/models/APIReference';
 export type { APIReferenceRequest } from '@/shared/api/generated/models/APIReferenceRequest';
 export type { RuntimeConfig } from '@/shared/api/generated/models/RuntimeConfig';
@@ -203,13 +208,20 @@ export type { ServiceAccountScopesResponse } from '@/shared/api/generated/models
 export type { JobResponse } from '@/shared/api/generated/models/JobResponse';
 export type { JobListResponse } from '@/shared/api/generated/models/JobListResponse';
 
-// Monitor Overview: the aggregation endpoint (GET /monitoring/executions,
-// `MonitoringService.getExecutionStats`) added by jentic-one#386. Powers the
-// Overview usage charts + top-operations panel.
+// Monitor Overview parity: the enriched usage-aggregation endpoint
+// (GET /monitoring/usage, `MonitoringService.getUsageStats`) added by
+// jentic-one-internal#561; it superseded the coarser #386 stats endpoint
+// (GET /monitoring/executions), whose models are no longer consumed by the UI.
+// Powers the full jentic-mini Overview port — bubble chart, per-row sparkline
+// trends, latency pills, and the api/toolkit/agent grouping toggle. `GroupBy`
+// is exported as a *value* because callers pass the enum members as the
+// `group_by` query param.
 export { MonitoringService } from '@/shared/api/generated/services/MonitoringService';
-export type { ExecutionStatsResponse } from '@/shared/api/generated/models/ExecutionStatsResponse';
-export type { DailyExecutionBucket } from '@/shared/api/generated/models/DailyExecutionBucket';
-export type { TopOperation } from '@/shared/api/generated/models/TopOperation';
+export { GroupBy } from '@/shared/api/generated/models/GroupBy';
+export type { UsageResponse } from '@/shared/api/generated/models/UsageResponse';
+export type { UsageStatsBlock } from '@/shared/api/generated/models/UsageStatsBlock';
+export type { UsageBucket } from '@/shared/api/generated/models/UsageBucket';
+export type { UsageTopRow } from '@/shared/api/generated/models/UsageTopRow';
 
 // Monitor global filter bar: the actor directory (GET /actors,
 // `ActorsService.listActors`) hydrates the actor picker shared across the
@@ -222,3 +234,32 @@ export { ActorsService } from '@/shared/api/generated/services/ActorsService';
 export { ActorType } from '@/shared/api/generated/models/ActorType';
 export type { ActorListResponse } from '@/shared/api/generated/models/ActorListResponse';
 export type { ActorSummaryResponse } from '@/shared/api/generated/models/ActorSummaryResponse';
+
+// Session lifecycle (#610/#608): expiry-aware token adoption + proactive
+// refresh scheduling + the one-shot "session expired" login notice.
+export {
+	setSession,
+	getSessionExpiresAt,
+	consumeSessionExpiredNotice,
+} from '@/shared/api/token-store';
+export type { ClearTokenReason } from '@/shared/api/token-store';
+
+// Overlays (feat/overlay-base-digest-dedupe, #937). The overlay lifecycle
+// service backing the workspace OverlaysSection + the "close the overlay-update
+// loop" flow (list/get/confirm/rollback/deprecate). List/get responses are
+// typed `any` on the generated client; the workspace module re-types them in
+// its own `api/types.ts` + `adapters.ts`. Append-only, like the rest.
+export { OverlaysService } from '@/shared/api/generated/services/OverlaysService';
+
+// System version (feat/app-release-update-banner). The running vs. latest-
+// available app release, read by the shell's update banner + UserMenu version
+// line via `useVersionInfo`. `SystemService` is already exported above; only the
+// response model is added here. Append-only.
+export type { VersionResponse } from '@/shared/api/generated/models/VersionResponse';
+
+// External-IdP (SSO) login. The public capability descriptor (`GET /auth/idp`)
+// tells the login page whether to show a "Continue with <provider>" button, and
+// the authorization-code + PKCE exchange (`POST /oauth/token`) yields the same
+// session bundle as password login. Append-only, like the rest.
+export { getIdpDescriptor, exchangeAuthCode } from '@/shared/api/idp';
+export type { IdpDescriptor } from '@/shared/api/idp';

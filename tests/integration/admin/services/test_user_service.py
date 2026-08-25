@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
@@ -329,6 +330,107 @@ async def test_reissue_invite_redeemed_raises(
     service = UserService(ctx)
     with pytest.raises(ConflictError):
         await service.reissue_invite(user_id, identity=Identity(sub="usr_test", email="test@local"))
+
+    # Cleanup
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(UserSecret).where(UserSecret.user_id == user_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+async def test_get_by_id_derives_expired_for_lapsed_pending_invite(
+    integration_context: Context, admin_user: str
+) -> None:
+    # A pending user whose only invite token has lapsed is derived as EXPIRED,
+    # even though the DB still stores 'pending'.
+    ctx = integration_context
+    service = UserService(ctx)
+    created = await service.create(
+        UserCreatePayload(email="lapsed@test.local", first_name="Lapsed", last_name="User"),
+        identity=Identity(sub=admin_user, email="test@local"),
+    )
+    user_id = created.user.id
+    assert created.user.invite_state == InviteState.PENDING
+
+    # Backdate the issued token so it is expired.
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(InviteToken)
+            .where(InviteToken.user_id == user_id)
+            .values(expires_at=datetime.now(UTC) - timedelta(hours=1))
+        )
+        await session.commit()
+
+    view = await service.get_by_id(user_id)
+    assert view.invite_state == InviteState.EXPIRED
+    # The stored column is untouched (derivation is read-only).
+    async with ctx.admin_db.session() as session:
+        stored = await UserRepository.get_by_id(session, user_id)
+    assert stored is not None and stored.invite_state == InviteState.PENDING
+
+    page = await service.list_all(limit=50)
+    listed = next(u for u in page.data if u.id == user_id)
+    assert listed.invite_state == InviteState.EXPIRED
+
+    # Cleanup
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(InviteToken).where(InviteToken.user_id == user_id))
+        await session.execute(
+            delete(UserPermissionGrant).where(UserPermissionGrant.user_id == user_id)
+        )
+        await session.execute(delete(UserSecret).where(UserSecret.user_id == user_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+async def test_get_by_id_pending_with_active_invite_not_expired(
+    integration_context: Context, admin_user: str
+) -> None:
+    # A freshly-created (thus active-token) pending user stays 'pending'.
+    ctx = integration_context
+    service = UserService(ctx)
+    created = await service.create(
+        UserCreatePayload(email="fresh-pending@test.local", first_name="Fresh", last_name="User"),
+        identity=Identity(sub=admin_user, email="test@local"),
+    )
+    user_id = created.user.id
+
+    view = await service.get_by_id(user_id)
+    assert view.invite_state == InviteState.PENDING
+
+    # Cleanup
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(InviteToken).where(InviteToken.user_id == user_id))
+        await session.execute(
+            delete(UserPermissionGrant).where(UserPermissionGrant.user_id == user_id)
+        )
+        await session.execute(delete(UserSecret).where(UserSecret.user_id == user_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+async def test_redeemed_invite_not_derived_as_expired(
+    integration_context: Context, admin_user: str
+) -> None:
+    # A redeemed user is never overlaid (only 'pending' is), even with no active
+    # token — confirms REDEEMED passes through.
+    ctx = integration_context
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.create(
+            session,
+            email="redeemed-view@test.local",
+            first_name="Redeemed",
+            last_name="View",
+            invite_state=InviteState.REDEEMED,
+            created_by="usr_test",
+        )
+        await UserSecretRepository.create(session, user_id=user.id, created_by="usr_test")
+        await session.commit()
+    user_id = user.id
+
+    service = UserService(ctx)
+    view = await service.get_by_id(user_id)
+    assert view.invite_state == InviteState.REDEEMED
 
     # Cleanup
     async with ctx.admin_db.session() as session:

@@ -44,7 +44,9 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 def create_app(ctx: Context) -> FastAPI:
     """Create the registry FastAPI application for standalone deployment."""
-    app = create_surface_app(ctx, title="jentic-one-registry", routers=get_routers())
+    app = create_surface_app(
+        ctx, title="jentic-one-registry", routers=get_routers(), enabled_apps={"registry"}
+    )
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
     return app

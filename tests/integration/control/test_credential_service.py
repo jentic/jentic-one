@@ -13,6 +13,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
 from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
@@ -30,6 +31,8 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialUpdate,
     OAuth2Full,
     OAuth2Redacted,
+    Sigv4Full,
+    Sigv4Redacted,
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
@@ -53,6 +56,7 @@ async def clean_credentials(control_db: DatabaseSession) -> AsyncGenerator[None,
         await session.execute(delete(BasicCredential))
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
+        await session.execute(delete(Sigv4Credential))
         await session.execute(delete(Credential))
         await session.commit()
     yield
@@ -62,6 +66,7 @@ async def clean_credentials(control_db: DatabaseSession) -> AsyncGenerator[None,
         await session.execute(delete(BasicCredential))
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
+        await session.execute(delete(Sigv4Credential))
         await session.execute(delete(Credential))
         await session.commit()
 
@@ -74,6 +79,61 @@ def svc(integration_context: Context) -> CredentialService:
 
 def _api() -> APIReference:
     return APIReference(vendor="test-vendor", name="test-api", version="v1")
+
+
+async def test_create_normalizes_dotted_vendor_and_name(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """A dotted vendor/name is stored in the registry's slug form (issue #656).
+
+    The registry normalizes vendor/name on import (``httpbin.org`` ->
+    ``httpbin-org``); the broker joins the credential's stored ``api_vendor``
+    against that discovered, normalized vendor. If ``POST /credentials`` stored
+    the raw domain the join would silently return zero rows and default-deny, so
+    the service must store the same slug form.
+    """
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="Dotted Vendor",
+            api=APIReference(vendor="httpbin.org", name="httpbin.org", version="1.0.0"),
+            token="sk-secret-token-value123",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+
+    stored = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
+    assert stored.api.vendor == "httpbin-org"
+    assert stored.api.name == "httpbin-org"
+    assert stored.api.version == "1.0.0"
+
+
+async def test_create_stores_empty_name_and_version_as_null(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """A missing api name/version is stored as NULL, not "".
+
+    APIReferenceRequest defaults name/version to "" (not None). NULL is the
+    "covers all names/versions" wildcard both the bind-time resolver and the
+    broker's toolkit_binding_resolver rely on; an empty string matches NEITHER
+    NULL nor a concrete value, so a versionless credential would make its toolkit
+    serve nothing at execute time (issue #775). The service must coerce "" -> NULL.
+    """
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.NO_AUTH,
+            name="No-auth country",
+            api=APIReference(vendor="country-is", name="", version=""),
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+
+    async with control_db.session() as session:
+        row = await session.get(Credential, result.credential_id)
+        assert row is not None
+        assert row.api_vendor == "country-is"
+        assert row.api_name is None
+        assert row.api_version is None
 
 
 async def test_create_bearer_token(svc: CredentialService, clean_credentials: None) -> None:
@@ -190,6 +250,143 @@ async def test_create_basic_auth(svc: CredentialService, clean_credentials: None
     redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
     assert isinstance(redacted.details, BasicAuthRedacted)
     assert redacted.details.username == "admin"
+
+
+async def test_create_sigv4(svc: CredentialService, clean_credentials: None) -> None:
+    """Create sigv4: echoes the secret once; redacted shows only preview + scope."""
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.SIGV4,
+            name="OpenSearch prod",
+            api=_api(),
+            access_key_id="AKIAEXAMPLE12345",
+            secret_access_key="wJalrXUtnFEMI-super-secret",
+            aws_region="us-east-1",
+            aws_service="aoss",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(result.secret, Sigv4Full)
+    assert result.secret.access_key_id == "AKIAEXAMPLE12345"
+    assert result.secret.secret_access_key == "wJalrXUtnFEMI-super-secret"
+    assert result.secret.aws_region == "us-east-1"
+    assert result.secret.aws_service == "aoss"
+
+    redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
+    assert isinstance(redacted.details, Sigv4Redacted)
+    assert redacted.details.access_key_id == "AKIAEXAMPLE12345"
+    assert redacted.details.aws_region == "us-east-1"
+    assert redacted.details.aws_service == "aoss"
+    assert redacted.details.has_session_token is False
+    # The secret preview must never expose the full secret.
+    assert redacted.details.secret_preview is not None
+    assert redacted.details.secret_preview != "wJalrXUtnFEMI-super-secret"
+
+
+async def test_create_sigv4_with_session_token(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """A session token is stored and surfaced as has_session_token, never echoed redacted."""
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.SIGV4,
+            name="Temp creds",
+            api=_api(),
+            access_key_id="ASIAEXAMPLE12345",
+            secret_access_key="temp-secret",
+            session_token="FQoGZXIvEXAMPLE",
+            aws_region="eu-west-1",
+            aws_service="execute-api",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(result.secret, Sigv4Full)
+    assert result.secret.session_token == "FQoGZXIvEXAMPLE"
+
+    redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
+    assert isinstance(redacted.details, Sigv4Redacted)
+    assert redacted.details.has_session_token is True
+
+
+async def test_create_sigv4_missing_region_rejected(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    with pytest.raises(InvalidCredentialInputError):
+        await svc.create(
+            CredentialCreate(
+                type=CredentialType.SIGV4,
+                name="No region",
+                api=_api(),
+                access_key_id="AKIAEXAMPLE12345",
+                secret_access_key="secret",
+                aws_service="aoss",
+            ),
+            identity=_ADMIN_IDENTITY,
+        )
+
+
+async def test_update_sigv4_rotates_keypair(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Rotating both key halves updates the stored secret preview."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.SIGV4,
+            name="Rotate me",
+            api=_api(),
+            access_key_id="AKIAOLDKEY000000",
+            secret_access_key="old-secret-aaa",
+            aws_region="us-east-1",
+            aws_service="aoss",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    before = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert isinstance(before.details, Sigv4Redacted)
+    old_preview = before.details.secret_preview
+    old_updated_at = before.updated_at
+
+    updated = await svc.update(
+        created.credential_id,
+        CredentialUpdate(
+            type=CredentialType.SIGV4,
+            access_key_id="AKIANEWKEY000000",
+            secret_access_key="brand-new-secret-zzz",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(updated.details, Sigv4Redacted)
+    assert updated.details.access_key_id == "AKIANEWKEY000000"
+    assert updated.details.secret_preview != old_preview
+    # A key rotation is a real mutation: updated_at must advance (honest signal,
+    # #881) and it must leave an audit trail — both are gated on ``changed``.
+    assert old_updated_at is not None
+    assert updated.updated_at is not None
+    assert updated.updated_at > old_updated_at
+
+
+async def test_update_sigv4_half_keypair_rejected(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """access_key_id without its secret (or vice versa) is a 400, not a partial write."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.SIGV4,
+            name="Half rotate",
+            api=_api(),
+            access_key_id="AKIAKEY000000000",
+            secret_access_key="secret",
+            aws_region="us-east-1",
+            aws_service="aoss",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    with pytest.raises(InvalidCredentialInputError):
+        await svc.update(
+            created.credential_id,
+            CredentialUpdate(type=CredentialType.SIGV4, access_key_id="AKIANEWKEY000000"),
+            identity=_ADMIN_IDENTITY,
+        )
 
 
 async def test_create_basic_auth_long_snapshot_version(
@@ -326,7 +523,13 @@ async def test_update_rotates_bearer_token(svc: CredentialService, clean_credent
     )
     assert isinstance(updated.details, BearerTokenRedacted)
     assert updated.details.token_preview == "…xyz"
+    # A persisted change must advance updated_at past created_at (#739) — both on
+    # the update return value and on a fresh read.
     assert updated.updated_at is not None
+    assert updated.updated_at > created.created_at
+    reread = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert reread.updated_at is not None
+    assert reread.updated_at > reread.created_at
 
 
 async def test_update_name(svc: CredentialService, clean_credentials: None) -> None:
@@ -359,6 +562,144 @@ async def test_update_rejects_type_change(svc: CredentialService, clean_credenti
             CredentialUpdate(type=CredentialType.API_KEY),
             identity=_ADMIN_IDENTITY,
         )
+
+
+async def test_update_rotates_api_key_advances_updated_at(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Rotating an api_key secret bumps updated_at (#739)."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="Rotate Key",
+            api=_api(),
+            key="old-key-value",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    updated = await svc.update(
+        created.credential_id,
+        CredentialUpdate(type=CredentialType.API_KEY, key="new-key-value"),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert updated.updated_at is not None
+    assert updated.updated_at > created.created_at
+
+
+async def test_update_noop_does_not_bump_updated_at(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """A PATCH that persists nothing must leave updated_at frozen (#739).
+
+    The SPA echoes the stored field_name/location on every api_key PATCH; a
+    request that carries only those (matching) echoes and no new secret changes
+    nothing, so updated_at must not move — otherwise it is a lying signal.
+    """
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="No-op",
+            api=_api(),
+            key="key-value-123",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    before = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+
+    updated = await svc.update(
+        created.credential_id,
+        CredentialUpdate(type=CredentialType.API_KEY, field_name="appid", location="query"),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert updated.updated_at == before.updated_at
+
+    reread = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert reread.updated_at == before.updated_at
+
+
+async def test_update_rejects_field_name_change(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Changing the api_key field_name is rejected as immutable (#589)."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="Locked Binding",
+            api=_api(),
+            key="key-value-123",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    with pytest.raises(ImmutableFieldError):
+        await svc.update(
+            created.credential_id,
+            CredentialUpdate(type=CredentialType.API_KEY, field_name="Default"),
+            identity=_ADMIN_IDENTITY,
+        )
+
+
+async def test_update_rejects_location_change(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Changing the api_key location is rejected as immutable (#589)."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="Locked Location",
+            api=_api(),
+            key="key-value-123",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    with pytest.raises(ImmutableFieldError):
+        await svc.update(
+            created.credential_id,
+            CredentialUpdate(type=CredentialType.API_KEY, location="header"),
+            identity=_ADMIN_IDENTITY,
+        )
+
+
+async def test_update_key_with_echoed_binding_succeeds(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Rotating the key while echoing the stored binding is allowed (#589).
+
+    The SPA always resends the seeded field_name/location; a matching echo
+    alongside a new key must rotate the secret and bump updated_at, not 409.
+    """
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="Echo Binding",
+            api=_api(),
+            key="old-key-value",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    updated = await svc.update(
+        created.credential_id,
+        CredentialUpdate(
+            type=CredentialType.API_KEY,
+            key="new-key-value",
+            field_name="appid",
+            location="query",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(updated.details, ApiKeyRedacted)
+    assert updated.details.field_name == "appid"
+    assert updated.updated_at is not None
+    assert updated.updated_at > created.created_at
 
 
 async def test_delete_cascade(svc: CredentialService, clean_credentials: None) -> None:

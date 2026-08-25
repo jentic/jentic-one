@@ -590,6 +590,23 @@
     },
     {
       "actor_types": [
+        "user"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "claimAgent",
+      "path": "/agents/{agent_id}:claim",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Claim Agent",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
         "user",
         "agent",
         "service_account",
@@ -1033,11 +1050,10 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
+      "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
-        "apis:write": [
-          "apis:read",
-          "catalog:import"
+        "overlays:confirm": [
+          "apis:read"
         ]
       },
       "method": "POST",
@@ -1045,11 +1061,37 @@
       "path": "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm",
       "public": false,
       "required_scopes": [
-        "apis:write"
+        "overlays:confirm"
       ],
       "summary": "Confirm Overlay",
       "surface": "apis",
-      "typical_caller": "any"
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "overlays:confirm": [
+          "apis:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rollbackOverlay",
+      "path": "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback",
+      "public": false,
+      "required_scopes": [
+        "overlays:confirm"
+      ],
+      "summary": "Rollback Overlay",
+      "surface": "apis",
+      "typical_caller": "operator"
     },
     {
       "actor_types": [
@@ -1321,6 +1363,21 @@
       "authenticated": false,
       "group": "Public (unauthenticated)",
       "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "authIdpDescriptor",
+      "path": "/auth/idp",
+      "public": true,
+      "required_scopes": [],
+      "summary": "External IdP login descriptor",
+      "surface": "auth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
       "method": "POST",
       "operation_id": "login",
       "path": "/auth/login",
@@ -1329,6 +1386,23 @@
       "summary": "Log in",
       "surface": "auth",
       "typical_caller": null
+    },
+    {
+      "actor_types": [
+        "user"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "refreshSession",
+      "path": "/auth/refresh",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Refresh session token",
+      "surface": "auth",
+      "typical_caller": "operator"
     },
     {
       "actor_types": [],
@@ -1454,6 +1528,58 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
+        "events:write": [
+          "events:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "snoozeCatalogEntry",
+      "path": "/catalog/{api_id}:snooze",
+      "public": false,
+      "required_scopes": [
+        "events:write"
+      ],
+      "summary": "Snooze Catalog Entry",
+      "surface": "catalog",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "events:write": [
+          "events:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "unsnoozeCatalogEntry",
+      "path": "/catalog/{api_id}:unsnooze",
+      "public": false,
+      "required_scopes": [
+        "events:write"
+      ],
+      "summary": "Unsnooze Catalog Entry",
+      "surface": "catalog",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
         "org:admin": [
           "agents:read",
           "agents:write",
@@ -1472,6 +1598,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -1904,6 +2031,21 @@
       "typical_caller": "agent"
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getInstance",
+      "path": "/instance",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Backend identity",
+      "surface": "instance",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -2050,6 +2192,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -2098,6 +2241,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -2228,7 +2372,7 @@
       "path": "/oauth/callback",
       "public": true,
       "required_scopes": [],
-      "summary": "Oauth Callback",
+      "summary": "Authorize Oauth Callback",
       "surface": "oauth",
       "typical_caller": null
     },
@@ -2739,6 +2883,26 @@
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getVersion",
+      "path": "/system/version",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Running and latest-available app version",
+      "surface": "system",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
       "implied_scopes": {
         "owner:toolkits:read": [],
         "toolkits:read": []
@@ -3038,6 +3202,32 @@
         "toolkits:write"
       ],
       "summary": "Replace binding permission rules",
+      "surface": "toolkits",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "owner:toolkits:read": [],
+        "toolkits:read": []
+      },
+      "method": "POST",
+      "operation_id": "testToolkitPermissions",
+      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test",
+      "public": false,
+      "required_scopes": [
+        "toolkits:read",
+        "owner:toolkits:read"
+      ],
+      "summary": "Dry-run permission evaluation",
       "surface": "toolkits",
       "typical_caller": "any"
     },
@@ -3617,6 +3807,7 @@
               "executions:read",
               "jobs:read",
               "jobs:write",
+              "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
               "toolkits:read",
@@ -3642,6 +3833,7 @@
               "executions:read",
               "jobs:read",
               "jobs:write",
+              "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
               "toolkits:read",
@@ -3764,6 +3956,26 @@
             ],
             "is_superuser": false,
             "name": "catalog:import"
+          }
+        ]
+      },
+      {
+        "blurb": "Confirming spec overlays — rewrites the API's served revision.",
+        "label": "Overlays",
+        "name": "overlays",
+        "scopes": [
+          {
+            "action": "confirm",
+            "description": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default)",
+            "family": "overlays",
+            "implies": [
+              "apis:read"
+            ],
+            "implies_transitive": [
+              "apis:read"
+            ],
+            "is_superuser": false,
+            "name": "overlays:confirm"
           }
         ]
       },
@@ -4287,6 +4499,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -4312,6 +4525,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -4321,6 +4535,19 @@
         ],
         "is_superuser": true,
         "name": "org:admin"
+      },
+      {
+        "action": "confirm",
+        "description": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default)",
+        "family": "overlays",
+        "implies": [
+          "apis:read"
+        ],
+        "implies_transitive": [
+          "apis:read"
+        ],
+        "is_superuser": false,
+        "name": "overlays:confirm"
       },
       {
         "action": "read",
@@ -4451,7 +4678,7 @@
         "name": "users:write"
       }
     ],
-    "total": 30
+    "total": 31
   },
-  "total": 150
+  "total": 159
 }

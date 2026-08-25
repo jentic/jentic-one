@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.web.sensitive import SENSITIVE
+
 
 class TokenRequest(BaseModel):
-    """Token endpoint request (form body)."""
+    """Token endpoint request (JSON body — not RFC 6749 form-encoded)."""
 
     grant_type: str
-    refresh_token: str | None = None
-    assertion: str | None = None
+    refresh_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    assertion: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     client_id: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     code: str | None = None
     code_verifier: str | None = None
     redirect_uri: str | None = None
@@ -21,9 +23,9 @@ class TokenRequest(BaseModel):
 class TokenResponse(BaseModel):
     """Token endpoint success response."""
 
-    access_token: str
-    refresh_token: str | None = None
-    id_token: str | None = None
+    access_token: str = Field(json_schema_extra=SENSITIVE)
+    refresh_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    id_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     token_type: str = "bearer"
     expires_in: int
 
@@ -39,7 +41,7 @@ class MintRequest(BaseModel):
 class MintResponse(BaseModel):
     """Ephemeral token minting response."""
 
-    access_token: str
+    access_token: str = Field(json_schema_extra=SENSITIVE)
     token_type: str = "bearer"
     expires_in: int
 
@@ -47,14 +49,14 @@ class MintResponse(BaseModel):
 class RevokeRequest(BaseModel):
     """Revocation endpoint request (form body)."""
 
-    token: str
+    token: str = Field(json_schema_extra=SENSITIVE)
     token_type_hint: str | None = None
 
 
 class IntrospectRequest(BaseModel):
     """Introspection endpoint request (form body)."""
 
-    token: str
+    token: str = Field(json_schema_extra=SENSITIVE)
     token_type_hint: str | None = None
 
 

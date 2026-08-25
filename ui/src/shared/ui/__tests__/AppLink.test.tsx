@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { render } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
 import { AppLink } from '@/shared/ui/AppLink';
 

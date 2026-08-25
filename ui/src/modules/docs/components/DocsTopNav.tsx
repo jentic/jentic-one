@@ -11,7 +11,7 @@
  * dismiss) and closes on outside click via `useDismissable`.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Search, FileText, SquareTerminal, ShieldCheck, Plug, Box } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { JenticLogo, Input, useDismissable } from '@/shared/ui';

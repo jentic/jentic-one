@@ -109,4 +109,6 @@ class ExecutionService:
             actor_id=record.actor_id,
             actor_type=record.actor_type,
             origin=record.origin,
+            credential_id=record.credential_id,
+            credential_name=record.credential_name,
         )

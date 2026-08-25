@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -11,16 +12,22 @@ import structlog
 from jentic_one.control.core.errors import DuplicatePendingItemError
 from jentic_one.control.core.schema.access_request_items import RULE_BEARING_COMBINATIONS
 from jentic_one.control.core.schema.access_requests import AccessRequest
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos.access_request_repo import AccessRequestRepository
 from jentic_one.control.repos.credential_repo import CredentialRepository
+from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
 from jentic_one.control.repos.toolkit_repo import ToolkitRepository
-from jentic_one.control.scoping.filters import build_access_filters
+from jentic_one.control.scoping.filters import build_access_filters, toolkit_owner_scope
 from jentic_one.control.services.access_requests.effects import (
+    PLAN_INTENT_COMBINATIONS,
+    UNGOVERNED_PLAN,
     EffectApplicator,
     EffectPhase,
     admin_effect_keys,
     classify_effect,
+    plan_governance_for_items,
 )
 from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
@@ -31,6 +38,7 @@ from jentic_one.control.services.access_requests.errors import (
     ItemNotPendingError,
     NotAReviewerError,
     PrerequisiteNotMetError,
+    ProvisioningPlanNotFulfilledError,
     RequestNotPendingError,
     RequiredFieldMissingError,
     RulesNotSupportedForBindError,
@@ -45,16 +53,18 @@ from jentic_one.control.services.access_requests.schemas.access_requests import 
     CollectedResourceIds,
     Evaluation,
     EvaluationCheck,
+    FilerOwnerView,
     ResolvedNames,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.models import (
     AccessRequestItemStatus,
     AccessRequestStatus,
 )
+from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.scopes import AGENTS_WRITE, ORG_ADMIN
@@ -76,7 +86,39 @@ _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
     ToolkitNotVisibleError,
     CredentialNotFoundForBindError,
     RequiredFieldMissingError,
+    ProvisioningPlanNotFulfilledError,
 )
+
+# Statuses in which a request has been decided and its actionable
+# `access_request.filed` alert must be settled. PENDING (partial decision)
+# keeps the alert live; WITHDRAWN settles via withdraw()'s own path.
+_SETTLED_STATUSES: frozenset[AccessRequestStatus] = frozenset(
+    {
+        AccessRequestStatus.APPROVED,
+        AccessRequestStatus.PARTIALLY_APPROVED,
+        AccessRequestStatus.DENIED,
+    }
+)
+
+
+@dataclass(slots=True)
+class _AdminSatisfactionProbes:
+    """Admin-DB satisfaction checks deferred until the control session closes.
+
+    ``get()`` computes control-DB satisfaction (credential bindings, toolkit
+    reference resolution) inside its control session, but the corresponding
+    admin-DB existence checks (agent↔toolkit bindings, scope grants) must not
+    run while the control session is open — one DB session at a time, mirroring
+    ``_resolve_filer_owners``. Each probe carries the item id to stamp plus the
+    already-resolved lookup key.
+    """
+
+    # (item_id, agent_id, toolkit_id) — satisfied if the agent is bound to it.
+    # Always a single resolved toolkit: explicit ids probe directly, and
+    # ambiguous references are left un-annotated (see the annotator).
+    toolkit_binds: list[tuple[str, str, str]] = field(default_factory=list)
+    # (item_id, actor_id, scope) — satisfied if the grant row exists.
+    scope_grants: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 class AccessRequestService:
@@ -149,6 +191,155 @@ class AccessRequestService:
                 )
         except Exception:
             logger.warning("emit_event_failed", request_id=request_id, type=type, exc_info=True)
+
+    async def _settle_filed_alerts(self, request_id: str, *, acknowledged_by: str) -> int:
+        """Acknowledge the actionable ``access_request.filed`` alert for a settled request.
+
+        Filed events carry the request id in ``data.request_id`` (the top-level
+        actor is the requesting agent, which may have many open requests), so
+        the match is on the data payload. Best-effort in its own short admin
+        transaction — alert bookkeeping must never fail the decision, which is
+        already durable in the control DB by the time this runs.
+
+        Returns the number of alerts settled (0 on failure). Settlement is
+        idempotent, so a non-zero count doubles as the durable "this decision
+        was never announced" marker that lets ``decide()`` recover the decision
+        event on the reconcile/retry path.
+        """
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                return await settle_actionable_events(
+                    session,
+                    event_type=EventType.ACCESS_REQUEST_FILED,
+                    acknowledged_by=acknowledged_by,
+                    acknowledgement_note="request settled",
+                    data_match={"request_id": request_id},
+                )
+        except Exception:
+            logger.warning("settle_filed_alerts_failed", request_id=request_id, exc_info=True)
+            return 0
+
+    async def _advise_unserved_bind_references(
+        self,
+        *,
+        items: list[dict[str, Any]],
+        filer_owner_id: str,
+        identity: Identity,
+        request_id: str,
+    ) -> None:
+        """Emit a best-effort ``TOOLKIT_BINDING_UNSERVED`` for unfulfillable filings.
+
+        A plain (non-plan) ``toolkit:bind`` filed by ``vendor/name`` reference
+        will typically deny on approval with
+        :class:`ToolkitReferenceUnresolvedError` when no toolkit owned by the
+        filer's owner currently serves that API. (Approval-time resolution
+        runs under the *decider's* scope — an org-admin can resolve toolkits
+        the filer's owner doesn't hold, so this owner-scoped check is a
+        heuristic, not a promise of denial.) Surfacing it at file time gives
+        operators an early signal — symmetric to the broker's own emit for
+        the same event on execute-time denials (see
+        ``execute._emit_toolkit_binding_unserved``).
+
+        Deliberately silent when:
+
+        - the item names a specific ``resource_id``/``to_id`` (fulfilment is by
+          id, not by reference — no cheap file-time check applies);
+        - the request also carries fulfilment intents (a *provisioning plan*
+          creates the toolkit that will serve the API, so "nothing serves it
+          yet" is expected);
+        - a toolkit already serves the API for this owner (the plain-approve
+          path will resolve cleanly).
+
+        Never blocks the filing — the emit is best-effort and any lookup
+        failure logs and continues.
+
+        The plan check here is deliberately request-wide (any intent item
+        silences all binds), unlike :func:`plan_governance_for_items`'s
+        per-item scoping used at approval time: at file() everything is
+        pending and a request carrying any fulfilment intent is wizard-bound,
+        where the operator will see unfulfillable binds up close anyway —
+        a coarser, quieter heuristic is the right trade-off for an advisory.
+        """
+        if any(
+            (it.get("resource_type"), it.get("action")) in PLAN_INTENT_COMBINATIONS for it in items
+        ):
+            return
+
+        actor_type_value = identity.actor_type.value if identity.actor_type is not None else None
+        for item in items:
+            if (item.get("resource_type"), item.get("action")) != ("toolkit", "bind"):
+                continue
+            if item.get("resource_id") or item.get("to_id"):
+                continue
+            reference = item.get("resource_reference") or {}
+            raw_vendor = reference.get("vendor")
+            if not raw_vendor:
+                continue
+            # ``resource_reference`` is schema-typed ``dict[str, Any]`` — coerce
+            # the fields once so a non-string value can't raise past the
+            # best-effort guards below (the filing is already committed here;
+            # an escape would 500 the request and skip its audit record).
+            # Emit the canonical slug forms (matching the broker's emit, which
+            # uses the resolved APIReference) so the same API correlates across
+            # the two emit sites — a raw `httpbin.org` filing and the broker's
+            # `httpbin-org` denial are the same problem.
+            vendor = slugify_api_field(str(raw_vendor))
+            raw_name = reference.get("name")
+            name = slugify_api_field(str(raw_name)) if raw_name is not None else None
+            raw_version = reference.get("version")
+            version = str(raw_version) if raw_version is not None else None
+            try:
+                async with self._ctx.control_db.session() as session:
+                    candidates = await EffectsRepository.resolve_toolkits_for_api(
+                        session,
+                        vendor=vendor,
+                        name=name,
+                        version=version,
+                        owner_ids=[filer_owner_id],
+                    )
+            except Exception:
+                logger.warning(
+                    "unserved_binding_check_failed",
+                    request_id=request_id,
+                    vendor=vendor,
+                    exc_info=True,
+                )
+                continue
+
+            if candidates:
+                continue
+
+            api_id = "/".join(part for part in (vendor, name) if part) or vendor
+            summary = (
+                f"Access request {request_id} names API '{api_id}' but no owned "
+                "toolkit serves it yet — provision a credential to enable binding."
+            )
+            try:
+                async with self._ctx.admin_db.transaction() as session:
+                    await emit_event_best_effort(
+                        session,
+                        type=EventType.TOOLKIT_BINDING_UNSERVED,
+                        severity=EventSeverity.WARNING,
+                        summary=summary,
+                        created_by=identity.sub,
+                        actor_id=identity.sub,
+                        actor_type=actor_type_value,
+                        data={
+                            "request_id": request_id,
+                            "api": {
+                                "vendor": vendor,
+                                "name": name,
+                                "version": version,
+                            },
+                        },
+                    )
+            except Exception:
+                logger.warning(
+                    "telemetry_emit_failed",
+                    event_type=EventType.TOOLKIT_BINDING_UNSERVED,
+                    request_id=request_id,
+                    exc_info=True,
+                )
 
     async def file(
         self,
@@ -240,6 +431,14 @@ class AccessRequestService:
             actor_id=created_by,
             actor_type=identity.actor_type,
         )
+        # File-time fulfillability advisory: a plain (non-plan) toolkit:bind
+        # referenced by vendor/name that no owned toolkit currently serves will
+        # deny on approval with ToolkitReferenceUnresolvedError. Emit an
+        # operator-visible signal *now* so the operator sees the gap before an
+        # approve/deny cycle. Best-effort — never blocks the file() commit.
+        await self._advise_unserved_bind_references(
+            items=items, filer_owner_id=filer_owner_id, identity=identity, request_id=view.id
+        )
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.CREATE,
@@ -263,7 +462,12 @@ class AccessRequestService:
             names = await self._resolve_names(session, [request])
             view = self._to_view(request, names=names)
             view.evaluation = self._compute_evaluation(request, identity)
-            return view
+            admin_probes = await self._annotate_satisfaction_control(
+                view, request, identity=identity, session=session
+            )
+        await self._annotate_satisfaction_admin(view, admin_probes)
+        await self._resolve_filer_owners([view])
+        return view
 
     async def list_all(
         self,
@@ -303,7 +507,165 @@ class AccessRequestService:
                 last = rows[-1]
                 next_cursor = encode_cursor(last.filed_at, last.id)
 
+        await self._resolve_filer_owners(data)
         return AccessRequestPage(data=data, has_more=has_more, next_cursor=next_cursor)
+
+    async def _resolve_filer_owners(self, views: list[AccessRequestView]) -> None:
+        """Stamp ``filer_owner`` display info onto views (cross-DB, best-effort).
+
+        ``filer_owner_id`` is a bare string (no cross-DB FK to the admin
+        ``users`` table), so consumers historically had to join it against a
+        separately-fetched roster client-side — which requires ``users:read``
+        just to label a row. Resolving here (one batched admin-DB lookup per
+        page, mirroring ``_resolve_names``) lets any viewer see the owner
+        label for requests they can already read. Ids that aren't users
+        (service-account filers) or no longer resolve stay ``None`` — the
+        wire field is optional by design.
+
+        Rows without a ``filer_owner_id`` (nullable column; legacy rows) fall
+        back to ``created_by`` — the same fallback consumers render — so a
+        user-filed row still gets its label when only the creator is recorded.
+        """
+
+        def owner_key(view: AccessRequestView) -> str:
+            return view.filer_owner_id or view.created_by
+
+        owner_ids = sorted({owner_key(v) for v in views if owner_key(v)})
+        if not owner_ids:
+            return
+        async with self._ctx.admin_db.session() as session:
+            displays = await PrerequisiteRepository.get_user_displays(session, user_ids=owner_ids)
+        for view in views:
+            row = displays.get(owner_key(view))
+            if row is None:
+                continue
+            name = " ".join(part for part in (row.first_name, row.last_name) if part).strip()
+            view.filer_owner = FilerOwnerView(
+                id=row.user_id,
+                email=row.email,
+                display_name=name or None,
+            )
+
+    async def _annotate_satisfaction_control(
+        self,
+        view: AccessRequestView,
+        request: AccessRequest,
+        *,
+        identity: Identity,
+        # ``Any`` because the arch rule forbids sqlalchemy imports in control
+        # services (tests/arch/test_no_direct_db.py); the repos it's passed to
+        # type it as AsyncSession.
+        session: Any,
+    ) -> _AdminSatisfactionProbes:
+        """Stamp control-DB ``already_satisfied`` hints; collect admin-DB probes.
+
+        Closes the manual-fulfilment gap (issue #826): an operator who set a
+        binding/grant up by hand (or adopted existing artifacts) sees which
+        pending items are already in effect and can approve them instead of
+        re-doing the work in the wizard. Labelling only — decide() re-validates
+        everything; this never authorizes.
+
+        Only PENDING effect items are annotated. Everything else stays ``None``
+        (not computed): decided items, fulfilment-only intents (their outcome is
+        the downstream binds'), items whose target is indeterminate (a
+        target-less credential:bind, a vendor-less toolkit reference), an
+        ambiguous toolkit reference (decide-time resolution would refuse it, so
+        a hint would advertise an approval that cannot succeed), and a
+        credential:bind whose credential the caller cannot see (mirrors
+        decide-time validation — and keeps the probe from acting as a
+        binding-existence oracle for amended-in foreign ids). A reference that
+        resolves to no toolkit visible to the caller is determinately False —
+        resolution runs under the caller's owner scope, the same scope
+        decide-time resolution would use.
+
+        When a ``toolkit:bind`` is satisfied, ``already_satisfied_by`` names the
+        toolkit that satisfies it so consumers can point the operator at the
+        exact object instead of a bare boolean.
+
+        Control-DB checks (credential bindings, reference resolution) run on the
+        caller's ``session``; admin-DB checks are returned as probes for
+        :meth:`_annotate_satisfaction_admin` to run after this session closes.
+        """
+        probes = _AdminSatisfactionProbes()
+        item_views_by_id = {iv.id: iv for iv in view.items}
+        for item in request.items:
+            if item.status != AccessRequestItemStatus.PENDING:
+                continue
+            item_view = item_views_by_id[item.id]
+            key = (item.resource_type, item.action)
+            if key == ("credential", "bind"):
+                if item.to_id and item.resource_id:
+                    # Same visibility gate as decide-time validation
+                    # (_validate_credential_bind_target): a credential the
+                    # caller can't see means approval would 422, and probing
+                    # past it would leak binding existence for arbitrary
+                    # amended-in ids.
+                    credential = await CredentialRepository.get_by_id(
+                        session,
+                        item.resource_id,
+                        filters=build_access_filters(identity, Credential),
+                    )
+                    if credential is None:
+                        continue
+                    binding = await ToolkitBindingRepository.get(
+                        session, item.to_id, item.resource_id
+                    )
+                    item_view.already_satisfied = binding is not None
+            elif key == ("toolkit", "bind"):
+                explicit_id = item.resource_id or item.to_id
+                if explicit_id:
+                    probes.toolkit_binds.append((item.id, item.actor_id, explicit_id))
+                    continue
+                reference = item.resource_reference or {}
+                vendor = reference.get("vendor")
+                if not vendor:
+                    continue
+                raw_name = reference.get("name")
+                candidates = await EffectsRepository.resolve_toolkits_for_api(
+                    session,
+                    vendor=slugify_api_field(str(vendor)),
+                    name=slugify_api_field(str(raw_name)) if raw_name else raw_name,
+                    version=reference.get("version"),
+                    owner_ids=toolkit_owner_scope(identity),
+                )
+                if not candidates:
+                    item_view.already_satisfied = False
+                elif len(candidates) == 1:
+                    probes.toolkit_binds.append((item.id, item.actor_id, candidates[0]))
+                # Several candidates: decide-time resolution would raise
+                # ToolkitReferenceAmbiguousError, so the item is not approvable
+                # as filed — leave the hint not-computed rather than advertise
+                # a satisfaction the operator can't act on.
+            elif key == ("scope", "grant") and item.resource_id:
+                probes.scope_grants.append((item.id, item.actor_id, item.resource_id))
+        return probes
+
+    async def _annotate_satisfaction_admin(
+        self, view: AccessRequestView, probes: _AdminSatisfactionProbes
+    ) -> None:
+        """Resolve the deferred admin-DB satisfaction probes onto the view.
+
+        Runs in its own admin session after the control session has closed (see
+        :class:`_AdminSatisfactionProbes`). Each probe's lookup key was fully
+        resolved on the control side, so this is pure existence checking.
+        """
+        if not probes.toolkit_binds and not probes.scope_grants:
+            return
+        item_views_by_id = {iv.id: iv for iv in view.items}
+        async with self._ctx.admin_db.session() as session:
+            for item_id, agent_id, toolkit_id in probes.toolkit_binds:
+                item_view = item_views_by_id[item_id]
+                bound = await PrerequisiteRepository.agent_bound_to_any_toolkit(
+                    session, agent_id=agent_id, toolkit_ids=[toolkit_id]
+                )
+                item_view.already_satisfied = bound
+                if bound:
+                    item_view.already_satisfied_by = toolkit_id
+            for item_id, actor_id, scope in probes.scope_grants:
+                item_view = item_views_by_id[item_id]
+                item_view.already_satisfied = await PrerequisiteRepository.actor_scope_grant_exists(
+                    session, actor_id=actor_id, scope=scope
+                )
 
     async def decide(
         self,
@@ -352,6 +714,17 @@ class AccessRequestService:
                 raise NotAReviewerError(request_id)
 
             items_by_id = {item.id: item for item in request.items}
+            # Provisioning-plan governance is per-item (issue #778): a bind is
+            # only held to the "must resolve by id (wizard-stamped)" contract
+            # when a live intent in the same request actually targets it. An
+            # independent reference-only toolkit:bind for a different API in
+            # the same request stays on the plain contract and resolves by its
+            # reference; a withdrawn/denied intent no longer governs. See
+            # ``plan_governance_for_items`` for the full rule. The mapping
+            # carries a per-item ``PlanGovernance`` value (intent ids + api
+            # tuple, or the empty default for non-plan items) so ``validate()``
+            # gets the *reason* an item is governed rather than a coarse bool.
+            plan_governance = plan_governance_for_items(request.items)
             control_effect_items: list[tuple[str, Any]] = []
 
             for decision in item_decisions:
@@ -383,7 +756,10 @@ class AccessRequestService:
                         # See _UNFULFILLABLE_BIND_TARGET / #696.
                         try:
                             await self._effects.validate(
-                                existing, identity=identity, control_session=session
+                                existing,
+                                identity=identity,
+                                control_session=session,
+                                plan_governance=plan_governance.get(existing.id, UNGOVERNED_PLAN),
                             )
                         except _UNFULFILLABLE_BIND_TARGET as exc:
                             verdict = AccessRequestItemStatus.DENIED
@@ -416,7 +792,12 @@ class AccessRequestService:
                 # was already validated above (and an unfulfillable one was flipped
                 # to DENY and skipped via the `continue`).
                 if result is None:
-                    await self._effects.validate(target, identity=identity, control_session=session)
+                    await self._effects.validate(
+                        target,
+                        identity=identity,
+                        control_session=session,
+                        plan_governance=plan_governance.get(target.id, UNGOVERNED_PLAN),
+                    )
 
                 phase = classify_effect(target.resource_type, target.action)
                 if phase is EffectPhase.ADMIN:
@@ -452,7 +833,23 @@ class AccessRequestService:
             names = await self._resolve_names(session, [refreshed])
             view = self._to_view(refreshed, names=names)
 
-        if any_transition:
+        # Announce the decision. `any_transition` alone is NOT a sufficient
+        # gate: decide() is documented as safe to retry, and if a first attempt
+        # crashed after the control commit (or `_reconcile_admin_effects`
+        # raised), the decision is durable but was never announced — a retry
+        # transitions nothing, so gating purely on transitions would skip the
+        # decision event AND leave the actionable `access_request.filed` alert
+        # live forever. The still-unacknowledged filed alert is the durable
+        # marker for that lost announcement: settlement is idempotent, and a
+        # non-zero settle count on a no-transition call means the first
+        # attempt's announcement never completed, so emit it now. (A crash
+        # between settle and emit can still drop the passive decision event on
+        # the next retry, but the actionable alert — the operator-facing bug —
+        # is settled by then; event history is best-effort.)
+        settled = 0
+        if view.status in _SETTLED_STATUSES:
+            settled = await self._settle_filed_alerts(view.id, acknowledged_by=decided_by)
+        if any_transition or settled:
             await self._emit_decision(view, decided_by=decided_by, identity=identity)
         return view
 
@@ -603,6 +1000,7 @@ class AccessRequestService:
                     item_id,
                     rules=amendment.get("rules"),
                     resource_id=amendment.get("resource_id"),
+                    to_id=amendment.get("to_id"),
                 )
                 if result is None:
                     raise ItemNotPendingError(item_id, "unknown")
@@ -650,6 +1048,9 @@ class AccessRequestService:
             actor_id=identity.sub,
             actor_type=identity.actor_type,
         )
+        # A withdrawn request no longer needs review — settle its filed alert
+        # so the operator attention surfaces drop the dead row.
+        await self._settle_filed_alerts(view.id, acknowledged_by=identity.sub)
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.REVOKE,

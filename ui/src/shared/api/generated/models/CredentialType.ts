@@ -10,4 +10,6 @@ export enum CredentialType {
     API_KEY = 'api_key',
     BASIC = 'basic',
     OAUTH2 = 'oauth2',
+    NO_AUTH = 'no_auth',
+    SIGV4 = 'sigv4',
 }

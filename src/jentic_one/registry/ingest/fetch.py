@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 from typing import Annotated, Any, Literal
 from urllib.parse import urljoin, urlparse
 
@@ -13,6 +14,7 @@ from jentic_one.registry.ingest.api_identifier import resolve_api_identifier
 from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
 from jentic_one.shared.config import IngestConfig
+from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.models import ApiRevisionSourceType
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -28,6 +30,28 @@ class InlineSource(BaseModel):
     version: str | None = None
     submitted_by: str | None = None
     origin: str | None = None
+    #: Optional provenance URL for inline content. Normally ``None`` (a genuine
+    #: paste has no URL), but overlay materialization re-ingests the base spec's
+    #: bytes inline and must carry the base ``source_url`` forward, or catalog
+    #: "registered" detection and the Flow-3 update-notify sweep lose the API.
+    source_url: str | None = None
+    #: Catalog identity slug, carried forward on re-ingests of a
+    #: catalog-originated spec (e.g. overlay materialization). ``None`` for
+    #: genuine pastes.
+    catalog_api_id: str | None = None
+    #: Overlay-only: the base revision's ``spec_digest`` this overlay is materialized
+    #: over. Propagated onto the resulting revision so the Flow-3 sweep diffs upstream
+    #: against the overlay's base rather than the overlaid digest. ``None`` otherwise.
+    overlay_base_digest: str | None = None
+    #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
+    #: confirmed overlay. Set only by the scope-checked enqueue path.
+    supersede_active: bool = False
+    #: Overlay-only: the id of the overlay being (re-)materialized. Propagated to the
+    #: ingest spec so ``CreateRevisionStage`` can distinguish a re-materialize of the same
+    #: overlay (keep the clean-base ``superseded_revision_id``) from a stacked confirm of a
+    #: different overlay over a live overlay's output (capture the current revision). Set
+    #: only by the confirm/re-materialize enqueue path. ``None`` for non-overlay sources.
+    overlay_id: str | None = None
 
 
 class UrlSource(BaseModel):
@@ -40,13 +64,115 @@ class UrlSource(BaseModel):
     version: str | None = None
     submitted_by: str | None = None
     origin: str | None = None
+    #: Catalog identity slug (`domain[/sub-api]`) for catalog-originated
+    #: imports. Persisted verbatim on the Api row (the `api_name` copy of the
+    #: same slug gets slugified and loses the separable structure).
+    catalog_api_id: str | None = None
+    #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
+    #: confirmed overlay (the current revision is then overlay-origin, so the stage must
+    #: archive every active revision). Set only by the scope-checked enqueue path.
+    supersede_active: bool = False
 
 
 IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
 
 
+class _JsonSafeLoader(yaml.SafeLoader):
+    """SafeLoader whose output contains only JSON-serializable values.
+
+    Real-world YAML specs are full of unquoted ISO dates (``version: 2022-01-16``,
+    changelog entries, example values). The stock ``SafeLoader`` resolves those
+    to ``datetime.date``/``datetime.datetime``, which the ingest pipeline's later
+    JSON serialization (JSONB spec storage, operation extraction) rejects —
+    dead-lettering the import (issue #979). Spec documents must stay
+    JSON-serializable (the contract stated on ``IngestSpecification.content``),
+    so the two tags that produce non-JSON scalars — ``!!timestamp`` and
+    ``!!binary`` — construct the scalar's verbatim text (lossless, and identical
+    to what the same spec yields when served as JSON), and ``!!set`` constructs
+    a list of its keys. Non-finite ``!!float`` scalars (``.nan``/``.inf``) also
+    fall back to verbatim text (issue #984): ``json.dumps`` emits them as the
+    non-standard ``NaN``/``Infinity`` tokens, which JSON parsers and Postgres
+    JSONB reject — while finite floats keep parsing as numbers. The remaining
+    exotic tags (``!!omap``/``!!pairs``) yield lists of tuples, which
+    JSON-serialize as arrays already.
+    """
+
+
+def _construct_scalar_as_str(loader: _JsonSafeLoader, node: yaml.ScalarNode) -> str:
+    return loader.construct_scalar(node)
+
+
+def _construct_set_as_list(loader: _JsonSafeLoader, node: yaml.MappingNode) -> list[Any]:
+    return list(loader.construct_mapping(node))
+
+
+def _construct_json_safe_float(loader: _JsonSafeLoader, node: yaml.ScalarNode) -> float | str:
+    value = yaml.SafeLoader.construct_yaml_float(loader, node)
+    if math.isfinite(value):
+        return value
+    return loader.construct_scalar(node)
+
+
+# !!timestamp and !!float are the tags here with implicit resolvers (bare
+# scalars); !!binary and !!set require an explicit tag but dead-letter
+# identically.
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:timestamp", _construct_scalar_as_str)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:binary", _construct_scalar_as_str)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:set", _construct_set_as_list)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:float", _construct_json_safe_float)
+
+
+def _load_yaml(raw: str) -> Any:
+    """``yaml.safe_load`` constrained to JSON-serializable output (see _JsonSafeLoader).
+
+    The loader is a ``SafeLoader`` subclass, so this is exactly as safe as
+    ``yaml.safe_load`` — hence the B506 suppression.
+
+    PyYAML's stock scalar constructors leak raw builtin exceptions on
+    malformed explicitly-tagged scalars instead of raising ``YAMLError``
+    (issue #988): ``!!float abc`` -> ``ValueError``, ``!!int ''`` ->
+    ``IndexError``, ``!!bool abc`` -> ``KeyError`` — and the escape set is
+    PyYAML-version-dependent. Normalize every constructor escape to
+    ``yaml.YAMLError`` so ``parse_spec_content``'s handlers wrap it into a
+    clean ``IngestStageError`` instead of dead-lettering with an internal
+    traceback.
+    """
+    try:
+        return yaml.load(raw, Loader=_JsonSafeLoader)  # nosec B506
+    except yaml.YAMLError:
+        raise
+    except Exception as exc:
+        raise yaml.YAMLError(f"YAML document construction failed: {exc}") from exc
+
+
+def _load_json(raw: str) -> Any:
+    """``json.loads`` with non-finite float tokens kept as their literal text.
+
+    Python's ``json.loads`` accepts the non-standard ``NaN``/``Infinity``/
+    ``-Infinity`` tokens by default and produces non-finite floats — the same
+    JSONB-rejected values the YAML loader guards against (issue #984). Keep
+    the token text verbatim, mirroring ``_JsonSafeLoader``.
+
+    Escapes that aren't ``ValueError`` (e.g. ``RecursionError`` on a deeply
+    nested document) are normalized to it, symmetric with ``_load_yaml``, so
+    both ``parse_spec_content`` call sites produce a clean parse error
+    (``json.JSONDecodeError`` is a ``ValueError`` subclass).
+    """
+    try:
+        return json.loads(raw, parse_constant=str)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"JSON document construction failed: {exc}") from exc
+
+
 def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, Any]:
-    """Parse raw spec content as JSON or YAML, returning a dict."""
+    """Parse raw spec content as JSON or YAML, returning a dict.
+
+    This is the single boundary where raw spec text becomes a document, and it
+    guarantees the result is JSON-serializable regardless of source format —
+    downstream stages (JSONB writes, ``json.dumps``) rely on that invariant.
+    """
     if not raw or not raw.strip():
         raise IngestStageError("spec content is empty")
 
@@ -61,18 +187,18 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
     parsed: Any = None
     if json_first:
         try:
-            parsed = json.loads(raw)
+            parsed = _load_json(raw)
         except (json.JSONDecodeError, ValueError):
             try:
-                parsed = yaml.safe_load(raw)
+                parsed = _load_yaml(raw)
             except yaml.YAMLError as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
     else:
         try:
-            parsed = yaml.safe_load(raw)
+            parsed = _load_yaml(raw)
         except yaml.YAMLError:
             try:
-                parsed = json.loads(raw)
+                parsed = _load_json(raw)
             except (json.JSONDecodeError, ValueError) as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
 
@@ -99,10 +225,16 @@ async def load_specification(
     size_limit_label = f"{max_bytes / (1024 * 1024):.1f} MB"
 
     if isinstance(source, InlineSource):
+        # Inline content bypasses the URL-fetch size checks below, so enforce the
+        # same cap here — otherwise an oversized inline import (e.g. a materialized
+        # overlay whose document blew up the spec) can exhaust memory and produce
+        # oversized DB rows.
+        if len(source.content.encode()) > max_bytes:
+            raise IngestStageError(f"inline content exceeds {size_limit_label} size limit")
         content = parse_spec_content(source.content, filename=source.filename)
         sha = hashlib.sha256(source.content.encode()).hexdigest()
         source_type = ApiRevisionSourceType.INLINE
-        source_url: str | None = None
+        source_url = source.source_url
         source_filename: str | None = source.filename
     else:
         try:
@@ -112,7 +244,9 @@ async def load_specification(
 
         try:
             async with httpx.AsyncClient(
-                timeout=cfg.fetch_timeout_s, follow_redirects=False
+                timeout=cfg.fetch_timeout_s,
+                follow_redirects=False,
+                transport=build_pinned_transport(cfg.egress),
             ) as client:
                 resp = await client.get(validated_url)
                 for _ in range(cfg.max_redirects):
@@ -173,4 +307,8 @@ async def load_specification(
         source_filename=source_filename,
         submitted_by=source.submitted_by,
         origin=source.origin,
+        catalog_api_id=source.catalog_api_id,
+        overlay_base_digest=getattr(source, "overlay_base_digest", None),
+        supersede_active=source.supersede_active,
+        overlay_id=getattr(source, "overlay_id", None),
     )

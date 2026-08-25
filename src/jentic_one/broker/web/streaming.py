@@ -38,7 +38,11 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
 )
 from jentic_one.broker.core.exceptions import ErrorOrigin, UpstreamTimeoutError
-from jentic_one.broker.core.headers import REGION_MISMATCH_HINT, JenticHeader
+from jentic_one.broker.core.headers import (
+    REGION_MISMATCH_HINT,
+    JenticHeader,
+    header_safe_value,
+)
 from jentic_one.broker.core.proxy_headers import passthrough_streaming_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.shared.broker.execution import StreamingOutcome
@@ -128,6 +132,13 @@ def _metadata_headers(
         metadata[JenticHeader.OPERATION.value] = ctx_req.operation_id
     if ctx_req.api_vendor:
         metadata[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
+    # Credential attribution (#740). Absent when no credential was used, so
+    # the streaming path stays symmetric with the sync router. The name is
+    # operator-authored free text: sanitize before emission.
+    if ctx_req.credential_id:
+        metadata[JenticHeader.CREDENTIAL_ID.value] = ctx_req.credential_id
+    if ctx_req.credential_name:
+        metadata[JenticHeader.CREDENTIAL_NAME.value] = header_safe_value(ctx_req.credential_name)
     if status_code >= 400:
         metadata[JenticHeader.ERROR_ORIGIN.value] = ErrorOrigin.UPSTREAM.value
     # Region-mismatch hint for a templated-host API's upstream 401/403 (#638),
@@ -156,6 +167,12 @@ async def open_streaming_response(
     When ``background_callback`` is provided, it is invoked as a Starlette
     ``BackgroundTask`` after the response body completes — used for persistence.
     """
+    # Anchor the duration clock *before* the upstream stream is opened:
+    # ``runner.stream()`` awaits connect + request send + response headers, and
+    # ``StreamingOutcome``'s default ``started_at_perf`` (perf_counter at
+    # construction) would run only after all of that — recording body-drain
+    # time (~0ms for small responses) instead of the full round trip.
+    start_perf = time.perf_counter()
     stack = AsyncExitStack()
     try:
         result = await stack.enter_async_context(runner.stream(request))
@@ -169,6 +186,7 @@ async def open_streaming_response(
         outcome = StreamingOutcome(
             execution_id=execution_id,
             http_status=result.status_code,
+            started_at_perf=start_perf,
         )
         background = BackgroundTask(background_callback, outcome)
 

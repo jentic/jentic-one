@@ -5,6 +5,7 @@ from __future__ import annotations
 from jentic_one.admin.core.permissions import IMPLICATION_MAP, compute_effective
 from jentic_one.admin.repos import (
     AuditRepository,
+    InviteTokenRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
@@ -30,6 +31,21 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+
+
+def _derive_invite_state(stored: str, user_id: str, active_invite_user_ids: set[str]) -> str:
+    """Overlay the read-time EXPIRED invite state (never persisted).
+
+    A ``pending`` user with no unredeemed, unexpired invite token has a lapsed
+    invite — surface it as ``expired`` so admins know to regenerate. Only
+    ``pending`` is overlaid; every other stored state (``redeemed`` and
+    ``accepted`` — the latter is persisted for external-auth users) passes
+    through unchanged. Mirrors the AccessRequest EXPIRED derivation: the DB keeps
+    ``pending`` and the token's ``expires_at`` is the source of truth.
+    """
+    if stored == InviteState.PENDING and user_id not in active_invite_user_ids:
+        return InviteState.EXPIRED
+    return stored
 
 
 def _build_effective_views(assigned: list[str]) -> list[EffectivePermissionView]:
@@ -77,6 +93,12 @@ class UserService:
         limit: int = 50,
         invite_state: InviteState | None = None,
     ) -> Page[UserView]:
+        # NOTE: the `invite_state` filter matches the STORED column, so it can't
+        # filter by the derived EXPIRED state (never persisted) — `EXPIRED`
+        # returns nothing and `PENDING` may return rows that render as expired.
+        # This mirrors AccessRequestService.list_all, which filters on stored
+        # status and derives EXPIRED only in the view. If filtering by expired is
+        # ever needed, translate it to `PENDING AND user_id NOT IN (active)` here.
         cursor_dt = None
         if cursor is not None:
             cursor_dt, _ = decode_cursor(cursor)
@@ -94,6 +116,17 @@ class UserService:
         perm_service = PermissionService(self._ctx)
         perms_map = await perm_service.project_for_users(user_ids)
 
+        # Derive the EXPIRED invite state at read time (never persisted, mirroring
+        # AccessRequest's EXPIRED overlay): a still-pending user with no unredeemed,
+        # unexpired token has a lapsed invite. One batch query — no N+1.
+        pending_ids = [u.id for u in users if u.invite_state == InviteState.PENDING]
+        active_invite_ids: set[str] = set()
+        if pending_ids:
+            async with self._ctx.admin_db.session() as session:
+                active_invite_ids = await InviteTokenRepository.user_ids_with_active_invite(
+                    session, pending_ids
+                )
+
         views = [
             UserView(
                 id=u.id,
@@ -103,7 +136,7 @@ class UserService:
                 name=f"{u.first_name} {u.last_name}",
                 active=u.active,
                 auth_provider=u.auth_provider,
-                invite_state=u.invite_state,
+                invite_state=_derive_invite_state(u.invite_state, u.id, active_invite_ids),
                 must_change_password=u.must_change_password,
                 external_subject_id=u.external_subject_id,
                 assigned=perms_map.get(u.id, []),
@@ -178,8 +211,15 @@ class UserService:
     async def get_by_id(self, user_id: str) -> UserView:
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_id(session, user_id)
-        if user is None:
-            raise UserNotFoundError(user_id)
+            if user is None:
+                raise UserNotFoundError(user_id)
+            # Derive EXPIRED at read time (see list_all): a pending user with no
+            # active invite token has a lapsed invite.
+            active_invite_ids: set[str] = set()
+            if user.invite_state == InviteState.PENDING:
+                active_invite_ids = await InviteTokenRepository.user_ids_with_active_invite(
+                    session, [user.id]
+                )
 
         perm_service = PermissionService(self._ctx)
         assigned = await perm_service.get_assigned_for_user(user_id)
@@ -191,7 +231,7 @@ class UserService:
             name=f"{user.first_name} {user.last_name}",
             active=user.active,
             auth_provider=user.auth_provider,
-            invite_state=user.invite_state,
+            invite_state=_derive_invite_state(user.invite_state, user.id, active_invite_ids),
             must_change_password=user.must_change_password,
             external_subject_id=user.external_subject_id,
             assigned=assigned,

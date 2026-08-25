@@ -57,6 +57,12 @@ export interface CatalogPage {
 	catalogTotal: number;
 	/** How many of the whole manifest are imported locally (stable across pages). */
 	registeredCount: number;
+	/**
+	 * How many of the whole manifest are registered *and* have an upstream update
+	 * available (stable across pages — drives the status row's "N update(s)
+	 * available" line).
+	 */
+	outdatedCount: number;
 	/** Manifest freshness; null = never fetched / no snapshot yet. */
 	manifestAgeSeconds: number | null;
 	/** Whether another keyset page follows. */
@@ -84,6 +90,7 @@ export async function listCatalog(params: {
 			q: params.q || null,
 			registeredOnly: params.filter === 'registered',
 			unregisteredOnly: params.filter === 'unregistered',
+			outdatedOnly: params.filter === 'outdated',
 			cursor: params.cursor ?? null,
 			limit: params.limit ?? 50,
 		});
@@ -91,6 +98,7 @@ export async function listCatalog(params: {
 			entities: res.data.map(catalogEntryToEntity),
 			catalogTotal: res.catalog_total,
 			registeredCount: res.registered_count,
+			outdatedCount: res.outdated_count ?? 0,
 			manifestAgeSeconds: res.manifest_age_seconds ?? null,
 			hasMore: res.has_more ?? false,
 			nextCursor: res.next_cursor ?? null,

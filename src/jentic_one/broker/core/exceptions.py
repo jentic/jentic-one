@@ -19,6 +19,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from jentic_one.shared.broker.execution import ErrorOrigin as ErrorOrigin
+from jentic_one.shared.broker.protocols import IdentityMismatch
 
 AgentStrategy = Literal[
     "wait",
@@ -158,6 +159,25 @@ class CredentialNotProvisionedError(BrokerError):
     """No credential is provisioned for the resolved API/caller (424, §02b)."""
 
 
+class CredentialUndecryptableError(BrokerError):
+    """A resolved credential's stored ciphertext cannot be decrypted (424).
+
+    Same-class failure as :class:`CredentialNotProvisionedError` (the request
+    is fine; a stored dependency is unusable), but a different recovery: the
+    caller cannot re-provision itself — an operator has to re-add the
+    credential because the encryption key that produced the stored blob is
+    gone. Common cause: a reinstall regenerated the encryption keyset under
+    the same key id, so lookup succeeds and AES-GCM authentication fails
+    (see ``shared/crypto/encryption.py`` — ``InvalidTag`` →
+    :class:`~jentic_one.shared.crypto.DecryptionError`); other paths include
+    a hand-rotated key without keeping the retired entry, a
+    corrupted row, or a database restored under a different key. The
+    ``prompt_human`` directive tells the agent to escalate to an operator
+    rather than retry. Never carry ciphertext or key material in the body
+    (redaction rule).
+    """
+
+
 class CredentialNeedsReconnectError(BrokerError):
     """The OAuth2 grant was revoked/disconnected — the caller must reconnect (401, §02b)."""
 
@@ -172,6 +192,17 @@ class InvalidCredentialNameError(BrokerError):
 
 class ActionDeniedError(BrokerError):
     """The request was denied by a toolkit permission rule (403)."""
+
+
+class CredentialIdentityMismatchError(BrokerError):
+    """Bound to a toolkit, but no credential's identity covers this API (403).
+
+    Distinct from :class:`ActionDeniedError` and ``no_toolkit_binding``: the
+    agent *is* bound and a credential *is* bound to a toolkit, but the
+    credential's stored API identity does not cover the resolved operation
+    identity (#747/#748). The recovery is to fix/re-provision the **credential**,
+    not to file an access request (which would auto-deny).
+    """
 
 
 class UpstreamTimeoutError(BrokerError):
@@ -250,6 +281,12 @@ def no_toolkit_binding_directive(
       because a toolkit only serves an API once a credential for it is bound
       (issue #683). So point the caller at credential provisioning first — the
       step that actually creates a serving toolkit — before the binding request.
+      The instruction also says the operator may fulfil the plan **into an
+      existing toolkit** (#897): toolkits serving *other* APIs may well exist,
+      and without the hint the flow reads as "recreate everything from scratch".
+      Deliberately text-only — the broker never enumerates other toolkits here
+      (that would leak instance inventory to an unbound agent, and this
+      stateless edge has no scoped view of what a future approver could reuse).
 
     Both variants name the exact next step so an autonomous agent can hand it to
     its operator verbatim instead of reading docs.
@@ -274,18 +311,90 @@ def no_toolkit_binding_directive(
         )
 
     # No toolkit serves this API yet: a credential must be provisioned and bound
-    # first (which creates the serving toolkit), then the toolkit binding can be
-    # requested. A bare `toolkit:bind` request now can never be approved.
-    parameters["suggested_command"] = f"jentic access request --toolkit {api} --wait"
+    # first (which creates the serving toolkit), then the agent is bound. A bare
+    # `toolkit:bind` request now can never be approved — so steer the agent to
+    # file the whole path as one provisioning plan (`--provision`), which a human
+    # fulfils and approves in the dashboard (they enter the secret + grant, into
+    # a new toolkit or one they already have — the wizard offers both, #897).
+    parameters["suggested_command"] = (
+        f'jentic access request --provision {api} --reason "<why you need this>" --wait'
+    )
     instruction = (
-        f"No toolkit serves '{api}' yet, so a toolkit-binding request cannot be approved. "
-        f"Ask your operator to connect (provision) a credential for '{api}' and bind it to a "
-        f"toolkit first — that is what makes a toolkit serve the API. Once a toolkit serves it, "
-        f"file `jentic access request --toolkit {api} --wait` to bind yourself, then retry."
+        f"Nothing serves '{api}' yet, so a bare toolkit-binding request cannot be approved. "
+        f'File a provisioning plan with `jentic access request --provision {api} --reason "<why>" '
+        "--wait` — propose the auth type (`--auth`) and permission rules (`--rules-json`) you read "
+        "from the API spec, and pass a `--reason` the approver sees; then ask your operator to "
+        "fulfil it in the dashboard (they enter the credential secret and approve; the wizard "
+        "lets them add it to one of their existing toolkits instead of creating a new one). "
+        "Only a human can grant this. Once approved, retry this call."
     )
     return AgentDirective(
         strategy="prompt_human",
         parameters=parameters,
+        human_readable_instruction=instruction,
+    )
+
+
+def _render_identity(vendor: str, name: str | None, version: str | None) -> str:
+    """Render a ``vendor/name/version`` identity with ``*`` for unset axes.
+
+    Unset (``None`` or empty) name/version become ``*`` so a
+    ``(vendor, None, "1.1")`` identity reads as ``vendor/*/1.1`` rather than the
+    ambiguous ``vendor/1.1`` (which looks like vendor/name).
+    """
+    return "/".join((vendor, name or "*", version or "*"))
+
+
+def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
+    """Directive for a ``credential_identity_mismatch`` 403 — fix the credential.
+
+    The agent is bound and a credential is bound to a toolkit, but the
+    credential's stored API identity does not cover the resolved operation
+    (#747/#748). Filing an access request here auto-denies, so the directive
+    points at re-provisioning/fixing the **credential** and names the concrete
+    expected-vs-found identity so the operator has an actionable diagnostic. The
+    strategy is the fixed ``prompt_human`` (only a human can fix the credential).
+
+    No ``suggested_command`` is emitted: fixing a credential is an operator
+    action with no single verbatim CLI command an agent can run (there is no
+    ``jentic credentials`` command group), so the prose instruction is the
+    contract. Unset identity axes render as ``*`` (e.g. ``vendor/*/1.1``) so the
+    caller never confuses a missing name for a version.
+    """
+    expected = _render_identity(
+        mismatch.expected_vendor, mismatch.expected_name, mismatch.expected_version
+    )
+    found = _render_identity(mismatch.found_vendor, mismatch.found_name, mismatch.found_version)
+    if mismatch.would_match_if_normalized:
+        instruction = (
+            f"A toolkit is bound for this API, but the bound credential's stored identity "
+            f"'{found}' only matches '{expected}' after normalization — it was stored in a "
+            f"non-canonical form. Ask your operator to re-provision (or recreate) the "
+            f"credential for '{expected}' so its identity is canonical, then retry. Do not "
+            f"file an access request — the binding already exists."
+        )
+    else:
+        instruction = (
+            f"A toolkit is bound for this API, but its credential's identity '{found}' does "
+            f"not match this API '{expected}'. Ask your operator to fix or re-provision the "
+            f"credential so it targets '{expected}', then retry. Do not file an access "
+            f"request — the binding already exists."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={
+            "expected": {
+                "vendor": mismatch.expected_vendor,
+                "name": mismatch.expected_name,
+                "version": mismatch.expected_version,
+            },
+            "found": {
+                "vendor": mismatch.found_vendor,
+                "name": mismatch.found_name,
+                "version": mismatch.found_version,
+            },
+            "would_match_if_normalized": mismatch.would_match_if_normalized,
+        },
         human_readable_instruction=instruction,
     )
 

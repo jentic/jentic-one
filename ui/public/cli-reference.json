@@ -5,15 +5,15 @@
       "name": "jentic",
       "tagline": "discover, inspect, and run against the Jentic API catalog",
       "short": "jentic: discover, inspect, and run against the Jentic API catalog",
-      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? Run `jentic register` to create an agent, then browse the catalog\nwith `jentic apis`. To install and operate jentic-one locally, use the\n`jenticctl` CLI (e.g. `jenticctl install`). Use `jentic \u003ccommand\u003e --help` for details.",
+      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? If you're a person setting up a local agent, run `jentic setup`\nto set one up end to end (identity + skills + isolation). If you're an agent\nthat just needs tokens for an existing identity, run `jentic register`. Then\nbrowse the public catalog with `jentic catalog`. To install and operate\njentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use\n`jentic \u003ccommand\u003e --help` for details.",
       "commands": [
         {
-          "name": "bootstrap",
-          "path": "jentic bootstrap",
-          "use": "bootstrap",
-          "short": "Register an agent, wait for approval, and prime your operator — in one step",
-          "long": "bootstrap takes a fresh machine from nothing to ready: it registers this\nprofile as an agent (Dynamic Client Registration), prints an approval link\nand waits for a human to approve it, mints and saves tokens, sets the\nprofile as the default, and generates the Jentic CLI-usage skill into your\nagent runtime's native layout.\n\nIt is a thin orchestration of `jentic register` and `jentic skill`: nothing\nhere you can't do by hand, just sequenced so you can start playing right\naway. Re-running refreshes everything idempotently.",
-          "example": "  jentic bootstrap\n  jentic bootstrap --operator claude --yes\n  jentic bootstrap --profile demo --base-url http://localhost:9000 --all --yes\n  jentic bootstrap --skip-skill   # identity only\n  jentic bootstrap --dry-run",
+          "name": "setup",
+          "path": "jentic setup",
+          "use": "setup",
+          "short": "Set up a new local agent (identity + skills + isolation) — start here if you're a person",
+          "long": "setup takes a fresh machine from nothing to ready: it connects this\nmachine to a Jentic install (creating the environment, identity and context\nif needed), registers the agent (Dynamic Client Registration), prints an\napproval link and waits for a human to approve it, mints and saves tokens,\nand generates the Jentic CLI-usage skill into your agent runtime's native\nlayout. It also offers to isolate the coding agent behind its own Unix user.\n\nIt is a thin orchestration of `jentic register` and `jentic skill`: nothing\nhere you can't do by hand, just sequenced so you can start playing right\naway. Re-running refreshes everything idempotently.",
+          "example": "  jentic setup\n  jentic setup --url https://jentic.example.com --broker-url https://broker.jentic.example.com\n  jentic setup --url https://jentic.example.com --operator claude --yes\n  jentic setup --skip-skill   # identity only\n  jentic setup --dry-run",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
@@ -23,9 +23,14 @@
               "usage": "target every supported operator"
             },
             {
-              "name": "base-url",
+              "name": "broker-url",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "broker (data plane) URL for the environment — execute needs it on a remote install; seeded automatically for loopback"
+            },
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
               "name": "dry-run",
@@ -34,10 +39,20 @@
               "usage": "show what would happen without registering or writing"
             },
             {
+              "name": "env",
+              "type": "string",
+              "usage": "environment name for --url (default: derived from the URL host)"
+            },
+            {
               "name": "force",
               "type": "bool",
               "default": "false",
-              "usage": "re-register the agent even if the profile already has one (does not overwrite an edited skill block)"
+              "usage": "re-register the agent even if the identity already has one (does not overwrite an edited skill block)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
             },
             {
               "name": "name",
@@ -45,21 +60,10 @@
               "usage": "agent client name shown to the approver"
             },
             {
-              "name": "no-activate",
-              "type": "bool",
-              "default": "false",
-              "usage": "do not set this profile as the default"
-            },
-            {
               "name": "operator",
               "type": "stringSlice",
               "default": "[]",
               "usage": "operators to target (repeatable or comma-separated)"
-            },
-            {
-              "name": "profile",
-              "type": "string",
-              "usage": "profile to create/use (default: config default_profile)"
             },
             {
               "name": "scope",
@@ -73,17 +77,27 @@
               "usage": "provision identity only; do not write skill files"
             },
             {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            },
+            {
               "name": "timeout",
               "type": "duration",
               "default": "5m0s",
               "usage": "how long to wait for approval"
             },
             {
+              "name": "url",
+              "type": "string",
+              "usage": "Jentic install URL to connect to (creates environment/identity/context on first run)"
+            },
+            {
               "name": "yes",
               "shorthand": "y",
               "type": "bool",
               "default": "false",
-              "usage": "non-interactive: use flags + defaults, no prompts"
+              "usage": "non-interactive: no prompts; with no --operator/--all, the skill targets the detected operators"
             }
           ]
         },
@@ -91,36 +105,57 @@
           "name": "register",
           "path": "jentic register",
           "use": "register",
-          "short": "Register this profile as an agent and obtain tokens",
-          "long": "register generates an Ed25519 keypair (if absent), performs Dynamic\nClient Registration, waits for an operator to approve the agent, then mints\nand saves an access/refresh token pair to the profile. `jentic execute` uses\nthose tokens as the Authorization bearer.",
+          "short": "Obtain tokens for an existing agent identity (identity only, no skills) — agents run this",
+          "long": "register connects this machine to a Jentic install: it generates an\nEd25519 keypair (if absent), performs Dynamic Client Registration, waits\nfor an operator to approve the agent, then mints and saves tokens.\n\nWith an active context (`jentic context use`), it registers that context's\nidentity with its environment. On a fresh machine, pass --url (or answer\nthe prompt) and register creates the environment, identity and context in\none step, activates them, and registers.\n\nLocal install: use http://127.0.0.1:8000 (NOT http://localhost:8000) — the\ntoken-exchange audience is matched exactly against the backend's\ncanonical_base_url, and a local backend uses 127.0.0.1. For a loopback URL,\nregister also seeds the environment's broker_url (http://127.0.0.1:8100) so\n`jentic execute` works without extra flags.\n\nRemote install: pass --broker-url too. The broker usually lives on its own\nhost and is never derived from the control-plane URL; without it the\nenvironment has no broker and `jentic execute` fail-closes until one is set\n(ask your operator for the broker URL). Re-running register with\n--broker-url fills it in on an existing environment.",
+          "example": "  jentic register --url http://127.0.0.1:8000   # local install (use 127.0.0.1, not localhost)\n  jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com\n  jentic register --url https://jentic.example.com --name crawler --env prod\n  jentic register                      # active context (or interactive setup)\n  jentic register --force              # re-register the active identity",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
-              "name": "base-url",
+              "name": "broker-url",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "broker (data plane) URL for the environment — execute needs it on a remote install; seeded automatically for loopback"
+            },
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "env",
+              "type": "string",
+              "usage": "environment name for --url (default: derived from the URL host)"
             },
             {
               "name": "force",
               "type": "bool",
               "default": "false",
-              "usage": "re-register even if the profile already has an agent"
+              "usage": "re-register even if this identity already has a registration"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
             },
             {
               "name": "name",
               "type": "string",
-              "usage": "agent client name"
+              "usage": "agent name shown to the approving operator (default: hostname)"
             },
             {
-              "name": "profile",
+              "name": "theme",
               "type": "string",
-              "usage": "profile name (default: config default_profile)"
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             },
             {
               "name": "timeout",
               "type": "duration",
               "default": "5m0s",
               "usage": "how long to wait for approval"
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "usage": "Jentic install URL to connect to (creates environment/identity/context on first run)"
             },
             {
               "name": "yes",
@@ -132,70 +167,595 @@
           ]
         },
         {
-          "name": "profile",
-          "path": "jentic profile",
-          "use": "profile",
-          "short": "View and switch the active profile",
-          "long": "profile lists the local agent profiles under ~/.jentic/profiles and\nswitches which one commands act on by default. The active profile is the\n--profile flag, else $JENTIC_PROFILE, else config.yaml default_profile.\nRun bare on a terminal to pick interactively.",
+          "name": "logout",
+          "path": "jentic logout",
+          "use": "logout",
+          "short": "Revoke and clear the active identity's cached token",
           "group_title": "Identity \u0026 access",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ]
+        },
+        {
+          "name": "context",
+          "path": "jentic context",
+          "use": "context",
+          "short": "Manage and switch contexts (environment + identity + mode)",
+          "long": "context binds an Environment, an Identity, and an interaction mode into a\nnamed context, and switches which one commands act on. It is the\nsuccessor to the old `jentic profile` (see `jentic migrate`).",
+          "group_title": "Identity \u0026 access",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
           "subcommands": [
             {
-              "name": "list",
-              "path": "jentic profile list",
-              "use": "list",
-              "short": "List profiles and mark the active one",
+              "name": "create",
+              "path": "jentic context create",
+              "use": "create \u003cname\u003e",
+              "short": "Create a context binding an environment + identity + mode",
+              "long": "Create a context — a named binding of an environment (--env), an identity\n(--identity), and a mode (--mode, default human). Contexts are what commands\nact through; --use activates the new one immediately. Most people never run\nthis directly — `jentic register --url …` creates the trio for you.",
+              "example": "  jentic context create prod --env prod --identity crawler --use\n  jentic context create local --env local --identity laptop --mode agent",
               "aliases": [
-                "ls"
+                "add"
+              ],
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "env",
+                  "type": "string",
+                  "usage": "Environment this context targets"
+                },
+                {
+                  "name": "force",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Replace an existing context of the same name"
+                },
+                {
+                  "name": "identity",
+                  "type": "string",
+                  "usage": "Identity this context acts as"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account (default human)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "use",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Set this as the active context after creating it"
+                }
               ]
             },
             {
               "name": "use",
-              "path": "jentic profile use",
-              "use": "use [name]",
-              "short": "Set the default profile (interactive picker when no name given)"
-            },
-            {
-              "name": "add-key",
-              "path": "jentic profile add-key",
-              "use": "add-key [name]",
-              "short": "Create a profile authenticated by an agent API key",
-              "long": "add-key stores an agent API key (jak_*) generated in the Jentic console as\na new profile. Unlike `jentic register`, no key is generated and no operator\napproval is needed — the API key is sent directly as the bearer credential.\nPass --api-key for scripting, or run interactively to be prompted for it.",
+              "path": "jentic context use",
+              "use": "use \u003cname\u003e",
+              "short": "Set the active context",
+              "long": "Set the active context — the environment + identity + mode that every\ncommand acts through when you don't pass --context. The named context must\nalready exist (`jentic context list`); this only switches which one is active.",
+              "example": "  jentic context use prod\n  jentic context use local   # then: jentic catalog / jentic execute …",
               "flags": [
                 {
-                  "name": "agent-id",
+                  "name": "context",
                   "type": "string",
-                  "usage": "agent id this key belongs to (optional, for display)"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
-                  "name": "api-key",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "agent API key (jak_*); prompted when omitted on a terminal"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
-                  "name": "base-url",
+                  "name": "theme",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "list",
+              "path": "jentic context list",
+              "use": "list",
+              "short": "List contexts and mark the active one",
+              "aliases": [
+                "ls"
+              ],
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "view",
+              "path": "jentic context view",
+              "use": "view",
+              "short": "Show the active context",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "rename",
+              "path": "jentic context rename",
+              "use": "rename \u003cold\u003e \u003cnew\u003e",
+              "short": "Rename a context",
+              "long": "rename changes a context's name (e.g. an auto-derived `qa1-crawler` to\nsomething friendlier) without delete+recreate. If the renamed context is\nactive, the active selection follows the new name.",
+              "example": "  jentic context rename qa1-crawler qa",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "delete",
+              "path": "jentic context delete",
+              "use": "delete \u003cname\u003e",
+              "short": "Delete a context",
+              "long": "delete removes a context (the equivalent of removing a legacy profile).\nIt refuses to delete the ACTIVE context\n(switch first) to avoid a dangling active_context. With --identity it also\nremoves the referenced identity iff no other context uses it.",
+              "aliases": [
+                "rm"
+              ],
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "identity",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Also delete the referenced identity if unused elsewhere"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "yes",
+                  "shorthand": "y",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Skip the confirmation prompt"
                 }
               ]
             }
           ]
         },
         {
-          "name": "logout",
-          "path": "jentic logout",
-          "use": "logout",
-          "short": "Revoke and clear the profile's cached tokens",
+          "name": "env",
+          "path": "jentic env",
+          "use": "env",
+          "short": "Manage Control Plane environments (deployment targets)",
+          "long": "env manages the deployment targets commands talk to — each an\nEnvironment with a Control Plane base URL and an optional Broker URL.\nEnvironments are referenced by Contexts (`jentic context`). Migrated\nfrom legacy ~/.jentic profiles by `jentic migrate`.",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
-              "name": "base-url",
+              "name": "context",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
-              "name": "profile",
+              "name": "mode",
               "type": "string",
-              "usage": "profile name (default: config default_profile)"
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "add",
+              "path": "jentic env add",
+              "use": "add \u003cname\u003e",
+              "short": "Add a Control Plane environment",
+              "long": "Add a Control Plane environment. --broker-url is optional and is NEVER\nderived from --url (Control Plane and Broker often live on different\ndomains). `jentic register` seeds broker_url automatically for a loopback\ninstall; set it explicitly here for a remote broker or to fix an existing\nenvironment (use --force to replace one of the same name).",
+              "example": "  # Local install: point both the control plane and broker at loopback (http).\n  jentic env add local --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force\n  # Remote: broker on its own host.\n  jentic env add prod --url https://jentic.example.com --broker-url https://broker.example.com",
+              "flags": [
+                {
+                  "name": "broker-url",
+                  "type": "string",
+                  "usage": "Data Plane / Broker URL (optional; used by execute and history)"
+                },
+                {
+                  "name": "ca-cert",
+                  "type": "string",
+                  "usage": "Path to a custom CA bundle for this environment (optional)"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "force",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Replace an existing environment of the same name"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "url",
+                  "type": "string",
+                  "usage": "Control Plane base URL"
+                }
+              ]
+            },
+            {
+              "name": "list",
+              "path": "jentic env list",
+              "use": "list",
+              "short": "List configured environments",
+              "aliases": [
+                "ls"
+              ],
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "delete",
+              "path": "jentic env delete",
+              "use": "delete \u003cname\u003e",
+              "short": "Delete an environment",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "yes",
+                  "shorthand": "y",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Skip the confirmation prompt"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "identity",
+          "path": "jentic identity",
+          "use": "identity",
+          "short": "Manage identities (agents and users) and their credentials",
+          "long": "identity manages the actors commands act as. Bind an identity to an\nenvironment through a Context (`jentic context`). API-key identities carry\na jak_* credential; agent identities register via `jentic register`.\nMigrated from legacy ~/.jentic profiles by `jentic migrate`.",
+          "group_title": "Identity \u0026 access",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "add",
+              "path": "jentic identity add",
+              "use": "add \u003cname\u003e",
+              "short": "Add an identity (optionally with a jak_* API key credential)",
+              "long": "add records an identity in the config. With --api-key it stores a jak_*\ncredential for the given --env (the successor to the old `jentic profile\nadd-key`). Agent identities obtain tokens later via `jentic register`.",
+              "flags": [
+                {
+                  "name": "api-key",
+                  "type": "string",
+                  "usage": "A jak_* API key credential to store for --env"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "env",
+                  "type": "string",
+                  "usage": "Environment the --api-key credential is scoped to"
+                },
+                {
+                  "name": "force",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Replace an existing identity of the same name"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "type",
+                  "type": "string",
+                  "usage": "Identity type: agent|user (default agent)"
+                }
+              ]
+            },
+            {
+              "name": "list",
+              "path": "jentic identity list",
+              "use": "list",
+              "short": "List configured identities",
+              "aliases": [
+                "ls"
+              ],
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "register",
+              "path": "jentic identity register",
+              "use": "register",
+              "short": "Register the active identity's key with the active environment",
+              "long": "register generates an environment-scoped Ed25519 key (if absent),\nperforms RFC 7591 Dynamic Client Registration, and records the returned\nclient_id + status. The agent is 'pending' until an operator approves it;\ntoken exchange then succeeds automatically. This is the successor to the\nlegacy `jentic register` and operates on the resolved active context.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "name",
+                  "type": "string",
+                  "usage": "Client name shown to the approving operator (default: identity name)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "claim",
+              "path": "jentic identity claim",
+              "use": "claim \u003cagent-id\u003e",
+              "short": "Claim ownership of a self-registered agent with its one-time claim token",
+              "long": "claim binds a self-registered agent to you (the human) using the\nsingle-use token shown once at `jentic register` time. Present it with\n--token; an agent cannot claim itself. Requires an active human context\n(`jentic context use`).",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "token",
+                  "type": "string",
+                  "usage": "The one-time claim token returned at registration (required)"
+                }
+              ]
+            },
+            {
+              "name": "delete",
+              "path": "jentic identity delete",
+              "use": "delete \u003cname\u003e",
+              "short": "Delete an identity",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "yes",
+                  "shorthand": "y",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Skip the confirmation prompt"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "migrate",
+          "path": "jentic migrate",
+          "use": "migrate",
+          "short": "Migrate legacy ~/.jentic profiles to the XDG context model",
+          "long": "migrate copies each legacy profile into an Environment + Identity +\nContext under ~/.config/jentic, and copies key/token material into the XDG\nlayout. It is idempotent and non-destructive (the legacy tree survives for\ndowngrade); --purge-legacy removes the old tree afterwards. Cached refresh\ntokens are intentionally dropped.",
+          "group_title": "Identity \u0026 access",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "purge-legacy",
+              "type": "bool",
+              "default": "false",
+              "usage": "Delete the legacy ~/.jentic profile tree after a successful migration"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            },
+            {
+              "name": "yes",
+              "shorthand": "y",
+              "type": "bool",
+              "default": "false",
+              "usage": "Proceed without interactive confirmation"
             }
           ]
         },
@@ -204,18 +764,23 @@
           "path": "jentic catalog",
           "use": "catalog",
           "short": "Browse, search, and import APIs from the public catalog",
-          "long": "catalog explores the Jentic public API catalog and imports specs into\nthis deployment's local registry. Run bare on a terminal to open an\ninteractive browser (search, preview operations, import in place); the\nsubcommands (list/search/show/import/refresh) are script-friendly.\nRequires a registered agent (run `jentic register` first).",
+          "long": "catalog explores the Jentic public API catalog and imports specs into\nthis deployment's local registry. Run bare on a terminal to open an\ninteractive browser (search, preview operations, import in place); the\nsubcommands (list/search/show/import/outdated/refresh) are script-friendly.\nRequires a registered agent (run `jentic register` first).",
           "group_title": "APIs",
           "flags": [
             {
-              "name": "base-url",
+              "name": "context",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
-              "name": "profile",
+              "name": "mode",
               "type": "string",
-              "usage": "profile name (default: config default_profile)"
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             }
           ],
           "subcommands": [
@@ -232,9 +797,9 @@
                   "usage": "follow pagination and list every matching entry"
                 },
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -249,15 +814,20 @@
                   "usage": "page size (1-200)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "registered",
                   "type": "bool",
                   "default": "false",
                   "usage": "only entries already imported locally"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 },
                 {
                   "name": "unregistered",
@@ -280,9 +850,9 @@
                   "usage": "follow pagination and list every matching entry"
                 },
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -297,15 +867,20 @@
                   "usage": "page size (1-200)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "registered",
                   "type": "bool",
                   "default": "false",
                   "usage": "only entries already imported locally"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 },
                 {
                   "name": "unregistered",
@@ -322,9 +897,9 @@
               "short": "Show a catalog entry and preview its operations",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -339,14 +914,19 @@
                   "usage": "max operations to preview (default 200)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "tag",
                   "type": "string",
                   "usage": "only preview operations with this tag"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -357,15 +937,20 @@
               "short": "Import a catalog entry into the local registry (auto-promotes to live)",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
                   "type": "bool",
                   "default": "false",
                   "usage": "emit JSON instead of formatted output"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "no-promote",
@@ -380,9 +965,9 @@
                   "usage": "enqueue the import and return the job id without waiting"
                 },
                 {
-                  "name": "profile",
+                  "name": "theme",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 },
                 {
                   "name": "timeout",
@@ -393,20 +978,67 @@
               ]
             },
             {
+              "name": "outdated",
+              "path": "jentic catalog outdated",
+              "use": "outdated",
+              "short": "List registered entries with an upstream update available",
+              "long": "outdated lists locally-registered catalog entries whose upstream spec has\na notified update the local revision hasn't adopted yet. Review the change,\nthen re-import to adopt it. By default, entries an operator has snoozed/muted\nare hidden; pass --include-snoozed to list them too.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "include-snoozed",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "also list entries whose update notification has been snoozed/muted"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "emit JSON instead of formatted output"
+                },
+                {
+                  "name": "limit",
+                  "type": "int",
+                  "default": "50",
+                  "usage": "page size (1-200)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
               "name": "refresh",
               "path": "jentic catalog refresh",
               "use": "refresh",
               "short": "Refresh the catalog manifest from upstream (requires org:admin)",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             }
@@ -421,14 +1053,19 @@
           "group_title": "APIs",
           "flags": [
             {
-              "name": "base-url",
+              "name": "context",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
-              "name": "profile",
+              "name": "mode",
               "type": "string",
-              "usage": "profile name (default: config default_profile)"
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             }
           ],
           "subcommands": [
@@ -448,9 +1085,9 @@
                   "usage": "follow pagination and list every matching API"
                 },
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -465,9 +1102,14 @@
                   "usage": "page size (1-200)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 },
                 {
                   "name": "vendor",
@@ -483,9 +1125,9 @@
               "short": "Show an API and preview its operations",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -500,9 +1142,14 @@
                   "usage": "max operations to preview (default 50)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -522,9 +1169,9 @@
                   "usage": "follow pagination and list every revision"
                 },
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -539,15 +1186,20 @@
                   "usage": "page size (1-200)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "state",
                   "type": "stringSlice",
                   "default": "[]",
                   "usage": "filter by state (draft, published, archived); repeatable"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -567,9 +1219,9 @@
                   "usage": "follow pagination and list every operation"
                 },
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -584,14 +1236,19 @@
                   "usage": "page size (1-200)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "revision",
                   "type": "string",
                   "usage": "list operations for a specific revision id"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -602,9 +1259,9 @@
               "short": "Inspect an operation's structural detail",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "format",
@@ -613,14 +1270,19 @@
                   "usage": "output format: markdown, json, or openapi"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "revision",
                   "type": "string",
                   "usage": "pin to a specific revision id"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -631,14 +1293,19 @@
               "short": "Promote a draft revision to live",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -649,14 +1316,19 @@
               "short": "Archive a draft revision",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -670,17 +1342,23 @@
               ],
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 },
                 {
                   "name": "yes",
+                  "shorthand": "y",
                   "type": "bool",
                   "default": "false",
                   "usage": "skip the confirmation prompt"
@@ -694,9 +1372,14 @@
               "short": "Download the OpenAPI spec for an API",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "out",
@@ -704,20 +1387,76 @@
                   "usage": "write to this file instead of stdout"
                 },
                 {
-                  "name": "profile",
-                  "type": "string",
-                  "usage": "profile name (default: config default_profile)"
-                },
-                {
                   "name": "revision",
                   "type": "string",
                   "usage": "download a specific revision id (default: current/live)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 },
                 {
                   "name": "yaml",
                   "type": "bool",
                   "default": "false",
                   "usage": "request YAML instead of JSON"
+                }
+              ]
+            },
+            {
+              "name": "import",
+              "path": "jentic apis import",
+              "use": "import \u003cfile|url\u003e",
+              "short": "Import an OpenAPI document into the catalog",
+              "long": "import submits an OpenAPI spec to the catalog. The argument is either a\nlocal file path (read and sent inline) or an http(s) URL (sent as a\nfetchable source). Import is asynchronous; the command prints the job id.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "dry-run",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Validate and print the request that WOULD be sent, without sending it"
+                },
+                {
+                  "name": "export-plan",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Emit a machine-readable execution plan (implies --dry-run)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "name",
+                  "type": "string",
+                  "usage": "Override the API name"
+                },
+                {
+                  "name": "submitted-by",
+                  "type": "string",
+                  "usage": "Attribution for who submitted this import (default: server infers from the caller)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "vendor",
+                  "type": "string",
+                  "usage": "Override the vendor for the imported API"
+                },
+                {
+                  "name": "version",
+                  "type": "string",
+                  "usage": "Override the API version"
                 }
               ]
             }
@@ -737,9 +1476,9 @@
               "usage": "only endpoints callable by this actor type (user, agent, service_account, toolkit)"
             },
             {
-              "name": "base-url",
+              "name": "context",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
               "name": "json",
@@ -748,14 +1487,110 @@
               "usage": "emit JSON instead of formatted output"
             },
             {
-              "name": "profile",
+              "name": "mode",
               "type": "string",
-              "usage": "profile name (default: config default_profile)"
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
             },
             {
               "name": "scope",
               "type": "string",
               "usage": "only endpoints requiring this scope"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ]
+        },
+        {
+          "name": "credentials",
+          "path": "jentic credentials",
+          "use": "credentials",
+          "short": "List and inspect credentials (secrets are server-masked)",
+          "aliases": [
+            "creds"
+          ],
+          "group_title": "APIs",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "list",
+              "path": "jentic credentials list",
+              "use": "list",
+              "short": "List credentials",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "cursor",
+                  "type": "string",
+                  "usage": "Fetch the page at this opaque cursor"
+                },
+                {
+                  "name": "limit",
+                  "type": "int",
+                  "default": "0",
+                  "usage": "Fetch a single page of at most N credentials"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "vendor",
+                  "type": "string",
+                  "usage": "Filter by vendor"
+                }
+              ]
+            },
+            {
+              "name": "show",
+              "path": "jentic credentials show",
+              "use": "show \u003ccredential_id\u003e",
+              "short": "Show a credential (secret-masked)",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
             }
           ]
         },
@@ -765,7 +1600,7 @@
           "use": "search \u003cquery\u003e",
           "short": "Search for operations by natural-language query",
           "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
-          "example": "  jentic search \"list users\"\n  jentic search -q \"create payment\" --api stripe.com/api/v1 --limit 5\n  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
+          "example": "  jentic search \"list users\"\n  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -778,12 +1613,12 @@
               "name": "api",
               "type": "stringSlice",
               "default": "[]",
-              "usage": "restrict to these APIs (vendor/name/version; repeatable)"
+              "usage": "restrict to these APIs (vendor[/name[/version]], as shown in search hits and `jentic apis list`; repeatable)"
             },
             {
-              "name": "base-url",
+              "name": "context",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
               "name": "cursor",
@@ -803,15 +1638,20 @@
               "usage": "max results per page (1-100)"
             },
             {
-              "name": "profile",
+              "name": "mode",
               "type": "string",
-              "usage": "profile name (default: config default_profile)"
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
             },
             {
               "name": "query",
               "shorthand": "q",
               "type": "string",
               "usage": "search query (alternative to positional arg)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             }
           ]
         },
@@ -820,14 +1660,14 @@
           "path": "jentic inspect",
           "use": "inspect \u003cMETHOD:url | operation_id\u003e",
           "short": "Inspect an operation's contract (schema, parameters, examples)",
-          "long": "inspect resolves an operation to its full structural detail: HTTP\nmethod, URL, parameters, request/response schemas, and examples. The\ntarget may be a discovered operation's METHOD:url (the same form\n`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets) or\nan opaque operation_id. The output format is negotiated with the\nserver: JSON for machine consumption, Markdown for human reading.\n\nDefault format: JSON when stdout is not a TTY, Markdown when it is.",
+          "long": "inspect resolves an operation to its full structural detail: HTTP\nmethod, URL, parameters, request/response schemas, and examples. The\ntarget may be a discovered operation's METHOD:url (the same form\n`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets) or\nan opaque operation_id. The output format is negotiated with the\nserver: JSON for machine consumption, Markdown for human reading.\n\nThe space form (`GET \u003curl\u003e`) is also accepted, but the colon form is\ncanonical (it needs no shell quoting).\n\nDefault format: JSON when stdout is not a TTY, Markdown when it is.",
           "example": "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n  jentic inspect createUser --format markdown\n  jentic search \"list users\" --json | jq -r '.data[0].operation_id' | xargs jentic inspect",
           "group_title": "Find and run operations",
           "flags": [
             {
-              "name": "base-url",
+              "name": "context",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
               "name": "format",
@@ -841,14 +1681,19 @@
               "usage": "shorthand for --format json"
             },
             {
-              "name": "profile",
+              "name": "mode",
               "type": "string",
-              "usage": "profile name (default: config default_profile)"
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
             },
             {
               "name": "revision",
               "type": "string",
               "usage": "pin to a specific revision ID"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             }
           ]
         },
@@ -857,15 +1702,10 @@
           "path": "jentic execute",
           "use": "execute \u003cMETHOD:url | METHOD:/path | operation_id\u003e",
           "short": "Execute an operation through the Jentic broker",
-          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker.\n  2. operation_id — resolve via inspect, then route through the broker.\n  3. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you are not bound to a toolkit\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)",
-          "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute listPets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json",
+          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker. The space form (`GET \u003curl\u003e`) is also\n     accepted, but the colon form is canonical (it needs no shell quoting).\n  2. operation_id — resolve via inspect, then route through the broker.\n  3. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you are not bound to a toolkit\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http. For a REMOTE\ncontrol plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\nrefuses with RESOLVE_FAILED rather than dialing the local default.",
+          "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute listPets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n  jentic execute listPets --broker-scheme http --broker-host 127.0.0.1:8100",
           "group_title": "Find and run operations",
           "flags": [
-            {
-              "name": "base-url",
-              "type": "string",
-              "usage": "Jentic control-plane base URL"
-            },
             {
               "name": "broker-host",
               "type": "string",
@@ -879,6 +1719,11 @@
               "usage": "broker target scheme (http or https)"
             },
             {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
               "name": "data",
               "shorthand": "d",
               "type": "string",
@@ -890,10 +1735,27 @@
               "usage": "read request body from this file"
             },
             {
+              "name": "dry-run",
+              "type": "bool",
+              "default": "false",
+              "usage": "Validate and print the request that WOULD be sent, without sending it"
+            },
+            {
+              "name": "export-plan",
+              "type": "bool",
+              "default": "false",
+              "usage": "Emit a machine-readable execution plan (implies --dry-run)"
+            },
+            {
               "name": "header",
               "type": "stringArray",
               "default": "[]",
               "usage": "extra header as key=value (repeatable)"
+            },
+            {
+              "name": "idempotency-key",
+              "type": "string",
+              "usage": "caller-supplied Idempotency-Key so a retried POST/PUT is de-duplicated by the broker"
             },
             {
               "name": "json",
@@ -902,15 +1764,15 @@
               "usage": "force JSON envelope output"
             },
             {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
               "name": "path",
               "type": "stringArray",
               "default": "[]",
               "usage": "path parameter as key=value (repeatable)"
-            },
-            {
-              "name": "profile",
-              "type": "string",
-              "usage": "profile name (default: config default_profile)"
             },
             {
               "name": "query",
@@ -928,6 +1790,11 @@
               "name": "revision",
               "type": "string",
               "usage": "pin to a specific revision ID for inspect"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             }
           ]
         },
@@ -938,6 +1805,23 @@
           "short": "Inspect your access and request more (toolkits, scopes)",
           "long": "access is how an agent closes the gap between having an identity and having\nthe access to use it. An approved agent starts bound to no toolkits, so its\nfirst execute fails with a 403 telling it to request access. Use this group\nto see what you can do now (whoami), ask a human to grant more (request),\nand track those requests (list, status, withdraw).\n\nApproval is a human action: filing a request prints an approve_url for your\noperator. Output defaults to JSON when stdout is not a TTY (agent-friendly).",
           "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
           "subcommands": [
             {
               "name": "whoami",
@@ -947,9 +1831,9 @@
               "long": "whoami answers \"what can I do right now?\" — your agent id, status, granted\nscopes, and the toolkits you are bound to. An empty bindings list means you\ncannot execute against any API yet; use `jentic access request` to ask.",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -958,9 +1842,14 @@
                   "usage": "force JSON output (default when stdout is not a TTY)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -968,14 +1857,20 @@
               "name": "request",
               "path": "jentic access request",
               "use": "request",
-              "short": "File a request for a toolkit binding or a scope grant",
-              "long": "request files an access request for the access you are missing and prints an\napprove_url for your human operator. Name the toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nAn existing pending request for the same resource is reused, not duplicated.\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
-              "example": "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --toolkit-id tk_123 --wait\n  jentic access request --scope owner:toolkits:read --json",
+              "short": "File a request for toolkit bindings, scope grants, or provisioning plans",
+              "long": "request files one access request for the access you are missing and prints an\napprove_url for your human operator. Name a toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen nothing serves an API yet (a fresh import with no toolkit/credential),\nuse --provision vendor/name to file the whole path to first execution as one\nplan: create a toolkit, provision a credential, bind it (with your proposed\n--rules-json), and bind yourself. A human fulfils the create/provision steps\nin the dashboard (they enter the secret — it never rides in your request) and\napproves. Use --auth to declare the credential type you detected from the spec\n(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\nAll target flags repeat and combine, so a job needing several APIs files ONE\ncomposite request the human decides in one sitting: each --provision appends\na provisioning plan, each --toolkit/--toolkit-id/--scope appends a single\nitem. With more than one --provision, key --auth and --rules-json by the\nsame vendor/name[/version] passed to --provision; the bare form applies\nwhen there is exactly one.\n\nAn existing pending request for the same resource is reused when this request\nnames a single target; a composite aborts instead (drop the already-pending\ntarget or withdraw the older request, then re-file).\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
+              "example": "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --toolkit-id tk_123 --wait\n  jentic access request --scope owner:toolkits:read --json\n  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n    --toolkit github.com/api --scope apis:write \\\n    --reason \"release-notes automation\" --wait",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "auth",
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name[/version]=\u003ctype\u003e)"
+                },
+                {
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -984,9 +1879,15 @@
                   "usage": "force JSON output (default when stdout is not a TTY)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "provision",
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "file a full provisioning plan to make this API executable (vendor/name[/version]; repeatable)"
                 },
                 {
                   "name": "reason",
@@ -994,9 +1895,21 @@
                   "usage": "human-readable justification shown to the approver"
                 },
                 {
+                  "name": "rules-json",
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "proposed permission rules for --provision, as a JSON array; key by API when --provision repeats (vendor/name[/version]=\u003cjson\u003e)"
+                },
+                {
                   "name": "scope",
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "request this scope be granted (repeatable)"
+                },
+                {
+                  "name": "theme",
                   "type": "string",
-                  "usage": "request this scope be granted"
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 },
                 {
                   "name": "timeout",
@@ -1006,13 +1919,15 @@
                 },
                 {
                   "name": "toolkit",
-                  "type": "string",
-                  "usage": "request a binding to the toolkit serving this API (vendor/name[/version])"
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "request a binding to the toolkit serving this API (vendor/name[/version]; repeatable)"
                 },
                 {
                   "name": "toolkit-id",
-                  "type": "string",
-                  "usage": "request a binding to this toolkit id (tk_…)"
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "request a binding to this toolkit id (tk_…; repeatable)"
                 },
                 {
                   "name": "wait",
@@ -1035,9 +1950,9 @@
                   "usage": "follow pagination and return all results"
                 },
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "cursor",
@@ -1057,14 +1972,19 @@
                   "usage": "max results per page (0 = server default)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "status",
                   "type": "string",
                   "usage": "filter by status (pending, approved, denied, withdrawn, …)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -1075,9 +1995,9 @@
               "short": "Show one access request, including per-item state and approve_url",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -1086,9 +2006,14 @@
                   "usage": "force JSON output (default when stdout is not a TTY)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -1099,9 +2024,9 @@
               "short": "Withdraw a pending access request",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -1110,9 +2035,14 @@
                   "usage": "force JSON output (default when stdout is not a TTY)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -1124,9 +2054,9 @@
               "long": "refresh forces a fresh token mint, picking up any scopes granted since your\ncurrent token was issued. Tokens bake in their scopes at mint time, so after\nan approved `scope:grant` request your existing token still can't exercise the\nnew scope until you refresh. Run this when `jentic access whoami` shows a scope\nunder \"granted\" that isn't yet active on your token.",
               "flags": [
                 {
-                  "name": "base-url",
+                  "name": "context",
                   "type": "string",
-                  "usage": "Jentic control-plane base URL"
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "json",
@@ -1135,9 +2065,306 @@
                   "usage": "force JSON output (default when stdout is not a TTY)"
                 },
                 {
-                  "name": "profile",
+                  "name": "mode",
                   "type": "string",
-                  "usage": "profile name (default: config default_profile)"
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "history",
+          "path": "jentic history",
+          "use": "history",
+          "short": "Query and export execution history",
+          "long": "history reads the control plane's execution records. `export` walks a\ntrace's executions (cursor-paginated) and emits a versioned JSON document an\nagent can template a workflow from.",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "export",
+              "path": "jentic history export",
+              "use": "export",
+              "short": "Export the execution history of a trace",
+              "long": "export walks every execution for --trace (following cursor pagination to\ncompletion) and renders a versioned export document. Failed executions\n(HTTP \u003e= 400) are excluded unless --include-failures is set. Use --limit/\n--cursor to fetch a single page instead of the full walk.",
+              "flags": [
+                {
+                  "name": "api",
+                  "type": "string",
+                  "usage": "Filter by API id"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "cursor",
+                  "type": "string",
+                  "usage": "Fetch the page at this opaque cursor instead of the full walk"
+                },
+                {
+                  "name": "from",
+                  "type": "string",
+                  "usage": "Only executions at/after this RFC3339 time"
+                },
+                {
+                  "name": "include-failures",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Include failed executions (HTTP \u003e= 400)"
+                },
+                {
+                  "name": "limit",
+                  "type": "int",
+                  "default": "0",
+                  "usage": "Fetch a single page of at most N records instead of the full walk"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "output",
+                  "shorthand": "o",
+                  "type": "string",
+                  "usage": "Write the export to this file instead of stdout"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "to",
+                  "type": "string",
+                  "usage": "Only executions at/before this RFC3339 time"
+                },
+                {
+                  "name": "trace",
+                  "type": "string",
+                  "usage": "Trace ID to export (required)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "events",
+          "path": "jentic events",
+          "use": "events",
+          "short": "Observe control-plane events",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "watch",
+              "path": "jentic events watch",
+              "use": "watch",
+              "short": "Tail the control-plane event stream as NDJSON",
+              "long": "watch connects to the control plane's Server-Sent Events stream and emits\none JSON event per line (NDJSON) until interrupted. Use --last-event-id to\nresume after a previously seen event (the stream also advertises the id of\neach event so a wrapper can persist it). Ctrl-C stops cleanly.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "last-event-id",
+                  "type": "string",
+                  "usage": "Resume after this event id"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "trace",
+                  "type": "string",
+                  "usage": "Only events for this trace id"
+                },
+                {
+                  "name": "type",
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "Only events of these types (repeatable)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "api",
+          "path": "jentic api",
+          "use": "api \u003cMETHOD\u003e \u003cPATH\u003e",
+          "short": "Authenticated passthrough to the control plane",
+          "long": "api sends an arbitrary request to the control plane, reusing the same\nauth, session, and transport as every other command. The PATH must match a\nroute in the CLI's embedded OpenAPI spec (use --live to allow routes the\nconnected server serves that this binary predates). Discover routes with\n`jentic api ops` and their contract with `jentic api describe`.\n\nRequest body (mirrors `jentic execute`): -d/--data inline JSON, -d - for\nstdin, --data-file \u003cpath\u003e, or auto-stdin when a body is piped/redirected.\n\nBy default any transport-successful response (2xx or 4xx/5xx) exits 0 and\nthe body is emitted as-is; --fail-on-error maps non-2xx to exit 1.",
+          "example": "  jentic api GET /credentials\n  jentic api POST /toolkits -d '{\"name\":\"clarity\"}'\n  jentic api POST /apis \u003c api.json\n  jentic api GET \"/apis?limit=10\"",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "data",
+              "shorthand": "d",
+              "type": "string",
+              "usage": "request body JSON (use - for stdin)"
+            },
+            {
+              "name": "data-file",
+              "type": "string",
+              "usage": "read request body from this file"
+            },
+            {
+              "name": "fail-on-error",
+              "type": "bool",
+              "default": "false",
+              "usage": "exit 1 on a non-2xx response"
+            },
+            {
+              "name": "header",
+              "type": "stringArray",
+              "default": "[]",
+              "usage": "extra header as key=value (repeatable)"
+            },
+            {
+              "name": "live",
+              "type": "bool",
+              "default": "false",
+              "usage": "fetch the server's /openapi.json instead of the embedded spec"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "query",
+              "type": "stringArray",
+              "default": "[]",
+              "usage": "query parameter as key=value (repeatable)"
+            },
+            {
+              "name": "raw",
+              "type": "bool",
+              "default": "false",
+              "usage": "skip the spec path allowlist (loopback hosts only, for dev)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "ops",
+              "path": "jentic api ops",
+              "use": "ops",
+              "short": "List control-plane operations (METHOD, path, id, summary)",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "filter",
+                  "type": "string",
+                  "usage": "only operations whose path/id/summary contains this substring"
+                },
+                {
+                  "name": "live",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "list the server's live operations instead of the embedded set"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "describe",
+              "path": "jentic api describe",
+              "use": "describe \u003cMETHOD\u003e \u003cPATH\u003e",
+              "short": "Describe an operation's params and request/response schema",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "live",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "describe against the server's live spec instead of the embedded one"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             }
@@ -1147,17 +2374,34 @@
           "name": "skill",
           "path": "jentic skill",
           "use": "skill",
-          "short": "Generate the Jentic CLI-usage skill into your agent's native layout",
-          "long": "skill writes a \"how to use Jentic via the CLI\" skill into each supported\nagent runtime's native layout — a dedicated SKILL.md for claude-code,\ncursor, and hermes, or a spliced block in AGENTS.md for codex and generic —\nso the agent knows the platform loop (register -\u003e request access -\u003e\nsearch/inspect/execute) without you hand-writing anything.\n\nWrites are idempotent: generated content lives in a clearly-marked managed\nblock, so re-running never clobbers your own edits around it.",
-          "group_title": "Find and run operations",
+          "short": "Generate the Jentic skill set into your agent's native layout",
+          "long": "skill writes the Jentic skill set into each supported agent runtime's\nnative layout — a clean, spec-conformant SKILL.md per skill for\nclaude-code, cursor, and hermes, or a named pointer block in AGENTS.md\nfor codex and generic — so the agent discovers how to use Jentic and the\nspec-flywheel skills without you hand-writing anything.\n\nThe shipped set is jentic (how to use the CLI), contribute-spec-fix, and\nimport-new-api; pass --skill to install a subset.\n\nWrites are idempotent: owned SKILL.md files carry provenance in a sidecar\nand AGENTS.md content lives in named managed blocks, so re-running never\nclobbers your own edits around them.",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
           "subcommands": [
             {
               "name": "init",
               "path": "jentic skill init",
               "use": "init",
-              "short": "Generate the Jentic skill for one or more operators",
-              "long": "init detects which agent runtimes you have, lets you pick the targets\n(or pass --operator), and writes the Jentic CLI-usage skill into each\none's native layout.",
-              "example": "  jentic skill init\n  jentic skill init --operator claude,cursor\n  jentic skill init --all --yes\n  jentic skill init --operator generic --dry-run",
+              "short": "Generate the Jentic skill set for one or more operators",
+              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic skill\nset into each one's native layout.\n\nPassing --operator or --all skips every prompt, including the placement\none: each operator uses its default scope unless --scope is given\n(preview with --dry-run). --skill limits the set (default: all shipped\nskills); there is no interactive skill picker.\n\nNon-interactively (--yes, pipes, agent sessions) it defaults to the\ndetected operators, echoing each resolved path before writing.",
+              "example": "  jentic skill init\n  jentic skill init --operator claude,cursor\n  jentic skill init --skill jentic --all --yes\n  jentic skill init --operator generic --dry-run",
               "flags": [
                 {
                   "name": "all",
@@ -1171,6 +2415,11 @@
                   "usage": "Jentic control-plane base URL"
                 },
                 {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
                   "name": "dry-run",
                   "type": "bool",
                   "default": "false",
@@ -1180,7 +2429,12 @@
                   "name": "force",
                   "type": "bool",
                   "default": "false",
-                  "usage": "overwrite a managed block you have manually edited"
+                  "usage": "overwrite content you have manually edited"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "operator",
@@ -1194,10 +2448,22 @@
                   "usage": "placement scope: user or project (default: per-operator)"
                 },
                 {
+                  "name": "skill",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "skills to install (repeatable or comma-separated; default: all shipped)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
                   "name": "yes",
+                  "shorthand": "y",
                   "type": "bool",
                   "default": "false",
-                  "usage": "skip the interactive picker (use --operator/--all)"
+                  "usage": "non-interactive: no pickers; with no --operator/--all, target the detected operators"
                 }
               ]
             },
@@ -1205,13 +2471,82 @@
               "name": "list",
               "path": "jentic skill list",
               "use": "list",
-              "short": "Show supported operators and which are detected in this environment",
+              "short": "Show supported operators and where each skill is installed",
               "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
                 {
                   "name": "json",
                   "type": "bool",
                   "default": "false",
                   "usage": "force JSON output"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "update",
+              "path": "jentic skill update",
+              "use": "update",
+              "short": "Re-render installed skills with the current base URL",
+              "long": "update re-renders every installed (skill, operator, scope) with the\ncurrently resolved base URL and rewrites it when the recorded content\nhash differs. A base-URL change therefore legitimately rewrites the\njentic skill (its body carries the interpolated URL). Manually-edited\ncontent is reported and left alone unless --force.",
+              "example": "  jentic skill update\n  jentic skill update --operator claude\n  jentic skill update --skill jentic --force",
+              "flags": [
+                {
+                  "name": "base-url",
+                  "type": "string",
+                  "usage": "Jentic control-plane base URL"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "dry-run",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "print what would change without writing"
+                },
+                {
+                  "name": "force",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "overwrite content you have manually edited"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "operator",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "operators to update (repeatable or comma-separated; default: all)"
+                },
+                {
+                  "name": "skill",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "skills to update (repeatable or comma-separated; default: all shipped)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             },
@@ -1219,14 +2554,23 @@
               "name": "remove",
               "path": "jentic skill remove",
               "use": "remove",
-              "short": "Remove the managed Jentic skill from one or more operators",
-              "example": "  jentic skill remove --operator cursor\n  jentic skill remove --operator cursor --dry-run\n  jentic skill remove --all --force",
+              "short": "Remove installed Jentic skills from one or more operators",
+              "example": "  jentic skill remove --operator cursor\n  jentic skill remove --skill import-new-api --operator cursor\n  jentic skill remove --all --force",
+              "aliases": [
+                "delete",
+                "rm"
+              ],
               "flags": [
                 {
                   "name": "all",
                   "type": "bool",
                   "default": "false",
                   "usage": "remove from every supported operator"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
                   "name": "dry-run",
@@ -1238,7 +2582,12 @@
                   "name": "force",
                   "type": "bool",
                   "default": "false",
-                  "usage": "remove even a managed block you have manually edited"
+                  "usage": "remove even content you have manually edited"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                 },
                 {
                   "name": "operator",
@@ -1249,9 +2598,172 @@
                 {
                   "name": "scope",
                   "type": "string",
-                  "usage": "placement scope: user or project (default: per-operator)"
+                  "usage": "placement scope to remove from: user or project (default: every scope where the skill is installed)"
+                },
+                {
+                  "name": "skill",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "skills to remove (repeatable or comma-separated; default: all shipped)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
+            }
+          ]
+        },
+        {
+          "name": "run",
+          "path": "jentic run",
+          "use": "run \u003cagent\u003e [path] [-- \u003cagent-args\u003e...]",
+          "short": "Launch a coding agent as its own isolated Unix user",
+          "long": "run launches a coding agent under a dedicated, unprivileged OS account\ndistinct from the operator's login user, so a compromised or prompt-injected\nagent cannot read the operator's keys, browser session, or the jentic-one\ncredential store. It provisions the agent's binary for that account if\nmissing, resolves filesystem access to the working directory (granting a\nscoped ACL only when the operator confirms), and starts the session as\nthe agent's own Unix user in a fresh login shell, so the operator's\nenvironment and secrets are not inherited by the agent.\n\nRunnable agents: claude, codex, cursor, hermes.\n(\"generic\" is a skill-only operator — it has no binary and cannot be run;\nuse `jentic skill` to write its onboarding docs instead.)\n\nArguments for the agent binary are forwarded verbatim, in either form:\n  jentic run claude -- --model opus -p \"hi\"   (agent, then -- \u003cagent-args\u003e)\n  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\nboth run `claude --model opus -p \"hi\"` as the agent user. In the leading-`--`\nform the first token after `--` is the agent id and there is no path argument\n(the working directory defaults to the current one); use the trailing form to\npass a path. Without any `--`, run takes at most the agent id and a path.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in the CLI's agent state (~/.config/jentic/agent-account.yaml).\nSee the security analysis in\ndocs/security/local-agent/local-agent-isolation.md for the full rationale.",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "agent-user",
+              "type": "string",
+              "usage": "override the derived \u003coperator\u003e-local-agent account"
+            },
+            {
+              "name": "allow-dir",
+              "type": "bool",
+              "default": "false",
+              "usage": "grant the agent access to the working directory without prompting"
+            },
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "grant",
+              "type": "string",
+              "usage": "grant the agent access to the given directory, then exit (without launching)"
+            },
+            {
+              "name": "home",
+              "type": "bool",
+              "default": "false",
+              "usage": "open the session in the agent's own home, skipping the current directory"
+            },
+            {
+              "name": "list-grants",
+              "type": "bool",
+              "default": "false",
+              "usage": "list the directories the agent has been granted, then exit"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "no-allow-dir",
+              "type": "bool",
+              "default": "false",
+              "usage": "never grant directory access; open in the agent's home instead"
+            },
+            {
+              "name": "no-seed-config",
+              "type": "bool",
+              "default": "false",
+              "usage": "never copy the operator's agent config into the agent's home"
+            },
+            {
+              "name": "revoke",
+              "type": "string",
+              "usage": "revoke the agent's access to the given directory, then exit"
+            },
+            {
+              "name": "seed-config",
+              "type": "bool",
+              "default": "false",
+              "usage": "copy the operator's agent config into the agent's home without prompting"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            },
+            {
+              "name": "yes",
+              "shorthand": "y",
+              "type": "bool",
+              "default": "false",
+              "usage": "assume the safe default for every prompt (never grants a flagged-dangerous dir)"
+            }
+          ]
+        },
+        {
+          "name": "reset",
+          "path": "jentic reset",
+          "use": "reset",
+          "short": "Tear down the agent account and wipe this machine's jentic identity state",
+          "long": "reset is the inverse of the agent-user setup folded into `jentic setup`,\nand the clean-slate hatch for this machine's jentic identity state.\n\nIt tears down the agent account — the dedicated Unix user, the named-user\nACLs stamped across your home (both the leaf read/write grants and the\nexecute-only ancestor traverse grants), and the passwordless-launch sudoers\ndrop-in — and then also wipes your OWN jentic identity state: the store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
+          "example": "  jentic reset                              # full clean slate: the account + your identity state\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "delete-home",
+              "type": "bool",
+              "default": "false",
+              "usage": "also delete the agent's home directory (non-interactive opt-in; pairs with --force)"
+            },
+            {
+              "name": "force",
+              "type": "bool",
+              "default": "false",
+              "usage": "skip the typed-name confirmation (the only non-interactive escape hatch; use with care)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ]
+        },
+        {
+          "name": "doctor",
+          "path": "jentic doctor",
+          "use": "doctor",
+          "short": "Diagnose this agent's local jentic setup (read-only)",
+          "long": "doctor is the agent-side self-check. It verifies the things an agent needs to\nwork — its config/state directories, a resolvable identity, a usable token or\nAPI key, control-plane reachability, and local clock skew — and prints a\npass/warn/fail report. It is read-only (never mints tokens or writes config)\nand, unlike `jenticctl doctor`, needs no operator tooling, so it runs where an\nagent actually lives. It exits non-zero when any check fails (warnings keep a\nzero exit), so it is safe to wire into a health probe.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly).",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "json",
+              "type": "bool",
+              "default": "false",
+              "usage": "force JSON output (default when stdout is not a TTY)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             }
           ]
         },
@@ -1262,12 +2774,46 @@
           "short": "Administer the jentic-one platform",
           "long": "admin groups operator-facing platform administration. Subcommands\nrequire an identity with admin privileges (e.g. org:admin).\n\n`admin config providers` manages runtime credential provider\nconfiguration (e.g. Pipedream) without hand-editing backend YAML or\nrestarting the server.",
           "group_title": "Administration",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
           "subcommands": [
             {
               "name": "config",
               "path": "jentic admin config",
               "use": "config",
               "short": "Manage runtime platform configuration",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ],
               "subcommands": [
                 {
                   "name": "providers",
@@ -1275,6 +2821,23 @@
                   "use": "providers",
                   "short": "Manage credential provider configuration",
                   "long": "providers configures credential providers (e.g. pipedream) at runtime.\nA successful `set` rebuilds the server's provider registry so the change\ntakes effect without a restart. Secret fields are encrypted at rest and\nredacted on read.",
+                  "flags": [
+                    {
+                      "name": "context",
+                      "type": "string",
+                      "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                    },
+                    {
+                      "name": "mode",
+                      "type": "string",
+                      "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                    },
+                    {
+                      "name": "theme",
+                      "type": "string",
+                      "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                    }
+                  ],
                   "subcommands": [
                     {
                       "name": "set",
@@ -1284,11 +2847,6 @@
                       "long": "set validates the provider-specific fields, encrypts the secret, and\nactivates the config at runtime. For `pipedream` the recognised flags are\n--project-id, --client-id, --environment, and --connect-base-url; the\nclient_secret is prompted for without echo (or read from stdin with\n--secret-stdin).",
                       "flags": [
                         {
-                          "name": "base-url",
-                          "type": "string",
-                          "usage": "Jentic control-plane base URL"
-                        },
-                        {
                           "name": "client-id",
                           "type": "string",
                           "usage": "provider client id"
@@ -1297,6 +2855,11 @@
                           "name": "connect-base-url",
                           "type": "string",
                           "usage": "provider connect base URL"
+                        },
+                        {
+                          "name": "context",
+                          "type": "string",
+                          "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                         },
                         {
                           "name": "environment",
@@ -1310,9 +2873,9 @@
                           "usage": "emit JSON output"
                         },
                         {
-                          "name": "profile",
+                          "name": "mode",
                           "type": "string",
-                          "usage": "profile name (default: config default_profile)"
+                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
                         },
                         {
                           "name": "project-id",
@@ -1324,6 +2887,11 @@
                           "type": "bool",
                           "default": "false",
                           "usage": "read client_secret from stdin instead of prompting"
+                        },
+                        {
+                          "name": "theme",
+                          "type": "string",
+                          "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                         }
                       ]
                     },
@@ -1334,9 +2902,9 @@
                       "short": "Show a provider config (secrets redacted)",
                       "flags": [
                         {
-                          "name": "base-url",
+                          "name": "context",
                           "type": "string",
-                          "usage": "Jentic control-plane base URL"
+                          "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                         },
                         {
                           "name": "json",
@@ -1345,9 +2913,14 @@
                           "usage": "emit JSON output"
                         },
                         {
-                          "name": "profile",
+                          "name": "mode",
                           "type": "string",
-                          "usage": "profile name (default: config default_profile)"
+                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                        },
+                        {
+                          "name": "theme",
+                          "type": "string",
+                          "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                         }
                       ]
                     },
@@ -1358,9 +2931,9 @@
                       "short": "List provider configs (secrets redacted)",
                       "flags": [
                         {
-                          "name": "base-url",
+                          "name": "context",
                           "type": "string",
-                          "usage": "Jentic control-plane base URL"
+                          "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                         },
                         {
                           "name": "json",
@@ -1369,15 +2942,45 @@
                           "usage": "emit JSON output"
                         },
                         {
-                          "name": "profile",
+                          "name": "mode",
                           "type": "string",
-                          "usage": "profile name (default: config default_profile)"
+                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                        },
+                        {
+                          "name": "theme",
+                          "type": "string",
+                          "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                         }
                       ]
                     }
                   ]
                 }
               ]
+            }
+          ]
+        },
+        {
+          "name": "theme",
+          "path": "jentic theme",
+          "use": "theme \u003cdark|light|no-color\u003e",
+          "short": "Set the persistent color theme",
+          "long": "theme persists the global color theme in ~/.config/jentic/config.yaml.\nOverride per-invocation with --theme or $JENTIC_THEME. Agent and\nservice-account modes always use no-color regardless of this setting.",
+          "group_title": "Administration",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             }
           ]
         }
@@ -1394,9 +2997,49 @@
           "path": "jenticctl install",
           "use": "install",
           "short": "Interactive wizard to configure and onboard jentic-one",
-          "long": "install walks you through choosing a deployment path (from source or\nDocker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\nthen builds the stack (local venv or Docker image), applies migrations, and\nstarts the app. Use --skip-build to only generate the config, or --no-start\nto build without launching.",
+          "long": "install walks you through choosing a deployment path (from source or\nDocker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\nthen builds the stack (local venv or Docker image), applies migrations, and\nstarts the app. Use --skip-build to only generate the config, or --no-start\nto build without launching.\n\nDocker path: by default this PULLS the published, signed app image\n(ghcr.io/jentic/jentic-one-app, version-matched to the CLI) — no local build.\nUse --build-local to build from a checkout instead (auto-selected inside a\njentic-one source tree or with $JENTIC_SRC), --ref to build a specific\nbranch/tag/commit, or --image-tag to pin a specific tag or @sha256: digest.\n\nAdvanced: --preset and the generated --\u003csection\u003e-\u003cfield\u003e flags (e.g.\n--server-public-base-url, --logging-file-enabled) overlay schema-driven\nconfiguration onto the generated jentic-one.yaml, on top of the wizard.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
+            {
+              "name": "answers",
+              "type": "string",
+              "usage": "non-interactive: skip the wizard and take answers from a YAML file (unlisted fields keep the wizard defaults; implies --defaults for the rest)"
+            },
+            {
+              "name": "build-local",
+              "type": "bool",
+              "default": "false",
+              "usage": "Docker path: build the app image from a local checkout instead of pulling the published image (auto-selected inside a jentic-one checkout, with $JENTIC_SRC, or --ref)"
+            },
+            {
+              "name": "config-form",
+              "type": "bool",
+              "default": "false",
+              "usage": "after the wizard, show an extra schema-derived form to review/adjust config sections (interactive only)"
+            },
+            {
+              "name": "defaults",
+              "type": "bool",
+              "default": "false",
+              "usage": "non-interactive: skip the wizard and take its defaults (Docker + Postgres, loopback) as-is"
+            },
+            {
+              "name": "fresh-secrets",
+              "type": "bool",
+              "default": "false",
+              "usage": "rotate every generated secret instead of reusing an existing config's (default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)"
+            },
+            {
+              "name": "fresh-venv",
+              "type": "bool",
+              "default": "false",
+              "usage": "wipe any existing local venv before building (recovers a wedged/half-populated ~/.jentic/venv from a prior failed install; local path only)"
+            },
+            {
+              "name": "image-tag",
+              "type": "string",
+              "usage": "Docker path: pull this app image tag or @sha256: digest (or a full ghcr.io/…@sha256 ref) instead of the version-matched tag; ignored with --build-local"
+            },
             {
               "name": "no-start",
               "type": "bool",
@@ -1416,6 +3059,16 @@
               "usage": "path to write the generated config to"
             },
             {
+              "name": "preset",
+              "type": "string",
+              "usage": "apply an embedded config preset over schema defaults (local-dev, production); empty means none"
+            },
+            {
+              "name": "ref",
+              "type": "string",
+              "usage": "git ref (branch/tag/commit) to build the stack from; implies --build-local (default: the ref this CLI was installed from, then the CLI version)"
+            },
+            {
               "name": "skip-build",
               "type": "bool",
               "default": "false",
@@ -1428,7 +3081,7 @@
           "path": "jenticctl wizard",
           "use": "wizard",
           "short": "Guided first-run: create your admin account, connect an operator, and start using Jentic",
-          "long": "wizard is the hand-held onboarding that runs after `jenticctl install`. It\nwaits while you create your first admin account in the browser (so you get\nto know the product through the UI), then offers to connect your AI operator\n(Claude, Cursor, …): it registers an agent, points you at the console to\napprove it, waits for the approval, and finally suggests example prompts you\ncan try.\n\nEverything it does you can also do by hand (open the UI, `jenticctl setup`,\n`jentic bootstrap`); the wizard just sequences it into one continuous flow.\nRe-run it any time — each step is idempotent.",
+          "long": "wizard is the hand-held onboarding that runs after `jenticctl install`. It\nwaits while you create your first admin account in the browser (so you get\nto know the product through the UI), then offers to connect your AI operator\n(Claude, Cursor, …): it registers an agent, points you at the console to\napprove it, waits for the approval, and finally suggests example prompts you\ncan try.\n\nEverything it does you can also do by hand (open the UI, `jenticctl setup`,\n`jentic setup`); the wizard just sequences it into one continuous flow.\nRe-run it any time — each step is idempotent.",
           "example": "  jenticctl wizard\n  jenticctl wizard --operator claude --yes\n  jenticctl wizard --no-open   # don't auto-launch the browser",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
@@ -1557,11 +3210,6 @@
               "type": "bool",
               "default": "false",
               "usage": "emit the check results as JSON"
-            },
-            {
-              "name": "profile",
-              "type": "string",
-              "usage": "profile name (default: config default_profile)"
             }
           ]
         },
@@ -1569,19 +3217,14 @@
           "name": "status",
           "path": "jenticctl status",
           "use": "status",
-          "short": "Show install, server, and agent health",
-          "long": "status is a health dashboard for the local jentic setup. It reports the\nrecorded install (mode/db/source), whether the control-plane server is\nreachable and its version, and the agent identity/token state for a\nprofile. It degrades gracefully: missing pieces are reported, not fatal.",
+          "short": "Show install, server, and identity health",
+          "long": "status is a health dashboard for the local jentic setup. It reports the\nrecorded install (mode/db/source), whether the control-plane server is\nreachable and its version, and the active context's identity/token\nstate. It degrades gracefully: missing pieces are reported, not fatal.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
               "name": "base-url",
               "type": "string",
               "usage": "Jentic control-plane base URL"
-            },
-            {
-              "name": "profile",
-              "type": "string",
-              "usage": "profile name (default: config default_profile)"
             }
           ]
         },
@@ -1622,6 +3265,7 @@
             },
             {
               "name": "yes",
+              "shorthand": "y",
               "type": "bool",
               "default": "false",
               "usage": "skip the confirmation prompt for --volumes"
@@ -1669,7 +3313,7 @@
           "path": "jenticctl update",
           "use": "update",
           "short": "Update the jentic CLIs (and check the stack) to the latest release",
-          "long": "update reports the installed CLI and server versions, compares the\ninstalled version against the latest release tag on GitHub, and (unless\n--check) rebuilds and replaces the jenticctl and jentic binaries in place,\nthen rebuilds the installed stack. Use --cli-only or --stack-only to update\njust one half.",
+          "long": "update reports the installed CLI and server versions, compares the\ninstalled version against the latest release tag on GitHub, and (unless\n--check) rebuilds and replaces the jenticctl and jentic binaries in place,\nthen rebuilds the installed stack. Use --cli-only or --stack-only to update\njust one half.\n\nA Homebrew-installed CLI is never swapped in place: the CLI half runs\n`brew upgrade jentic` instead, so brew's bookkeeping stays consistent\n(--ref cannot pin a Homebrew-managed CLI).",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
@@ -1702,6 +3346,7 @@
             },
             {
               "name": "yes",
+              "shorthand": "y",
               "type": "bool",
               "default": "false",
               "usage": "skip the confirmation prompt"
@@ -1713,14 +3358,14 @@
           "path": "jenticctl uninstall",
           "use": "uninstall",
           "short": "Remove everything under ~/.jentic (config files are backed up to *-old)",
-          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nprofiles, CA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. Use --purge to also delete the data volume\n(this destroys the database), or --keep-data to force preservation. With\nno flag and an interactive terminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.",
+          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nCA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. Your agent\nidentity (~/.jentic/profiles) is ALSO preserved — reinstalling keeps you\nauthenticated; run `jentic reset` to remove it. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup — install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
               "name": "keep-data",
               "type": "bool",
               "default": "false",
-              "usage": "preserve the Docker stack's data volume (the default; reinstall reattaches it)"
+              "usage": "preserve the Docker stack's data volume (the default; reinstall reattaches it and reuses jentic-one-old.yaml's encryption key)"
             },
             {
               "name": "purge",
@@ -1730,6 +3375,7 @@
             },
             {
               "name": "yes",
+              "shorthand": "y",
               "type": "bool",
               "default": "false",
               "usage": "skip the confirmation prompts"

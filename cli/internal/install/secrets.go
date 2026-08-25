@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 )
@@ -19,10 +20,28 @@ func randomBase64(n int) (string, error) {
 	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
+// randomHex returns hex of n cryptographically-random bytes. Used where the
+// value crosses YAML/DSN/env boundaries (e.g. the managed Postgres password):
+// hex is alphanumeric-only, so no quoting or escaping context can mangle it.
+func randomHex(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate random bytes: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
 // FillSecrets populates the Draft's generated-secret fields with fresh random
 // values. The encryption key is a 32-byte (AES-256) base64 string, matching the
 // credentials.encryption keyset format. The other secrets are random tokens
 // suitable for local installs. Call once before rendering the config.
+//
+// Fields that already carry a value are preserved: [ReuseSecrets] populates
+// them from an existing config so a reinstall keeps the on-disk data readable
+// (a rotated encryption key would silently brick stored credentials). Only
+// blank fields are filled here. The `--fresh-secrets` install flag skips the
+// reuse step entirely and re-enters this with a zero draft, giving the old
+// "always fresh" behavior for deliberate rotation.
 func (d *Draft) FillSecrets() error {
 	// Each surface secret is an independent 32-byte (256-bit) random token.
 	for _, dst := range []*string{
@@ -31,11 +50,31 @@ func (d *Draft) FillSecrets() error {
 		&d.AdminInvitePepper,
 		&d.ConnectStateSecret,
 	} {
+		if *dst != "" {
+			continue
+		}
 		v, err := randomBase64(32)
 		if err != nil {
 			return err
 		}
 		*dst = v
+	}
+
+	// The managed Postgres container (Docker path) is machine-managed end to
+	// end: the operator never types its password, so there is no UX cost to a
+	// random one — and the old "postgres" default was a guessable credential
+	// on a database that could end up internet-reachable (#992). Left alone
+	// when the wizard/answers provided one or ReuseSecrets carried one over
+	// (POSTGRES_PASSWORD only applies at initdb, so a reinstall over an
+	// existing volume MUST keep the volume's original password). The local
+	// path is untouched: the user's own Postgres has whatever password it has,
+	// including a legitimately empty one under trust auth.
+	if d.IsDocker() && d.IsPostgres() && d.PGPassword == "" {
+		v, err := randomHex(24)
+		if err != nil {
+			return err
+		}
+		d.PGPassword = v
 	}
 
 	// SSO needs an ES256 key for the platform to sign its own ID tokens.

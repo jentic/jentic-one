@@ -12,23 +12,53 @@
 export {
 	listAccessRequests,
 	getAccessRequest,
+	decideAccessRequest,
+	decideAllPending,
+	amendAccessRequest,
 	itemTargetLabel,
 	isSpecificResource,
 	isScopeGrant,
 	scopeLabel,
+	summarizeAccessRequest,
+	ACCESS_REQUEST_STATUS_VARIANT,
 	rulesAreEnforceable,
 	parseItemRules,
 	ruleSummary,
 	isUnrestrictedAllow,
 	type AccessRequest,
+	type AccessRequestOwner,
 	type AccessRequestItem,
 	type AccessRequestEvaluation,
 	type AccessRequestEvaluationCheck,
 	type AccessRequestPage,
 	type ListAccessRequestsParams,
+	type ItemDecision,
+	type ItemAmendment,
 	type PermissionRule,
 	type PermissionRuleEffect,
+	type PermissionRuleMatchMode,
 } from '@/shared/lib/accessRequests';
+
+// Provisioning-plan classification/shape helpers — used by the fulfilment
+// wizard that decides `--provision` requests (create → amend → approve).
+export {
+	isProvisioningPlan,
+	planApiReference,
+	planAuthType,
+	planIsNoAuth,
+	planSteps,
+	planChains,
+	chainAuthType,
+	chainIsNoAuth,
+	chainItems,
+	findItem,
+	itemKey,
+	FULFILMENT_ITEM_TYPES,
+	type PlanApiReference,
+	type PlanStep,
+	type PlanChain,
+	type PlanShape,
+} from '@/shared/lib/provisioningPlan';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope
 // picker and the actor (agent/service-account) platform-permission picker.
@@ -49,3 +79,25 @@ export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
 // Monitor's Events tab and the Dashboard's "Needs attention" card so the same
 // event reads identically in both surfaces.
 export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
+
+// Narrow, module-consumable slices of the agent-stream data layer (NOT the
+// rail's React components): the HAL-link id parser (so Monitor's Events
+// drill-in and the rail parse links with the same rules) and the
+// provider-optional stream hook (so Monitor's acknowledge mutation can sync
+// the rail's in-memory copy when the shell's stream is mounted, and no-op in
+// tests/embedded surfaces where it isn't).
+export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
+
+// API-identity display helpers — one humanising rule applied everywhere a
+// machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
+// friendly primary line. Originally lived in `modules/discover/api/adapters.ts`
+// (`titleFromApiId`); moved here so Discover, the credential picker, and the
+// toolkit surfaces all share the same rule.
+export {
+	humanizeDomainSlug,
+	humanizeName,
+	titleFromApiId,
+	toolkitCredDisplayName,
+	apiRefDisplayName,
+	apiIdentityTuple,
+} from '@/shared/lib/api-display';

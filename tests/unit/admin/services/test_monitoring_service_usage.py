@@ -15,6 +15,7 @@ from jentic_one.admin.repos.monitoring_repo import (
     UsageQueryFilters,
 )
 from jentic_one.admin.services.monitoring_service import (
+    _CACHE_TTL_SECONDS,
     _USAGE_CACHE_MAX_ENTRIES,
     MonitoringService,
     UsageFilters,
@@ -118,12 +119,72 @@ async def test_default_since_until_resolution() -> None:
         call_args = mock_query.call_args[0]
         resolved_since, resolved_until = call_args[0], call_args[1]
 
-    expected_until = (int(mock_now.timestamp()) // 60) * 60
+    # The fallback bound is rounded UP to the next minute (#913): stable cache
+    # keys within a minute, but the strict `< until` filter still covers the
+    # current partial minute — executions must never be visible in the feed
+    # yet missing from the volume aggregate.
+    expected_until = (int(mock_now.timestamp()) // 60 + 1) * 60
     expected_since = expected_until - 86400
     assert resolved_until == expected_until
     assert resolved_since == expected_since
     assert resolved_until % 60 == 0
+    assert resolved_until > int(mock_now.timestamp())
     assert resolved_until - resolved_since == 86400
+
+
+@pytest.mark.asyncio
+async def test_cached_entry_expires_after_ttl() -> None:
+    """An entry older than the TTL is a miss — the aggregate is re-queried.
+
+    The TTL is deliberately short (30s, #913): with the fallback window stable
+    for a whole minute, a longer TTL would pin the minute's FIRST response and
+    hide executions arriving mid-minute from the volume chart while the
+    executions feed already shows them.
+    """
+    ctx = _make_ctx()
+    svc = MonitoringService(ctx)
+    cached = UsageStats(
+        since=1000,
+        until=87400,
+        bucket_seconds=3600,
+        group_by="api",
+        total=1,
+        success=1,
+        failed=0,
+        pending=0,
+        avg_ms=1.0,
+        p50_ms=None,
+        p95_ms=None,
+        active_now=0,
+        buckets=[],
+        top=[],
+    )
+    cache_key = (1000, 87400, GroupBy.API, 10, UsageFilters())
+    svc._usage_cache[cache_key] = _UsageCacheEntry(
+        result=cached, cached_at=time.monotonic() - (_CACHE_TTL_SECONDS + 1)
+    )
+
+    fresh = UsageStats(
+        since=1000,
+        until=87400,
+        bucket_seconds=3600,
+        group_by="api",
+        total=4,
+        success=4,
+        failed=0,
+        pending=0,
+        avg_ms=1.0,
+        p50_ms=None,
+        p95_ms=None,
+        active_now=0,
+        buckets=[],
+        top=[],
+    )
+    with patch.object(svc, "_query_usage", new_callable=AsyncMock, return_value=fresh):
+        result = await svc.get_usage_stats(
+            since=1000, until=87400, group_by=GroupBy.API, top_limit=10
+        )
+    assert result is fresh
 
 
 @pytest.mark.asyncio
@@ -134,7 +195,30 @@ async def test_bucket_seconds_selection_for_various_windows() -> None:
     assert MonitoringService._compute_bucket_seconds(86400) == 3600
     assert MonitoringService._compute_bucket_seconds(259200) == 21600
     assert MonitoringService._compute_bucket_seconds(604800) == 21600
+    # A day-aligned 7d window across a fall-back DST change (7d + 1h) keeps
+    # the 6h tier; only genuinely wider windows drop to daily buckets.
+    assert MonitoringService._compute_bucket_seconds(608400) == 21600
+    assert MonitoringService._compute_bucket_seconds(8 * 86400) == 21600
+    assert MonitoringService._compute_bucket_seconds(8 * 86400 + 1) == 86400
     assert MonitoringService._compute_bucket_seconds(1209600) == 86400
+
+
+def test_trend_points_follow_bucket_tier() -> None:
+    # One trend segment per aggregate bucket: 24 hourly for a day, 28 six-hour
+    # for a week, 30 daily for a month — so day-aligned windows produce
+    # day-aligned segments (the volume chart's 7d axis shows exactly 7 days).
+    assert MonitoringService._compute_trend_points(86400, 3600) == 24
+    assert MonitoringService._compute_trend_points(604800, 21600) == 28
+    assert MonitoringService._compute_trend_points(2592000, 86400) == 30
+    # A DST-stretched 7-day window (7d + 1h) stays on the 6h tier and still
+    # gets 28 segments — each slightly stretched (~6h2m), not an extra one —
+    # so it remains re-bucketable into 7 day bars client-side.
+    assert MonitoringService._compute_trend_points(608400, 21600) == 28
+    # Capped at 60 (1h window / 60s buckets, or pathologically wide windows).
+    assert MonitoringService._compute_trend_points(3600, 60) == 60
+    assert MonitoringService._compute_trend_points(86400 * 365, 86400) == 60
+    # Never below one segment.
+    assert MonitoringService._compute_trend_points(30, 60) == 1
 
 
 @pytest.mark.asyncio
@@ -240,10 +324,12 @@ async def test_query_usage_assembles_response_correctly() -> None:
             "jentic_one.admin.services.monitoring_service.MonitoringRepository.grouped_trend",
             new_callable=AsyncMock,
             return_value=_sample_trends(),
-        ),
+        ) as mock_trend,
     ):
         result = await svc.get_usage_stats(since=1719792000, until=1719878400)
 
+    # 24h window / hourly buckets → 24 trend segments requested.
+    assert mock_trend.call_args[1]["num_points"] == 24
     assert result.total == 100
     assert result.success == 80
     assert result.failed == 20

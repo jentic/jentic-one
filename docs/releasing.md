@@ -20,6 +20,16 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
    - **gate** — builds the app, runs every migration on a fresh ephemeral
      SQLite DB, asserts each DB reached an Alembic head, and checks `/health`
      serves the tag version. Nothing publishes if this fails.
+   - **smoke** — the full Helm smoke matrix (combined / parts / broker / +obs)
+     on a kind cluster, reusing `smoke-helm.yml`. Unlike the post-merge run on
+     `main`, this one blocks: a release cannot ship while any deployment mode
+     is red.
+   - **publish-image** — builds the `app` container image and pushes it to GHCR
+     as `ghcr.io/<owner>/jentic-one-app` (tagged `X.Y.Z` — the `v` is stripped
+     — and the short SHA; `latest` moves only on stable releases). One image
+     serves every surface via `JENTIC__APPS`; this is the image self-hosters
+     pull — see
+     [`deploy/README.md`](../deploy/README.md#self-hosted-containers--external-postgres).
    - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and pushes the Homebrew cask.
 
@@ -28,11 +38,28 @@ release is `v0.14.0` (we continue the `0.x` line — see `VERSIONING.md`).
 
 ### Forcing or recovering a release
 
-release-please only opens a Release PR when there are user-facing commits since
-the last release (`ci`, `chore`, `test` and other hidden types don't trigger a
-bump). To force a release anyway — e.g. to recover a release whose `release.yml`
-run failed before GoReleaser published its assets — land a commit on `main`
-whose footer sets the version explicitly:
+For a **partially failed run** (e.g. `publish-image` succeeded but GoReleaser
+failed, or cosign/Sigstore hiccuped after the image pushed), the first move is
+**"Re-run failed jobs"** on that run in the Actions UI: it re-executes only the
+red jobs, leaving the already-pushed image (and its signature) untouched.
+Two states worth knowing by name:
+
+- **Published-but-unsigned**: the image push succeeded but the sign/attest
+  step failed. `:latest` has *not* moved (it only moves after signing), but
+  the `X.Y.Z`/SHA tags are live unsigned. Re-run the failed jobs — signing
+  targets the already-pushed digest, so it converges.
+- **Full re-run**: re-running *all* jobs rebuilds the image and `docker push`
+  **overwrites** the existing `X.Y.Z`/SHA tags with a **new digest** (builds
+  aren't bit-reproducible; the old digest stays pullable but untagged). The
+  digest echoed by the *first* run then no longer matches the tag — anyone
+  who pinned it keeps the old (still-signed) image. Prefer "Re-run failed
+  jobs" precisely to avoid this.
+
+When the run can't be recovered in place (the workflow itself needs a fix),
+force a fresh release instead. release-please only opens a Release PR when
+there are user-facing commits since the last release (`ci`, `chore`, `test`
+and other hidden types don't trigger a bump) — to force one anyway, land a
+commit on `main` whose footer sets the version explicitly:
 
 ```
 ci(release): force patch release to republish artifacts
@@ -62,6 +89,25 @@ The automation is inert until these are provisioned:
 
 cosign signing needs no secret — it uses the release job's OIDC token (keyless,
 via Sigstore/Fulcio).
+
+The **`publish-image`** stage needs no extra secret either — it pushes to GHCR
+with the built-in `GITHUB_TOKEN` (the job grants it `packages: write`).
+
+**First-release checklist:** the first push creates the `jentic-one-app`
+package under the repo owner **as private**. After the first release, a
+maintainer must set its visibility to **public** in the package settings —
+until then self-hosters cannot `docker pull` without authenticating. GHCR's
+**immutable tags** option is a trade-off, not a default: it hardens tags
+against re-pushes, but breaks the full-re-run recovery path above (a full
+re-run cannot overwrite `X.Y.Z`) — enable it only if you accept recovering
+via "Re-run failed jobs" or `Release-As` instead. The image is cosign-signed
+with an SBOM attestation; the verify commands live in `deploy/README.md`
+("Verify the image signature").
+
+Also consider a **repository ruleset restricting `v*` tag creation** to the
+release App and admins: the workflow trusts any pushed tag, and while the
+gate's version assertion bounds what a rogue tag can ship, a signed release
+should only ever be release-please-initiated.
 
 ## Verifying a release (supply chain)
 

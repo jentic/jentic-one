@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react';
-import { BookOpen, ExternalLink, KeyRound, LogOut } from 'lucide-react';
+import { KeyRound, LogOut } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { MenuPanel, MenuSeparator, menuItemClass, useDismissable } from '@/shared/ui/Menu';
 import { cn } from '@/shared/lib/utils';
 import { useAuth } from '@/shared/auth/AuthContext';
+import { useVersionInfo } from '@/shared/hooks';
 import { ROUTES } from '@/shared/app/routes';
 
 /** Avatar initial: first name, then email, then a neutral fallback. */
@@ -25,6 +26,7 @@ function displayName(
 
 export function UserMenu() {
 	const { user, logout } = useAuth();
+	const { current } = useVersionInfo();
 	const [open, setOpen] = useState(false);
 	const close = useCallback(() => setOpen(false), []);
 	const menuRef = useDismissable<HTMLDivElement>(open, close);
@@ -55,6 +57,11 @@ export function UserMenu() {
 								{user.email}
 							</div>
 						)}
+						{current && (
+							<div className="text-muted-foreground/60 mt-1 truncate text-[11px]">
+								jentic-one v{current}
+							</div>
+						)}
 					</div>
 
 					<MenuSeparator />
@@ -67,35 +74,6 @@ export function UserMenu() {
 					>
 						<KeyRound className="h-4 w-4 shrink-0" aria-hidden="true" />
 						Change password
-					</AppLink>
-
-					<AppLink
-						href="/docs"
-						external
-						role="menuitem"
-						onClick={close}
-						className={menuItemClass()}
-						aria-label="API docs (opens in a new tab)"
-						title="API docs (opens in a new tab)"
-					>
-						<BookOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
-						API docs
-						<ExternalLink
-							className="ml-auto h-3 w-3 shrink-0 opacity-60"
-							aria-hidden="true"
-						/>
-					</AppLink>
-
-					<AppLink
-						href="https://example.com"
-						role="menuitem"
-						onClick={close}
-						className={menuItemClass()}
-						aria-label="More at example.com (opens in a new tab)"
-						title="More at example.com (opens in a new tab)"
-					>
-						<ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
-						More at example.com
 					</AppLink>
 
 					<MenuSeparator />

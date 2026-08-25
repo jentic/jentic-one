@@ -37,6 +37,11 @@ class IngestSpecification(BaseModel):
     api_identifier: ApiIdentifier
     sha: str | None = None
     metadata: dict[str, Any] | None = None
+    #: The parsed spec document. Guaranteed JSON-serializable regardless of the
+    #: source format — the YAML parse boundary (``parse_spec_content``) keeps
+    #: date/binary scalars and non-finite floats as strings (issues #979, #984).
+    #: Stage authors may ``json.dumps`` this or write it to a JSONB column
+    #: without an encoder.
     content: dict[str, Any] | None = None
     source_id: str | None = None
     source_type: ApiRevisionSourceType | None = None
@@ -44,6 +49,28 @@ class IngestSpecification(BaseModel):
     source_filename: str | None = None
     submitted_by: str | None = None
     origin: str | None = None
+    # Catalog identity slug (`domain[/sub-api]`) for catalog-originated imports;
+    # None for manual/inline sources. Persisted verbatim on the Api row so
+    # display surfaces can derive friendly titles without reverse-engineering
+    # the slugified vendor/name tuple.
+    catalog_api_id: str | None = None
+    #: Overlay-only: the base revision's ``spec_digest`` this overlay was materialized
+    #: over (distinct from ``sha``, which is the overlaid digest). Persisted on the
+    #: resulting ``api_revisions`` row so the Flow-3 sweep can diff upstream against the
+    #: overlay's base. NULL for non-overlay ingests.
+    overlay_base_digest: str | None = None
+    #: Authorized-supersede flag (A4b): when a catalog re-import is allowed to replace a
+    #: live confirmed overlay, the current revision may be overlay-origin (not catalog),
+    #: so the stage must archive *every* active revision rather than only the same-origin
+    #: one. Set only by the scope-checked enqueue path; ``False`` for ordinary imports.
+    supersede_active: bool = False
+    #: Overlay-only: the id of the overlay this materialize job is (re-)materializing. Lets
+    #: ``CreateRevisionStage`` tell a *re-materialize of the same overlay* (skip re-capturing
+    #: ``superseded_revision_id`` so the overlay keeps its original clean base for rollback,
+    #: D1) apart from a *stacked confirm of a different overlay* over a live overlay's output
+    #: (which must capture the current revision as the new overlay's superseded target). NULL
+    #: for non-overlay ingests. Server-set (never client-controlled), like ``supersede_active``.
+    overlay_id: str | None = None
 
     def to_log_string(self) -> str:
         fields = self.model_dump(exclude={"content"})

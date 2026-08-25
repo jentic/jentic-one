@@ -19,11 +19,12 @@ from jentic_one.admin.services._support.passwords import (
     hash_password,
     verify_password,
 )
-from jentic_one.admin.services._support.tokens import issue_jwt
+from jentic_one.admin.services._support.tokens import InvalidTokenError, decode_jwt, issue_jwt
 from jentic_one.admin.services.errors import (
     AccountLockedError,
     InvalidCredentialsError,
     InvalidInputError,
+    SessionExpiredError,
     SetupAlreadyCompleteError,
     UserEmailNotFoundError,
 )
@@ -50,6 +51,40 @@ class AuthService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+
+    async def _mint_session_bundle(
+        self,
+        *,
+        user_id: str,
+        email: str,
+        must_change_password: bool,
+        auth_time: int,
+    ) -> TokenBundle:
+        """Mint a login-JWT bundle with freshly-resolved effective permissions.
+
+        ``auth_time`` (epoch seconds of the original credential authentication)
+        rides in the claims so :meth:`refresh` can enforce the absolute session
+        window (``admin.auth.session_ttl_seconds``) across re-mints.
+        """
+        config = self._ctx.config.admin.auth
+        perm_service = PermissionService(self._ctx)
+        perms_view = await perm_service.get_effective_for_user(user_id)
+        claims = {
+            "sub": user_id,
+            "email": email,
+            # Explicit self-description so privilege-granting consumers
+            # (refresh) can fail closed instead of assuming a default.
+            "actor_type": ActorType.USER.value,
+            "permissions": perms_view.effective,
+            "must_change_password": must_change_password,
+            "auth_time": auth_time,
+        }
+        token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+        return TokenBundle(
+            access_token=token,
+            expires_in=config.jwt_ttl_seconds,
+            must_change_password=must_change_password,
+        )
 
     async def login(self, payload: LoginPayload) -> TokenBundle:
         config = self._ctx.config.admin.auth
@@ -134,20 +169,75 @@ class AuthService:
         logger.info("login_success", user_id=user.id)
         login_counter.add(1, {"outcome": "success"})
 
-        perm_service = PermissionService(self._ctx)
-        perms_view = await perm_service.get_effective_for_user(user.id)
-
-        claims = {
-            "sub": user.id,
-            "email": user.email,
-            "permissions": perms_view.effective,
-            "must_change_password": user.must_change_password,
-        }
-        token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
-        return TokenBundle(
-            access_token=token,
-            expires_in=config.jwt_ttl_seconds,
+        return await self._mint_session_bundle(
+            user_id=user.id,
+            email=user.email,
             must_change_password=user.must_change_password,
+            auth_time=int(datetime.now(UTC).timestamp()),
+        )
+
+    async def refresh(self, raw_token: str) -> TokenBundle:
+        """Re-mint the caller's login JWT (sliding web session).
+
+        Takes the *raw* bearer token (not the resolved Identity) because the
+        session-window claims (``auth_time``) are not part of the shared
+        ``Identity`` contract. Fail-closed: only tokens that explicitly carry
+        ``actor_type: "user"`` and an ``auth_time`` are refreshable — agent /
+        service-account JWTs, opaque ``at_`` tokens, and pre-upgrade tokens
+        minted before these claims existed are refused (the latter simply
+        expire at their natural TTL and the user signs in once more). The
+        re-mint is denied once the original authentication is older than
+        ``admin.auth.session_ttl_seconds`` (absolute cap: a leaked token cannot
+        be kept alive indefinitely; the final re-mint still carries a full JWT
+        TTL, so the hard end of a session is at most ``session_ttl +
+        jwt_ttl``).
+        """
+        config = self._ctx.config.admin.auth
+        try:
+            claims = decode_jwt(raw_token, config.jwt_secret.get_secret_value())
+        except InvalidTokenError as exc:
+            # Opaque tokens, foreign JWTs, or expired signatures — the route's
+            # auth gate normally rejects these first; this is defence in depth.
+            raise InvalidCredentialsError("Token is not refreshable") from exc
+
+        # Fail closed: refresh grants privilege, so a token must explicitly
+        # declare itself a user token. Missing or unrecognised values are
+        # refused rather than assumed USER (and comparing against the plain
+        # string means junk input can never make ActorType() raise a 500).
+        if claims.get("actor_type") != ActorType.USER.value:
+            raise InvalidCredentialsError("Token is not refreshable")
+
+        # Same posture for the window anchor: no explicit `auth_time`, no
+        # refresh. Pre-upgrade tokens lack both claims and end at their
+        # natural expiry — a one-time re-login after this feature ships.
+        auth_time_claim = claims.get("auth_time")
+        if auth_time_claim is None:
+            raise InvalidCredentialsError("Token is not refreshable")
+        auth_time = int(auth_time_claim)
+        now = int(datetime.now(UTC).timestamp())
+        if now - auth_time > config.session_ttl_seconds:
+            raise SessionExpiredError()
+
+        async with self._ctx.admin_db.transaction() as session:
+            user = await UserRepository.get_by_id(session, claims["sub"])
+            if user is None or not user.active:
+                raise InvalidCredentialsError("Token is not refreshable")
+            await record_audit(
+                session,
+                action=AuditAction.REFRESH,
+                target_type=AuditTargetType.SESSION,
+                target_id=user.id,
+                actor_type=ActorType.USER,
+                actor_id=user.id,
+                origin=None,
+            )
+
+        logger.info("session_refreshed", user_id=user.id)
+        return await self._mint_session_bundle(
+            user_id=user.id,
+            email=user.email,
+            must_change_password=user.must_change_password,
+            auth_time=auth_time,
         )
 
     async def bootstrap_admin(
@@ -173,8 +263,6 @@ class AuthService:
         """
         if len(password) < MIN_PASSWORD_LENGTH:
             raise InvalidInputError(PASSWORD_TOO_SHORT_MESSAGE)
-
-        config = self._ctx.config.admin
 
         try:
             async with self._ctx.admin_db.transaction() as session:
@@ -234,22 +322,11 @@ class AuthService:
 
         logger.info("bootstrap_admin_created", user_id=user.id, email=email)
 
-        perm_service = PermissionService(self._ctx)
-        perms_view = await perm_service.get_effective_for_user(user.id)
-
-        claims = {
-            "sub": user.id,
-            "email": user.email,
-            "permissions": perms_view.effective,
-            "must_change_password": False,
-        }
-        token = issue_jwt(
-            claims, config.auth.jwt_secret.get_secret_value(), config.auth.jwt_ttl_seconds
-        )
-        return TokenBundle(
-            access_token=token,
-            expires_in=config.auth.jwt_ttl_seconds,
+        return await self._mint_session_bundle(
+            user_id=user.id,
+            email=user.email,
             must_change_password=False,
+            auth_time=int(datetime.now(UTC).timestamp()),
         )
 
     async def change_own_password(
@@ -296,22 +373,13 @@ class AuthService:
 
         logger.info("password_changed", user_id=user_id)
 
-        config = self._ctx.config.admin
-        perm_service = PermissionService(self._ctx)
-        perms_view = await perm_service.get_effective_for_user(user_id)
-        claims = {
-            "sub": user_id,
-            "email": user.email if user is not None else identity.email,
-            "permissions": perms_view.effective,
-            "must_change_password": False,
-        }
-        token = issue_jwt(
-            claims, config.auth.jwt_secret.get_secret_value(), config.auth.jwt_ttl_seconds
-        )
-        return TokenBundle(
-            access_token=token,
-            expires_in=config.auth.jwt_ttl_seconds,
+        # A password change is itself a fresh credential proof, so the absolute
+        # session window restarts here (auth_time = now), matching login.
+        return await self._mint_session_bundle(
+            user_id=user_id,
+            email=user.email if user is not None else identity.email,
             must_change_password=False,
+            auth_time=int(datetime.now(UTC).timestamp()),
         )
 
     async def reset_password(self, *, email: str, temporary_password: str) -> str:

@@ -8,14 +8,25 @@ import secrets
 from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 
+import structlog
+
+from jentic_one.admin.core.permissions import ALL_PERMISSIONS
 from jentic_one.admin.repos import (
     AuthorizationCodeRepository,
     ExternalIdentityRepository,
+    UserPermissionGrantRepository,
     UserRepository,
 )
 from jentic_one.auth.core.id_token import issue_id_token
-from jentic_one.auth.core.idp import IdpAdapter, IdpClaims, OidcAdapter
-from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.auth.core.idp import (
+    AdmissionDecision,
+    IdpAdapter,
+    IdpClaims,
+    build_idp_adapter,
+    get_admission_policy,
+    get_default_idp_grants,
+)
+from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.config import AuthConfig
@@ -26,6 +37,23 @@ from jentic_one.shared.models import ActorType, InviteState
 
 def _hash_code(code: str) -> str:
     return hashlib.sha256(code.encode()).hexdigest()
+
+
+_logger = structlog.get_logger(__name__)
+
+
+def _valid_grants(permissions: list[str]) -> list[str]:
+    """Keep only permission names present in the catalogue, dropping unknowns.
+
+    A default-grants provider is deployment-configured, so a typo or a scope that
+    no longer exists must not be able to fail an otherwise-valid login. Unknown
+    names are logged once and skipped.
+    """
+    known = [p for p in permissions if p in ALL_PERMISSIONS]
+    unknown = [p for p in permissions if p not in ALL_PERMISSIONS]
+    if unknown:
+        _logger.warning("idp_default_grants_unknown_dropped", unknown=sorted(set(unknown)))
+    return known
 
 
 def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
@@ -46,9 +74,7 @@ class AuthorizeService:
         return self._ctx.config.auth
 
     def _get_idp_adapter(self) -> IdpAdapter | None:
-        if not self._auth_config.idp.enabled:
-            return None
-        return OidcAdapter(self._auth_config.idp)
+        return build_idp_adapter(self._auth_config.idp)
 
     def get_authorize_redirect_url(
         self,
@@ -279,6 +305,19 @@ class AuthorizeService:
                     )
                     return existing_user.id
 
+                # Brand-new (never-seen) verified email: consult the deployment's
+                # admission policy. Default (open) admits any verified email — the
+                # historical behaviour. A stricter policy (invite-only, domain-
+                # gated, …) can decline via set_admission_policy(); the already-
+                # linked and existing-account paths above are never gated. On
+                # reject we leave this transaction WITHOUT writing (a rollback
+                # would discard a reject audit), then audit + raise below.
+                if get_admission_policy()(claims) is not AdmissionDecision.ADMIT_AND_CREATE:
+                    await self._audit_admission_rejected(claims, provider)
+                    raise UserNotAdmittedError(
+                        "This account is not permitted to sign in to this deployment"
+                    )
+
                 new_user = await UserRepository.create(
                     session,
                     email=claims.email,
@@ -298,6 +337,20 @@ class AuthorizeService:
                     email=claims.email,
                     created_by=new_user.id,
                 )
+                # Baseline permissions for a brand-new IdP user (default: none).
+                # Applied only here, at creation — existing/linked accounts above
+                # are never touched. Written in this same transaction so the user
+                # and their grants land atomically. Unknown scope names are
+                # dropped defensively so a misconfigured list can't 500 the login.
+                default_grants = _valid_grants(get_default_idp_grants()(claims))
+                if default_grants:
+                    await UserPermissionGrantRepository.set_permissions(
+                        session,
+                        new_user.id,
+                        permissions=set(default_grants),
+                        granted_by=new_user.id,
+                        created_by=new_user.id,
+                    )
                 await record_audit(
                     session,
                     action=AuditAction.CREATE,
@@ -305,7 +358,11 @@ class AuthorizeService:
                     target_id=new_user.id,
                     actor_type=ActorType.USER,
                     actor_id=new_user.id,
-                    after={"email": claims.email, "auth_provider": provider},
+                    after={
+                        "email": claims.email,
+                        "auth_provider": provider,
+                        "granted_permissions": sorted(default_grants),
+                    },
                     reason="provisioned via external IdP",
                     origin=None,
                 )
@@ -320,3 +377,22 @@ class AuthorizeService:
             if ext_id is not None:
                 return ext_id.user_id
             raise InvalidGrantError("concurrent identity creation failed")
+
+    async def _audit_admission_rejected(self, claims: IdpClaims, provider: str) -> None:
+        """Record a rejected external-IdP login in its own committed transaction.
+
+        Kept separate from the provisioning transaction because that transaction
+        rolls back when the reject is raised — inlining the audit there would
+        discard it.
+        """
+        async with self._ctx.admin_db.transaction() as session:
+            await record_audit(
+                session,
+                action=AuditAction.CREATE,
+                target_type=AuditTargetType.USER,
+                target_id=claims.email,
+                actor_type=ActorType.USER,
+                actor_id=claims.email,
+                reason=f"external IdP login not admitted ({provider})",
+                origin=None,
+            )

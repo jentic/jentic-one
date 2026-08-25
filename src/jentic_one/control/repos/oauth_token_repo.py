@@ -85,6 +85,10 @@ class OAuthTokenRepository:
         row.expires_at = expires_at
         if scope is not None:
             row.scope = scope
+        # Fresh tokens supersede any past revocation: a re-connect over a
+        # previously revoked row must yield a live token, not a permanently
+        # revoked one (the derived `connected` flag reads `revoked_at`).
+        row.revoked_at = None
         row.last_refreshed = datetime.now(UTC)
         await session.flush()
         return row

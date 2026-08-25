@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference as APIReferenceResponse
 from jentic_one.shared.schemas import APIReferenceRequest
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 __all__ = ["APIReferenceRequest", "APIReferenceResponse"]
 
@@ -52,7 +53,7 @@ class BearerTokenCreateRequest(BaseModel):
     provider: str = "static"
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    token: str
+    token: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -87,7 +88,8 @@ class ApiKeyCreateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     key: str = Field(
-        description="The API key secret. Stored encrypted; never returned after create."
+        description="The API key secret. Stored encrypted; never returned after create.",
+        json_schema_extra=SENSITIVE,
     )
     location: CredentialLocation = Field(description="Where to inject the key on upstream calls.")
     field_name: str = Field(description="Header or query-parameter name carrying the key.")
@@ -105,7 +107,7 @@ class BasicAuthCreateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     username: str
-    password: str
+    password: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -127,14 +129,69 @@ class OAuth2CreateRequest(BaseModel):
     token_url: str | None = None
     authorize_url: str | None = None
     client_id: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     scopes: list[str] | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
+class NoAuthCreateRequest(BaseModel):
+    """Create request for no_auth credentials.
+
+    A no-auth credential carries no secret — it represents "this API is called
+    without authentication". It still exists as a credential row so a toolkit
+    binding (and its permission rules) can hang off it, and the broker resolves
+    it as a no-op auth (see broker credential resolver / injection).
+    """
+
+    type: Literal["no_auth"]
+    name: str
+    api: APIReferenceRequest
+    provider: str = "static"
+    runtime_config: RuntimeConfig | None = None
+    server_variables: dict[str, str] | None = None
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
+class Sigv4CreateRequest(BaseModel):
+    """Create request for sigv4 (AWS Signature V4) credentials."""
+
+    type: Literal["sigv4"]
+    name: str = Field(description="Human-readable label for the credential.")
+    api: APIReferenceRequest = Field(
+        description="Loose (vendor, name, version) API identity tuple."
+    )
+    provider: str = Field(
+        default="static", description="Credential provider; 'static' for stored secrets."
+    )
+    runtime_config: RuntimeConfig | None = None
+    server_variables: dict[str, str] | None = None
+    access_key_id: str = Field(description="AWS access key id (public identifier).")
+    secret_access_key: str = Field(
+        description="AWS secret access key. Stored encrypted; never returned after create.",
+        json_schema_extra=SENSITIVE,
+    )
+    session_token: str | None = Field(
+        default=None,
+        description=(
+            "Optional temporary-credential session token (STS). Expires; re-save when it does."
+        ),
+        json_schema_extra=SENSITIVE,
+    )
+    aws_region: str = Field(description="Signing region, e.g. 'us-east-1'.")
+    aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
 CredentialCreateRequest = Annotated[
-    BearerTokenCreateRequest | ApiKeyCreateRequest | BasicAuthCreateRequest | OAuth2CreateRequest,
+    BearerTokenCreateRequest
+    | ApiKeyCreateRequest
+    | BasicAuthCreateRequest
+    | OAuth2CreateRequest
+    | NoAuthCreateRequest
+    | Sigv4CreateRequest,
     Field(discriminator="type"),
 ]
 
@@ -150,7 +207,7 @@ class BearerTokenUpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    token: str | None = None
+    token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -163,9 +220,23 @@ class ApiKeyUpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    key: str | None = None
-    location: CredentialLocation | None = None
-    field_name: str | None = None
+    key: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    location: CredentialLocation | None = Field(
+        default=None,
+        description=(
+            "Immutable after create. Accepted for backward compatibility; if "
+            "provided it must equal the stored value, otherwise the request is "
+            "rejected. Recreate the credential to change the injection binding."
+        ),
+    )
+    field_name: str | None = Field(
+        default=None,
+        description=(
+            "Immutable after create. Accepted for backward compatibility; if "
+            "provided it must equal the stored value, otherwise the request is "
+            "rejected. Recreate the credential to change the parameter name."
+        ),
+    )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -179,7 +250,7 @@ class BasicAuthUpdateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     username: str | None = None
-    password: str | None = None
+    password: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -192,15 +263,37 @@ class OAuth2UpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     token_url: str | None = None
     scopes: list[str] | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
+class Sigv4UpdateRequest(BaseModel):
+    """Update request for sigv4 credentials (key rotation / scope edit)."""
+
+    type: Literal["sigv4"]
+    name: str | None = None
+    active: bool | None = None
+    runtime_config: RuntimeConfig | None = None
+    server_variables: dict[str, str] | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    session_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    clear_session_token: bool = False
+    aws_region: str | None = None
+    aws_service: str | None = None
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
 CredentialUpdateRequest = Annotated[
-    BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest,
+    BearerTokenUpdateRequest
+    | ApiKeyUpdateRequest
+    | BasicAuthUpdateRequest
+    | OAuth2UpdateRequest
+    | Sigv4UpdateRequest,
     Field(discriminator="type"),
 ]
 
@@ -271,6 +364,13 @@ class CredentialRedactedResponse(BaseModel):
     api: APIReferenceResponse = Field(
         description="The (vendor, name, version) API this credential targets."
     )
+    catalog_api_id: str | None = Field(
+        default=None,
+        description=(
+            "Catalog identity slug of the target API (`domain[/sub-api]`), when "
+            "recorded at create time. Display-only; null for older credentials."
+        ),
+    )
     provider: str = Field(description="Credential provider; 'static' for stored secrets.")
     provider_account_ref: str | None = Field(
         default=None, description="Opaque reference to the provider account, when applicable."
@@ -283,7 +383,13 @@ class CredentialRedactedResponse(BaseModel):
     updated_at: datetime | None = Field(default=None, description="Last update timestamp (UTC).")
     details: dict[str, Any] | None = Field(
         default=None,
-        description="Redacted, type-specific projection (hints/last-N chars; never the secret).",
+        description=(
+            "Redacted, type-specific projection (hints/last-N chars; never the "
+            "secret). For oauth2: client_id, token_url, grant_type "
+            "(authorization_code | client_credentials), scopes, and — for "
+            "authorization_code only — `connected`, whether the interactive "
+            "sign-in completed and is still usable (null for other grants)."
+        ),
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
@@ -295,7 +401,7 @@ class CredentialCreateResponse(BaseModel):
     """Create response: redacted + secret shown once."""
 
     credential: CredentialRedactedResponse
-    secret: dict[str, Any]
+    secret: dict[str, Any] = Field(json_schema_extra=SENSITIVE)
 
 
 class CredentialListResponse(BaseModel):

@@ -47,7 +47,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
-from jentic_one.admin.core.permissions import compute_implies_transitive
+from jentic_one.shared.auth.permission_catalog import compute_implies_transitive
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.scopes import AGENTS_WRITE, DEFAULT_AGENT_SCOPES
 
@@ -121,6 +121,9 @@ _OPERATOR_SCOPES: frozenset[str] = frozenset(
         "service-accounts:write",
         "audit:read",
         "events:write",
+        # Confirming an overlay rewrites the served spec — a human operator action,
+        # never an agent default (excluded from GRANTABLE_SCOPES/DEFAULT_AGENT_SCOPES).
+        "overlays:confirm",
     }
 )
 
@@ -172,7 +175,13 @@ PATH_SCOPE_OVERRIDES: dict[tuple[str, str], list[str]] = {
 }
 
 #: ``(method, path) -> [actor_type, ...]`` to override the inferred actor types.
-ACTOR_TYPE_OVERRIDES: dict[tuple[str, str], list[str]] = {}
+ACTOR_TYPE_OVERRIDES: dict[tuple[str, str], list[str]] = {
+    # Session refresh is enforced in the service layer (AuthService.refresh
+    # rejects non-user actors and opaque tokens), which the route dependency
+    # cannot express — without this override the reference would read "any
+    # authenticated actor" for a users-only operation.
+    ("POST", "/auth/refresh"): [ActorType.USER.value],
+}
 
 #: ``(method, path) -> note`` for operations that **do** authenticate but not via
 #: the standard ``get_current_identity`` bearer dependency (so closure
@@ -192,14 +201,32 @@ NON_IDENTITY_AUTH: dict[tuple[str, str], str] = {
 # --- route introspection ----------------------------------------------------
 
 
-def _iter_api_routes(routes: list[Any]) -> list[APIRoute]:
-    """Flatten ``app.routes``, descending into upstream ``_IncludedRouter`` wrappers."""
-    out: list[APIRoute] = []
+def _iter_api_routes(routes: list[Any], prefix: str = "") -> list[tuple[str, APIRoute]]:
+    """Flatten ``app.routes`` into ``(prefix, route)`` pairs.
+
+    Descends into upstream ``_IncludedRouter`` wrappers, accumulating the
+    ``include_router(prefix=...)`` prefix so a route's *full* path can be
+    reconstructed. FastAPI stores each included route's ``.path`` **without** the
+    prefix its parent applied (the prefix lives on the ``_IncludedRouter`` wrapper,
+    in ``include_context.prefix``), so a naive walk keys routes by their
+    prefix-stripped path — which then fails to join to the OpenAPI document (whose
+    paths carry the full prefix). That silently dropped every prefixed
+    ``AppContainer.extra_routers`` route (e.g. an enterprise overlay's
+    ``/enterprise/admin/*`` console) from the auth map, so the endpoint reference
+    mis-classified them as public. Threading the prefix through fixes the join.
+    """
+    out: list[tuple[str, APIRoute]] = []
     for route in routes:
         if isinstance(route, APIRoute):
-            out.append(route)
+            out.append((prefix, route))
         elif _IncludedRouterType is not None and isinstance(route, _IncludedRouterType):
-            out.extend(_iter_api_routes(route.original_router.routes))
+            # The included prefix lives on the wrapper's include_context (FastAPI
+            # ≥0.138). Read it defensively: if a future refactor moves it, we fall
+            # back to no extra prefix rather than crash — the classification guard
+            # in endpoint_reference remains the loud backstop.
+            context = getattr(route, "include_context", None)
+            child_prefix = prefix + getattr(context, "prefix", "")
+            out.extend(_iter_api_routes(route.original_router.routes, child_prefix))
     return out
 
 
@@ -295,14 +322,14 @@ def build_operation_auth_map(
     stable across both the route table and the generated document.
     """
     result: dict[tuple[str, str], dict[str, Any]] = {}
-    for route in _iter_api_routes(app.routes):
+    for prefix, route in _iter_api_routes(app.routes):
         methods = {m.upper() for m in (route.methods or set())} - {"HEAD", "OPTIONS"}
         if not methods:
             continue
         has_identity, perms, actor = _route_auth(route)
 
         for method in methods:
-            key = (method, _normalise_path(route.path))
+            key = (method, _normalise_path(prefix + route.path))
             # A curated scope/actor override (or a non-identity auth note) makes an
             # operation authenticated even when no get_current_identity dependency
             # is visible (service-layer-enforced scopes, RAT-gated routes, ...).

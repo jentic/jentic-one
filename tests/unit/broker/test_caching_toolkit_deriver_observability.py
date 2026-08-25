@@ -10,6 +10,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 import jentic_one.broker.repos.caching_toolkit_deriver as _deriver_mod
 from jentic_one.broker.repos.caching_toolkit_deriver import CachingToolkitDeriver
+from jentic_one.shared.broker.protocols import ToolkitDerivation
 
 
 class _CountingDeriver:
@@ -21,12 +22,15 @@ class _CountingDeriver:
 
     async def derive_toolkits(
         self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> list[str]:
+    ) -> ToolkitDerivation:
         self.calls += 1
-        return list(self.result)
-
-    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
-        return bool(self.result)
+        tk = tuple(self.result)
+        return ToolkitDerivation(
+            toolkits=tk,
+            agent_bound_any=bool(tk),
+            api_served_toolkits=tk,
+            identity_mismatch=None,
+        )
 
 
 def _get_counter_value(reader: InMemoryMetricReader, name: str) -> int:

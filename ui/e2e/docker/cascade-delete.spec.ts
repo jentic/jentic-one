@@ -28,7 +28,8 @@ test('hard-delete a toolkit from the detail page (type-to-confirm, generic warni
 	await page.goto(`/app/toolkits/${toolkitId}`);
 	await expect(page.getByRole('heading', { name })).toBeVisible();
 
-	// Open the cascade dialog from the danger-zone delete control.
+	// Open the cascade dialog from the Settings tab's danger-zone control.
+	await page.getByRole('tab', { name: 'Settings' }).click();
 	await page
 		.getByRole('button', { name: `Delete ${name}` })
 		.first()

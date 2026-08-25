@@ -4,20 +4,25 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import Field
 
 from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 from jentic_one.control.core.schema.toolkits import Toolkit
+from jentic_one.control.services.toolkits.errors import ToolkitLevelPermissionsUnsupportedError
+from jentic_one.control.services.toolkits.schemas import BindingWarning
 from jentic_one.control.services.toolkits.service import ToolkitService
 from jentic_one.control.web.deps import get_toolkit_service
 from jentic_one.control.web.schemas.toolkits import (
+    BindingWarningSchema,
     PermissionRuleListResponse,
     PermissionRuleReadSchema,
     PermissionRuleSchema,
     PermissionsPatchRequest,
+    PermissionTestRequest,
+    PermissionTestResponse,
     ToolkitAgentListResponse,
     ToolkitAgentResponse,
     ToolkitCreateRequest,
@@ -35,21 +40,24 @@ from jentic_one.control.web.schemas.toolkits import (
     ToolkitUpdateRequest,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
 
 
-def _to_toolkit_response(toolkit: Toolkit) -> ToolkitResponse:
+def _to_toolkit_response(
+    toolkit: Toolkit, served: dict[str, list[ServedApiRef]] | None = None
+) -> ToolkitResponse:
     return ToolkitResponse(
         toolkit_id=toolkit.id,
         name=toolkit.name,
         description=toolkit.description,
         active=toolkit.active,
-        permissions=toolkit.permissions,
         key_count=len(toolkit.keys),
         credential_count=len(toolkit.bindings),
+        apis=(served or {}).get(toolkit.id, []),
         created_by=toolkit.created_by,
         created_at=toolkit.created_at,
         updated_at=toolkit.updated_at,
@@ -72,6 +80,7 @@ def _to_key_response(key: ToolkitKey) -> ToolkitKeyResponse:
 def _to_binding_response(
     binding: ToolkitCredentialBinding,
     permissions: list[ToolkitPermissionRule] | None = None,
+    warnings: list[BindingWarningSchema] | None = None,
 ) -> ToolkitCredentialBindingResponse:
     cred = binding.credential
     return ToolkitCredentialBindingResponse(
@@ -79,10 +88,20 @@ def _to_binding_response(
         credential_id=binding.credential_id,
         api_vendor=cred.api_vendor if cred else None,
         api_name=cred.api_name if cred else None,
+        catalog_api_id=cred.catalog_api_id if cred else None,
         credential_type=cred.type if cred else None,
         label=cred.name if cred else None,
         bound_at=binding.bound_at,
         permissions=[_to_permission_rule(r) for r in permissions] if permissions else [],
+        warnings=warnings if warnings else [],
+    )
+
+
+def _to_binding_warning(warning: BindingWarning) -> BindingWarningSchema:
+    return BindingWarningSchema(
+        code=warning.code,
+        message=warning.message,
+        credential_id=warning.credential_id,
     )
 
 
@@ -92,6 +111,7 @@ def _to_permission_rule(rule: ToolkitPermissionRule) -> PermissionRuleReadSchema
             "effect": rule.effect,
             "methods": rule.methods,
             "path": rule.path,
+            "match_mode": rule.match_mode,
             "operations": rule.operations,
             "_system": rule.is_system,
             "_comment": rule.comment,
@@ -102,9 +122,34 @@ def _to_permission_rule(rule: ToolkitPermissionRule) -> PermissionRuleReadSchema
 # --- Toolkit CRUD ---
 
 
+async def _reject_toolkit_level_permissions(request: Request) -> None:
+    """Explicit reject for the legacy `POST /toolkits` `permissions` field.
+
+    Toolkit-level ``permissions`` were written on create but never enforced
+    by the broker (which reads per-binding ``toolkit_permission_rules``).
+    Dropping the field from the schema alone is not enough — Pydantic
+    silently ignores unknown keys on ``ToolkitCreateRequest``, so a client
+    would go on submitting the array with no feedback. Peek at the raw
+    body first; if ``permissions`` is present, raise the domain error the
+    error map surfaces as ``422 toolkit_level_permissions_unsupported``.
+    """
+    if request.method != "POST":
+        return
+    if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+        return
+    try:
+        body = await request.json()
+    except ValueError:
+        # Malformed JSON — let the Pydantic body parser produce its own 422.
+        return
+    if isinstance(body, dict) and "permissions" in body:
+        raise ToolkitLevelPermissionsUnsupportedError()
+
+
 @router.post("/toolkits", status_code=201, summary="Create toolkit")
 async def create_toolkit(
     body: ToolkitCreateRequest,
+    _reject: None = Depends(_reject_toolkit_level_permissions),
     identity: Identity = get_current_identity(required_permissions=["toolkits:write"]),
     svc: ToolkitService = Depends(get_toolkit_service),
 ) -> ToolkitCreateResponse:
@@ -112,22 +157,21 @@ async def create_toolkit(
 
     The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
     never retrievable again. Optional `credential_ids` bind existing credentials
-    at creation time.
+    at creation time; each inline bind emits a ``no_permission_rules`` warning
+    because the broker denies by default until rules are added.
     """
-    permissions = (
-        [p.model_dump(exclude_none=True) for p in body.permissions] if body.permissions else None
-    )
-    toolkit, plaintext = await svc.create(
+    result = await svc.create(
         name=body.name,
         identity=identity,
         description=body.description,
         active=body.active,
-        permissions=permissions,
         credential_ids=body.credential_ids,
     )
+    served = await svc.served_apis([result.toolkit.id], identity=identity)
     return ToolkitCreateResponse(
-        toolkit=_to_toolkit_response(toolkit),
-        api_key=plaintext,
+        toolkit=_to_toolkit_response(result.toolkit, served),
+        api_key=result.plaintext_key,
+        warnings=[_to_binding_warning(w) for w in result.warnings],
     )
 
 
@@ -142,8 +186,9 @@ async def list_toolkits(
 ) -> ToolkitListResponse:
     """List toolkits with cursor-based pagination."""
     data, has_more, next_cursor = await svc.list_all(cursor=cursor, limit=limit, identity=identity)
+    served = await svc.served_apis([t.id for t in data], identity=identity)
     return ToolkitListResponse(
-        data=[_to_toolkit_response(t) for t in data],
+        data=[_to_toolkit_response(t, served) for t in data],
         has_more=has_more,
         next_cursor=next_cursor,
     )
@@ -159,7 +204,8 @@ async def get_toolkit(
 ) -> ToolkitResponse:
     """Get a single toolkit by its `tk_…` ID."""
     toolkit = await svc.get(toolkit_id, identity=identity)
-    return _to_toolkit_response(toolkit)
+    served = await svc.served_apis([toolkit.id], identity=identity)
+    return _to_toolkit_response(toolkit, served)
 
 
 @router.patch("/toolkits/{toolkit_id}", summary="Update toolkit", responses=not_found())
@@ -177,7 +223,8 @@ async def update_toolkit(
         description=body.description,
         active=body.active,
     )
-    return _to_toolkit_response(toolkit)
+    served = await svc.served_apis([toolkit.id], identity=identity)
+    return _to_toolkit_response(toolkit, served)
 
 
 @router.delete(
@@ -342,11 +389,16 @@ async def bind_credential(
     permissions_data = None
     if body.permissions:
         permissions_data = [p.model_dump(exclude_none=True) for p in body.permissions]
-    binding = await svc.bind_credential(
-        toolkit_id, body.credential_id, identity=identity, permissions=permissions_data
+    result = await svc.bind_credential(
+        toolkit_id,
+        body.credential_id,
+        identity=identity,
+        permissions=permissions_data,
+        allow_all=body.allow_all,
     )
-    rules = await svc.list_permissions(toolkit_id, body.credential_id, identity=identity)
-    return _to_binding_response(binding, rules)
+    return _to_binding_response(
+        result.binding, result.rules, [_to_binding_warning(w) for w in result.warnings]
+    )
 
 
 @router.get(
@@ -449,3 +501,43 @@ async def patch_permissions(
         toolkit_id, credential_id, identity=identity, add=add_data, remove=body.remove
     )
     return PermissionRuleListResponse(data=[_to_permission_rule(r) for r in rules])
+
+
+@router.post(
+    "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test",
+    operation_id="testToolkitPermissions",
+    summary="Dry-run permission evaluation",
+    responses=not_found(),
+)
+async def test_permissions(
+    toolkit_id: str,
+    credential_id: str,
+    body: PermissionTestRequest,
+    identity: Identity = get_current_identity(
+        required_permissions=["toolkits:read", "owner:toolkits:read"]
+    ),
+    svc: ToolkitService = Depends(get_toolkit_service),
+) -> PermissionTestResponse:
+    """Answer "what would the broker do for this request?" without calling upstream.
+
+    Evaluates the same **vendor-pooled** rule set the broker sees at request
+    time — rules from all same-vendor bindings on this toolkit compete in one
+    ordered list. The response names which binding contributed the matching
+    rule, which is not obvious from the toolkit id alone under pooling.
+    """
+    result = await svc.test_permissions(
+        toolkit_id,
+        credential_id,
+        method=body.method,
+        path=body.path,
+        operation_id=body.operation_id,
+        identity=identity,
+    )
+    return PermissionTestResponse(
+        allowed=result.allowed,
+        matched=result.matched,
+        effect=result.effect,
+        rule_index=result.rule_index,
+        credential_id=result.credential_id,
+        is_system=result.is_system,
+    )

@@ -1,4 +1,4 @@
-import { Navigate, useRoutes, type RouteObject } from 'react-router-dom';
+import { Navigate, useRoutes, type RouteObject } from 'react-router';
 import { useEffect } from 'react';
 import { AuthGuard } from '@/shared/auth/AuthGuard';
 import { SetupGate } from '@/shared/auth/SetupGate';
@@ -7,6 +7,7 @@ import { SetupPage } from '@/shared/auth/SetupPage';
 import { ChangePasswordPage } from '@/shared/auth/ChangePasswordPage';
 import { RedeemInvitePage } from '@/shared/auth/RedeemInvitePage';
 import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
+import { SsoCallbackPage } from '@/shared/auth/SsoCallbackPage';
 import { Layout } from '@/shared/app/Layout';
 import { moduleRoutes, ROUTES } from '@/shared/app/routes';
 import { PlaceholderPage } from '@/shared/app/placeholders';
@@ -106,6 +107,11 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 		// self-closes. Outside the AuthGuard (the popup has no guaranteed
 		// session). Registered before the '*' catch-all below.
 		{ path: '/oauth/connected', element: <OAuthPopupReturn /> },
+		// Public SSO callback landing. The backend redirects the browser here
+		// (→ /app/auth/callback?code=…) after the external-IdP round-trip; the
+		// page exchanges the code for a session and enters the app. Outside the
+		// AuthGuard (no session yet). Registered before the '*' catch-all.
+		{ path: ROUTES.authCallback, element: <SsoCallbackPage /> },
 		// Public API reference — API docs are public-by-norm; lives outside the
 		// AuthGuard/Layout. Matched before the authenticated shell so it wins for
 		// `/app/docs` whether or not a session exists.

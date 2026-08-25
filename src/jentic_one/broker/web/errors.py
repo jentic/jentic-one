@@ -26,9 +26,11 @@ from jentic_one.broker.core.exceptions import (
     AmbiguousMatchError,
     BrokerError,
     CircuitOpenError,
+    CredentialIdentityMismatchError,
     CredentialNeedsReconnectError,
     CredentialNotProvisionedError,
     CredentialRefreshTransientError,
+    CredentialUndecryptableError,
     DeadlineExceededError,
     ErrorOrigin,
     IdempotencyConflictError,
@@ -56,6 +58,7 @@ _PROBLEM_JSON = "application/problem+json"
 # Domain exception → HTTP status (plan.md §7.3 / 02-core-proxy error map).
 STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     ActionDeniedError: 403,
+    CredentialIdentityMismatchError: 403,
     OperationNotFoundError: 404,
     AmbiguousMatchError: 409,
     MethodNotAllowedError: 405,
@@ -72,6 +75,7 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     CircuitOpenError: 503,
     RateLimitExceededError: 429,
     CredentialNotProvisionedError: 424,
+    CredentialUndecryptableError: 424,
     CredentialNeedsReconnectError: 401,
     CredentialRefreshTransientError: 502,
     UpstreamTimeoutError: 504,

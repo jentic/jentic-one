@@ -107,7 +107,7 @@ async def test_derive_toolkits_no_overlap_returns_empty(
         agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
     )
 
-    assert result == []
+    assert result.toolkits == ()
 
 
 async def test_derive_toolkits_single_match(
@@ -127,7 +127,7 @@ async def test_derive_toolkits_single_match(
         agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
     )
 
-    assert result == [matching]
+    assert result.toolkits == (matching,)
 
 
 async def test_derive_toolkits_multiple_matches(
@@ -147,24 +147,26 @@ async def test_derive_toolkits_multiple_matches(
         agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
     )
 
-    assert result == sorted([tk_a, tk_b])
+    assert result.toolkits == tuple(sorted([tk_a, tk_b]))
 
 
 async def test_derive_toolkits_wildcard_name_version(
     admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
 ) -> None:
-    """Empty name/version match any credential for the vendor."""
+    """A NULL-name/version credential covers any concrete API for the vendor."""
+    # The credential is vendor-scoped (NULL name/version), so it covers a concrete
+    # operation identity for that vendor.
     tk_id = await _seed_toolkit_with_credential(
-        control_db, toolkit_name="tk-acme", vendor="acme.com", name="pets-api", version="v2"
+        control_db, toolkit_name="tk-acme", vendor="acme.com", name=None, version=None
     )
     agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
 
     resolver = ToolkitBindingResolver(admin_db, control_db)
     result = await resolver.derive_toolkits(
-        agent_id=agent_id, vendor="acme.com", name="", version=""
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v2"
     )
 
-    assert result == [tk_id]
+    assert result.toolkits == (tk_id,)
 
 
 async def test_derive_toolkits_no_agent_bindings_returns_empty(
@@ -181,7 +183,8 @@ async def test_derive_toolkits_no_agent_bindings_returns_empty(
         agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
     )
 
-    assert result == []
+    assert result.toolkits == ()
+    assert result.agent_bound_any is False
 
 
 async def test_derive_toolkits_excludes_unbound_wildcard_toolkit(
@@ -208,29 +211,35 @@ async def test_derive_toolkits_excludes_unbound_wildcard_toolkit(
         agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
     )
 
-    assert result == [bound]
-    assert unbound_wildcard not in result
+    assert result.toolkits == (bound,)
+    assert unbound_wildcard not in result.toolkits
+    # Both toolkits serve the API (the wildcard covers it too), independent of
+    # the agent's bindings — this drives the recovery directive, not authz.
+    assert set(result.api_served_toolkits) == {bound, unbound_wildcard}
 
 
-async def test_any_toolkit_serves_api_true_when_a_toolkit_serves(
+async def test_derive_toolkits_served_true_when_a_toolkit_serves(
     admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
 ) -> None:
     """A toolkit with a bound credential for the API → serves the API (issue #683).
 
-    Independent of any agent binding: this drives the ``no_toolkit_binding``
-    recovery directive, not authorization.
+    ``api_served_toolkits`` is independent of any agent binding: it drives the
+    ``no_toolkit_binding`` recovery directive, not authorization.
     """
     await _seed_toolkit_with_credential(
         control_db, toolkit_name="tk-acme", vendor="acme.com", name="pets-api", version="v1"
     )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[])
 
     resolver = ToolkitBindingResolver(admin_db, control_db)
-    serves = await resolver.any_toolkit_serves_api(vendor="acme.com", name="pets-api", version="v1")
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
 
-    assert serves is True
+    assert result.api_served_toolkits != ()
 
 
-async def test_any_toolkit_serves_api_false_when_no_toolkit_serves(
+async def test_derive_toolkits_served_false_when_no_toolkit_serves(
     admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
 ) -> None:
     """No toolkit bound a credential for the API → does not serve it (issue #683).
@@ -241,8 +250,101 @@ async def test_any_toolkit_serves_api_false_when_no_toolkit_serves(
     await _seed_toolkit_with_credential(
         control_db, toolkit_name="tk-other", vendor="other.com", name="x", version="v1"
     )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[])
 
     resolver = ToolkitBindingResolver(admin_db, control_db)
-    serves = await resolver.any_toolkit_serves_api(vendor="acme.com", name="pets-api", version="v1")
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
 
-    assert serves is False
+    assert result.api_served_toolkits == ()
+
+
+async def test_nearest_miss_same_vendor_wrong_name(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """Bound to a same-vendor credential with the wrong name → identity mismatch (#748).
+
+    The agent is bound and a credential covers the vendor, but its name doesn't
+    match the operation. This is a genuine credential-identity mismatch, not a
+    provisioning gap.
+    """
+    tk_id = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-billing", vendor="acme-com", name="billing", version="v1"
+    )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme-com", name="payments", version="v1"
+    )
+
+    assert result.toolkits == ()
+    assert result.identity_mismatch is not None
+    assert result.identity_mismatch.found_name == "billing"
+    assert result.identity_mismatch.would_match_if_normalized is False
+
+
+async def test_nearest_miss_legacy_non_canonical_would_match(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A legacy non-canonical stored identity flags would_match_if_normalized (#746)."""
+    # Stored verbatim (bypassing the canonicalizing service), as a legacy row.
+    tk_id = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-legacy", vendor="Acme.com", name="Pets-API", version="v1"
+    )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    # The operation identity is canonical; the stored row only matches once slugged.
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme-com", name="pets-api", version="v1"
+    )
+
+    assert result.toolkits == ()
+    assert result.identity_mismatch is not None
+    assert result.identity_mismatch.would_match_if_normalized is True
+
+
+async def test_nearest_miss_unrelated_vendor_is_no_mismatch(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """Bound only to an unrelated vendor → no mismatch, falls through to #683.
+
+    An agent bound to Slack calling Stripe must NOT be told to retarget its Slack
+    credential. The vendor-affinity gate returns no mismatch, so the caller yields
+    ``no_toolkit_binding`` instead.
+    """
+    tk_id = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-slack", vendor="slack-com", name="chat", version="v1"
+    )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="stripe-com", name="payments", version="v1"
+    )
+
+    assert result.toolkits == ()
+    assert result.identity_mismatch is None
+
+
+async def test_nearest_miss_none_when_no_bound_credentials(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """The agent's toolkits have no bound credentials → provisioning gap, not mismatch."""
+    toolkit = Toolkit(name="tk-empty")
+    async with control_db.session() as session:
+        session.add(toolkit)
+        await session.flush()
+        tk_id = toolkit.id
+        await session.commit()
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme-com", name="pets-api", version="v1"
+    )
+
+    assert result.toolkits == ()
+    assert result.identity_mismatch is None

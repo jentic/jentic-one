@@ -18,6 +18,14 @@ from jentic_one.shared.models import ActorStatus, ActorType
 
 _INVALID = "Assertion is invalid"
 
+# Returned only after the assertion's signature has verified, so the caller has
+# proven possession of the registered private key. A distinct detail is what
+# lets the CLI's register/setup/wizard flows tell "wait for the operator to
+# approve" apart from a genuinely rejected assertion (audience/signature) —
+# with the ambiguous _INVALID for both, the approval wait aborted on first
+# contact on self-hosted backends, which mint no claim tokens by default.
+_PENDING = "Agent is not active yet (pending approval)"
+
 _DEFAULT_MAX_TTL = 300
 
 
@@ -89,7 +97,7 @@ class AssertionService:
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.get_by_id_for_update(session, issuer)
 
-            if agent is None or agent.status != ActorStatus.ACTIVE or not agent.jwks:
+            if agent is None or not agent.jwks:
                 raise InvalidGrantError(_INVALID)
 
             public_key = resolve_agent_key(agent.jwks, unverified_header.get("kid"))
@@ -108,6 +116,27 @@ class AssertionService:
                 raise InvalidGrantError(_INVALID) from None
 
             self._validate_timing(payload)
+
+            # Status gate AFTER signature verification, deliberately:
+            # 1. The distinct PENDING detail is only revealed to a caller who
+            #    holds the registered private key, so it leaks nothing an
+            #    unauthenticated prober could use (a bad signature still gets
+            #    the generic _INVALID regardless of status).
+            # 2. It is what makes the CLI's approval wait possible on backends
+            #    without a claim-token minter: register/setup/wizard poll the
+            #    token exchange until the operator approves, and need pending
+            #    to be distinguishable from a hard assertion failure.
+            # Other non-active statuses (rejected/disabled/archived) stay
+            # deliberately generic: they are terminal, not waitable, and get
+            # no dedicated probe signal.
+            #
+            # Checked BEFORE the jti replay cache so approval polling (a fresh
+            # jti per attempt) never populates the cache for exchanges that
+            # cannot succeed.
+            if agent.status == ActorStatus.PENDING:
+                raise InvalidGrantError(_PENDING)
+            if agent.status != ActorStatus.ACTIVE:
+                raise InvalidGrantError(_INVALID)
 
             jti = payload.get("jti")
             if not jti or not self._jti_cache.check_and_insert(jti):
@@ -138,7 +167,9 @@ class AssertionService:
 
     @property
     def _expected_audience(self) -> str:
-        base = self._ctx.config.auth.canonical_base_url
+        # Normalized like deployment_base_url so a trailing slash in the
+        # configured canonical_base_url can't break assertion validation.
+        base = self._ctx.config.auth.canonical_base_url.rstrip("/")
         return f"{base}/oauth/token"
 
     def _validate_timing(self, payload: dict[str, Any]) -> None:

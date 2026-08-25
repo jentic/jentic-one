@@ -62,7 +62,20 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 def install_on_app(app: FastAPI, ctx: Context) -> None:
     """Install the auth token verifier on the app for shared identity resolution."""
-    app.state.verify_token = _make_auth_verifier(ctx)
+    app.state.verify_token = make_superset_verifier(ctx)
+
+
+def make_superset_verifier(ctx: Context) -> Any:
+    """Build the full-taxonomy token verifier for combined/standalone apps.
+
+    Resolves every platform token shape a signed-in caller can present:
+    agent/service-account API keys (``jak_``/``sak_``), opaque ``at_`` access
+    tokens (DB-resolved, live permissions), and HS256 web-session JWTs. This is
+    the verifier a combined-app assembler should install so admin/enterprise
+    routes accept ``at_`` regardless of surface ordering — the auth surface's
+    ``install_on_app`` uses it, and other assemblers can call it directly.
+    """
+    return _make_auth_verifier(ctx)
 
 
 def _make_auth_verifier(ctx: Context) -> Any:
@@ -124,7 +137,9 @@ def _make_auth_verifier(ctx: Context) -> Any:
 
 def create_app(ctx: Context) -> FastAPI:
     """Create the auth FastAPI application for standalone deployment."""
-    app = create_surface_app(ctx, title="jentic-one-auth", routers=get_routers())
+    app = create_surface_app(
+        ctx, title="jentic-one-auth", routers=get_routers(), enabled_apps={"auth"}
+    )
     install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)

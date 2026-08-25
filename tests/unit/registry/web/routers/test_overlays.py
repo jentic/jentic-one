@@ -16,6 +16,7 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 from jentic_one.registry.services.errors import (
     ApiNotFoundError,
     OverlayNotFoundError,
+    OverlayRematerializeForbiddenError,
     OverlayStateConflictError,
 )
 from jentic_one.registry.services.overlay_service import OverlayPage, OverlayPageItem, OverlayView
@@ -55,7 +56,13 @@ def client() -> TestClient:
     return TestClient(app, headers={"Authorization": "Bearer test-token"})
 
 
-def _make_view(*, status: str = "pending") -> OverlayView:
+def _make_view(
+    *,
+    status: str = "pending",
+    confirmed_revision_id: uuid.UUID | None = None,
+    superseded_revision_id: uuid.UUID | None = None,
+    deprecated_reason: str | None = None,
+) -> OverlayView:
     return OverlayView(
         id=_OVERLAY_ID,
         api_id=uuid.uuid4(),
@@ -65,12 +72,16 @@ def _make_view(*, status: str = "pending") -> OverlayView:
         status=status,
         document={"overlay": "1.0"},
         target_revision_id=None,
+        confirmed_revision_id=confirmed_revision_id,
+        superseded_revision_id=superseded_revision_id,
         contributed_by="agent",
+        created_by="usr_submitter",
         confirmed_by_execution_id=None,
         created_at=datetime(2024, 6, 1, tzinfo=UTC),
         updated_at=None,
         confirmed_at=None,
         deprecated_at=None,
+        deprecated_reason=deprecated_reason,
     )
 
 
@@ -109,6 +120,57 @@ def test_submit_overlay_api_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_get_overlay_surfaces_confirmed_revision_id(client: TestClient) -> None:
+    """A materialized overlay exposes its confirmed_revision_id over the API."""
+    rev_id = uuid.uuid4()
+    view = _make_view(status="confirmed", confirmed_revision_id=rev_id)
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    assert resp.status_code == 200
+    assert resp.json()["confirmed_revision_id"] == str(rev_id)
+
+
+def test_get_overlay_surfaces_author_and_superseded_revision(client: TestClient) -> None:
+    """The submitting principal + rollback target are on the wire (UI legibility)."""
+    superseded = uuid.uuid4()
+    view = _make_view(
+        status="confirmed",
+        confirmed_revision_id=uuid.uuid4(),
+        superseded_revision_id=superseded,
+    )
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["created_by"] == "usr_submitter"
+    assert body["contributed_by"] == "agent"
+    assert body["superseded_revision_id"] == str(superseded)
+
+
+def test_get_overlay_surfaces_deprecated_reason(client: TestClient) -> None:
+    """The deprecation cause is on the wire so clients can label the event durably."""
+    view = _make_view(status="deprecated", deprecated_reason="rollback")
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    assert resp.status_code == 200
+    assert resp.json()["deprecated_reason"] == "rollback"
+
+
 def test_list_overlays_200(client: TestClient) -> None:
     page = OverlayPage(
         data=[
@@ -118,12 +180,16 @@ def test_list_overlays_200(client: TestClient) -> None:
                 status="pending",
                 document={"x": 1},
                 target_revision_id=None,
+                confirmed_revision_id=None,
+                superseded_revision_id=None,
                 contributed_by=None,
+                created_by="usr_submitter",
                 confirmed_by_execution_id=None,
                 created_at=datetime(2024, 6, 1, tzinfo=UTC),
                 updated_at=None,
                 confirmed_at=None,
                 deprecated_at=None,
+                deprecated_reason=None,
             )
         ],
         has_more=False,
@@ -141,6 +207,7 @@ def test_list_overlays_200(client: TestClient) -> None:
     assert len(body["data"]) == 1
     assert body["has_more"] is False
     assert "_links" in body["data"][0]
+    assert body["data"][0]["created_by"] == "usr_submitter"
 
 
 def test_get_overlay_200(client: TestClient) -> None:
@@ -199,6 +266,21 @@ def test_update_overlay_conflict(client: TestClient) -> None:
     assert resp.status_code == 409
 
 
+def test_update_overlay_rematerialize_forbidden(client: TestClient) -> None:
+    """Editing a materialized overlay without overlays:confirm maps to 403 (D1)."""
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.update",
+        new_callable=AsyncMock,
+        side_effect=OverlayRematerializeForbiddenError(_OVERLAY_ID),
+    ):
+        resp = client.patch(
+            f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}",
+            json={"document": {"x": 1}},
+        )
+
+    assert resp.status_code == 403
+
+
 def test_deprecate_overlay_204(client: TestClient) -> None:
     with patch(
         "jentic_one.registry.web.routers.overlays.OverlayService.deprecate",
@@ -254,6 +336,9 @@ def test_confirm_link_present_when_pending(client: TestClient) -> None:
     body = resp.json()
     assert body["_links"]["confirm"] is not None
     assert ":confirm" in body["_links"]["confirm"]
+    # A pending overlay can be deprecated but not rolled back (nothing materialized).
+    assert body["_links"]["deprecate"] is not None
+    assert body["_links"]["rollback"] is None
 
 
 def test_confirm_link_absent_when_confirmed(client: TestClient) -> None:
@@ -267,3 +352,51 @@ def test_confirm_link_absent_when_confirmed(client: TestClient) -> None:
 
     body = resp.json()
     assert body["_links"]["confirm"] is None
+
+
+def test_rollback_link_present_when_materialized(client: TestClient) -> None:
+    # A materialized overlay (CONFIRMED + confirmed_revision_id) advertises rollback +
+    # deprecate, but not confirm.
+    view = _make_view(status="confirmed", confirmed_revision_id=uuid.uuid4())
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    body = resp.json()
+    assert body["_links"]["rollback"] is not None
+    assert ":rollback" in body["_links"]["rollback"]
+    assert body["_links"]["deprecate"] is not None
+    assert body["_links"]["confirm"] is None
+
+
+def test_rollback_link_absent_when_confirmed_but_unmaterialized(client: TestClient) -> None:
+    # CONFIRMED with no confirmed_revision_id (materialize not linked): rollback is not
+    # offered, since there is no materialized revision to restore from.
+    view = _make_view(status="confirmed", confirmed_revision_id=None)
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    body = resp.json()
+    assert body["_links"]["rollback"] is None
+
+
+def test_no_action_links_when_deprecated(client: TestClient) -> None:
+    view = _make_view(status="deprecated")
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    body = resp.json()
+    assert body["_links"]["confirm"] is None
+    assert body["_links"]["rollback"] is None
+    assert body["_links"]["deprecate"] is None

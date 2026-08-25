@@ -367,3 +367,41 @@ async def test_pipedream_replay_rejected(
         credential = await CredentialRepository.get_by_id(session, credential_id)
         assert credential is not None
         assert credential.provider_account_ref == "acct_1"
+
+
+# --- Token-row lifecycle (repo-level) ---
+
+
+async def test_reconnect_clears_revocation(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """`update_tokens` (the re-connect/refresh write path) clears `revoked_at`.
+
+    A revoked row that receives fresh tokens is live again — leaving the old
+    revocation stamp would permanently pin the derived `connected` flag to
+    False after a successful re-connect (#890 review board).
+    """
+    ctx = integration_context
+    credential_id = await _create_oauth2_credential(ctx, provider="static")
+
+    async with ctx.control_db.transaction() as session:
+        await OAuthTokenRepository.create(
+            session,
+            credential_id=credential_id,
+            encrypted_access_token="enc-old",
+            created_by="usr_test",
+        )
+        await OAuthTokenRepository.mark_revoked(session, credential_id)
+
+    async with ctx.control_db.transaction() as session:
+        row = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert row is not None
+        assert row.revoked_at is not None
+
+        updated = await OAuthTokenRepository.update_tokens(
+            session,
+            credential_id,
+            encrypted_access_token="enc-new",
+        )
+        assert updated is not None
+        assert updated.revoked_at is None

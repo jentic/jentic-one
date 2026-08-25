@@ -19,13 +19,13 @@
  * `/events` carries no actor filter (tracked: jentic/jentic-one#387).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, TriangleAlert } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
-import { toast } from '@/shared/ui';
-import { AccessRequestDialog } from '@/shared/app/rail/AccessRequestDialog';
+import { toast, Tooltip } from '@/shared/ui';
+import { AccessRequestDecisionDialog } from '@/shared/app/rail/AccessRequestDecisionDialog';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import { RailFeed } from '@/shared/app/rail/RailFeed';
 import type { RailFeedFilters } from '@/shared/app/rail/RailFeed';
@@ -37,7 +37,9 @@ import {
 	RAIL_COLLAPSE_CHANGE_EVENT,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	buildTraceBundle,
+	formatFailurePillCount,
 	readToastScope,
+	unacknowledgedFailureCount,
 	useAgentStream,
 	writeToastScope,
 } from '@/shared/lib/agentStream';
@@ -124,7 +126,15 @@ export function AgentRail() {
 	const [frozenIds, setFrozenIds] = useState<Set<string> | null>(null);
 
 	useEffect(() => {
-		if (feedFrozen && frozenIds === null) setFrozenIds(new Set(events.map((e) => e.id)));
+		// Never freeze an EMPTY feed: if the cursor happens to rest over the rail
+		// while it mounts (page load, or the shared pointer in browser-mode CI),
+		// `mouseenter` fires before the backlog fetch resolves — snapshotting
+		// zero ids would hold every event back indefinitely and the feed would
+		// sit at "Holding · N" with nothing rendered. Wait for the first events
+		// to land, then snapshot.
+		if (feedFrozen && frozenIds === null && events.length > 0) {
+			setFrozenIds(new Set(events.map((e) => e.id)));
+		}
 		if (!feedFrozen && frozenIds !== null) setFrozenIds(null);
 	}, [feedFrozen, frozenIds, events]);
 
@@ -183,6 +193,25 @@ export function AgentRail() {
 		setSearch('');
 		setSeverities(new Set());
 		setKinds(new Set());
+	}
+
+	// The rail's persistent failure badge counts unacknowledged error/critical
+	// events; clicking it focuses the feed on exactly those (#671).
+	const failureCount = useMemo(() => unacknowledgedFailureCount(events), [events]);
+	function focusFailures() {
+		setCollapsed(false);
+		// Unfreeze so a failure that arrived while paused/hovering actually enters
+		// the feed the operator is being pointed at — otherwise the pill can count
+		// N+1 while the frozen feed still shows N, and the new failure never
+		// surfaces. Clear both freeze mechanisms and the frozen snapshot.
+		setManualPaused(false);
+		setHoverFrozen(false);
+		setFrozenIds(null);
+		// ADD the failure severities to the operator's current view rather than
+		// replacing it — union with the previous set so a `warning`/`info` chip
+		// they had selected survives, and deliberately leave `search` and `kinds`
+		// untouched so we don't wipe a filter they set on purpose.
+		setSeverities((prev) => new Set<StreamEvent['severity']>([...prev, 'error', 'critical']));
 	}
 
 	function handleLoadOlder() {
@@ -273,6 +302,22 @@ export function AgentRail() {
 										: 'bg-muted-foreground',
 						)}
 					/>
+					{failureCount > 0 && (
+						<Tooltip
+							interactiveChild
+							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity`}
+						>
+							<button
+								type="button"
+								onClick={() => focusFailures()}
+								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity. Expand and show failures.`}
+								className="border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 flex flex-col items-center gap-0.5 rounded-full border px-1 py-1 text-[9px] font-bold tabular-nums transition-colors"
+							>
+								<TriangleAlert className="h-3 w-3" />
+								{formatFailurePillCount(failureCount)}
+							</button>
+						</Tooltip>
+					)}
 					<span className="text-muted-foreground font-mono text-[10px] tracking-widest uppercase [writing-mode:vertical-rl]">
 						Events · {events.length}
 					</span>
@@ -296,6 +341,8 @@ export function AgentRail() {
 				heldBack={feedFrozen ? Math.max(0, events.length - renderEvents.length) : 0}
 				stale={stale}
 				audioOnCritical={audioOnCritical}
+				failureCount={failureCount}
+				onFocusFailures={focusFailures}
 				onTogglePause={() => setManualPaused((p) => !p)}
 				onCollapse={() => setCollapsed(true)}
 				onLoadOlder={handleLoadOlder}
@@ -334,22 +381,29 @@ export function AgentRail() {
 				onAudioToggle={() => setAudioOnCritical((v) => !v)}
 			/>
 
-			<AccessRequestDialog
-				open={requestDialog !== null}
-				requestId={requestDialog?.requestId ?? null}
-				eventId={requestDialog?.eventId ?? null}
-				onClose={() => setRequestDialog(null)}
-				onResolved={(eventId) => resolveEvent(eventId)}
-				onDecided={() => {
-					// A per-item decision from the dialog changes the durable queue
-					// + dashboard counts + the nav badge. Invalidate the shared roots
-					// (shared-layer code, no cross-module key imports) so every
-					// approval surface refreshes — not just the nav badge, which was
-					// the original stale-dashboard bug.
-					queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
-					queryClient.invalidateQueries({ queryKey: sharedQueryKeys.accessRequestsRoot });
-				}}
-			/>
+			{/* Routed through the shared decision wrapper (fetches the request by
+			    id) so a provisioning plan opens the setup wizard from the rail —
+			    exactly like the dashboard queue — instead of the plain dialog's
+			    "open it from Access Requests" dead end. */}
+			{requestDialog !== null && (
+				<AccessRequestDecisionDialog
+					requestId={requestDialog.requestId}
+					eventId={requestDialog.eventId}
+					onClose={() => setRequestDialog(null)}
+					onResolved={(eventId) => resolveEvent(eventId)}
+					onDecided={() => {
+						// A decision changes the durable queue + dashboard counts +
+						// the nav badge. Invalidate the shared roots (shared-layer
+						// code, no cross-module key imports) so every approval
+						// surface refreshes — not just the nav badge, which was
+						// the original stale-dashboard bug.
+						queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+						queryClient.invalidateQueries({
+							queryKey: sharedQueryKeys.accessRequestsRoot,
+						});
+					}}
+				/>
+			)}
 		</aside>
 	);
 }

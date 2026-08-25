@@ -1,9 +1,10 @@
 /**
  * MonitorList / MonitorRow — the shared "feed" presentation for the Monitor
- * list tabs (Executions, Jobs, Events, Audit).
+ * list tabs (Jobs, Events, Audit; Executions uses the columned ExecutionTable
+ * ported from jentic-mini).
  *
  * This replaces the flat <DataTable> grid for these surfaces with the richer
- * row vocabulary the Overview already uses (see TopOperations): a colour-tinted
+ * row vocabulary the Overview already uses (see UsageBreakdown): a colour-tinted
  * status icon tile as a visual anchor, a strong title + muted subtitle identity
  * stack, optional inline meta badges, and a right-aligned trailing slot for
  * timing / actions. One component renders the same on phones and desktop
@@ -99,14 +100,31 @@ export function MonitorRow({
 	return (
 		<li className="bg-card border-border/40 border-b last:border-0">
 			{onClick ? (
-				<button
-					type="button"
-					onClick={onClick}
+				// A row can carry its own inline controls (e.g. Events' Acknowledge
+				// button), so the clickable wrapper is a `role="link"` div rather than
+				// a real <button> — nesting a button inside a button is invalid. A
+				// click that originates on a nested control is ignored here so the
+				// control's own handler wins.
+				<div
+					role="link"
+					tabIndex={0}
 					aria-label={label}
-					className="hover:bg-muted focus-visible:bg-muted focus-visible:ring-ring block w-full text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset"
+					onClick={(e) => {
+						if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return;
+						onClick();
+					}}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							if ((e.target as HTMLElement).closest('button, a, [role="button"]'))
+								return;
+							e.preventDefault();
+							onClick();
+						}
+					}}
+					className="hover:bg-muted focus-visible:bg-muted focus-visible:ring-ring block w-full cursor-pointer text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset"
 				>
 					{body}
-				</button>
+				</div>
 			) : (
 				body
 			)}

@@ -11,9 +11,10 @@ import hmac
 import secrets
 from base64 import b32encode
 
-from jentic_one.shared.auth.tokens import decode_jwt, issue_jwt
+from jentic_one.shared.auth.tokens import InvalidTokenError, decode_jwt, issue_jwt
 
 __all__ = [
+    "InvalidTokenError",
     "decode_jwt",
     "generate_invite_token",
     "hash_invite_token",

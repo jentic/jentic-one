@@ -18,6 +18,7 @@ from jentic_one.broker.adapters.http_client import HttpClientProvider
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
+from jentic_one.broker.adapters.runners.sigv4 import SigV4SigningRunner
 from jentic_one.broker.core.setup import install_broker_auth
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.execution.executor import PipelineExecutor
@@ -27,6 +28,7 @@ from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.middleware import AdmissionControlMiddleware, _AdmissionGate
 from jentic_one.broker.web.readiness import make_readiness_router
 from jentic_one.broker.web.routers import execute
+from jentic_one.shared.broker.execution import UpstreamRunner
 from jentic_one.shared.context import Context
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.resilience import CircuitBreaker, RateLimiter
@@ -120,11 +122,16 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
             max_per_host=upstream_cfg.max_per_host,
             max_response_bytes=upstream_cfg.max_response_bytes,
         )
+        # SigV4 signing sits innermost — closest to the transport, inside the
+        # breaker and the retry loop — so it signs the final (method, URL, body)
+        # and re-signs each retry attempt with a fresh x-amz-date. It is a no-op
+        # passthrough for every non-sigv4 credential (#776).
+        signing_runner = SigV4SigningRunner(http_runner)
         # Capability profile of the underlying transport — the breaker/deadline
         # wrappers don't declare capabilities, so capture it from the HTTP runner
         # itself and hand it to build_runner for capability-gating (§11 RN-0.3).
         runner_caps = http_runner.capabilities()
-        base_runner: HttpRunner | CircuitBreakerRunner = http_runner
+        base_runner: UpstreamRunner = signing_runner
         cb = resilience.circuit_breaker
         if cb.enabled:
             breaker = CircuitBreaker(
@@ -195,8 +202,10 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         ctx,
         title="jentic-one-broker",
         routers=_routers(readiness_saturation_threshold=resilience.readiness_saturation_threshold),
+        enabled_apps={"broker"},
         extra_lifespan=broker_lifespan,
         container=container,
+        include_instance_router=False,
     )
     # One admission gate shared by the shedding middleware and the readiness
     # probe (§05 R5.2), so both observe the same in-flight counter.

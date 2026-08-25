@@ -15,9 +15,11 @@ from jentic_one.control.web.schemas.access_requests import (
     AccessRequestFileRequest,
     AccessRequestItemResponse,
     AccessRequestListResponse,
+    AccessRequestOwnerResponse,
     AccessRequestResponse,
     AmendRequest,
     DecideRequest,
+    DuplicatePendingProblem,
     EvaluationCheckResponse,
     EvaluationResponse,
 )
@@ -45,6 +47,8 @@ def _to_item_response(item: AccessRequestItemView) -> AccessRequestItemResponse:
         decided_by=item.decided_by,
         decided_at=item.decided_at,
         decision_reason=item.decision_reason,
+        already_satisfied=item.already_satisfied,
+        already_satisfied_by=item.already_satisfied_by,
     )
 
 
@@ -62,6 +66,13 @@ def _to_response(view: AccessRequestView) -> AccessRequestResponse:
     evaluation = None
     if view.evaluation is not None:
         evaluation = _to_evaluation_response(view.evaluation)
+    filer_owner = None
+    if view.filer_owner is not None:
+        filer_owner = AccessRequestOwnerResponse(
+            id=view.filer_owner.id,
+            email=view.filer_owner.email,
+            display_name=view.filer_owner.display_name,
+        )
     return AccessRequestResponse(
         id=view.id,
         actor_id=view.actor_id,
@@ -73,12 +84,28 @@ def _to_response(view: AccessRequestView) -> AccessRequestResponse:
         expires_at=view.expires_at,
         created_by=view.created_by,
         filer_owner_id=view.filer_owner_id,
+        filer_owner=filer_owner,
         items=[_to_item_response(i) for i in view.items],
         evaluation=evaluation,
     )
 
 
-@router.post("/access-requests", status_code=202, summary="File access request")
+@router.post(
+    "/access-requests",
+    status_code=202,
+    summary="File access request",
+    responses={
+        409: {
+            "description": "A pending request already exists for the same resource.",
+            "model": DuplicatePendingProblem,
+            "content": {
+                "application/problem+json": {
+                    "schema": {"$ref": "#/components/schemas/DuplicatePendingProblem"}
+                }
+            },
+        }
+    },
+)
 async def file_access_request(
     body: AccessRequestFileRequest,
     identity: Identity = get_current_identity(),

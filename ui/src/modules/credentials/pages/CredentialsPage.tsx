@@ -7,17 +7,17 @@ import {
 	useCredentials,
 	useDeleteCredential,
 	type Credential,
-} from '@/modules/credentials/api';
-import { CredentialsList } from '@/modules/credentials/components/CredentialsList';
+} from '@/shared/credentials/api';
+import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
 import {
 	CredentialsToolbar,
 	type CredentialTypeFilter,
-} from '@/modules/credentials/components/CredentialsToolbar';
+} from '@/shared/credentials/components/CredentialsToolbar';
 import {
 	CreateCredentialDialog,
 	type CreatedCredentialInfo,
-} from '@/modules/credentials/components/CreateCredentialDialog';
-import { EditCredentialSheet } from '@/modules/credentials/components/EditCredentialSheet';
+} from '@/shared/credentials/components/CreateCredentialDialog';
+import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 
 /**
  * Credentials module home. Lists stored credentials and hosts the create

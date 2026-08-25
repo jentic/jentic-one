@@ -33,6 +33,7 @@ import { decideAllPending } from '@/shared/lib/accessRequests';
 */
 const DASHBOARD_ROOT_KEY = sharedQueryKeys.dashboardRoot;
 const ACCESS_REQUESTS_ROOT_KEY = sharedQueryKeys.accessRequestsRoot;
+const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
 
 /*
   AGENT RAIL STREAM — backed by the REAL platform event feed.
@@ -60,7 +61,8 @@ export type StreamSeverity = 'critical' | 'error' | 'warning' | 'info';
  * dot of `EventResponse.type`). `other` is the safe bucket for any namespace
  * the backend adds later so the rail never crashes on an unknown type.
  */
-export type StreamKind = 'import' | 'execution' | 'access_request' | 'credential' | 'other';
+export type StreamKind =
+	'import' | 'execution' | 'access_request' | 'credential' | 'agent' | 'catalog' | 'other';
 
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
@@ -72,6 +74,21 @@ export type StreamTokens = {
 	execution_id?: string;
 	access_request_id?: string;
 	agent_id?: string;
+	// Catalog/overlay events carry the affected API's identity triple (so the
+	// row can deep-link to its Workspace detail page) plus the overlay id for
+	// overlay-lifecycle events and conflict metadata.
+	api_id?: string;
+	vendor?: string;
+	name?: string;
+	version?: string;
+	overlay_id?: string;
+};
+
+/** Conflict digests from a `catalog.update_conflicts_overlay` event's `data.conflict`. */
+export type ConflictDigests = {
+	base_digest?: string;
+	served_digest?: string;
+	upstream_digest?: string;
 };
 
 /** Deep-links carried by `EventResponse._links` (HAL-style). */
@@ -100,6 +117,8 @@ export type StreamEvent = {
 	requiresAction: boolean;
 	acknowledged: boolean;
 	acknowledgedAt?: number;
+	/** Conflict digests for a `catalog.update_conflicts_overlay` event (L5 "why"). */
+	conflict?: ConflictDigests;
 	// Stable key for grouping. Format: "<kind>:<type>:<trace|''>".
 	groupKey: string;
 };
@@ -116,12 +135,27 @@ export const RAIL_COLLAPSE_CHANGE_EVENT = 'j1:rail-collapse-change';
 /* Wire → UI adaptation                                                */
 /* ------------------------------------------------------------------ */
 
-const KNOWN_KINDS = new Set<StreamKind>(['import', 'execution', 'access_request', 'credential']);
+const KNOWN_KINDS = new Set<StreamKind>([
+	'import',
+	'execution',
+	'access_request',
+	'credential',
+	'agent',
+	'catalog',
+]);
 
-/** Namespace before the first dot → `StreamKind` (`other` for anything else). */
+/**
+ * Namespace before the first dot → `StreamKind` (`other` for anything else).
+ *
+ * `catalog.*` and `overlay.*` events both belong to the catalog/overlay update
+ * loop (an upstream spec change, an overlay conflict, an overlay deprecation),
+ * so they collapse into a single `catalog` kind — one filter chip, one label,
+ * one deep-link target (the affected API's Workspace detail page).
+ */
 export function kindForType(type: string): StreamKind {
-	const ns = type.split('.', 1)[0] as StreamKind;
-	return KNOWN_KINDS.has(ns) ? ns : 'other';
+	const ns = type.split('.', 1)[0];
+	if (ns === 'overlay') return 'catalog';
+	return KNOWN_KINDS.has(ns as StreamKind) ? (ns as StreamKind) : 'other';
 }
 
 /**
@@ -134,6 +168,8 @@ export const STREAM_KIND_LABEL: Record<StreamKind, string> = {
 	execution: 'Execution',
 	credential: 'Credential',
 	access_request: 'Access request',
+	agent: 'Agent',
+	catalog: 'Catalog',
 	other: 'Platform',
 };
 
@@ -163,12 +199,32 @@ function stringField(data: Record<string, unknown> | undefined, key: string): st
 	return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
+/**
+ * Extract the trailing id from a HAL link like `/executions/{id}` or
+ * `/jobs/{id}` (query/hash stripped). The backend surfaces the linked
+ * execution/job only as such a link, not as a `data` field — see `adaptEvent`.
+ * Exported so module-side consumers (e.g. Monitor's Events drill-in) parse
+ * links with the same rules instead of re-deriving them.
+ */
+export function idFromLink(link: string | null | undefined): string | undefined {
+	if (!link) return undefined;
+	const id = decodeURIComponent(link.split(/[?#]/)[0].split('/').pop() ?? '');
+	return id.length > 0 ? id : undefined;
+}
+
 /** Build the grouping key. Consecutive same-key events collapse in the feed. */
 function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string {
 	const token =
 		t.tokens.operation_id ??
 		t.tokens.toolkit_id ??
 		t.tokens.credential_id ??
+		// The request id must outrank the agent id: real `access_request.*`
+		// events carry BOTH (the requesting agent is the top-level actor), and
+		// keying on the agent would collapse two requests filed by the same
+		// agent in one burst — the normal CLI provisioning case — into one row.
+		t.tokens.access_request_id ??
+		// Distinct registering agents still get distinct rows.
+		t.tokens.agent_id ??
 		t.tokens.trace_id ??
 		'';
 	return `${t.kind}:${t.type}:${token}`;
@@ -177,22 +233,83 @@ function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string
 /** Test-only re-export of the internal group-key builder. */
 export const buildGroupKeyForTest = buildGroupKey;
 
+/**
+ * Short human hint explaining WHY an upstream update conflicts with a confirmed
+ * overlay (L5 "why"): the overlay was built on a base spec that upstream has
+ * since moved off. Returns null for any event without conflict digests, so the
+ * row only shows it for `catalog.update_conflicts_overlay`. Digests are shown as
+ * 12-char prefixes to stay compact within the rail row.
+ */
+export function conflictHint(ev: StreamEvent): string | null {
+	const c = ev.conflict;
+	if (!c) return null;
+	const base = c.base_digest ? c.base_digest.slice(0, 12) : null;
+	const upstream = c.upstream_digest ? c.upstream_digest.slice(0, 12) : null;
+	if (!base && !upstream) return 'Upstream moved off the base your overlay was built on';
+	const suffix = [base && `base ${base}`, upstream && `upstream ${upstream}`]
+		.filter(Boolean)
+		.join(' → ');
+	return `Upstream moved off the base your overlay was built on (${suffix})`;
+}
+
 /** Adapt a wire `EventResponse` into the rail's UI `StreamEvent`. */
 export function adaptEvent(e: EventResponse): StreamEvent {
 	const data = (e.data ?? {}) as Record<string, unknown>;
+	// `agent.*` events (e.g. self-registration) identify the agent via the
+	// top-level `actor_id`, not the free-form `data` map — fall back to it so
+	// the row can deep-link to the agent's approval page.
+	const actorAgentId =
+		e.actor_type === 'agent' && typeof e.actor_id === 'string' && e.actor_id.length > 0
+			? e.actor_id
+			: undefined;
+	// The linked execution/job is surfaced as a HAL link (`_links.execution` =
+	// `/executions/{id}`, `_links.job` = `/jobs/{id}`), NOT as a `data` entry —
+	// so parse the id out of the link (last path segment) and prefer it over the
+	// `data` fallback. Without this the "View execution/job" deep-link never
+	// appeared for real events (their `data` carries no id). See issue #617.
 	const tokens: StreamTokens = {
 		trace_id: e.trace_id ?? stringField(data, 'trace_id'),
 		toolkit_id: stringField(data, 'toolkit_id'),
 		operation_id: stringField(data, 'operation_id'),
 		credential_id: stringField(data, 'credential_id'),
-		job_id: stringField(data, 'job_id'),
-		execution_id: stringField(data, 'execution_id'),
+		job_id: idFromLink(e._links?.job) ?? stringField(data, 'job_id'),
+		execution_id: idFromLink(e._links?.execution) ?? stringField(data, 'execution_id'),
 		access_request_id:
 			stringField(data, 'access_request_id') ?? stringField(data, 'request_id'),
-		agent_id: stringField(data, 'agent_id') ?? stringField(data, 'actor_id'),
+		// Precedence matters: explicit `data.agent_id` first, then the top-level
+		// actor when it IS an agent (guarded — e.g. DCR self-registration). No
+		// `data.actor_id` fallback: no current emitter populates it, and one
+		// that did could carry a NON-agent id (e.g. the deciding user), which
+		// would deep-link "View agent" to /agents/<user_id>.
+		agent_id: stringField(data, 'agent_id') ?? actorAgentId,
+		// Catalog/overlay events carry the affected API's identity so the row can
+		// deep-link into Workspace: `api_id` (catalog slug) + the (vendor, name,
+		// version) triple, plus the overlay id for overlay-lifecycle events.
+		api_id: stringField(data, 'api_id'),
+		vendor: stringField(data, 'vendor'),
+		name: stringField(data, 'name'),
+		version: stringField(data, 'version'),
+		overlay_id: stringField(data, 'overlay_id'),
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;
+	// A `catalog.update_conflicts_overlay` event carries `data.conflict` with the
+	// three digests explaining WHY the upstream update collides with the overlay.
+	const rawConflict = data.conflict;
+	const conflict: ConflictDigests | undefined =
+		rawConflict && typeof rawConflict === 'object'
+			? {
+					base_digest: stringField(rawConflict as Record<string, unknown>, 'base_digest'),
+					served_digest: stringField(
+						rawConflict as Record<string, unknown>,
+						'served_digest',
+					),
+					upstream_digest: stringField(
+						rawConflict as Record<string, unknown>,
+						'upstream_digest',
+					),
+				}
+			: undefined;
 	const ev: StreamEvent = {
 		id: e.event_id,
 		// Fall back to "now" only when the wire timestamp is missing/unparseable,
@@ -213,6 +330,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		requiresAction: e.requires_action,
 		acknowledged: e.acknowledged,
 		acknowledgedAt: e.acknowledged_at ? Date.parse(e.acknowledged_at) || undefined : undefined,
+		conflict,
 		groupKey: '',
 	};
 	ev.groupKey = buildGroupKey(ev);
@@ -300,6 +418,24 @@ export function AgentStreamProvider({
 	const invalidateApprovalSurfaces = useCallback(() => {
 		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
 		void queryClient.invalidateQueries({ queryKey: ACCESS_REQUESTS_ROOT_KEY });
+	}, [queryClient]);
+
+	/**
+	 * Refresh the agent-approval surfaces (pending-agents card, "Awaiting
+	 * approval" tile, agents list + nav badge). A CLI self-registration lands as
+	 * an `agent.*` SSE event; without this bridge those surfaces sat on their
+	 * 45–60s fallback polls and looked broken right after `jentic register`.
+	 */
+	const invalidateAgentSurfaces = useCallback(() => {
+		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
+		void queryClient.invalidateQueries({ queryKey: AGENTS_ROOT_KEY });
+		// A registration changes the actor DIRECTORY too — it's cached
+		// aggressively (5-min staleTime) as reference data, and a CLI agent
+		// files its provisioning request seconds after registering. Without
+		// this, every `actor_id` resolution for the new agent (rail rows, the
+		// setup wizard's badge and agent-named toolkit suggestion) misses and
+		// falls back to the raw `agnt_…` id until the cache expires.
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 	}, [queryClient]);
 
 	// Fresh mirror of `events` for callbacks that need the current list WITHOUT
@@ -395,20 +531,87 @@ export function AgentStreamProvider({
 			return undefined;
 		}
 		setStatus('connecting');
+		// Ids already delivered on this subscription. Reconnects rewind `since`
+		// past the boundary (and the server re-queries an overlap window), so a
+		// re-delivered event must RECONCILE list state (upsert is authoritative)
+		// but must NOT re-fire the toast/audio cue or the invalidation fan-out.
+		// Bounded FIFO: the server prunes its dedup map to the overlap horizon;
+		// mirror that discipline so a very long-lived tab can't grow unbounded.
+		const deliveredIds = new Set<string>();
+		const DELIVERED_IDS_MAX = 5000;
 		const unsubscribe = streamEvents(
 			{},
 			{
 				onOpen: () => setStatus('live'),
 				onEvent: (wire) => {
 					const ev = adaptEvent(wire);
+					const firstDelivery = !deliveredIds.has(ev.id);
+					if (firstDelivery) {
+						deliveredIds.add(ev.id);
+						if (deliveredIds.size > DELIVERED_IDS_MAX) {
+							// Set iterates in insertion order — drop the oldest.
+							const oldest = deliveredIds.values().next().value;
+							if (oldest !== undefined) deliveredIds.delete(oldest);
+						}
+					}
 					upsert([ev], true);
+					// Settlement mirrors run on EVERY delivery, not just the
+					// first: they're idempotent (only unacknowledged matching
+					// rows flip), and in the late-commit race the actionable
+					// row can land AFTER its decision event was first seen —
+					// a re-delivered decision must still be able to settle it.
+					if (
+						ev.kind === 'agent' &&
+						(ev.type === 'agent.registration_approved' ||
+							ev.type === 'agent.registration_denied') &&
+						ev.tokens.agent_id
+					) {
+						// The backend acknowledges the registration alert in the
+						// decision transaction; mirror on local rows so the live
+						// session drops the stale actionable row immediately.
+						setEvents((prev) =>
+							prev.map((row) =>
+								row.type === 'agent.self_registered' &&
+								row.tokens.agent_id === ev.tokens.agent_id &&
+								!row.acknowledged
+									? markResolved(row)
+									: row,
+							),
+						);
+					}
+					if (
+						ev.kind === 'access_request' &&
+						(ev.type === 'access_request.approved' ||
+							ev.type === 'access_request.denied' ||
+							ev.type === 'access_request.withdrawn') &&
+						ev.tokens.access_request_id
+					) {
+						// Same for the filed alert: the decision settles it
+						// server-side; without this mirror a re-delivered filed
+						// event (reconnect overlap) could resurrect View/Deny
+						// buttons for an already-decided request.
+						setEvents((prev) =>
+							prev.map((row) =>
+								row.type === 'access_request.filed' &&
+								row.tokens.access_request_id === ev.tokens.access_request_id &&
+								!row.acknowledged
+									? markResolved(row)
+									: row,
+							),
+						);
+					}
+					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: a filed/decided access request changes the durable
 					// queue + dashboard counts. Refresh those surfaces so they
 					// stop going stale (the rail used to be the ONLY thing that
-					// reacted to these events).
+					// reacted to these events). Agent lifecycle events (CLI
+					// self-registration, approval) likewise refresh the agent
+					// surfaces the instant they land.
 					if (ev.kind === 'access_request') {
 						invalidateApprovalSurfaces();
+					} else if (ev.kind === 'agent') {
+						invalidateAgentSurfaces();
 					}
 				},
 				onError: () => setStatus('error'),
@@ -416,7 +619,7 @@ export function AgentStreamProvider({
 			},
 		);
 		return unsubscribe;
-	}, [live, upsert, invalidateApprovalSurfaces]);
+	}, [live, upsert, invalidateApprovalSurfaces, invalidateAgentSurfaces, markResolved]);
 
 	const acknowledge = useCallback(
 		async (eventId: string) => {
@@ -425,11 +628,21 @@ export function AgentStreamProvider({
 			try {
 				const updated = await acknowledgeEvent(eventId);
 				patchEvent(eventId, () => adaptEvent(updated));
+				// The ack happened outside React Query, and the SSE stream is a
+				// created_at-watermark poll that will never re-deliver an old event
+				// just because its acknowledged flag flipped — so eagerly refresh
+				// the other surfaces that count/list unacknowledged events (the
+				// Monitor Events tab and the dashboard action inbox), mirroring
+				// what `decide` does for approval surfaces.
+				void queryClient.invalidateQueries({
+					queryKey: sharedQueryKeys.monitorEventsRoot,
+				});
+				void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
 			} catch {
 				patchEvent(eventId, markUnresolved);
 			}
 		},
-		[patchEvent, markResolved, markUnresolved],
+		[patchEvent, markResolved, markUnresolved, queryClient],
 	);
 
 	const decide = useCallback(
@@ -525,6 +738,17 @@ export function useAgentStream(): AgentStreamValue {
 	return ctx;
 }
 
+/**
+ * Provider-optional variant for module-side hooks that should SYNC with the
+ * stream when it's mounted (the app shell) but must not require it (tests,
+ * embedded surfaces). Monitor's acknowledge mutation uses this to flip the
+ * rail's in-memory copy of an event so the failure pill drops immediately —
+ * the SSE watermark poll never re-delivers an old event on an ack flip.
+ */
+export function useAgentStreamOptional(): AgentStreamValue | null {
+	return useContext(AgentStreamContext);
+}
+
 /* ------------------------------------------------------------------ */
 /* Toast scope + display helpers                                       */
 /* ------------------------------------------------------------------ */
@@ -559,6 +783,43 @@ export function matchesToastScope(severity: StreamSeverity, scope: ToastScope): 
 	return severity === 'critical';
 }
 
+/**
+ * A failure severity — `error` or `critical`. Failures are surfaced proactively
+ * (toast + persistent badge) regardless of the operator's toast scope, since a
+ * silently-failed unattended run is exactly what must never be missed (#671).
+ */
+export function isFailureSeverity(severity: StreamSeverity): boolean {
+	return severity === 'error' || severity === 'critical';
+}
+
+/**
+ * Count of unacknowledged failure events (error/critical) in the LOADED feed
+ * window (backlog seed + live inserts, capped) — the number shown on the
+ * rail's persistent failure badge (#671). Deliberately window-scoped: the pill
+ * is a "recent activity" signal, not a global unacked-failures query (that's
+ * the Monitor Events tab); labels around it say "recent" for that reason.
+ * Drops as the operator acknowledges each failing event.
+ */
+export function unacknowledgedFailureCount(events: StreamEvent[]): number {
+	let n = 0;
+	for (const ev of events) {
+		if (!ev.acknowledged && isFailureSeverity(ev.severity)) n += 1;
+	}
+	return n;
+}
+
+/**
+ * Badge-friendly rendering of a failure count: caps at "99+" so a runaway count
+ * can't overflow the narrow rail pill, and clamps pathological inputs (NaN,
+ * negatives, fractions) to a sane non-negative integer so the pill never shows
+ * "NaN" or "-1". The underlying number stays accurate for aria labels — this
+ * only shapes the visible glyphs.
+ */
+export function formatFailurePillCount(count: number): string {
+	const n = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+	return n > 99 ? '99+' : String(n);
+}
+
 export function severityStripeClass(s: StreamSeverity): string {
 	if (s === 'critical') return 'border-l-danger';
 	if (s === 'error') return 'border-l-danger';
@@ -572,6 +833,64 @@ export function formatStreamTime(tsMs: number): string {
 	const mm = d.getMinutes().toString().padStart(2, '0');
 	const ss = d.getSeconds().toString().padStart(2, '0');
 	return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Absolute local datetime split into a date line and a time line, so a tooltip
+ * can render it as two clean rows ("28 Jul 2026" / "13:02:01") instead of one
+ * string that wraps awkwardly into three (issue #705 tooltip polish).
+ */
+export function formatStreamDateTimeParts(tsMs: number): { date: string; time: string } {
+	const d = new Date(tsMs);
+	if (Number.isNaN(d.getTime())) return { date: '', time: '' };
+	const date = d.toLocaleDateString(undefined, {
+		day: 'numeric',
+		month: 'short',
+		year: 'numeric',
+	});
+	const time = d.toLocaleTimeString(undefined, {
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+	});
+	return { date, time };
+}
+
+/**
+ * Stable **local** `YYYY-MM-DD` key for detecting calendar-day boundaries in the
+ * feed. Built from local date parts (not `toISOString`, which is UTC and would
+ * mis-bucket events around midnight for non-UTC operators — the #705 reporter is
+ * UTC+1).
+ */
+export function streamDayKey(tsMs: number): string {
+	const d = new Date(tsMs);
+	if (Number.isNaN(d.getTime())) return '';
+	const y = d.getFullYear();
+	const m = (d.getMonth() + 1).toString().padStart(2, '0');
+	const day = d.getDate().toString().padStart(2, '0');
+	return `${y}-${m}-${day}`;
+}
+
+/**
+ * Human day-separator label for the rail feed: "Today" / "Yesterday" / else a
+ * compact weekday+date like "Thu 16 Jul". `now` is injectable for tests.
+ */
+export function formatStreamDayLabel(tsMs: number, now: number = Date.now()): string {
+	const key = streamDayKey(tsMs);
+	if (!key) return '';
+	if (key === streamDayKey(now)) return 'Today';
+	// "Yesterday" is the previous LOCAL calendar day. Rewinding by a fixed 24h in
+	// ms mislabels the day after a DST transition (the previous local day is 23h
+	// or 25h away), so step the Date's day-of-month instead — this stays correct
+	// across spring-forward / fall-back.
+	const y = new Date(now);
+	y.setDate(y.getDate() - 1);
+	if (key === streamDayKey(y.getTime())) return 'Yesterday';
+	return new Date(tsMs).toLocaleDateString(undefined, {
+		weekday: 'short',
+		day: 'numeric',
+		month: 'short',
+	});
 }
 
 /* ------------------------------------------------------------------ */
@@ -602,6 +921,8 @@ export type InlineActionKind =
 	| 'approve'
 	| 'deny'
 	| 'view_request'
+	| 'view_agent'
+	| 'view_api'
 	| 'view_execution'
 	| 'view_job'
 	| 'view_trace';
@@ -625,17 +946,49 @@ export type InlineActionSpec = {
 	requiresReason?: boolean;
 };
 
-/** Resolve a HAL `_links` URL or token into a router-relative monitor route. */
+/**
+ * Resolve a HAL `_links` URL or token into a router-relative monitor route.
+ *
+ * The detail-param vocabulary MUST match what the Monitor tabs read off the URL:
+ * the Executions tab opens its trace/execution sheet from `trace_id`/`execution_id`
+ * and the Jobs tab from `job_id` (the underscore names — see
+ * `modules/monitor/lib/links.ts` and the tabs' `searchParams.get(...)`). Emitting
+ * the short `trace`/`execution`/`job` aliases here switched the tab but left the
+ * detail sheet closed, so a rail "View execution" click looked like a dead end
+ * (issue #617). `trace_id="unknown"` is a placeholder for header-less runs and
+ * can't open a sheet, so it's never emitted as a trace link.
+ */
+const hasUsableTrace = (traceId: string | null | undefined): traceId is string =>
+	traceId != null && traceId !== '' && traceId !== 'unknown';
+
 const NAV = {
 	trace: (ev: StreamEvent) =>
-		ev.tokens.trace_id ? `/monitor?tab=executions&trace=${ev.tokens.trace_id}` : null,
+		hasUsableTrace(ev.tokens.trace_id)
+			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			: null,
 	execution: (ev: StreamEvent) => {
 		const id = ev.tokens.execution_id;
-		if (id) return `/monitor?tab=executions&execution=${encodeURIComponent(id)}`;
-		return ev.tokens.trace_id ? `/monitor?tab=executions&trace=${ev.tokens.trace_id}` : null;
+		if (id) return `/monitor?tab=executions&execution_id=${encodeURIComponent(id)}`;
+		return hasUsableTrace(ev.tokens.trace_id)
+			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			: null;
 	},
 	job: (ev: StreamEvent) =>
-		ev.tokens.job_id ? `/monitor?tab=jobs&job=${encodeURIComponent(ev.tokens.job_id)}` : null,
+		ev.tokens.job_id
+			? `/monitor?tab=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
+			: null,
+	agent: (ev: StreamEvent) =>
+		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
+	// Catalog/overlay events deep-link to the affected API's Workspace detail
+	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
+	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
+	// shared-layer code, so the path shape is inlined rather than imported from a
+	// module's encoder). Router-relative — the rail prepends the `/app` basename.
+	workspaceApi: (ev: StreamEvent) => {
+		const { vendor, name, version } = ev.tokens;
+		if (!vendor || !name || !version) return null;
+		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+	},
 };
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
@@ -654,6 +1007,21 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 				decides: 'denied',
 				requiresReason: true,
 			});
+		} else if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
+			// A self-registered agent awaits approval — route the operator to the
+			// agent's page (where approve/deny lives) instead of a bare Acknowledge.
+			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
+			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
+		} else if (
+			(ev.type === 'catalog.update_available' ||
+				ev.type === 'catalog.update_conflicts_overlay') &&
+			NAV.workspaceApi(ev)
+		) {
+			// An upstream spec change (or a change that conflicts with a confirmed
+			// overlay) — deep-link the operator to the API's Workspace detail page
+			// (where Re-import / overlay resolution lives) alongside Acknowledge.
+			actions.push({ kind: 'view_api', label: 'Review', href: NAV.workspaceApi });
+			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else {
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		}
@@ -663,6 +1031,16 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 		actions.push({ kind: 'view_execution', label: 'View execution', href: NAV.execution });
 	} else if (ev.tokens.job_id || ev.kind === 'import') {
 		actions.push({ kind: 'view_job', label: 'View job', href: NAV.job });
+	} else if (ev.kind === 'agent' && ev.tokens.agent_id) {
+		if (!actions.some((a) => a.kind === 'view_agent')) {
+			actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
+		}
+	} else if (ev.kind === 'catalog' && NAV.workspaceApi(ev)) {
+		// Catalog/overlay rows (e.g. `overlay.deprecated`) deep-link to the API
+		// detail page. Skip if a "Review" action already links there.
+		if (!actions.some((a) => a.kind === 'view_api')) {
+			actions.push({ kind: 'view_api', label: 'View API', href: NAV.workspaceApi });
+		}
 	} else if (ev.tokens.trace_id) {
 		actions.push({ kind: 'view_trace', label: 'View trace', href: NAV.trace });
 	}
@@ -728,6 +1106,10 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 				: NAV.trace(ev);
 		case 'access_request':
 			return ev.tokens.agent_id ? `/agents/${ev.tokens.agent_id}` : NAV.trace(ev);
+		case 'agent':
+			return NAV.agent(ev) ?? NAV.trace(ev);
+		case 'catalog':
+			return NAV.workspaceApi(ev) ?? NAV.trace(ev);
 		default:
 			return NAV.trace(ev);
 	}

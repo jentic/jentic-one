@@ -46,8 +46,41 @@ server:
   host: 0.0.0.0
   port: 8000
   reload: false
+  # Locality label reported by the public GET /instance identity probe:
+  # "local" (default) for a self-hosted install on your own machine/network,
+  # "remote" for a hosted install run elsewhere.
+  # backend: local
 
 apps:
   - registry
   - admin
   - control
+  - auth
+
+# Public base URL of the app, so issued OAuth/OIDC token iss/aud and connect
+# redirect URIs are correct.
+auth:
+  canonical_base_url: "https://jentic.example.com"
+
+# Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
+# WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
+# var — fill it here and treat the whole file as a secret. Generate material:
+#   python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
+credentials:
+  encryption:
+    active_id: v1
+    entries:
+      - id: v1
+        material: CHANGE_ME   # pragma: allowlist secret
+
+admin:
+  auth:
+    # Secret for signing web-session JWTs. REQUIRED in production — supply via
+    # JENTIC__ADMIN__AUTH__JWT_SECRET rather than committing it here.
+    # jwt_secret: CHANGE_ME
+    # Lifetime of a single login JWT. The web UI silently re-mints the token
+    # via POST /auth/refresh before it expires (sliding session).
+    jwt_ttl_seconds: 3600
+    # Absolute cap on a web session: refresh is refused once the original
+    # login is older than this window, forcing a fresh sign-in.
+    session_ttl_seconds: 43200

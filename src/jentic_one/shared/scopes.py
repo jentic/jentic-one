@@ -49,5 +49,9 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
 #
 # Still excludes the truly privileged scopes (``org:admin``, ``agents:write``)
 # so an owner with ``agents:write`` cannot self-escalate an agent to admin via
-# the access-request path (confused-deputy).
+# the access-request path (confused-deputy). ``overlays:confirm`` is likewise
+# excluded: confirming an overlay rewrites an API's served spec (an operator
+# action), so an agent must never obtain it through self-service — the whole
+# point of the purpose-scoped downgrade from ``org:admin`` is that a human
+# operator holds it, not an agent.
 GRANTABLE_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES) | {"apis:write"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -13,13 +14,20 @@ from jentic.problem_details import Forbidden, ProblemDetailException
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
     AmbiguousMatchError,
+    CredentialIdentityMismatchError,
     no_toolkit_binding_directive,
 )
 from jentic_one.broker.web.errors import install_broker_error_handlers
-from jentic_one.broker.web.routers.execute import select_toolkit
+from jentic_one.broker.web.routers.execute import (
+    _emit_toolkit_binding_unserved,
+    _is_unserved_no_toolkit_binding,
+    select_toolkit,
+)
 from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.protocols import IdentityMismatch, ToolkitDerivation
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import APIReference
 
 _API = APIReference(vendor="acme", name="widgets", version="1.0.0")
@@ -27,23 +35,49 @@ _INSTANCE = "/acme.example.com/v1/widgets"
 
 
 class _StubDeriver:
-    def __init__(self, candidates: list[str], *, toolkit_serves_api: bool = True) -> None:
+    """Stub deriver returning a hand-built ToolkitDerivation.
+
+    ``toolkit_serves_api`` controls whether ``api_served_toolkits`` is non-empty;
+    ``agent_bound_any`` defaults to True when there are candidates, else follows
+    the explicit flag. ``mismatch`` injects a nearest-miss for the #747/#748 case.
+    """
+
+    def __init__(
+        self,
+        candidates: list[str],
+        *,
+        toolkit_serves_api: bool = True,
+        agent_bound_any: bool | None = None,
+        mismatch: IdentityMismatch | None = None,
+    ) -> None:
         self.candidates = candidates
         self._toolkit_serves_api = toolkit_serves_api
+        self._agent_bound_any = agent_bound_any
+        self._mismatch = mismatch
         self.calls: list[dict[str, str]] = []
-        self.serves_calls: list[dict[str, str]] = []
 
     async def derive_toolkits(
         self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> list[str]:
+    ) -> ToolkitDerivation:
         self.calls.append(
             {"agent_id": agent_id, "vendor": vendor, "name": name, "version": version}
         )
-        return self.candidates
-
-    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
-        self.serves_calls.append({"vendor": vendor, "name": name, "version": version})
-        return self._toolkit_serves_api
+        bound = (
+            self._agent_bound_any if self._agent_bound_any is not None else bool(self.candidates)
+        )
+        # A served set that is independent of the agent's candidates: when a
+        # toolkit serves the API, model at least one serving toolkit even if the
+        # agent is bound to none of them (the "bound elsewhere" case).
+        if self._toolkit_serves_api:
+            served = tuple(self.candidates) if self.candidates else ("tk_serving",)
+        else:
+            served = ()
+        return ToolkitDerivation(
+            toolkits=tuple(self.candidates),
+            agent_bound_any=bound or bool(self.candidates),
+            api_served_toolkits=served,
+            identity_mismatch=self._mismatch,
+        )
 
 
 def _identity(actor_type: str = "agent") -> Identity:
@@ -127,8 +161,62 @@ async def test_zero_candidates_no_toolkit_serves_recommends_credential_first() -
     instruction = exc.value.directive.human_readable_instruction
     assert "credential" in instruction.lower()
     assert "provision" in instruction.lower()
-    # The broker consulted the "any toolkit serves this API?" predicate.
-    assert deriver.serves_calls == [{"vendor": "acme", "name": "widgets", "version": "1.0.0"}]
+
+
+async def test_no_toolkit_serves_instruction_mentions_existing_toolkit_reuse() -> None:
+    # #897: the provisioning plan does not force a NEW toolkit — the wizard can
+    # fulfil it into a toolkit the operator already has. The agent-relayed
+    # instruction must say so, or an operator with existing toolkits reads the
+    # flow as "recreate everything" and denies (the reporter's dead-end). The
+    # hint lives in the TEXT only: `parameters` stays machine-stable so CLI and
+    # skill parsing of `suggested_command`/`toolkit_serves_api` never breaks.
+    deriver = _StubDeriver([], toolkit_serves_api=False)
+    with pytest.raises(ActionDeniedError) as exc:
+        await _select(deriver, header_toolkit=None)
+    directive = exc.value.directive
+    assert directive is not None
+    assert "existing toolkit" in directive.human_readable_instruction.lower()
+    assert directive.parameters["suggested_command"] == (
+        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
+    )
+    assert set(directive.parameters) == {"api", "toolkit_serves_api", "suggested_command"}
+
+
+async def test_zero_candidates_bound_with_identity_mismatch_points_at_credential() -> None:
+    # #747/#748: the agent is bound, but no toolkit serves the API because the
+    # bound credential's identity does not cover it. The denial must be a
+    # credential_identity_mismatch pointing at the credential — never a bind request.
+    mismatch = IdentityMismatch(
+        expected_vendor="acme",
+        expected_name="widgets",
+        expected_version="1.0.0",
+        found_vendor="acme.com",
+        found_name="widgets",
+        found_version="1.0.0",
+        would_match_if_normalized=True,
+    )
+    deriver = _StubDeriver([], toolkit_serves_api=False, agent_bound_any=True, mismatch=mismatch)
+    with pytest.raises(CredentialIdentityMismatchError) as exc:
+        await _select(deriver, header_toolkit=None)
+    assert exc.value.type == "credential_identity_mismatch"
+    assert exc.value.instance == _INSTANCE
+    assert exc.value.directive is not None
+    assert exc.value.directive.strategy == "prompt_human"
+    assert exc.value.directive.parameters["expected"]["vendor"] == "acme"
+    assert exc.value.directive.parameters["found"]["vendor"] == "acme.com"
+    assert exc.value.directive.parameters["would_match_if_normalized"] is True
+    instruction = exc.value.directive.human_readable_instruction.lower()
+    assert "credential" in instruction
+    assert "access request" not in instruction or "do not file an access request" in instruction
+
+
+async def test_zero_candidates_bound_no_mismatch_stays_no_toolkit_binding() -> None:
+    # Bound elsewhere, nothing serves this API, but no near-miss credential:
+    # this is a genuine provisioning gap, not a mismatch → no_toolkit_binding.
+    deriver = _StubDeriver([], toolkit_serves_api=False, agent_bound_any=True, mismatch=None)
+    with pytest.raises(ActionDeniedError) as exc:
+        await _select(deriver, header_toolkit=None)
+    assert exc.value.type == "no_toolkit_binding"
 
 
 async def test_multiple_candidates_no_header_raises_409_with_candidates() -> None:
@@ -281,3 +369,81 @@ def test_no_toolkit_binding_credential_first_directive_and_denial_reason_agree()
     assert "credential" in denial_reason
     assert "provision" in denial_reason
     assert "no toolkit serves" in denial_reason
+
+
+# --- unserved-API operator event (theme 3 residual) --------------------------
+
+
+def _no_toolkit_binding_error(*, serves: bool) -> ActionDeniedError:
+    return ActionDeniedError(
+        "No toolkit binding for this API",
+        type="no_toolkit_binding",
+        instance=_INSTANCE,
+        directive=no_toolkit_binding_directive(
+            vendor=_API.vendor, name=_API.name, version=_API.version, toolkit_serves_api=serves
+        ),
+    )
+
+
+def test_is_unserved_no_toolkit_binding_true_when_serves_false() -> None:
+    assert _is_unserved_no_toolkit_binding(_no_toolkit_binding_error(serves=False)) is True
+
+
+def test_is_unserved_no_toolkit_binding_false_when_serves_true() -> None:
+    # A toolkit exists, the caller just isn't bound → agent-recoverable via a
+    # bind access request; we deliberately do NOT emit the operator event here.
+    assert _is_unserved_no_toolkit_binding(_no_toolkit_binding_error(serves=True)) is False
+
+
+def test_is_unserved_no_toolkit_binding_false_for_other_error_types() -> None:
+    other = ActionDeniedError("denied", type="action_denied", instance=_INSTANCE, directive=None)
+    assert _is_unserved_no_toolkit_binding(other) is False
+
+
+def test_is_unserved_no_toolkit_binding_false_without_directive() -> None:
+    exc = ActionDeniedError(
+        "No toolkit binding for this API",
+        type="no_toolkit_binding",
+        instance=_INSTANCE,
+        directive=None,
+    )
+    assert _is_unserved_no_toolkit_binding(exc) is False
+
+
+async def test_emit_toolkit_binding_unserved_writes_event() -> None:
+    ctx = MagicMock()
+    session = AsyncMock()
+    ctx.admin_db.transaction.return_value.__aenter__ = AsyncMock(return_value=session)
+    ctx.admin_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
+    identity = Identity(sub="agnt_001", actor_type=ActorType.AGENT, permissions=[])
+
+    with patch(
+        "jentic_one.broker.web.routers.execute.emit_event_best_effort",
+        new_callable=AsyncMock,
+    ) as mock_emit:
+        await _emit_toolkit_binding_unserved(ctx, api=_API, identity=identity)
+
+    mock_emit.assert_awaited_once()
+    call = mock_emit.await_args
+    assert call is not None
+    kwargs = call.kwargs
+    assert kwargs["type"] == EventType.TOOLKIT_BINDING_UNSERVED
+    assert kwargs["severity"] is EventSeverity.WARNING
+    assert kwargs["actor_id"] == "agnt_001"
+    assert kwargs["actor_type"] == ActorType.AGENT.value
+    assert kwargs["data"]["api"] == {
+        "vendor": _API.vendor,
+        "name": _API.name,
+        "version": _API.version,
+    }
+    assert "acme/widgets" in kwargs["summary"]
+
+
+async def test_emit_toolkit_binding_unserved_swallows_errors() -> None:
+    # Telemetry is best-effort: an admin-DB failure must not surface to the
+    # execute request (which is already returning 403 anyway).
+    ctx = MagicMock()
+    ctx.admin_db.transaction.side_effect = RuntimeError("db down")
+    identity = Identity(sub="agnt_001", actor_type=ActorType.AGENT, permissions=[])
+
+    await _emit_toolkit_binding_unserved(ctx, api=_API, identity=identity)  # must not raise

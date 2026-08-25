@@ -10,6 +10,9 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+
+from jentic_one.shared.context import Context
 
 pytestmark = pytest.mark.integration
 
@@ -297,3 +300,111 @@ def test_list_toolkit_agents_respects_limit_bounds(tk_owner_client: TestClient) 
 
     assert tk_owner_client.get(f"/toolkits/{toolkit_id}/agents?limit=0").status_code == 422
     assert tk_owner_client.get(f"/toolkits/{toolkit_id}/agents?limit=201").status_code == 422
+
+
+# --- Served APIs on the list/get response (#890) ---
+
+
+async def test_toolkit_response_carries_served_apis(
+    tk_owner_client: TestClient, web_context: Context
+) -> None:
+    """`apis` aggregates the distinct APIs behind the toolkit's credential
+    bindings — deduped (two credentials for one API yield one entry) and
+    vendor-sorted — so pickers can rank/badge toolkits by the API a plan
+    targets without a per-toolkit child fetch (#890). Unbound toolkits report
+    an empty list.
+    """
+    created = _create_toolkit(tk_owner_client, name="served-apis-test")
+    toolkit_id = created["toolkit"]["toolkit_id"]
+    assert created["toolkit"]["apis"] == []
+
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials "
+                "(id, type, name, api_vendor, api_name, api_version, created_by) VALUES "
+                "('cred_srvapi_1', 'token_value', 'srvapi-one', "
+                "'webtest-alpha', 'alpha-api', 'v1', 'usr_webtest_tk_owner'), "
+                "('cred_srvapi_2', 'token_value', 'srvapi-two', "
+                "'webtest-alpha', 'alpha-api', 'v1', 'usr_webtest_tk_owner'), "
+                "('cred_srvapi_3', 'token_value', 'srvapi-three', "
+                "'webtest-beta', NULL, NULL, 'usr_webtest_tk_owner') "
+                "ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings (id, toolkit_id, credential_id) VALUES "
+                "('tcb_srvapi_1', :tk, 'cred_srvapi_1'), "
+                "('tcb_srvapi_2', :tk, 'cred_srvapi_2'), "
+                "('tcb_srvapi_3', :tk, 'cred_srvapi_3') ON CONFLICT DO NOTHING"
+            ),
+            {"tk": toolkit_id},
+        )
+        await session.commit()
+    try:
+        got = tk_owner_client.get(f"/toolkits/{toolkit_id}").json()
+        assert got["apis"] == [
+            {"api_vendor": "webtest-alpha", "api_name": "alpha-api", "api_version": "v1"},
+            # NULL name/version are preserved (the covers-all wildcard, #775),
+            # matching the `/me` response's ServedApiRef convention.
+            {"api_vendor": "webtest-beta", "api_name": None, "api_version": None},
+        ]
+
+        listed = tk_owner_client.get("/toolkits").json()
+        row = next(t for t in listed["data"] if t["toolkit_id"] == toolkit_id)
+        assert row["apis"] == got["apis"]
+    finally:
+        # Bindings cascade with the toolkit (clean_toolkits); the credentials
+        # belong to no cleanup fixture, so drop them here.
+        async with web_context.control_db.session() as session:
+            await session.execute(
+                text(
+                    "DELETE FROM credentials "
+                    "WHERE id IN ('cred_srvapi_1', 'cred_srvapi_2', 'cred_srvapi_3')"
+                )
+            )
+            await session.commit()
+
+
+async def test_served_apis_scoped_by_credential_visibility(
+    tk_owner_client: TestClient, web_context: Context
+) -> None:
+    """`apis` reveals only the APIs of credentials the caller can read.
+
+    A binding to someone else's credential (possible via an org:admin bind)
+    still counts in `credential_count`, but its API identity stays hidden —
+    the aggregation runs under the caller's Credential read filter, so
+    top-level toolkit visibility (including enterprise shares) never leaks
+    the bound credentials' metadata.
+    """
+    created = _create_toolkit(tk_owner_client, name="served-apis-scope-test")
+    toolkit_id = created["toolkit"]["toolkit_id"]
+
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials "
+                "(id, type, name, api_vendor, api_name, api_version, created_by) VALUES "
+                "('cred_srvapi_foreign', 'token_value', 'srvapi-foreign', "
+                "'webtest-hidden', 'hidden-api', 'v1', 'usr_webtest_other') "
+                "ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings (id, toolkit_id, credential_id) "
+                "VALUES ('tcb_srvapi_foreign', :tk, 'cred_srvapi_foreign') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"tk": toolkit_id},
+        )
+        await session.commit()
+    try:
+        got = tk_owner_client.get(f"/toolkits/{toolkit_id}").json()
+        assert got["credential_count"] == 1
+        assert got["apis"] == []
+    finally:
+        async with web_context.control_db.session() as session:
+            await session.execute(text("DELETE FROM credentials WHERE id = 'cred_srvapi_foreign'"))
+            await session.commit()

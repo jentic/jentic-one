@@ -98,7 +98,14 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
         parent_agent_id=agent.parent_agent_id,
         approved_by=agent.approved_by,
         toolkit_bindings=[
-            ToolkitBindingEntry(toolkit_id=tb.toolkit_id, name=tb.name, bound_at=tb.bound_at)
+            ToolkitBindingEntry(
+                toolkit_id=tb.toolkit_id,
+                name=tb.name,
+                bound_at=tb.bound_at,
+                # service + web share ServedApiRef, so the serves list passes
+                # straight through with no per-item remapping.
+                serves=tb.serves,
+            )
             for tb in toolkits
         ],
     )

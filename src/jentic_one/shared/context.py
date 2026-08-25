@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import TracebackType
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ from jentic_one.shared.config import AppConfig, load_config
 from jentic_one.shared.crypto import EncryptionService
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.provider_config_store import load_provider_configs
+from jentic_one.shared.release_check import ReleaseChecker
 
 if TYPE_CHECKING:
     from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
@@ -53,6 +55,8 @@ class Context:
         self._registry_db: DatabaseSession | None = None
         self._admin_db: DatabaseSession | None = None
         self._control_db: DatabaseSession | None = None
+        self._update_sweep_lock: asyncio.Lock | None = None
+        self._release_checker: ReleaseChecker | None = None
         # Product telemetry (issue #446). Resolved + owned by the lifespan when
         # telemetry is enabled; both stay None otherwise (the single consent gate).
         self._instance_id: str | None = None
@@ -188,6 +192,36 @@ class Context:
         if self._control_db is None:
             self._control_db = DatabaseSession(self._config.databases.control)
         return self._control_db
+
+    @property
+    def update_sweep_lock(self) -> asyncio.Lock:
+        """Process-wide guard so the catalog update-notify sweep never runs concurrently.
+
+        The scanner (owned cadence) and the read-path ``trigger_update_notify_sweep``
+        (``POST /catalog:refresh`` piggyback) can both fire a sweep in one process; without a
+        guard, two in-flight sweeps can each read ``last_notified_digest=None`` for a
+        first-time change and both emit a duplicate (now *actionable*)
+        ``catalog.update_available`` event. Serializing on this lock collapses the in-process
+        race to a single emit. Cross-replica overlap is still possible but self-heals: the
+        losing replica's next sweep sees the persisted digest and won't re-fire. Lazily
+        created on first access so it binds to the running loop.
+        """
+        if self._update_sweep_lock is None:
+            self._update_sweep_lock = asyncio.Lock()
+        return self._update_sweep_lock
+
+    @property
+    def release_checker(self) -> ReleaseChecker:
+        """Process-wide cache for the "latest jentic-one release" lookup.
+
+        Held on the Context so its in-memory TTL cache and single-flight lock are
+        shared across every ``GET /system/version`` request on this process
+        (rather than re-fetching per request). Lazily constructed on first access.
+        See ``shared/release_check.py``.
+        """
+        if self._release_checker is None:
+            self._release_checker = ReleaseChecker(self._config)
+        return self._release_checker
 
     async def startup(self) -> None:
         """Connect allowed databases."""

@@ -1,10 +1,10 @@
 import { http, HttpResponse } from 'msw';
-import { toolkitsHandlers } from '@/modules/toolkits/mocks/handlers';
+import { toolkitsHandlers, toolkitsE2eHooks } from '@/modules/toolkits/mocks/handlers';
 import { agentsHandlers } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
 import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
-import { credentialsHandlers, credentialsE2eHooks } from '@/modules/credentials/mocks/handlers';
+import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 
@@ -80,6 +80,16 @@ const actorDirectorySeed = [
 		created_at: '2026-01-01T00:00:00Z',
 	},
 	{
+		// The admin id the agents-module fixtures stamp on approvals / audit
+		// rows (approved_by, audit actor_id) — must resolve or the detail
+		// consoles' "Approved by" and "Recent changes" show a raw id.
+		id: 'usr_000000000000000000000admin',
+		actor_type: 'user',
+		name: 'Admin User',
+		active: true,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
 		id: 'sva_active_1',
 		actor_type: 'service_account',
 		name: 'metrics-exporter',
@@ -111,6 +121,9 @@ export const handlers = [
 		}
 		return HttpResponse.json(mockUser);
 	}),
+	// External-IdP (SSO) login capability hint (GET /auth/idp). Default: disabled,
+	// so the login page shows password-only. SSO tests enable it via worker.use.
+	http.get('/auth/idp', () => HttpResponse.json({ enabled: false, provider: null })),
 	// Actor directory (GET /actors) — cross-cutting reference data the UI hydrates
 	// once to resolve raw `actor_id` values into names. Seeded to match the ids
 	// other module stores emit (agents store + the access-request fixtures) so
@@ -121,6 +134,12 @@ export const handlers = [
 			has_more: false,
 			next_cursor: null,
 		}),
+	),
+	// Running/latest app version (GET /system/version) — cross-cutting shell
+	// endpoint powering the update banner + UserMenu version line. Default: no
+	// newer release (banner hidden); tests override via worker.use(...).
+	http.get('/system/version', () =>
+		HttpResponse.json({ current: '0.26.0', latest: null, update_available: false }),
 	),
 	// Feature modules append their handlers here, e.g.:
 	//   import { discoverHandlers } from '@/modules/discover/mocks/handlers';
@@ -172,5 +191,6 @@ export const handlers = [
 export function installE2eTestHooks(target: Record<string, unknown>): void {
 	target.__mswTestHooks = {
 		...credentialsE2eHooks,
+		...toolkitsE2eHooks,
 	};
 }

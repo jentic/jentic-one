@@ -1,4 +1,4 @@
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet } from 'react-router';
 import { usePermission } from '@/shared/auth/usePermission';
 import { ROUTES } from '@/shared/app/routes';
 

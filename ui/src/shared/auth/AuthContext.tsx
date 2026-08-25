@@ -4,20 +4,24 @@ import {
 	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useSyncExternalStore,
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
 	UsersService,
 	clearToken,
+	getSessionExpiresAt,
 	getToken,
 	HEALTH_QUERY_KEY,
 	isAuthError,
-	setToken,
+	isClientError,
+	setSession,
 	subscribeToken,
 	type CreateAdminRequest,
 	type CurrentUserResponse,
 	type LoginRequest,
+	type LoginResponse,
 } from '@/shared/api';
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
@@ -28,6 +32,13 @@ export interface AuthContextValue {
 	/** True once logged in but the backend requires a password change first. */
 	mustChangePassword: boolean;
 	login: (credentials: LoginRequest) => Promise<void>;
+	/**
+	 * Adopt a session minted out-of-band (e.g. the SSO authorization-code
+	 * exchange), taking the same `{ access_token, expires_in }` bundle password
+	 * login produces. Feeds the shared session path (setSession + /users/me
+	 * refresh) so refresh-renewal and expiry handling are identical.
+	 */
+	loginWithSession: (bundle: { access_token: string; expires_in: number }) => Promise<void>;
 	/** First-run setup: create the first admin and adopt the returned session. */
 	createAdmin: (payload: CreateAdminRequest) => Promise<void>;
 	/**
@@ -70,20 +81,115 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	// A token that the backend rejects (401/403) is dead — drop it so the UI
 	// falls back to the login screen instead of looping on a doomed request.
+	// Only act once the query is settled (`fetchStatus === 'idle'`): while a
+	// refetch is in flight React Query still exposes the *previous* error, so
+	// without the guard a cached 401 from an expired token would clear the
+	// freshly-minted token adopted right before the refetch (#610).
 	useEffect(() => {
-		if (token !== null && meQuery.isError && isAuthError(meQuery.error)) {
-			clearToken();
+		if (
+			token !== null &&
+			meQuery.isError &&
+			meQuery.fetchStatus === 'idle' &&
+			isAuthError(meQuery.error)
+		) {
+			// Record why the token vanished so the login page can say "session
+			// expired" instead of silently presenting a bare form (#608).
+			clearToken('session-expired');
 		}
-	}, [token, meQuery.isError, meQuery.error]);
+	}, [token, meQuery.isError, meQuery.fetchStatus, meQuery.error]);
+
+	// Adopt a freshly-minted session bundle. The previous token's /users/me
+	// state is removed *before* the new token lands so no stale 401 can be
+	// (mis)attributed to it — the root cause of the login-needs-retries bug
+	// (#610) — then a fresh fetch resolves the new identity before we return.
+	const adoptSession = useCallback(
+		async (bundle: LoginResponse) => {
+			queryClient.removeQueries({ queryKey: ME_QUERY_KEY });
+			setSession(bundle.access_token, bundle.expires_in);
+			await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+		},
+		[queryClient],
+	);
+
+	// Proactive sliding-session renewal (#608): re-mint the JWT at ~80% of its
+	// remaining lifetime so an active operator never hits the hard 1-hour
+	// expiry. Refresh failure falls through to the normal expiry path (the next
+	// 401 clears the token with a session-expired notice). Background tabs may
+	// throttle the timer; the visibility listener catches up on return.
+	const refreshInFlight = useRef(false);
+	useEffect(() => {
+		if (token === null) return;
+		const expiresAt = getSessionExpiresAt();
+		if (expiresAt === null) return; // Legacy token without expiry metadata.
+
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let disposed = false;
+		const refreshDueAt = Date.now() + (expiresAt - Date.now()) * 0.8;
+
+		const runRefresh = async () => {
+			if (disposed || refreshInFlight.current) return;
+			refreshInFlight.current = true;
+			try {
+				const bundle = await UsersService.refreshSession();
+				// The effect is torn down (disposed) on any token change — logout or
+				// a different session being adopted while the request was in flight.
+				// A late response must not resurrect the old session over it.
+				if (disposed) return;
+				// setSession notifies the token store, re-running this effect with
+				// the new expiry — the next cycle schedules itself.
+				setSession(bundle.access_token, bundle.expires_in);
+			} catch (error) {
+				if (disposed) return; // Same guard: never clobber a successor session.
+				if (isAuthError(error)) {
+					// Refresh refused (absolute window exceeded, user deactivated…):
+					// the session is over — surface the login page with the notice.
+					clearToken('session-expired');
+				} else if (!isClientError(error) && Date.now() < expiresAt) {
+					// Transient failure (network blip, 5xx): retry while the token
+					// lives. Other 4xx (e.g. 404 from a backend without the refresh
+					// endpoint) are deterministic — don't loop; the session simply
+					// ends at its natural expiry.
+					timer = setTimeout(() => void runRefresh(), 30_000);
+				}
+			} finally {
+				refreshInFlight.current = false;
+			}
+		};
+
+		const onVisible = () => {
+			// Timers are throttled in hidden tabs — if the refresh slot passed
+			// while hidden, catch up as soon as the tab is visible again.
+			if (document.visibilityState === 'visible' && Date.now() >= refreshDueAt) {
+				void runRefresh();
+			}
+		};
+
+		timer = setTimeout(() => void runRefresh(), Math.max(refreshDueAt - Date.now(), 0));
+		document.addEventListener('visibilitychange', onVisible);
+		return () => {
+			disposed = true;
+			if (timer !== undefined) clearTimeout(timer);
+			document.removeEventListener('visibilitychange', onVisible);
+		};
+	}, [token]);
 
 	const login = useCallback(
 		async (credentials: LoginRequest) => {
 			const result = await UsersService.login({ requestBody: credentials });
-			setToken(result.access_token);
 			// Force a fresh /users/me so the new identity is reflected immediately.
-			await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+			await adoptSession(result);
 		},
-		[queryClient],
+		[adoptSession],
+	);
+
+	const loginWithSession = useCallback(
+		async (bundle: { access_token: string; expires_in: number }) => {
+			// The SSO callback already exchanged the code for a session; adopt it
+			// through the same path as password login so /users/me refreshes and
+			// the refresh-renewal effect schedules against the real expiry.
+			await adoptSession(bundle as LoginResponse);
+		},
+		[adoptSession],
 	);
 
 	const createAdmin = useCallback(
@@ -91,8 +197,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			// First-run setup returns a ready-to-use token (auto-login), so the
 			// operator lands authenticated without a second round-trip.
 			const result = await UsersService.createAdmin({ requestBody: payload });
-			setToken(result.access_token);
-			await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+			await adoptSession(result);
 			// Setup just closed: mark the cached health/setup flag stale so any
 			// later pass through the SetupGate (back-nav, logout→login) refetches
 			// setup_required:false instead of bouncing the new admin to /setup.
@@ -106,7 +211,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				refetchType: 'none',
 			});
 		},
-		[queryClient],
+		[adoptSession, queryClient],
 	);
 
 	const changePassword = useCallback(
@@ -116,10 +221,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			const result = await UsersService.changePassword({
 				requestBody: { current_password: currentPassword, new_password: newPassword },
 			});
-			setToken(result.access_token);
-			await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+			await adoptSession(result);
 		},
-		[queryClient],
+		[adoptSession],
 	);
 
 	const redeemInvite = useCallback(
@@ -129,10 +233,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			const result = await UsersService.redeemInvite({
 				requestBody: { invite_token: inviteToken, password },
 			});
-			setToken(result.access_token);
-			await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+			await adoptSession(result);
 		},
-		[queryClient],
+		[adoptSession],
 	);
 
 	const logout = useCallback(() => {
@@ -158,6 +261,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			user,
 			mustChangePassword: user?.must_change_password ?? false,
 			login,
+			loginWithSession,
 			createAdmin,
 			changePassword,
 			redeemInvite,
@@ -169,6 +273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		meQuery.isError,
 		meQuery.data,
 		login,
+		loginWithSession,
 		createAdmin,
 		changePassword,
 		redeemInvite,

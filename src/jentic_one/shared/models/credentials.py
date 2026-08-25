@@ -14,6 +14,7 @@ class StoredCredentialType(StrEnum):
     OAUTH2_AUTHORIZATION_CODE = "OAUTH2_AUTHORIZATION_CODE"
     OAUTH2_IMPLICIT = "OAUTH2_IMPLICIT"
     NO_AUTH = "NO_AUTH"
+    AWS_SIGV4 = "AWS_SIGV4"
 
 
 class CredentialType(StrEnum):
@@ -23,6 +24,8 @@ class CredentialType(StrEnum):
     API_KEY = "api_key"
     BASIC = "basic"
     OAUTH2 = "oauth2"
+    NO_AUTH = "no_auth"
+    SIGV4 = "sigv4"
 
 
 class CredentialLocation(StrEnum):

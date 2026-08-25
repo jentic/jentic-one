@@ -24,9 +24,18 @@ spec:
           ports:
             - containerPort: 8000
           env:
+{{- range $k, $v := .Values.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+{{- end }}
+{{ include "common.config-file.env" . | indent 12 }}
 {{ include "common.logging-env" . | indent 12 }}
 {{ include "common.metrics-env" . | indent 12 }}
 {{ include "common.db-env" . | indent 12 }}
+{{- with (include "common.config-file.mount" . | trim) }}
+          volumeMounts:
+{{ . | indent 12 }}
+{{- end }}
           readinessProbe:
             httpGet:
               path: {{ .Values.healthCheck.path | default "/health" }}
@@ -44,7 +53,14 @@ spec:
         {{- if .Values.global.observability.otel.enabled }}
 {{ include "common.otel-sidecar" . | indent 8 }}
         {{- end }}
-      {{- if .Values.global.observability.otel.enabled }}
+      {{- $otel := .Values.global.observability.otel.enabled }}
+      {{- $cfg := (include "common.config-file.volume" . | trim) }}
+      {{- if or $otel $cfg }}
       volumes:
+      {{- if $otel }}
 {{ include "common.otel-config-volume" . | indent 8 }}
+      {{- end }}
+      {{- with $cfg }}
+{{ . | indent 8 }}
+      {{- end }}
       {{- end }}

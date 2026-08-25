@@ -12,7 +12,7 @@
  * `api/hooks` (useDiscoverCatalog / useImportCatalogApi / useOperationPreview).
  * It never touches `@/shared/api` directly (ESLint-enforced).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { PageShell, PageHeader, PageHelp, AppLink } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
@@ -50,6 +50,27 @@ export default function DiscoverPage() {
 	useEffect(() => {
 		reconcileImported(catalog.entities);
 	}, [catalog.entities, reconcileImported]);
+
+	// The catalog scrolls on the window (no bounded results container), so a new
+	// query or filter re-ranks the list but leaves the viewport wherever the user
+	// last scrolled — burying the freshly-ranked top matches off-screen (#602).
+	// Snap back to the top whenever the committed query or filter actually
+	// changes. Comparing the previous values (rather than a "have I mounted"
+	// boolean) is StrictMode-safe: the effect's double-invocation on mount reads
+	// the ref back as the current value and no-ops, so first load isn't yanked.
+	// The snap fires at debounce-commit, before results land — deliberately, so
+	// the viewport is already in place when they swap in; if the fetch errors
+	// instead, the error alert renders at the top the user was just snapped to.
+	const prevQueryRef = useRef(debouncedQuery);
+	const prevFilterRef = useRef(filter);
+	useEffect(() => {
+		if (prevQueryRef.current === debouncedQuery && prevFilterRef.current === filter) {
+			return;
+		}
+		prevQueryRef.current = debouncedQuery;
+		prevFilterRef.current = filter;
+		window.scrollTo({ top: 0, left: 0 });
+	}, [debouncedQuery, filter]);
 
 	function handleOpen(entity: DiscoveryEntity) {
 		setSelected(entity);
@@ -126,6 +147,7 @@ export default function DiscoverPage() {
 				<DiscoverStatusRow
 					catalogTotal={catalog.catalogTotal}
 					registeredCount={catalog.registeredCount}
+					outdatedCount={catalog.outdatedCount}
 					manifestAgeSeconds={catalog.manifestAgeSeconds}
 					loading={catalog.isPending}
 				/>

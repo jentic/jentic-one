@@ -6,7 +6,7 @@ import ipaddress
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import structlog
 import yaml
@@ -71,7 +71,11 @@ class DatabaseConfig(BaseModel):
     user: str = "postgres"
     password: SecretStr = SecretStr("")
     pool_max: int = 10
-    schema_name: str = "public"
+    # Interpolated into `CREATE SCHEMA IF NOT EXISTS "{schema_name}"` and
+    # search_path by the migration runner; the identifier pattern is
+    # defense-in-depth so a hostile config value cannot escape the quoted
+    # identifier (SEC-2).
+    schema_name: str = Field(default="public", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     # SQLite: filesystem path to the database file (":memory:" for in-memory).
     path: str | None = None
     # SQLite concurrency knobs (ignored for non-SQLite backends). ``journal_mode``
@@ -182,13 +186,25 @@ class AdminAuthConfig(BaseModel):
     """Admin authentication settings."""
 
     jwt_secret: SecretStr = SecretStr(_DEFAULT_SECRET_PLACEHOLDER)
-    jwt_ttl_seconds: int = 3600
+    jwt_ttl_seconds: int = Field(default=3600, gt=0)
+    # Absolute cap on a web session: `POST /auth/refresh` re-mints the login
+    # JWT (sliding session) only while `now - auth_time` stays inside this
+    # window, so a leaked token cannot be kept alive indefinitely.
+    session_ttl_seconds: int = Field(default=43200, gt=0)
     failed_login_lockout_threshold: int = 5
     failed_login_lockout_seconds: int = 900
 
     @model_validator(mode="after")
     def _reject_default_secret_in_production(self) -> AdminAuthConfig:
         _require_production_secret(self.jwt_secret, field_path="admin.auth.jwt_secret")
+        return self
+
+    @model_validator(mode="after")
+    def _session_window_covers_jwt_ttl(self) -> AdminAuthConfig:
+        # A session window shorter than one JWT would make every refresh fail
+        # while the first token is still valid — always a misconfiguration.
+        if self.session_ttl_seconds < self.jwt_ttl_seconds:
+            raise ValueError("admin.auth.session_ttl_seconds must be >= admin.auth.jwt_ttl_seconds")
         return self
 
 
@@ -237,6 +253,11 @@ class IdpConfig(BaseModel):
     authorization_endpoint: str | None = None
     exchange_endpoint: str | None = None
     userinfo_endpoint: str | None = None
+    # Google `hd` (hosted-domain) restriction. When set, only accounts whose
+    # userinfo carries a matching `hd` claim should be admitted. OSS surfaces the
+    # claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's
+    # admission policy.
+    hosted_domain: str | None = None
 
 
 class AuthConfig(BaseModel):
@@ -246,6 +267,10 @@ class AuthConfig(BaseModel):
     access_ttl_seconds: int = 3600
     refresh_ttl_seconds: int = 604800
     rat_ttl_seconds: int = 900
+    # TTL for the agent-ownership claim token minted at /register (see
+    # auth/core/claim.py). Only meaningful when a claim-token minter is installed;
+    # OSS default mints no token so this is inert.
+    claim_ttl_seconds: int = 900
     assertion_max_ttl_seconds: int = 300
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
@@ -746,6 +771,30 @@ class CatalogConfig(BaseModel):
     # Lazy refresh-on-read: a manifest older than this is refreshed on the next
     # list()/get(). Zero disables auto-refresh (manual :refresh only).
     manifest_max_age_seconds: int = 86400
+    # Update-notify (Flow 3): the standalone ``CatalogUpdateScanner`` (started in
+    # app_factory when both the registry + admin DBs are present) runs one sweep per
+    # this interval, conditionally re-fetching the spec URLs of upstream-tracked APIs
+    # (If-None-Match) and emitting a ``catalog.update_available`` event when the
+    # upstream spec changed. The manual ``POST /catalog:refresh`` also triggers a
+    # sweep. A given API is re-probed at most once per this interval (a persistent
+    # per-API gate, so scanner + manual refresh don't double-probe). Zero disables the
+    # sweep + scanner entirely (kill switch for air-gapped installs — no event spam,
+    # no egress). Standalone-registry deployments (no admin DB) get no scanner.
+    update_check_interval_seconds: int = 86400
+    # Aggregate guardrails for one update-notify sweep. The sweep is offloaded off
+    # the triggering read (fire-and-forget), but it still probes N registered specs
+    # over the network, so bound the batch: stop after this many wall-clock seconds
+    # and run at most this many probes concurrently. Concurrency is kept below the
+    # registry DB pool so the sweep never starves live request traffic.
+    update_sweep_deadline_seconds: int = 300
+    update_sweep_max_concurrency: int = 4
+    # Full-jitter fraction added to the per-cycle sweep interval, to de-phase the
+    # scanner across replicas (thundering-herd mitigation). Each time a sweep runs,
+    # the next one is due after ``interval * (1 + uniform(0, jitter_ratio))``, so N
+    # replicas that start in lock-step drift apart instead of all re-probing the
+    # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
+    # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
+    update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
 class ServerConfig(BaseModel):
@@ -754,6 +803,12 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = False
+    backend: Literal["local", "remote"] = "local"
+    """Self-declared backend locality surfaced by ``GET /instance``: ``local`` for
+    a self-hosted install on the operator's own machine/network, ``remote`` for a
+    hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
+    which backend they reached — not an authorization signal. Defaults to
+    ``local``; the hosted platform sets ``remote`` in its own config."""
 
 
 class TelemetryConfig(BaseModel):
@@ -794,6 +849,91 @@ class TelemetryConfig(BaseModel):
         return value
 
 
+class ReleaseCheckConfig(BaseModel):
+    """ "Update available" check for the running jentic-one build itself.
+
+    Powers ``GET /system/version``: the backend asks GitHub for the newest
+    published release of ``repo`` and compares it against the running build so the
+    web console can surface an "update available" banner (and the user menu can
+    always show the current version). This is about *jentic-one's own* release —
+    distinct from ``CatalogConfig``, which tracks the public *API catalog*.
+
+    Runs only on a ``local`` backend (a self-hosted install the operator can
+    actually update); the hosted platform (``server.backend == "remote"``) skips
+    it. The result is cached in-process for ``cache_ttl_seconds`` (fetch-on-read,
+    no background job), so at most one GitHub request happens per TTL regardless
+    of how many clients poll. Every failure degrades to "latest unknown" (no
+    banner) rather than erroring — the version probe must never break the app.
+    """
+
+    enabled: bool = True
+    # ``owner/name`` slug of the GitHub repo whose releases represent this build.
+    # The check hits ``https://api.github.com/repos/{repo}/releases/latest``.
+    repo: str = "jentic/jentic-one"
+    # In-process cache lifetime for the resolved latest release. Zero is a kill
+    # switch (disables the check outright — air-gapped installs, no egress),
+    # mirroring the catalog scanner's ``interval <= 0`` convention.
+    cache_ttl_seconds: int = 21600  # 6h
+
+
+class EntitlementConfig(BaseModel):
+    """AWS Marketplace license gate for the Marketplace-listed deployment.
+
+    Powers the entitlement checker (``integrations/aws_marketplace``): on
+    startup — and every ``refresh_interval_seconds`` after — the process asks
+    AWS whether this deployment's Marketplace subscription is still active, and
+    locks the HTTP surface (503, health excepted) when it definitively is not.
+    Defaults to **OFF**: a non-Marketplace install that omits this block runs
+    exactly as before — nothing is wired, no AWS call is ever made.
+
+    Failure posture: an *unreachable* or *erroring* AWS API is never grounds
+    for lockout by itself — the last definitive verdict holds for
+    ``grace_period_seconds`` before the gate fails closed. Only an explicit
+    "not entitled" answer from AWS locks out immediately.
+    """
+
+    enabled: bool = False
+    # The Marketplace product code, issued by the AWS Marketplace portal when
+    # the container product is created. Required whenever ``enabled``.
+    product_code: str | None = None
+    region: str = "us-east-1"
+    # Which paid listing model the check calls: ``contract`` → License Manager
+    # ``CheckoutLicense`` (needs ``license_sku``); ``usage`` → Metering Service
+    # ``RegisterUsage`` (hourly/usage pricing). The live listing is contract
+    # priced (decided 2026-08-20), hence the default; the usage variant is kept
+    # until the listing is public in case the model changes during review.
+    pricing_model: Literal["usage", "contract"] = "contract"
+    refresh_interval_seconds: int = 3600
+    grace_period_seconds: int = 86400
+    # Contract pricing only (License Manager); unused for usage pricing.
+    # This is the Marketplace **product ID** from the portal (CheckoutLicense
+    # ``ProductSKU``) — NOT the product code above; the portal issues both.
+    license_sku: str | None = None
+    # Contract pricing only: the listing's entitlement dimension keys the gate
+    # checks out (all must be granted by the buyer's license). The live listing
+    # defines ``users`` and ``executions``. Accepts a YAML list or a
+    # comma-separated string (env: JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS).
+    license_dimensions: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
+        default_factory=list
+    )
+    # Test-only endpoint override (same posture as ``TelemetryConfig.endpoint``):
+    # points the client at a stub server for deployed-gate rehearsal —
+    # moto/LocalStack do not implement these AWS APIs. Not for operators.
+    endpoint: str | None = None
+
+    @model_validator(mode="after")
+    def _require_gate_inputs(self) -> EntitlementConfig:
+        if not self.enabled:
+            return self
+        if not self.product_code:
+            raise ValueError("entitlement.enabled requires entitlement.product_code")
+        if self.pricing_model == "contract" and not self.license_sku:
+            raise ValueError(
+                "entitlement.pricing_model 'contract' requires entitlement.license_sku"
+            )
+        return self
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
@@ -820,6 +960,8 @@ class AppConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
+    entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
 
     # Validated extension sub-configs, keyed by their registered section name.
@@ -878,10 +1020,40 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+def _coerce_indexed_dicts_to_lists(value: Any) -> Any:
+    """Recursively turn digit-keyed dicts into lists.
+
+    The env convention (``JENTIC__SECTION__KEY``) can only ever build nested
+    dicts, so a *list*-valued field addressed by index —
+    ``JENTIC__AUTH__ID_SIGNING__0__KID`` — arrives as ``{"0": {"kid": ...}}``
+    rather than ``[{"kid": ...}]`` and fails validation with ``list_type``.
+
+    A dict is treated as a list when its keys are exactly the contiguous integer
+    sequence ``0..n-1`` (as strings); it's then rebuilt in index order. Any other
+    dict (real string keys, or a sparse/1-based set) is left untouched and
+    recursed into, so ordinary config is unaffected.
+    """
+    if isinstance(value, dict):
+        coerced = {k: _coerce_indexed_dicts_to_lists(v) for k, v in value.items()}
+        keys = list(coerced.keys())
+        if keys and all(k.isdigit() for k in keys):
+            ordered = sorted(keys, key=int)
+            if [int(k) for k in ordered] == list(range(len(ordered))):
+                return [coerced[k] for k in ordered]
+        return coerced
+    if isinstance(value, list):
+        return [_coerce_indexed_dicts_to_lists(item) for item in value]
+    return value
+
+
 def _env_overrides() -> dict[str, Any]:
     """Build a nested dict from JENTIC__* environment variables.
 
     Convention: JENTIC__SECTION__KEY=value → {"section": {"key": "value"}}
+
+    A numeric path segment addresses a list index, so
+    ``JENTIC__AUTH__ID_SIGNING__0__KID`` builds ``{"0": {...}}`` here and is
+    coerced to a one-element list by :func:`_coerce_indexed_dicts_to_lists`.
     """
     prefix = "JENTIC__"
     result: dict[str, Any] = {}
@@ -893,7 +1065,9 @@ def _env_overrides() -> dict[str, Any]:
         for part in parts[:-1]:
             current = current.setdefault(part, {})
         current[parts[-1]] = value
-    return result
+    # Top-level keys are section names (never all-digit), so the result stays a
+    # dict; the coercion only reshapes nested indexed segments.
+    return cast("dict[str, Any]", _coerce_indexed_dicts_to_lists(result))
 
 
 def load_config(path: Path | None = None) -> AppConfig:

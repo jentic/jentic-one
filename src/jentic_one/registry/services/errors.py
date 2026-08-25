@@ -122,6 +122,50 @@ class OverlayStateConflictError(RegistryServiceError):
         self.action = action
 
 
+class OverlayRollbackTargetMissingError(RegistryServiceError):
+    """Raised when a confirmed overlay cannot be rolled back to a prior revision.
+
+    Rollback (A5b) promotes the overlay's ``superseded_revision_id`` back to current.
+    This is raised when that target is unknown (a first-ever materialize superseded
+    nothing, or a pre-A5a overlay never recorded it) or the target revision is no longer
+    restorable (deleted / not archived) — there is no deterministic revision to serve, so
+    the caller must resolve manually (e.g. re-import upstream) rather than the rollback
+    silently doing nothing.
+    """
+
+    def __init__(self, overlay_id: str, detail: str) -> None:
+        super().__init__(f"Cannot roll back overlay '{overlay_id}': {detail}")
+        self.overlay_id = overlay_id
+        self.detail = detail
+
+
+class OverlayApplyConflictError(RegistryServiceError):
+    """Raised when a confirmed overlay cannot be materialized onto its base spec.
+
+    Covers an overlay whose JSONPath targets no longer resolve against the base
+    spec (drift), an unsupported target expression, or an overlaid spec that fails
+    the post-apply safety checks (missing ``openapi`` key, unsafe ``servers[].url``).
+    """
+
+    def __init__(self, overlay_id: str, detail: str) -> None:
+        super().__init__(f"Cannot materialize overlay '{overlay_id}': {detail}")
+        self.overlay_id = overlay_id
+        self.detail = detail
+
+
+class InvalidOverlayDocumentError(RegistryServiceError):
+    """Raised when an overlay document is structurally invalid or too large at submit.
+
+    Rejects abusive input at the ingress (contributor with ``apis:write``) rather than
+    only at confirm time: the document must be an object with a bounded ``actions``
+    list and must not exceed the configured serialized-size cap.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"Invalid overlay document: {detail}")
+        self.detail = detail
+
+
 class SearchUnavailableError(RegistryServiceError):
     """Raised when search is not supported for the current backend/mode."""
 
@@ -129,8 +173,12 @@ class SearchUnavailableError(RegistryServiceError):
 class InvalidApiFilterError(RegistryServiceError):
     """Raised when an api filter identifier cannot be resolved."""
 
-    def __init__(self, identifier: str) -> None:
-        super().__init__(f"Unknown API filter: {identifier!r}")
+    def __init__(self, identifier: str, hint: str | None = None) -> None:
+        detail = hint or (
+            "expected 'vendor[/name[/version]]' matching an imported API, "
+            "e.g. 'github-com/api-github-com/1.1.4'"
+        )
+        super().__init__(f"Unknown API filter: {identifier!r} ({detail})")
         self.identifier = identifier
 
 
@@ -185,3 +233,73 @@ class CatalogUnavailableError(RegistryServiceError):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+class OverlaySupersedeForbiddenError(RegistryServiceError):
+    """Raised when a re-import would supersede a live overlay but the caller can't.
+
+    A4b (privilege-inversion guard): re-importing an upstream spec over an API whose
+    current revision is a live *confirmed* overlay would silently discard the operator's
+    materialized fix. That is an operator action, so it requires ``overlays:confirm``.
+    When the enqueuing caller lacks it, the import is refused (rather than silently
+    reverting the fix) and an operator-facing ``catalog.update_conflicts_overlay`` event
+    is re-emitted so a privileged operator can decide. The caller sees a 403.
+    """
+
+    def __init__(self, api_id: str, overlay_id: str) -> None:
+        super().__init__(
+            f"Re-importing '{api_id}' would supersede confirmed overlay '{overlay_id}', "
+            "which discards an operator's fix. This requires the 'overlays:confirm' "
+            "permission — ask an operator to run the re-import, or roll back the overlay "
+            "if the fix should be retired."
+        )
+        self.api_id = api_id
+        self.overlay_id = overlay_id
+
+
+class OverlayRematerializeForbiddenError(RegistryServiceError):
+    """Raised when editing a *materialized* overlay would re-materialize it, but the caller can't.
+
+    D1: editing a CONFIRMED, live overlay re-applies the edited document over its base and
+    re-ingests it — rewriting the API's served spec, exactly like a confirm. That is an
+    operator action, so it requires ``overlays:confirm`` (the same gate as confirm/rollback),
+    not just the ``apis:write`` an ordinary contributor holds to edit a *pending* overlay. A
+    caller with only ``apis:write`` editing a materialized overlay is refused with a 403
+    rather than silently rewriting what the platform serves. (Editing a pending — or a
+    stuck-unmaterialized — overlay stays ``apis:write``: it changes nothing served.)
+    """
+
+    def __init__(self, overlay_id: str) -> None:
+        super().__init__(
+            f"Editing confirmed overlay '{overlay_id}' re-materializes it onto the served "
+            "spec, which requires the 'overlays:confirm' permission. Ask an operator to make "
+            "the edit, or edit it while it is still pending."
+        )
+        self.overlay_id = overlay_id
+
+
+class SnoozeForbiddenError(RegistryServiceError):
+    """Raised when a caller lacks the operator scope to snooze/mute a catalog update (C1).
+
+    Snoozing quiets a real upstream-drift notification, so it is an operator event-management
+    action gated on ``events:write`` — a low-privilege agent must not be able to hide a genuine
+    upstream change. Maps to HTTP 403.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Snoozing a catalog update notification requires the 'events:write' permission."
+        )
+
+
+class NothingToSnoozeError(RegistryServiceError):
+    """Raised when snoozing an entry that has no outstanding notified update (C1).
+
+    A snooze pins the digest the sweep last notified for; with nothing notified there is no
+    change to accept, so the request is a no-op error rather than silently creating a snooze
+    that matches nothing. Maps to HTTP 409.
+    """
+
+    def __init__(self, api_id: str) -> None:
+        super().__init__(f"Catalog entry '{api_id}' has no outstanding update to snooze")
+        self.api_id = api_id

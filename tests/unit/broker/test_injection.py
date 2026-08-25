@@ -25,6 +25,7 @@ def _make_ctx(decrypt_map: dict[str, str]) -> MagicMock:
 def test_inject_bearer_token() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_1",
+        name="cred1",
         wire_type=CredentialType.BEARER_TOKEN,
         stored_type=StoredCredentialType.STATIC_BEARER_TOKEN,
         provider="static",
@@ -41,6 +42,7 @@ def test_inject_bearer_token() -> None:
 def test_inject_api_key_header() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_2",
+        name="cred2",
         wire_type=CredentialType.API_KEY,
         stored_type=StoredCredentialType.API_KEY,
         provider="static",
@@ -59,6 +61,7 @@ def test_inject_api_key_header() -> None:
 def test_inject_api_key_query() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_3",
+        name="cred3",
         wire_type=CredentialType.API_KEY,
         stored_type=StoredCredentialType.API_KEY,
         provider="static",
@@ -78,6 +81,7 @@ def test_inject_api_key_query() -> None:
 def test_inject_api_key_cookie() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_3c",
+        name="cred3c",
         wire_type=CredentialType.API_KEY,
         stored_type=StoredCredentialType.API_KEY,
         provider="static",
@@ -97,6 +101,7 @@ def test_inject_api_key_cookie() -> None:
 def test_inject_basic_auth() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_4",
+        name="cred4",
         wire_type=CredentialType.BASIC,
         stored_type=StoredCredentialType.BASIC_AUTH,
         provider="static",
@@ -115,6 +120,7 @@ def test_inject_basic_auth() -> None:
 def test_inject_oauth2_with_access_token() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_5",
+        name="cred5",
         wire_type=CredentialType.OAUTH2,
         stored_type=StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         provider="direct_oauth2",
@@ -131,6 +137,7 @@ def test_inject_oauth2_with_access_token() -> None:
 def test_inject_oauth2_raises_without_access_token() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_6",
+        name="cred6",
         wire_type=CredentialType.OAUTH2,
         stored_type=StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         provider="direct_oauth2",
@@ -147,3 +154,94 @@ def test_injection_result_dataclass() -> None:
     assert result.headers == {"A": "B"}
     assert result.query_params == {"c": "d"}
     assert result.cookies == {"e": "f"}
+
+
+def test_inject_no_auth_injects_nothing() -> None:
+    # A no-auth credential carries no secret — injection is a no-op (#603).
+    resolved = ResolvedCredential(
+        credential_id="cred_noauth",
+        name="noauth",
+        wire_type=CredentialType.NO_AUTH,
+        stored_type=StoredCredentialType.NO_AUTH,
+        provider="static",
+    )
+    result = inject_auth(resolved, ctx=MagicMock())
+    assert result.headers == {}
+    assert result.query_params == {}
+    assert result.cookies == {}
+
+
+def test_inject_sigv4_returns_signing_material_not_headers() -> None:
+    # SigV4 can't produce a static header — it hands decrypted material forward
+    # for the signing runner to sign the final request (#776).
+    resolved = ResolvedCredential(
+        credential_id="cred_sigv4",
+        name="sigv4",
+        wire_type=CredentialType.SIGV4,
+        stored_type=StoredCredentialType.AWS_SIGV4,
+        provider="static",
+        access_key_id="AKIAEXAMPLE",
+        encrypted_secret_access_key="enc:secret",
+        encrypted_session_token=None,
+        aws_region="us-east-1",
+        aws_service="aoss",
+    )
+    ctx = _make_ctx({"enc:secret": "decrypted-secret"})
+
+    result = inject_auth(resolved, ctx=ctx)
+
+    assert result.headers == {}
+    assert result.query_params == {}
+    assert result.cookies == {}
+    assert result.signing is not None
+    assert result.signing.access_key_id == "AKIAEXAMPLE"
+    assert result.signing.secret_access_key == "decrypted-secret"
+    assert result.signing.region == "us-east-1"
+    assert result.signing.service == "aoss"
+    assert result.signing.session_token is None
+
+
+def test_inject_sigv4_decrypts_session_token() -> None:
+    resolved = ResolvedCredential(
+        credential_id="cred_sigv4_st",
+        name="sigv4st",
+        wire_type=CredentialType.SIGV4,
+        stored_type=StoredCredentialType.AWS_SIGV4,
+        provider="static",
+        access_key_id="ASIAEXAMPLE",
+        encrypted_secret_access_key="enc:secret",
+        encrypted_session_token="enc:token",
+        aws_region="eu-west-1",
+        aws_service="execute-api",
+    )
+    ctx = _make_ctx({"enc:secret": "s", "enc:token": "session-tok"})
+
+    result = inject_auth(resolved, ctx=ctx)
+
+    assert result.signing is not None
+    assert result.signing.session_token == "session-tok"
+
+
+def test_inject_sigv4_missing_secret_raises() -> None:
+    resolved = ResolvedCredential(
+        credential_id="cred_sigv4_bad",
+        name="sigv4bad",
+        wire_type=CredentialType.SIGV4,
+        stored_type=StoredCredentialType.AWS_SIGV4,
+        provider="static",
+        access_key_id="AKIAEXAMPLE",
+        encrypted_secret_access_key=None,
+        aws_region="us-east-1",
+        aws_service="aoss",
+    )
+    with pytest.raises(ValueError, match="missing encrypted_secret_access_key"):
+        inject_auth(resolved, ctx=MagicMock())
+
+
+def test_inject_unknown_wire_type_raises() -> None:
+    # An unknown wire type must fail loudly, not silently inject nothing — a quiet
+    # empty injection would send an unauthenticated request (B4 / Ren review).
+    resolved = MagicMock()
+    resolved.wire_type = "totally-unknown-type"
+    with pytest.raises(ValueError, match="Unsupported credential wire_type"):
+        inject_auth(resolved, ctx=MagicMock())

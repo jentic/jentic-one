@@ -9,7 +9,6 @@ caller's concern (the runner returns the verbatim upstream result).
 
 from __future__ import annotations
 
-import re
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -28,9 +27,10 @@ from jentic_one.broker.services.execution.pipeline import (
     ExecutionContext,
     ExecutionOutcome,
 )
+from jentic_one.shared.aws.sigv4 import SigV4Material
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, valid_trace_id_or_none
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
@@ -54,7 +54,6 @@ _execution_duration = _meter.create_histogram(
 )
 
 _circuit_event_last_emitted: dict[str, datetime] = {}
-_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _MAX_EVENT_SUMMARY_LEN = 128
 
 #: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
@@ -127,6 +126,7 @@ async def run_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    signing: SigV4Material | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -158,6 +158,7 @@ async def run_execution(
         headers=headers or {},
         body=body,
         timeout_s=timeout,
+        signing=signing,
     )
     exec_context = ExecutionContext(
         execution_id=execution_id,
@@ -374,6 +375,8 @@ async def persist_streaming_execution(
         actor_id=actor_id,
         actor_type=actor_type,
         origin=origin,
+        credential_id=ctx_req.credential_id,
+        credential_name=ctx_req.credential_name,
     )
 
     # Third-party auth failure on the streaming path — mirrors run_execution
@@ -434,6 +437,8 @@ async def _persist(
         actor_id=actor_id,
         actor_type=actor_type,
         origin=origin,
+        credential_id=ctx_req.credential_id,
+        credential_name=ctx_req.credential_name,
     )
 
 
@@ -463,7 +468,7 @@ async def _emit_execution_lifecycle(
     separate ``auth_failure`` event that the flat, correlation-id-free payload
     could never dedupe downstream.
     """
-    event_trace_id = trace_id if trace_id and _TRACE_ID_RE.match(trace_id) else None
+    event_trace_id = valid_trace_id_or_none(trace_id)
     try:
         if status == ExecutionStatus.COMPLETED:
             await emit_event(

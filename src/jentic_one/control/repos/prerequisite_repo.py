@@ -1,7 +1,8 @@
-"""Cross-database prerequisite queries for access request validation.
+"""Cross-database reads against admin tables for the control module.
 
-Uses raw SQL (text()) to avoid importing admin ORM models — the control module
-must not import from the admin module.
+Existence checks (access-request prerequisites) and labelling lookups (display
+enrichment) share one seam: raw SQL (text()) so the control module never
+imports admin ORM models.
 """
 
 from __future__ import annotations
@@ -24,8 +25,55 @@ class BoundAgentRow(NamedTuple):
     bound_at: datetime
 
 
+class UserDisplayRow(NamedTuple):
+    """Display fields for a user, resolved cross-DB for labelling only."""
+
+    user_id: str
+    email: str
+    first_name: str | None
+    last_name: str | None
+
+
 class PrerequisiteRepository:
-    """Checks existence of bindings in the admin database without admin imports."""
+    """Cross-DB reads (existence checks + labelling lookups) without admin imports."""
+
+    @staticmethod
+    async def active_user_exists(session: AsyncSession, *, user_id: str) -> bool:
+        """Return True if an active user with this id exists (admin DB).
+
+        A cross-DB existence check that lets a control-side caller validate a
+        user id without importing admin ORM models (e.g. before recording a
+        reference to a user). Returns False for unknown or deactivated users.
+        """
+        result = await session.execute(
+            text("SELECT 1 FROM users WHERE id = :user_id AND active = true LIMIT 1"),
+            {"user_id": user_id},
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def get_user_displays(
+        session: AsyncSession, *, user_ids: list[str]
+    ) -> dict[str, UserDisplayRow]:
+        """Batch-resolve user display info by id (admin DB), keyed by user id.
+
+        Labelling only — never authorization. Ids that don't resolve (agents,
+        service accounts, deleted rows) are simply absent from the result, so
+        callers degrade to showing the raw id. Deactivated users ARE returned:
+        a decided request whose owner was later offboarded should still show
+        who owned it.
+        """
+        if not user_ids:
+            return {}
+        placeholders = ", ".join(f":uid_{i}" for i in range(len(user_ids)))
+        params: dict[str, object] = {f"uid_{i}": uid for i, uid in enumerate(user_ids)}
+        result = await session.execute(
+            text(
+                f"SELECT id, email, first_name, last_name FROM users WHERE id IN ({placeholders})"
+            ),
+            params,
+        )
+        return {row[0]: UserDisplayRow(*row) for row in result.fetchall()}
 
     @staticmethod
     async def agent_toolkit_binding_exists(
@@ -38,6 +86,50 @@ class PrerequisiteRepository:
                 "WHERE agent_id = :agent_id AND toolkit_id = :toolkit_id LIMIT 1"
             ),
             {"agent_id": agent_id, "toolkit_id": toolkit_id},
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def agent_bound_to_any_toolkit(
+        session: AsyncSession, *, agent_id: str, toolkit_ids: list[str]
+    ) -> bool:
+        """Return True if the agent is bound to at least one of the given toolkits.
+
+        Batched variant of :meth:`agent_toolkit_binding_exists` for
+        satisfaction checks (issue #826). The current annotator only probes a
+        single resolved toolkit per item (ambiguous references are left
+        un-annotated), but the batched shape stays so future callers can check
+        several candidates in one query. Empty ``toolkit_ids`` short-circuits
+        to False.
+        """
+        if not toolkit_ids:
+            return False
+        placeholders = ", ".join(f":tk_{i}" for i in range(len(toolkit_ids)))
+        params: dict[str, object] = {f"tk_{i}": tid for i, tid in enumerate(toolkit_ids)}
+        params["agent_id"] = agent_id
+        result = await session.execute(
+            text(
+                "SELECT 1 FROM agent_toolkit_bindings "
+                f"WHERE agent_id = :agent_id AND toolkit_id IN ({placeholders}) LIMIT 1"
+            ),
+            params,
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def actor_scope_grant_exists(session: AsyncSession, *, actor_id: str, scope: str) -> bool:
+        """Return True if the actor already holds this scope grant (admin DB).
+
+        Mirrors the uniqueness key of ``EffectsRepository.grant_scope_to_actor``'s
+        idempotent insert (``(actor_id, scope)``), so "exists" here is exactly
+        "the grant effect would be a no-op".
+        """
+        result = await session.execute(
+            text(
+                "SELECT 1 FROM actor_scope_grants "
+                "WHERE actor_id = :actor_id AND scope = :scope LIMIT 1"
+            ),
+            {"actor_id": actor_id, "scope": scope},
         )
         return result.scalar_one_or_none() is not None
 

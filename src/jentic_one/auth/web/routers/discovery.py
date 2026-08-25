@@ -10,6 +10,7 @@ from jentic_one.shared.auth import CachedJWKSPublisher
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.links import deployment_base_url
 
 router = APIRouter()
 
@@ -30,12 +31,6 @@ def _get_publisher(config: AuthConfig) -> CachedJWKSPublisher:
     return publisher
 
 
-def _build_issuer(config: AuthConfig, request: Request) -> str:
-    if config.canonical_base_url:
-        return config.canonical_base_url.rstrip("/")
-    return str(request.base_url).rstrip("/")
-
-
 @router.get(
     "/.well-known/oauth-authorization-server",
     summary="OAuth authorization server metadata",
@@ -44,7 +39,7 @@ async def oauth_authorization_server(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> dict[str, Any]:
     """Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms)."""
-    issuer = _build_issuer(ctx.config.auth, request)
+    issuer = deployment_base_url(ctx.config.auth, request)
     return {
         "issuer": issuer,
         "authorization_endpoint": f"{issuer}/authorize",
@@ -71,3 +66,22 @@ async def oauth_authorization_server(
 async def jwks(ctx: Context = Depends(get_ctx)) -> dict[str, Any]:
     """Return the JWKS document with the active public signing keys (ES256)."""
     return _get_publisher(ctx.config.auth).get_jwks()
+
+
+@router.get(
+    "/auth/idp",
+    operation_id="authIdpDescriptor",
+    summary="External IdP login descriptor",
+)
+async def auth_idp_descriptor(ctx: Context = Depends(get_ctx)) -> dict[str, Any]:
+    """Public capability hint: whether IdP login is enabled, and which provider.
+
+    The SPA reads this before login to decide whether to show a "Continue with
+    <provider>" button. Unauthenticated and secret-free — it advertises only the
+    enabled flag and the provider name (never client secrets or endpoints).
+    """
+    idp = ctx.config.auth.idp
+    return {
+        "enabled": idp.enabled,
+        "provider": idp.provider if idp.enabled else None,
+    }

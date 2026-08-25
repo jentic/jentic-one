@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **150**._
+_Total endpoints: **159**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -109,7 +109,7 @@ _Total endpoints: **150**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (43)
+## Operator-facing (typically a human operator / admin) (49)
 
 
 ### `access-requests`
@@ -139,11 +139,19 @@ _Total endpoints: **150**._
 | POST | `/agents/{agent_id}/toolkits` | `agents:write` | operator | Bind Toolkit |
 | DELETE | `/agents/{agent_id}/toolkits/{toolkit_id}` | `agents:write` | operator | Unbind Toolkit |
 | POST | `/agents/{agent_id}:approve` | `agents:write` | operator | Approve Agent |
+| POST | `/agents/{agent_id}:claim` | _any authenticated_ | operator | Claim Agent |
 | POST | `/agents/{agent_id}:deny` | `agents:write` | operator | Deny Agent |
 | POST | `/agents/{agent_id}:disable` | `agents:write` | operator | Disable Agent |
 | POST | `/agents/{agent_id}:enable` | `agents:write` | operator | Enable Agent |
 | POST | `/agents/{agent_id}:generate-api-key` | `agents:write` | operator | Generate Agent Api Key |
 | POST | `/agents/{agent_id}:revoke-api-key` | `agents:write` | operator | Revoke Agent Api Key |
+
+### `apis`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm` | `overlays:confirm` | operator | Confirm Overlay |
+| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback` | `overlays:confirm` | operator | Rollback Overlay |
 
 ### `audit`
 
@@ -151,6 +159,19 @@ _Total endpoints: **150**._
 |---|---|---|---|---|
 | GET | `/audit` | `audit:read` | operator | List Audit Entries |
 | GET | `/audit/{audit_id}` | `audit:read` | operator | Get Audit Entry |
+
+### `auth`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/auth/refresh` | _any authenticated_ | operator | Refresh session token |
+
+### `catalog`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/catalog/{api_id}:snooze` | `events:write` | operator | Snooze Catalog Entry |
+| POST | `/catalog/{api_id}:unsnooze` | `events:write` | operator | Unsnooze Catalog Entry |
 
 ### `catalog:refresh`
 
@@ -200,7 +221,7 @@ _Total endpoints: **150**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (59)
+## Any authenticated actor (60)
 
 
 ### `access-requests`
@@ -238,7 +259,6 @@ _Total endpoints: **150**._
 | POST | `/apis/{vendor}/{name}/{version}/overlays` | `apis:write` | any | Submit Overlay |
 | DELETE | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Deprecate Overlay |
 | PATCH | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Update Overlay |
-| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm` | `apis:write` | any | Confirm Overlay |
 | DELETE | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:write` | any | Delete Revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive Revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote Revision |
@@ -304,6 +324,12 @@ _Total endpoints: **150**._
 |---|---|---|---|---|
 | GET | `/service-accounts/{service_account_id}` | _any authenticated_ | any | Get Service Account |
 
+### `system`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/system/version` | _any authenticated_ | any | Running and latest-available app version |
+
 ### `toolkits`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -320,6 +346,7 @@ _Total endpoints: **150**._
 | GET | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:read`, `owner:toolkits:read` | any | List binding permission rules |
 | PATCH | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:write` | any | Patch binding permission rules |
 | PUT | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:write` | any | Replace binding permission rules |
+| POST | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test` | `toolkits:read`, `owner:toolkits:read` | any | Dry-run permission evaluation |
 | GET | `/toolkits/{toolkit_id}/keys` | `toolkits:read`, `owner:toolkits:read` | any | List toolkit keys |
 | POST | `/toolkits/{toolkit_id}/keys` | `toolkits:write` | any | Issue toolkit key |
 | DELETE | `/toolkits/{toolkit_id}/keys/{key_id}` | `toolkits:write` | any | Revoke toolkit key |
@@ -332,7 +359,7 @@ _Total endpoints: **150**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (17)
+## Public (unauthenticated) (19)
 
 
 ### `.well-known`
@@ -353,6 +380,7 @@ _Total endpoints: **150**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/auth/health` | _public — no auth_ | — | Auth health |
+| GET | `/auth/idp` | _public — no auth_ | — | External IdP login descriptor |
 | POST | `/auth/login` | _public — no auth_ | — | Log in |
 
 ### `authorize`
@@ -385,11 +413,17 @@ _Total endpoints: **150**._
 |---|---|---|---|---|
 | GET | `/health` | _public — no auth_ | — | Health |
 
+### `instance`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/instance` | _public — no auth_ | — | Backend identity |
+
 ### `oauth`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/oauth/callback` | _public — no auth_ | — | Oauth Callback |
+| GET | `/oauth/callback` | _public — no auth_ | — | Authorize Oauth Callback |
 | POST | `/oauth/token` | _public — no auth_ | — | Token Endpoint |
 
 ### `ready`

@@ -93,6 +93,7 @@ async def list_apis(
                     version=item.version,
                     host=item.host,
                 ),
+                catalog_api_id=item.catalog_api_id,
                 display_name=item.display_name,
                 description=item.description,
                 icon_url=item.icon_url,
@@ -102,6 +103,9 @@ async def list_apis(
                 revision_count=item.revision_count,
                 operation_count=item.operation_count,
                 security_schemes=item.security_schemes,
+                origin=item.origin,
+                source_url=item.source_url,
+                update_available=item.update_available,
                 created_at=item.created_at,
                 updated_at=item.updated_at,
                 links=links,
@@ -159,13 +163,22 @@ async def import_apis(
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
     """Import OpenAPI/Arazzo content as new API revisions (async)."""
+    # Attribute each resulting revision to the authenticated principal unless the
+    # client supplied an explicit `submitted_by` override (e.g. importing on
+    # behalf of someone else). The job row's `created_by` records the caller
+    # either way; this default carries the same principal through the ingest
+    # pipeline onto ApiRevision.submitted_by, which was previously left null.
+    sources = [s.model_dump(mode="json") for s in body.sources]
+    for source in sources:
+        if source.get("submitted_by") is None:
+            source["submitted_by"] = identity.sub
     async with ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
             session,
             JobKind.IMPORT,
             created_by=identity.sub,
             actor_type=identity.actor_type,
-            payload={"sources": [s.model_dump(mode="json") for s in body.sources]},
+            payload={"sources": sources},
         )
 
     resp = ApiImportResponse(
@@ -196,6 +209,7 @@ def _build_api_response(view: ApiView, request: Request) -> ApiResponse:
             version=view.version,
             host=view.host,
         ),
+        catalog_api_id=view.catalog_api_id,
         display_name=view.display_name,
         description=view.description,
         icon_url=view.icon_url,
@@ -203,6 +217,9 @@ def _build_api_response(view: ApiView, request: Request) -> ApiResponse:
         revision_count=view.revision_count,
         operation_count=view.operation_count,
         security_schemes=view.security_schemes,
+        origin=view.origin,
+        source_url=view.source_url,
+        update_available=view.update_available,
         created_at=view.created_at,
         updated_at=view.updated_at,
         links=ApiLinksResponse(
@@ -602,9 +619,11 @@ async def get_api_spec(
     overlays: bool = Query(default=True),
 ) -> Response:
     """Download the OpenAPI spec for the API's current (live) revision."""
-    # `overlays` is accepted for forward-compatibility; overlay merging is not
-    # implemented yet, so the flag is currently a no-op and bodies are identical
-    # regardless of its value.
+    # `overlays` is accepted for forward-compatibility with a future read-time merge.
+    # Confirmed overlays are applied by *materialization* (a confirm re-ingests the
+    # base spec with the overlay applied and promotes the result to the current
+    # revision), so the current revision already embodies confirmed overlays and this
+    # flag is currently a no-op — bodies are identical regardless of its value.
     svc = SpecDownloadService(ctx)
     doc = await svc.get_live_spec(vendor, name, version)
     return _spec_response(request, doc)
@@ -622,8 +641,10 @@ async def get_api_revision_spec(
     overlays: bool = Query(default=True),
 ) -> Response:
     """Download the OpenAPI spec for a specific revision."""
-    # `overlays` is accepted for forward-compatibility; overlay merging is not
-    # implemented yet, so the flag is currently a no-op.
+    # `overlays` is accepted for forward-compatibility with a future read-time merge.
+    # Confirmed overlays are applied by materialization (they produce their own
+    # revision), so a specific revision's body is served as-stored and this flag is
+    # currently a no-op.
     svc = SpecDownloadService(ctx)
     doc = await svc.get_revision_spec(vendor, name, version, revision_id)
     return _spec_response(request, doc)

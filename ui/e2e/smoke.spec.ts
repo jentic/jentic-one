@@ -40,11 +40,11 @@ test('app loads, login works, shell renders, health resolves, console clean', as
 	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
 	await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 
-	// The dashboard composes its overview from real list endpoints (mocked here):
-	// the "Awaiting approval" overview tile renders once /agents resolves. Use
-	// exact match — "Agents awaiting approval" (the card heading) is a separate,
-	// substring-overlapping element.
-	await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible();
+	// The dashboard composes its overview from real list endpoints (mocked
+	// here): the "Needs your action" header bell renders its count badge once
+	// its sources resolve (the body queue cards were folded into it in the
+	// rebuild).
+	await expect(page.getByRole('button', { name: /Needs your action \(\d+/ })).toBeVisible();
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });

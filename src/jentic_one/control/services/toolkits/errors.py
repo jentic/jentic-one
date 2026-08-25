@@ -99,3 +99,24 @@ class KeyAlreadyRevokedError(ToolkitServiceError):
     def __init__(self, key_id: str) -> None:
         super().__init__(f"Key '{key_id}' is already revoked")
         self.key_id = key_id
+
+
+class ToolkitLevelPermissionsUnsupportedError(ToolkitServiceError):
+    """Raised when ``POST /toolkits`` carries a ``permissions`` array.
+
+    The old ``Toolkit.permissions`` JSON column was written on create but
+    never read by the broker's rule evaluator (which enforces the
+    per-binding ``toolkit_permission_rules`` table). Silently accepting
+    the field misled operators into thinking they had gated a toolkit
+    when they hadn't (issue #655). Reject with a ``422`` that names the
+    supported surface — the same "reject where not enforced" remedy as
+    #656/#680.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Toolkit-level permissions are not enforced; attach rules to a "
+            "credential binding via "
+            "PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions "
+            "or inline on the bind request"
+        )

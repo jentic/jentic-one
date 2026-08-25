@@ -13,7 +13,7 @@
  * state rather than issuing a bad request.
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { FileJson, Trash2 } from 'lucide-react';
 import {
 	PageShell,
@@ -29,9 +29,18 @@ import {
 import { OverviewStrip } from '@/modules/workspace/components/OverviewStrip';
 import { OperationsSection } from '@/modules/workspace/components/OperationsSection';
 import { RevisionsSection } from '@/modules/workspace/components/RevisionsSection';
+import { OverlaysSection } from '@/modules/workspace/components/OverlaysSection';
+import { ServingStateStrip } from '@/modules/workspace/components/ServingStateStrip';
 import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
-import { formatApiKey, useDeleteApi, useWorkspaceApi } from '@/modules/workspace/api';
-import type { ApiKey } from '@/modules/workspace/api';
+import {
+	formatApiKey,
+	diffBaseFor,
+	useApiRevisions,
+	useDeleteApi,
+	useWorkspaceApi,
+} from '@/modules/workspace/api';
+import type { ApiKey, SpecDiffBase } from '@/modules/workspace/api';
+import { apiRefDisplayName } from '@/shared/lib';
 import { ROUTES } from '@/shared/app/routes';
 
 /** Build the identity triple from route params, decoding each segment. */
@@ -57,6 +66,9 @@ export default function ApiDetailPage() {
 	const params = useParams<{ vendor: string; name: string; version: string }>();
 	const apiKey = keyFromParams(params);
 	const query = useWorkspaceApi(apiKey);
+	// Shared cache with RevisionsSection — used to pick the header spec
+	// viewer's diff base (the revision created just before the live one).
+	const revisionsQuery = useApiRevisions(apiKey);
 	const navigate = useNavigate();
 	const deleteApi = useDeleteApi();
 	const [specOpen, setSpecOpen] = useState(false);
@@ -72,7 +84,30 @@ export default function ApiDetailPage() {
 	}
 
 	const api = query.data;
-	const title = api?.displayName ?? `${apiKey.vendor}/${apiKey.name}`;
+
+	// The header "View spec" shows the LIVE document, opening in FULL mode (the
+	// label promises the raw document); a Diff toggle vs the revision created
+	// just before the live one is available when the list carries one.
+	const revisions = revisionsQuery.items;
+	const live = revisions.find((r) => r.isCurrent) ?? null;
+	const liveDiffBase: SpecDiffBase | null = live ? diffBaseFor(live, revisions) : null;
+
+	// Route the title through the shared friendly-name rule so a draft-only API
+	// (no user-set display_name) reads as its humanised sub-API/vendor name
+	// instead of the raw `vendor/name` tuple, matching the workspace tile.
+	// `apiRefDisplayName` can return '' for generic/empty identity fields, so
+	// chain the same guaranteed non-empty fallback `ApiCard.titleFor` uses. The
+	// early return above guarantees `apiKey.vendor` is a non-empty string (a
+	// blank vendor makes `keyFromParams` return null), so it's the final
+	// fallback — the title also feeds the VendorIcon name + the Remove/aria
+	// labels, so it must never be blank.
+	const title =
+		apiRefDisplayName({
+			displayName: api?.displayName,
+			catalogApiId: api?.catalogApiId,
+			vendor: apiKey.vendor,
+			name: apiKey.name,
+		}) || apiKey.vendor;
 
 	return (
 		<PageShell>
@@ -106,6 +141,14 @@ export default function ApiDetailPage() {
 							<FileJson size={14} aria-hidden="true" />
 							View spec
 						</Button>
+						{/* The disabled button is unfocusable, so its title hint is
+						    hover-only; mirror it for keyboard/SR users. */}
+						{api && api.currentRevisionId === null ? (
+							<span className="sr-only">
+								View spec is unavailable: no live revision — promote a revision to
+								view its spec.
+							</span>
+						) : null}
 						<CopyButton value={formatApiKey(apiKey)} />
 						<Button
 							variant="danger"
@@ -145,11 +188,20 @@ export default function ApiDetailPage() {
 				<>
 					<OverviewStrip api={api} />
 					<OperationsSection apiKey={apiKey} totalCount={api.operationCount} />
+					<ServingStateStrip apiKey={apiKey} />
 					<RevisionsSection apiKey={apiKey} />
+					<OverlaysSection apiKey={apiKey} currentRevisionId={api.currentRevisionId} />
 				</>
 			)}
 
-			<SpecViewerDialog apiKey={apiKey} open={specOpen} onClose={() => setSpecOpen(false)} />
+			<SpecViewerDialog
+				apiKey={apiKey}
+				open={specOpen}
+				onClose={() => setSpecOpen(false)}
+				revisionLabel="live"
+				diffAgainst={liveDiffBase}
+				defaultMode="full"
+			/>
 
 			<CascadeDeleteDialog
 				open={deleteOpen}

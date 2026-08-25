@@ -198,6 +198,7 @@ def test_password_rotation_required(web_context: Context) -> None:
     claims = {
         "sub": "user-needs-rotation",
         "email": "rotation@test.local",
+        "actor_type": "user",
         "permissions": ["org:admin"],
         "must_change_password": True,
     }

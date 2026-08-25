@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { ChevronDown } from 'lucide-react';
 import { LayoutGroup, motion } from 'framer-motion';
 import { sortedNavItems, visibleNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';

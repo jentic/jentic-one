@@ -12,7 +12,7 @@ import { clearToken, setToken } from '@/shared/api';
 import { AuthProvider } from '@/shared/auth/AuthContext';
 import { App } from '@/App';
 import { clearAllToasts, Toaster } from '@/shared/ui';
-import { CredentialType } from '@/modules/credentials/api';
+import { CredentialType } from '@/shared/credentials/api';
 import { CredentialsPage } from '@/modules/credentials/pages/CredentialsPage';
 import {
 	makeMockApi,
@@ -20,7 +20,7 @@ import {
 	makeMockCredential,
 	resetApisStore,
 	resetCredentialsStore,
-} from '@/modules/credentials/mocks/handlers';
+} from '@/shared/credentials/mocks/handlers';
 
 /**
  * The success toast that previously lived as a one-time-secret dialog is now
@@ -219,7 +219,10 @@ describe('CredentialsPage', () => {
 		await screen.findByText('No credentials stored');
 		await user.click(screen.getByRole('button', { name: /add your first credential/i }));
 		await user.type(screen.getByLabelText('Search APIs'), 'acme');
-		await user.click(await screen.findByText('acme.com'));
+		// Catalog rows title from the `api_id` slug exactly like Discover
+		// (#910): a bare-domain entry reads `acme.com` verbatim (it also
+		// appears as the mono subtitle, so pick the first match).
+		await user.click((await screen.findAllByText('acme.com'))[0]);
 
 		// The summary chip now signals the upcoming :import via an inline
 		// subtitle (replacing the old standalone badge) — the wording matches
@@ -414,6 +417,26 @@ describe('CredentialsPage', () => {
 		const nameField = await screen.findByDisplayValue('Editable cred');
 		await user.type(nameField, ' v2');
 		expect(save).toBeEnabled();
+	});
+
+	it('locks the api_key field name and location in the edit sheet (#589)', async () => {
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'ck1',
+				name: 'Key cred',
+				type: CredentialType.API_KEY,
+				details: { field_name: 'appid', location: 'query', hint: '••••' },
+			}),
+		]);
+		renderWithProviders(<CredentialsPage />);
+		const user = userEvent.setup();
+
+		await screen.findByText('Key cred');
+		await user.click(screen.getByRole('button', { name: 'Edit credential Key cred' }));
+		await screen.findByRole('heading', { name: 'Edit credential' });
+
+		const fieldName = await screen.findByDisplayValue('appid');
+		expect(fieldName).toBeDisabled();
 	});
 
 	it('has no critical a11y violations on the populated list', async () => {

@@ -17,6 +17,10 @@ export type CredentialRedactedResponse = {
      */
     api: APIReference;
     /**
+     * Catalog identity slug of the target API (`domain[/sub-api]`), when recorded at create time. Display-only; null for older credentials.
+     */
+    catalog_api_id?: (string | null);
+    /**
      * Creation timestamp (UTC).
      */
     created_at: string;
@@ -29,7 +33,7 @@ export type CredentialRedactedResponse = {
      */
     credential_id: string;
     /**
-     * Redacted, type-specific projection (hints/last-N chars; never the secret).
+     * Redacted, type-specific projection (hints/last-N chars; never the secret). For oauth2: client_id, token_url, grant_type (authorization_code | client_credentials), scopes, and — for authorization_code only — `connected`, whether the interactive sign-in completed and is still usable (null for other grants).
      */
     details?: (Record<string, any> | null);
     /**

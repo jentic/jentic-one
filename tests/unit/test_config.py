@@ -9,19 +9,22 @@ from unittest.mock import patch
 
 import pytest
 import yaml
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from jentic_one.shared.config import (
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
+    CatalogConfig,
     ConfigError,
     CredentialsConfig,
     EgressConfig,
     EncryptionConfig,
+    EntitlementConfig,
     RuntimeConfig,
     _csv_to_list,
     _deep_merge,
+    _env_overrides,
     load_config,
 )
 
@@ -101,6 +104,47 @@ def test_env_coerces_float(config_file: Path):
     assert config.services.request_timeout_s == 60.5
 
 
+def test_env_indexed_keys_build_list_of_models(config_file: Path):
+    # JENTIC__AUTH__ID_SIGNING__0__* addresses a list index; the env parser
+    # can only build dicts, so this exercises the digit-keyed dict -> list
+    # coercion that lets list[SigningKeyConfig] validate.
+    env = {
+        "JENTIC__AUTH__ID_SIGNING__0__KID": "k0",
+        "JENTIC__AUTH__ID_SIGNING__0__PRIVATE_KEY_PEM": "pem-zero",
+        "JENTIC__AUTH__ID_SIGNING__1__KID": "k1",
+        "JENTIC__AUTH__ID_SIGNING__1__PRIVATE_KEY_PEM": "pem-one",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert [k.kid for k in config.auth.id_signing] == ["k0", "k1"]
+    assert config.auth.id_signing[0].private_key_pem.get_secret_value() == "pem-zero"
+
+
+def test_env_overrides_coerces_contiguous_digit_dict_to_list():
+    env = {
+        "JENTIC__AUTH__ID_SIGNING__0__KID": "k0",
+        "JENTIC__AUTH__ID_SIGNING__1__KID": "k1",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        overrides = _env_overrides()
+    signing = overrides["auth"]["id_signing"]
+    assert isinstance(signing, list)
+    assert [item["kid"] for item in signing] == ["k0", "k1"]
+
+
+def test_env_overrides_leaves_non_indexed_dicts_untouched():
+    # Real string keys (databases.registry) must stay a dict, and a sparse /
+    # 1-based numeric set must NOT be coerced (it isn't a valid list address).
+    env = {
+        "JENTIC__DATABASES__REGISTRY__HOST": "h",
+        "JENTIC__WIDGETS__1__NAME": "one",  # missing index 0 -> not a list
+    }
+    with patch.dict(os.environ, env, clear=False):
+        overrides = _env_overrides()
+    assert overrides["databases"]["registry"] == {"host": "h"}
+    assert overrides["widgets"] == {"1": {"name": "one"}}
+
+
 def test_numeric_password_preserved_as_string(config_file: Path):
     env = {"JENTIC__DATABASES__REGISTRY__PASSWORD": "123456"}
     with patch.dict(os.environ, env, clear=False):
@@ -148,6 +192,65 @@ def test_empty_jwt_secret_rejected_in_production(blank: str):
         pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
     ):
         AdminAuthConfig(jwt_secret=SecretStr(blank))
+
+
+def test_session_lifetime_defaults():
+    """Defaults: 1 h JWT, 12 h absolute session window."""
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        cfg = AdminAuthConfig()
+    assert cfg.jwt_ttl_seconds == 3600
+    assert cfg.session_ttl_seconds == 43200
+
+
+def test_session_lifetimes_env_override(config_file: Path):
+    env = {
+        "JENTIC__ADMIN__AUTH__JWT_TTL_SECONDS": "600",
+        "JENTIC__ADMIN__AUTH__SESSION_TTL_SECONDS": "7200",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.admin.auth.jwt_ttl_seconds == 600
+    assert config.admin.auth.session_ttl_seconds == 7200
+
+
+def test_session_window_shorter_than_jwt_ttl_rejected():
+    """A session window shorter than one JWT would break every refresh."""
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False),
+        pytest.raises(ValidationError, match="session_ttl_seconds"),
+    ):
+        AdminAuthConfig(jwt_ttl_seconds=3600, session_ttl_seconds=60)
+
+
+@pytest.mark.parametrize("field", ["jwt_ttl_seconds", "session_ttl_seconds"])
+def test_non_positive_session_lifetimes_rejected(field: str):
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False),
+        pytest.raises(ValidationError, match=field),
+    ):
+        AdminAuthConfig.model_validate({field: 0})
+
+
+def test_catalog_jitter_ratio_default():
+    """The sweep jitter ratio defaults to a bounded 15%."""
+    assert CatalogConfig().update_sweep_jitter_ratio == 0.15
+
+
+@pytest.mark.parametrize("bad", [-0.01, 1.01, 10.0])
+def test_catalog_jitter_ratio_out_of_bounds_rejected(bad: float):
+    """The ratio is bounded [0, 1]: a value outside that fails fast at load.
+
+    Without the Field(ge=0, le=1) bound a value like 10.0 would silently make the
+    "cadence stays ~daily" contract false (up to 11x the interval), so reject it.
+    """
+    with pytest.raises(ValidationError, match="update_sweep_jitter_ratio"):
+        CatalogConfig.model_validate({"update_sweep_jitter_ratio": bad})
+
+
+def test_catalog_jitter_ratio_bounds_accepted():
+    """The inclusive bounds 0.0 (disable) and 1.0 (max) are both valid."""
+    assert CatalogConfig(update_sweep_jitter_ratio=0.0).update_sweep_jitter_ratio == 0.0
+    assert CatalogConfig(update_sweep_jitter_ratio=1.0).update_sweep_jitter_ratio == 1.0
 
 
 def test_default_invite_pepper_rejected_in_production():
@@ -360,6 +463,34 @@ def test_broker_jobs_api_base_url_env_override(config_file: Path):
     assert config.broker.jobs_api_base_url == "https://env.example.com"
 
 
+def test_server_backend_defaults_to_local(config_file: Path):
+    config = load_config(config_file)
+    assert config.server.backend == "local"
+
+
+def test_server_backend_from_yaml(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["server"] = {"backend": "remote"}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    config = load_config(path)
+    assert config.server.backend == "remote"
+
+
+def test_server_backend_env_override(config_file: Path):
+    env = {"JENTIC__SERVER__BACKEND": "remote"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.backend == "remote"
+
+
+def test_server_backend_rejects_invalid_value(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["server"] = {"backend": "cloud"}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
 def test_local_yaml_has_valid_encryption_config():
     """config/local.yaml must ship a usable encryption keyset for local dev."""
     local_path = Path(__file__).resolve().parents[2] / "config" / "local.yaml"
@@ -433,3 +564,44 @@ def test_egress_empty_string_produces_empty_list():
 def test_csv_to_list_rejects_non_string_non_list():
     with pytest.raises(TypeError, match="expected list or comma-separated string"):
         _csv_to_list(123)
+
+
+# --- EntitlementConfig (AWS Marketplace license gate) -------------------------
+
+
+def test_entitlement_defaults_off(config_file: Path):
+    config = load_config(config_file)
+    assert config.entitlement.enabled is False
+    assert config.entitlement.product_code is None
+    # The live listing is contract-priced, hence the default.
+    assert config.entitlement.pricing_model == "contract"
+    assert config.entitlement.license_dimensions == []
+
+
+def test_entitlement_enabled_requires_product_code():
+    with pytest.raises(ValidationError, match=r"entitlement\.product_code"):
+        EntitlementConfig(enabled=True)
+
+
+def test_entitlement_contract_requires_sku():
+    with pytest.raises(ValidationError, match=r"entitlement\.license_sku"):
+        EntitlementConfig(enabled=True, product_code="prod-abc", pricing_model="contract")
+
+
+def test_entitlement_env_override_round_trip(config_file: Path):
+    env = {
+        "JENTIC__ENTITLEMENT__ENABLED": "true",
+        "JENTIC__ENTITLEMENT__PRODUCT_CODE": "prod-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_SKU": "prod-id-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS": "users,executions",
+        "JENTIC__ENTITLEMENT__REGION": "eu-west-1",
+        "JENTIC__ENTITLEMENT__REFRESH_INTERVAL_SECONDS": "600",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.entitlement.enabled is True
+    assert config.entitlement.product_code == "prod-abc123"
+    assert config.entitlement.license_sku == "prod-id-abc123"
+    assert config.entitlement.license_dimensions == ["users", "executions"]
+    assert config.entitlement.region == "eu-west-1"
+    assert config.entitlement.refresh_interval_seconds == 600

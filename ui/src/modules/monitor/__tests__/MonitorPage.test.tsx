@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import {
 	renderWithProviders,
 	screen,
@@ -75,6 +75,25 @@ describe('MonitorPage', () => {
 		expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(1);
 	});
 
+	it('scopes Executions to a toolkit via the ?toolkit_id deep-link and clears it from the chip', async () => {
+		const user = userEvent.setup();
+		// The deep-link the toolkit detail's "Open in Monitor" writes.
+		renderMonitor('/app/monitor?tab=executions&toolkit_id=tk_payments');
+
+		// Only the tk_payments rows render (tk_dev's github row is filtered out).
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
+		expect(screen.queryByText('GET /repos/{owner}/{repo}')).not.toBeInTheDocument();
+
+		// The scope is visible as a removable chip in the filter bar (the rows
+		// also print the toolkit id, so assert on multiple occurrences).
+		expect(screen.getAllByText('tk_payments').length).toBeGreaterThanOrEqual(2);
+		await user.click(screen.getByRole('button', { name: 'Clear toolkit filter' }));
+
+		// Cleared: the full log returns and the param leaves the URL.
+		expect(await screen.findByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+		expect(screen.getByTestId('location-search').textContent).not.toContain('toolkit_id');
+	});
+
 	it('filters Executions by terminal status (backend accepts only completed/failed)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
@@ -112,22 +131,44 @@ describe('MonitorPage', () => {
 		expect(screen.getByText('Execution failed: github-api')).toBeInTheDocument();
 	});
 
-	it('renders the Overview health strip + volume chart + breakdown from the stats endpoint (#386)', async () => {
+	it('renders the Overview health strip + volume chart + breakdown from the usage endpoint (#561)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
 
 		await user.click(screen.getByRole('tab', { name: 'Overview' }));
 
-		// HealthStrip pill + the Execution Volume chart render from the
-		// aggregation endpoint — no more "coming soon" gate. The fixture's
-		// ~91% success rate maps to the "Degraded" health pill.
+		// HealthStrip pills + the Execution Volume chart render from the enriched
+		// usage endpoint (GET /monitoring/usage) — no more "coming soon" gate. The
+		// fixture's ~91% success rate maps to the "Degraded" health pill; the
+		// latency pill renders alongside it (fixture avg ~450ms → "Normal").
 		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
 		expect(screen.getByText('Degraded')).toBeInTheDocument();
+		expect(screen.getAllByText('Normal').length).toBeGreaterThanOrEqual(1);
 
-		// Breakdown panel lists the busiest operations.
+		// Breakdown table lists the busiest APIs (also present in the bubble
+		// chart + HealthStrip cluster, so assert at least one occurrence).
 		expect(screen.getByText('Breakdown')).toBeInTheDocument();
-		expect(screen.getByText('POST /v1/refunds')).toBeInTheDocument();
+		expect(screen.getAllByText('stripe-api').length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('github-api').length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('regroups the Breakdown by Agents and surfaces the Unattributed bucket', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor');
+		await screen.findByText('Breakdown');
+
+		// Both the bubble chart and the Breakdown carry an APIs/Toolkits/Agents
+		// toggle; flip the Breakdown's (the last one). The agent grouping was
+		// prefetched, so rows swap without a spinner. Backend agent keys are
+		// mechanical "actor_type/actor_id" strings — the UI strips the type
+		// prefix for display — and NULL actor columns arrive as a null key that
+		// must surface as "Unattributed" rather than being dropped.
+		const agentToggles = screen.getAllByRole('button', { name: 'Agents' });
+		await user.click(agentToggles[agentToggles.length - 1]);
+
+		expect(await screen.findByText('agent_billing')).toBeInTheDocument();
+		expect(screen.getByText('Unattributed')).toBeInTheDocument();
 	});
 
 	it('reloads Overview stats when the window selector changes', async () => {
@@ -137,9 +178,17 @@ describe('MonitorPage', () => {
 		await user.click(screen.getByRole('tab', { name: 'Overview' }));
 		await screen.findByText('Execution Volume');
 
-		// Switching the window re-queries (days=30) and keeps the chart mounted.
+		// Switching the window re-queries with a tighter `since` and keeps the
+		// chart mounted (subtitle reflects the wider window).
 		await user.click(screen.getByRole('button', { name: '30d' }));
-		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
+		expect(await screen.findByText(/Last 30 days, colored by/)).toBeInTheDocument();
+
+		// The 24h window exercises the sub-day path: the mock serves recent
+		// points inside the last 24h, so the chart renders bars instead of
+		// falling into the empty state.
+		await user.click(screen.getByRole('button', { name: '24h' }));
+		expect(await screen.findByText(/Last 24 hours, colored by/)).toBeInTheDocument();
+		expect(screen.queryByText('No executions yet')).not.toBeInTheDocument();
 	});
 
 	it('switches to the Jobs tab', async () => {
@@ -453,5 +502,208 @@ describe('Monitor inter-linking', () => {
 		await waitFor(() => expect(streamUrl).not.toBeNull());
 		// The 24h window is sent as the SSE `since` lower-bound.
 		expect(streamUrl!.searchParams.get('since')).toBeTruthy();
+	});
+
+	it('Events row → clicking a failed event opens its trace detail sheet (#617)', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?tab=events');
+
+		// evt_1 is a failed execution event carrying trace_bbbbbbbb; the row must
+		// be clickable through to the trace sheet (the whole point of #617).
+		const row = await screen.findByRole('link', {
+			name: /Open execution for Execution failed: github-api/,
+		});
+		await user.click(row);
+
+		await waitFor(() => {
+			expect(currentParams().get('trace_id')).toBe('trace_bbbbbbbb');
+		});
+		// The trace sheet opens for that trace.
+		expect(await screen.findByRole('dialog')).toBeInTheDocument();
+	});
+
+	it('Events row → an event with no execution/trace is not clickable (#617)', async () => {
+		// evt_2 (import.completed) carries only trace_aaaaaaaa via its top-level
+		// trace_id — so it IS clickable; assert the acknowledged/info evt_2 with a
+		// stripped trace is inert by pointing the events feed at a payload with no
+		// trace at all.
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({
+					data: [
+						{
+							_links: { self: '/events/evt_x' },
+							acknowledged: false,
+							acknowledged_at: null,
+							acknowledged_by: null,
+							created_at: new Date().toISOString(),
+							data: {},
+							detail: 'A configuration warning with no execution.',
+							event_id: 'evt_x',
+							requires_action: false,
+							severity: 'warning',
+							summary: 'Config drift detected',
+							trace_id: null,
+							type: 'config.drift',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?tab=events');
+
+		await screen.findByText('Config drift detected');
+		// No clickable row was rendered for an event with no drill-in id.
+		expect(
+			screen.queryByRole('link', { name: /Open execution for Config drift detected/ }),
+		).not.toBeInTheDocument();
+	});
+
+	it('Events row → a failure with only a _links.execution (no trace) opens by execution_id (#617)', async () => {
+		// The exact real-world case that regressed: the backend surfaces the
+		// linked execution ONLY as `_links.execution` (= /executions/{id}) — it is
+		// NOT stamped into `data` and there is no usable trace. The row must still
+		// be clickable and open the sheet by execution_id.
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({
+					data: [
+						{
+							_links: {
+								self: '/events/evt_link',
+								execution: '/executions/exec_99',
+								job: null,
+								action: null,
+							},
+							acknowledged: false,
+							acknowledged_at: null,
+							acknowledged_by: null,
+							created_at: new Date().toISOString(),
+							data: {},
+							detail: 'Upstream 401 from api.example.com',
+							event_id: 'evt_link',
+							requires_action: true,
+							severity: 'error',
+							summary: 'Execution failed: example-api',
+							trace_id: null,
+							type: 'execution.failed',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?tab=events');
+
+		const row = await screen.findByRole('link', {
+			name: /Open execution for Execution failed: example-api/,
+		});
+		await user.click(row);
+
+		await waitFor(() => {
+			expect(currentParams().get('execution_id')).toBe('exec_99');
+		});
+		expect(currentParams().get('trace_id')).toBeNull();
+	});
+
+	it('rail-style deep-link (execution_id) on the Events tab opens the sheet (#617)', async () => {
+		// The rail's "View execution" now emits the underscore vocabulary; landing
+		// on the Executions tab with it must open the sheet.
+		renderMonitor('/app/monitor?tab=executions&execution_id=exec_2');
+		expect(await screen.findByRole('dialog')).toBeInTheDocument();
+	});
+});
+
+/**
+ * Events-tab severity filter (#617). The Events tab previously had no way to
+ * filter by severity — a "critical" flag elsewhere led to a filter that showed
+ * nothing. The backend honours a repeatable `severity=` param; these lock in
+ * that the chips drive it and that error/critical stay independent values.
+ */
+describe('Monitor Events severity filter', () => {
+	beforeEach(() => {
+		setToken('mock-access-token');
+		worker.use(...monitorHandlers);
+	});
+
+	function currentParams() {
+		return new URLSearchParams(screen.getByTestId('location-search').textContent ?? '');
+	}
+
+	it('selecting Error narrows the feed and writes the severity param', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?tab=events');
+
+		// Both fixture events render first (error + info).
+		await screen.findByText('Execution failed: github-api');
+		await screen.findByText('Import completed');
+
+		await user.click(screen.getByRole('button', { name: 'Error' }));
+
+		// The URL carries severity=error and the info event drops out.
+		await waitFor(() => {
+			expect(currentParams().get('severity')).toBe('error');
+		});
+		await waitFor(() => {
+			expect(screen.queryByText('Import completed')).not.toBeInTheDocument();
+		});
+		expect(screen.getAllByText('Execution failed: github-api').length).toBeGreaterThanOrEqual(
+			1,
+		);
+	});
+
+	it('critical and error are independent chips (selecting Critical hides an error event) (#617)', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?tab=events');
+		await screen.findByText('Execution failed: github-api');
+
+		// The fixture's failure is severity "error"; selecting ONLY Critical must
+		// therefore hide it — proving the chips don't silently coalesce (the exact
+		// confusion #617 reported). Both remain selectable together for "failures".
+		await user.click(screen.getByRole('button', { name: 'Critical' }));
+		await waitFor(() => {
+			expect(currentParams().get('severity')).toBe('critical');
+		});
+		await waitFor(() => {
+			expect(screen.queryByText('Execution failed: github-api')).not.toBeInTheDocument();
+		});
+
+		// Adding Error back brings the failure in; the param preserves canonical order.
+		await user.click(screen.getByRole('button', { name: 'Error' }));
+		await waitFor(() => {
+			expect(currentParams().get('severity')).toBe('critical,error');
+		});
+		await waitFor(() => {
+			expect(
+				screen.getAllByText('Execution failed: github-api').length,
+			).toBeGreaterThanOrEqual(1);
+		});
+	});
+
+	it('hydrates the selected severity from the URL and clears it', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?tab=events&severity=info');
+
+		// Only the info event survives an initial severity=info deep-link.
+		await screen.findByText('Import completed');
+		expect(screen.queryByText('Execution failed: github-api')).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Info' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
+
+		await user.click(screen.getByRole('button', { name: 'Clear' }));
+		await waitFor(() => {
+			expect(currentParams().get('severity')).toBeNull();
+		});
+		await waitFor(() => {
+			expect(
+				screen.getAllByText('Execution failed: github-api').length,
+			).toBeGreaterThanOrEqual(1);
+		});
 	});
 });

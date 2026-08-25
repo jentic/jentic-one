@@ -170,6 +170,306 @@ else
   pass "detect_platform: unsupported arch exits non-zero"
 fi
 
+# --- write_manifest preserves stack-owned fields across a CLI-only run ---
+# This script only ever builds the CLI binaries. `stack_ref` records what the
+# *stack* was last built from, so dropping it would let a CLI update advertise a
+# stale stack as current and wedge later updates (jentic-one#943). mode/db/
+# broker_port are likewise owned by `jenticctl install`.
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-home.XXXXXX")"
+cat > "$tmp_home/install.json" <<'EOF'
+{
+  "repo": "jentic/jentic-one",
+  "ref": "v0.24.0",
+  "stack_ref": "v0.24.0",
+  "commit": "aaaaaaa",
+  "cli_version": "v0.24.0",
+  "binary_path": "/opt/homebrew/bin/jenticctl",
+  "mode": "docker",
+  "db": "postgres",
+  "broker_port": "8100",
+  "installed_at": "2026-01-01T00:00:00Z"
+}
+EOF
+(
+  export JENTIC_HOME="$tmp_home"
+  JENTIC_REPO="jentic/jentic-one" JENTIC_REF="v0.25.0" \
+    BUILT_COMMIT="bbbbbbb" INSTALLED_PATH="/opt/homebrew/bin/jenticctl" \
+    write_manifest >/dev/null 2>&1
+)
+manifest_out="$(cat "$tmp_home/install.json")"
+assert_contains "write_manifest: advances ref to the new CLI build" "$manifest_out" '"ref": "v0.25.0"'
+assert_contains "write_manifest: preserves stack_ref (#943)" "$manifest_out" '"stack_ref": "v0.24.0"'
+assert_contains "write_manifest: preserves mode" "$manifest_out" '"mode": "docker"'
+assert_contains "write_manifest: preserves db" "$manifest_out" '"db": "postgres"'
+assert_contains "write_manifest: preserves broker_port" "$manifest_out" '"broker_port": "8100"'
+
+# A fresh install (no prior manifest) must not emit an empty stack_ref: the
+# stack has not been built yet, and `""` would parse as a real (bogus) value.
+rm -f "$tmp_home/install.json"
+(
+  export JENTIC_HOME="$tmp_home"
+  JENTIC_REPO="jentic/jentic-one" JENTIC_REF="v0.25.0" \
+    BUILT_COMMIT="bbbbbbb" INSTALLED_PATH="/opt/homebrew/bin/jenticctl" \
+    write_manifest >/dev/null 2>&1
+)
+manifest_out="$(cat "$tmp_home/install.json")"
+assert_not_contains "write_manifest: fresh install omits stack_ref" "$manifest_out" 'stack_ref'
+rm -rf "$tmp_home"
+
+# --- write_manifest: backfill stack_ref for pre-stack_ref manifests ------------
+# Every manifest written before stack_ref existed records the stack's build only
+# in `ref` — the field a CLI-only re-install overwrites. Losing it makes
+# ResolvedStackRef() fall back to the *new* `ref`, so a stale stack reports
+# itself current: #943, re-created on the first CLI-only re-install, which is
+# precisely when the wedge occurs. `mode` is written by `jenticctl install`, so
+# its presence is what says "a stack was built at this ref".
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-home.XXXXXX")"
+cat > "$tmp_home/install.json" <<'EOF'
+{
+  "repo": "jentic/jentic-one",
+  "ref": "v0.25.0",
+  "commit": "f4cb196",
+  "cli_version": "v0.25.0",
+  "binary_path": "/opt/homebrew/bin/jenticctl",
+  "mode": "docker",
+  "db": "postgres",
+  "installed_at": "2026-08-04T10:42:27Z"
+}
+EOF
+(
+  export JENTIC_HOME="$tmp_home"
+  JENTIC_REPO="jentic/jentic-one" JENTIC_REF="v0.26.0" \
+    BUILT_COMMIT="ccccccc" INSTALLED_PATH="/opt/homebrew/bin/jenticctl" \
+    write_manifest >/dev/null 2>&1
+)
+manifest_out="$(cat "$tmp_home/install.json")"
+assert_contains "write_manifest: legacy manifest advances ref" "$manifest_out" '"ref": "v0.26.0"'
+assert_contains "write_manifest: backfills stack_ref from the old ref (#943)" \
+  "$manifest_out" '"stack_ref": "v0.25.0"'
+
+# A legacy manifest with no `mode` never had a stack built, so there is nothing
+# to backfill — inventing a stack_ref would claim a stack that does not exist.
+rm -f "$tmp_home/install.json"
+cat > "$tmp_home/install.json" <<'EOF'
+{
+  "repo": "jentic/jentic-one",
+  "ref": "v0.25.0",
+  "commit": "f4cb196",
+  "cli_version": "v0.25.0",
+  "binary_path": "/opt/homebrew/bin/jenticctl",
+  "installed_at": "2026-08-04T10:42:27Z"
+}
+EOF
+(
+  export JENTIC_HOME="$tmp_home"
+  JENTIC_REPO="jentic/jentic-one" JENTIC_REF="v0.26.0" \
+    BUILT_COMMIT="ccccccc" INSTALLED_PATH="/opt/homebrew/bin/jenticctl" \
+    write_manifest >/dev/null 2>&1
+)
+manifest_out="$(cat "$tmp_home/install.json")"
+assert_not_contains "write_manifest: CLI-only legacy manifest omits stack_ref" \
+  "$manifest_out" 'stack_ref'
+rm -rf "$tmp_home"
+
+# --- highest_release_tag: latest canonical release tag from ls-remote output ---
+# Mirrors the Go highestReleaseTag (cli/internal/update/version.go): keep only
+# clean vX.Y.Z tags; ignore cli/v* noise, pre-releases, and peeled "^{}" lines.
+# The fixture is deliberately unordered and mixes all the shapes we must ignore.
+lsr_fixture="$(printf '%s\n' \
+  'b99f974	refs/tags/cli/v0.14.3' \
+  'b99f974	refs/tags/cli/v0.14.3^{}' \
+  '1b37598	refs/tags/v0.1.0' \
+  'f4b8f89	refs/tags/v0.10.0' \
+  'aaaaaaa	refs/tags/v0.24.0' \
+  'bbbbbbb	refs/tags/v0.24.0^{}' \
+  'ccccccc	refs/tags/v1.0.0-rc1' \
+  'ddddddd	refs/tags/v0.9.0')"
+
+out="$(printf '%s\n' "$lsr_fixture" | highest_release_tag)"
+assert_eq "highest_release_tag: picks the highest vX.Y.Z" "v0.24.0" "$out"
+
+# Numeric (not lexical) ordering: v0.9.0 must beat v0.10.0 only when it's really
+# larger — here v0.10.0 > v0.9.0, and neither is the max, so the earlier check
+# already covers ordering. Add a focused pair to guard against lexical sort.
+out="$(printf '%s\n' 'x	refs/tags/v0.2.0' 'y	refs/tags/v0.10.0' | highest_release_tag)"
+assert_eq "highest_release_tag: numeric ordering (v0.10.0 > v0.2.0)" "v0.10.0" "$out"
+
+# Only noise/non-release tags -> non-zero exit and no output.
+set +e
+out="$(printf '%s\n' 'a	refs/tags/cli/v0.14.3' 'b	refs/tags/v1.0.0-rc1' 'c	refs/heads/main' | highest_release_tag)"
+rc=$?
+set -e
+assert_eq "highest_release_tag: no release tags -> non-zero exit" "1" "$rc"
+assert_eq "highest_release_tag: no release tags -> empty output" "" "$out"
+
+# Empty input -> non-zero exit, empty output.
+set +e
+out="$(printf '' | highest_release_tag)"
+rc=$?
+set -e
+assert_eq "highest_release_tag: empty input -> non-zero exit" "1" "$rc"
+
+# --- check_prereqs batches ALL missing tools (install P0-B) ------------------
+# A user missing two base tools should learn both in one failure, not discover
+# the second only after installing the first and re-running. Drive check_prereqs
+# with a minimal PATH that has bash+grep but omits git AND tar, and assert the
+# single die() names both.
+prereq_bindir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-prereq.XXXXXX")"
+for t in bash cat mktemp rm grep curl uname; do
+  p="$(command -v "$t" 2>/dev/null || true)"
+  [ -n "$p" ] && [ -x "$p" ] && [ -f "$p" ] && ln -sf "$p" "$prereq_bindir/$t"
+done
+# git and tar are deliberately absent.
+set +e
+prereq_out="$(PATH="$prereq_bindir" bash -c ". '$INSTALL_SH'; check_prereqs" 2>&1)"
+set -e
+assert_contains "check_prereqs: reports missing git" "$prereq_out" "git"
+assert_contains "check_prereqs: reports missing tar in the SAME failure" "$prereq_out" "tar"
+rm -rf "$prereq_bindir"
+
+# --- chain_install non-interactive branch prints the headless next step ------
+# With no TTY (stdin+stdout both redirected) chain_install must NOT exec the
+# wizard; it prints the `install --defaults` command and the JENTIC_NO_INSTALL
+# opt-out, then returns non-zero so main() falls through to banner().
+set +e
+chain_out="$(CTL_BINARY=jenticctl API_BINARY=jentic \
+  bash -c ". '$INSTALL_SH'; chain_install </dev/null" 2>&1 >/dev/null)"
+chain_rc=$?
+set -e
+assert_eq "chain_install: non-interactive returns non-zero (no exec)" "1" "$chain_rc"
+assert_contains "chain_install: names the non-interactive install command" \
+  "$chain_out" "install --defaults"
+assert_contains "chain_install: surfaces the JENTIC_NO_INSTALL opt-out" \
+  "$chain_out" "JENTIC_NO_INSTALL=1"
+
+# JENTIC_NO_INSTALL=1 short-circuits before printing anything.
+set +e
+chain_out="$(CTL_BINARY=jenticctl API_BINARY=jentic JENTIC_NO_INSTALL=1 \
+  bash -c ". '$INSTALL_SH'; chain_install </dev/null" 2>&1)"
+chain_rc=$?
+set -e
+assert_eq "chain_install: JENTIC_NO_INSTALL=1 returns non-zero" "1" "$chain_rc"
+assert_not_contains "chain_install: JENTIC_NO_INSTALL=1 prints no wizard hint" \
+  "$chain_out" "install --defaults"
+
+# --- plan_summary prints the from-source plan preamble (install P0-B) --------
+plan_out="$(CTL_BINARY=jenticctl API_BINARY=jentic \
+  bash -c ". '$INSTALL_SH'; plan_summary" 2>&1)"
+assert_contains "plan_summary: states it builds from source" "$plan_out" "from source"
+assert_contains "plan_summary: names the install dir" "$plan_out" "$JENTIC_INSTALL_DIR"
+
+# --- download mode: asset_name mirrors goreleaser name_template (P1) ---------
+# asset_name must be byte-identical to the Go update.AssetName helper and the
+# goreleaser per-binary name_template: <binary>_<ver-without-v>_<os>_<arch>.tar.gz.
+out="$(OS=linux ARCH=amd64 JENTIC_REF=v0.31.0 asset_name jentic)"
+assert_eq "asset_name: jentic linux/amd64 strips the v" "jentic_0.31.0_linux_amd64.tar.gz" "$out"
+out="$(OS=darwin ARCH=arm64 JENTIC_REF=0.31.0 asset_name jenticctl)"
+assert_eq "asset_name: jenticctl darwin/arm64 (no v prefix)" "jenticctl_0.31.0_darwin_arm64.tar.gz" "$out"
+
+# --- download mode: selected binaries (jentic-only default, both opt-in) -----
+out="$(JENTIC_INSTALL_BINARIES=jentic download_selected_binaries | tr '\n' ' ')"
+assert_eq "download_selected_binaries: default is jentic-only" "jentic " "$out"
+out="$(JENTIC_INSTALL_BINARIES=both download_selected_binaries | tr '\n' ' ')"
+assert_eq "download_selected_binaries: both adds jenticctl" "jentic jenticctl " "$out"
+
+# --- download mode: verify_checksum is FAIL-CLOSED (P1) ----------------------
+# The whole download phase is sold as fail-closed. A checksums.txt with no row
+# for the asset must ABORT (not vacuously pass, the `--check --ignore-missing`
+# trap), and a mismatching digest must abort too. Only the exact matching digest
+# passes.
+ck_dir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-ck.XXXXXX")"
+printf 'payload' > "$ck_dir/jentic_0.31.0_linux_amd64.tar.gz"
+good_sum="$(sha256_file "$ck_dir/jentic_0.31.0_linux_amd64.tar.gz")"
+
+# (a) matching digest -> passes (exit 0).
+printf '%s  jentic_0.31.0_linux_amd64.tar.gz\n' "$good_sum" > "$ck_dir/checksums.txt"
+set +e
+( verify_checksum jentic_0.31.0_linux_amd64.tar.gz \
+    "$ck_dir/jentic_0.31.0_linux_amd64.tar.gz" "$ck_dir/checksums.txt" ) >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "verify_checksum: matching digest passes" "0" "$rc"
+
+# (b) no row for the asset -> abort (fail-closed, NOT a vacuous pass).
+printf '%s  some_other_file.tar.gz\n' "$good_sum" > "$ck_dir/checksums.txt"
+set +e
+verify_out="$( ( verify_checksum jentic_0.31.0_linux_amd64.tar.gz \
+    "$ck_dir/jentic_0.31.0_linux_amd64.tar.gz" "$ck_dir/checksums.txt" ) 2>&1 )"
+rc=$?
+set -e
+assert_eq "verify_checksum: missing entry aborts (fail-closed)" "1" "$rc"
+assert_contains "verify_checksum: missing entry names the asset" "$verify_out" "no entry"
+
+# (c) mismatching digest -> abort.
+printf '%s  jentic_0.31.0_linux_amd64.tar.gz\n' \
+  "0000000000000000000000000000000000000000000000000000000000000000" > "$ck_dir/checksums.txt"
+set +e
+verify_out="$( ( verify_checksum jentic_0.31.0_linux_amd64.tar.gz \
+    "$ck_dir/jentic_0.31.0_linux_amd64.tar.gz" "$ck_dir/checksums.txt" ) 2>&1 )"
+rc=$?
+set -e
+assert_eq "verify_checksum: digest mismatch aborts" "1" "$rc"
+assert_contains "verify_checksum: mismatch message is clear" "$verify_out" "mismatch"
+rm -rf "$ck_dir"
+
+# --- download mode: unknown JENTIC_INSTALL_METHOD is rejected (P1) -----------
+# main() dies on an unknown method rather than silently building from source.
+set +e
+method_out="$(JENTIC_INSTALL_METHOD=bogus \
+  bash -c ". '$INSTALL_SH'; JENTIC_INSTALL_METHOD=bogus; \
+    check_prereqs 2>/dev/null; detect_platform >/dev/null 2>&1; \
+    case \"\$JENTIC_INSTALL_METHOD\" in auto|binary|source) echo ok;; *) die \"unknown JENTIC_INSTALL_METHOD='\$JENTIC_INSTALL_METHOD'\";; esac" 2>&1)"
+method_rc=$?
+set -e
+assert_eq "JENTIC_INSTALL_METHOD: unknown value exits non-zero" "1" "$method_rc"
+assert_contains "JENTIC_INSTALL_METHOD: unknown value names the bad method" \
+  "$method_out" "unknown JENTIC_INSTALL_METHOD"
+
+# --- download mode: release_asset_url composition (P1) -----------------------
+out="$(JENTIC_REPO=jentic/jentic-one JENTIC_REF=v0.31.0 \
+  release_asset_url checksums.txt)"
+assert_eq "release_asset_url: composes the GitHub releases download URL" \
+  "https://github.com/jentic/jentic-one/releases/download/v0.31.0/checksums.txt" "$out"
+
+# --- download mode: empty auth array survives `set -u` on bash 3.2 -----------
+# With GITHUB_TOKEN unset the local auth=() arrays in release_assets_exist and
+# curl_asset expand EMPTY; macOS stock bash 3.2 treats a bare "${auth[@]}" as an
+# unbound variable under `set -u`, which crashed every explicit-JENTIC_REF
+# install ("auth[@]: unbound variable"). The ${auth[@]+…} guard must hold: with
+# curl stubbed to succeed, both helpers must run to completion with no token.
+set +e
+noauth_out="$(bash -c "set -euo pipefail; . '$INSTALL_SH'
+  curl() { return 0; }
+  GITHUB_TOKEN=\"\" JENTIC_REPO=jentic/jentic-one JENTIC_REF=v0.31.0 OS=darwin ARCH=arm64
+  release_assets_exist || exit 1
+  curl_asset https://github.com/x/y/releases/download/v0.31.0/a.tar.gz /dev/null || exit 1
+  echo survived" 2>&1)"
+noauth_rc=$?
+set -e
+assert_eq "empty-auth: helpers run under set -u with no token" "0" "$noauth_rc"
+assert_contains "empty-auth: both helpers completed" "$noauth_out" "survived"
+if printf '%s' "$noauth_out" | grep -q "unbound variable"; then
+  fail "empty-auth: 'unbound variable' crash regressed: $noauth_out"
+else
+  pass "empty-auth: no unbound-variable crash"
+fi
+
+# --- ensure_private_home: ~/.jentic is created/tightened to 0700 -------------
+# jenticctl install ASSERTS ~/.jentic is 0700 before creating the 0777 logs dir
+# (SEC-6). The installer's own mkdir -p calls run under the user's umask, so
+# ensure_private_home must (a) create the home 0700 on a fresh machine and
+# (b) tighten a pre-existing 0755 one — otherwise the chained `jenticctl
+# install` fails on every fresh curl|sh run.
+home_tmp="$(mktemp -d "${TMPDIR:-/tmp}/jentic-home-test.XXXXXX")"
+JENTIC_HOME="$home_tmp/fresh/.jentic" ensure_private_home
+mode="$(ls -ld "$home_tmp/fresh/.jentic" | awk '{print $1}' | cut -c2-10)"
+assert_eq "ensure_private_home: fresh home created owner-only" "rwx------" "$mode"
+mkdir -p "$home_tmp/loose/.jentic" && chmod 755 "$home_tmp/loose/.jentic"
+JENTIC_HOME="$home_tmp/loose/.jentic" ensure_private_home
+mode="$(ls -ld "$home_tmp/loose/.jentic" | awk '{print $1}' | cut -c2-10)"
+assert_eq "ensure_private_home: pre-existing 0755 home tightened to 0700" "rwx------" "$mode"
+rm -rf "$home_tmp"
+
 # ---------------------------------------------------------------------------
 # Contract tier: run the installer through each shell and prove it re-execs and
 # reaches main() without a bash syntax error. We build a minimal PATH that has
@@ -218,21 +518,21 @@ if [ -x /bin/sh ]; then
   out="$(run_installer_via /bin/sh || true)"
   assert_not_contains "curl|sh via /bin/sh: no bash syntax error" "$out" "syntax error"
   assert_not_contains "curl|sh via /bin/sh: no unexpected token '<'" "$out" "unexpected token"
-  assert_contains "curl|sh via /bin/sh: re-execs and reaches prereq check" "$out" "required command not found: git"
+  assert_contains "curl|sh via /bin/sh: re-execs and reaches prereq check" "$out" "not found: git"
 fi
 
 # Under dash, if available (Linux CI default /bin/sh).
 if command -v dash >/dev/null 2>&1; then
   out="$(run_installer_via "$(command -v dash)" || true)"
   assert_not_contains "curl|sh via dash: no bash syntax error" "$out" "syntax error"
-  assert_contains "curl|sh via dash: re-execs and reaches prereq check" "$out" "required command not found: git"
+  assert_contains "curl|sh via dash: re-execs and reaches prereq check" "$out" "not found: git"
 fi
 
 # Under bash directly — no re-exec, must still reach the prereq check.
 if command -v bash >/dev/null 2>&1; then
   out="$(run_installer_via "$(command -v bash)" || true)"
   assert_not_contains "curl|sh via bash: no bash syntax error" "$out" "syntax error"
-  assert_contains "curl|sh via bash: reaches prereq check" "$out" "required command not found: git"
+  assert_contains "curl|sh via bash: reaches prereq check" "$out" "not found: git"
 fi
 
 # --- re-fetch fallback: no JENTIC_INSTALL_SELF and no curl -> clean error ---
@@ -250,6 +550,98 @@ if [ -x /bin/sh ]; then
   assert_contains "piped re-exec without curl: clear error, no hang" \
     "$out" "curl is required to bootstrap"
   assert_not_contains "piped re-exec without curl: no bash syntax error" "$out" "syntax error"
+fi
+
+# --- re-fetch source override: JENTIC_INSTALL_SOURCE_URL is honoured ---------
+# First-party install endpoints set (or serve-time-rewrite) this variable so
+# the piped re-exec loops back to the origin that served the script instead of
+# hard-depending on raw.githubusercontent.com (jentic-one#962). Prove it with a
+# stubbed curl that records its argv and fails: the recorded URL must be the
+# override, and the error message must name it. Each invocation clears the
+# JENTIC_* env that could leak in from a developer shell and skew the run.
+if [ -x /bin/sh ]; then
+  bindir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-bin.XXXXXX")"
+  make_min_path "$bindir"
+  curl_log="$(mktemp "${TMPDIR:-/tmp}/jentic-test-curl.XXXXXX")"
+  printf '#!/bin/sh\nprintf '"'"'%%s\\n'"'"' "$*" >> "%s"\nexit 22\n' "$curl_log" > "$bindir/curl"
+  chmod +x "$bindir/curl"
+
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    JENTIC_INSTALL_SOURCE_URL="https://jentic.example/install.sh" \
+    GITHUB_TOKEN="secret-token" /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  recorded="$(cat "$curl_log" 2>/dev/null || true)"
+  assert_contains "re-exec override: stub curl fetched the override URL" \
+    "$recorded" "https://jentic.example/install.sh"
+  assert_not_contains "re-exec override: raw.githubusercontent.com not contacted" \
+    "$recorded" "raw.githubusercontent.com"
+  assert_not_contains "re-exec override: GITHUB_TOKEN not sent to non-GitHub origin" \
+    "$recorded" "secret-token"
+  assert_contains "re-exec override: failure message names the override URL" \
+    "$out" "https://jentic.example/install.sh"
+  assert_not_contains "re-exec override: error message does not mention GitHub raw" \
+    "$out" "raw.githubusercontent.com"
+
+  # Default (no override): the canonical raw URL is fetched, and the token IS
+  # attached for GitHub (private-fork support unchanged).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    GITHUB_TOKEN="secret-token" /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  recorded="$(cat "$curl_log" 2>/dev/null || true)"
+  assert_contains "re-exec default: canonical raw URL fetched" \
+    "$recorded" "https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh"
+  assert_contains "re-exec default: GITHUB_TOKEN attached for GitHub origin" \
+    "$recorded" "secret-token"
+
+  # Empty override: ':-' falls back to the canonical URL (guards a future
+  # '${VAR-…}' typo that would silently fetch an empty URL).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    JENTIC_INSTALL_SOURCE_URL="" /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  assert_contains "re-exec empty override: falls back to canonical raw URL" \
+    "$(cat "$curl_log")" "https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh"
+
+  # Precedence: JENTIC_INSTALL_SELF wins over SOURCE_URL (no network fetch).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    JENTIC_INSTALL_SELF="$INSTALL_SH" JENTIC_INSTALL_SOURCE_URL="https://jentic.example/install.sh" \
+    /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  assert_eq "re-exec: SELF wins over SOURCE_URL (curl never called)" "" "$(cat "$curl_log")"
+  assert_contains "re-exec: SELF wins over SOURCE_URL (reaches prereq check)" \
+    "$out" "not found: git"
+
+  # Override on github.com itself: the token IS attached (private-fork proxy).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    GITHUB_TOKEN="secret-token" \
+    JENTIC_INSTALL_SOURCE_URL="https://github.com/jentic/fork/raw/main/tools/install.sh" \
+    /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  assert_contains "re-exec override on github.com: token IS attached" \
+    "$(cat "$curl_log")" "secret-token"
+
+  # Non-https override: refused fail-closed before any fetch (http:// would
+  # hand code execution to an on-path attacker; leading '-' would be parsed
+  # as a curl option).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    JENTIC_INSTALL_SOURCE_URL="http://jentic.example/install.sh" \
+    /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  assert_contains "re-exec non-https override: refused with a clear error" \
+    "$out" "must be an https:// URL"
+  assert_eq "re-exec non-https override: curl never called" "" "$(cat "$curl_log")"
+
+  rm -rf "$bindir" "$curl_log"
 fi
 
 # ---------------------------------------------------------------------------

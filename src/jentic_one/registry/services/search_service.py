@@ -21,7 +21,7 @@ from jentic_one.registry.services.errors import (
     SearchUnavailableError,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ApiRevisionState
+from jentic_one.shared.models import ApiRevisionState, slugify_api_field
 from jentic_one.shared.pagination import (
     Page,
     decode_search_cursor,
@@ -83,14 +83,36 @@ def _build_inspect_link(method: str, url: str) -> str:
     return f"/inspect?id={encoded_id}"
 
 
+def _parse_api_identifier(entry: str) -> tuple[str, str | None, str | None]:
+    """Parse an API filter entry into a ``(vendor, name, version)`` tuple.
+
+    Accepts the canonical ``vendor[/name[/version]]`` slug used everywhere else
+    (CLI ``--api`` flags, catalog references, access requests) as well as the
+    colon-separated form this endpoint historically required (#1080). The first
+    separator present decides the form, so a slash slug whose verbatim version
+    embeds a colon still parses correctly (and vice versa).
+
+    Vendor and name are normalized with ``slugify_api_field`` — the same
+    canonicalization ingest applies before storing them — so raw spellings like
+    ``stripe.com/api`` resolve instead of 422ing on exact string comparison.
+    The version is only trimmed, never slugified (that would corrupt it, e.g.
+    ``1.1.4`` → ``1-1-4``). Empty segments (``'vendor/'``) degrade to ``None``
+    (an unfiltered axis) rather than exact-matching the empty string.
+    """
+    colon, slash = entry.find(":"), entry.find("/")
+    sep = ":" if colon != -1 and (slash == -1 or colon < slash) else "/"
+    parts = entry.split(sep, 2)
+    vendor = slugify_api_field(parts[0])
+    name = slugify_api_field(parts[1]) if len(parts) > 1 else ""
+    version = parts[2].strip() if len(parts) > 2 else ""
+    return vendor, name or None, version or None
+
+
 async def _resolve_api_filters(session: Any, apis: list[str]) -> list[uuid.UUID]:
-    """Parse colon-encoded api identifiers and resolve to api_ids."""
+    """Resolve ``vendor[/name[/version]]`` api identifiers to api_ids."""
     all_ids: list[uuid.UUID] = []
     for entry in apis:
-        parts = entry.split(":")
-        vendor = parts[0]
-        name = parts[1] if len(parts) > 1 else None
-        version = parts[2] if len(parts) > 2 else None
+        vendor, name, version = _parse_api_identifier(entry)
         resolved = await ApiRepository.resolve_ids(
             session, vendor=vendor, name=name, version=version
         )
@@ -106,10 +128,12 @@ async def _resolve_revision_pins(
     """Resolve revision_pins from api identifier -> revision_id strings to uuid mapping."""
     resolved: dict[uuid.UUID, uuid.UUID] = {}
     for api_key, rev_id_str in revision_pins.items():
-        parts = api_key.split(":")
-        if len(parts) != 3:
-            raise InvalidApiFilterError(api_key)
-        vendor, name, version = parts[0], parts[1], parts[2]
+        vendor, name, version = _parse_api_identifier(api_key)
+        if name is None or version is None:
+            raise InvalidApiFilterError(
+                api_key,
+                hint="revision_pins keys need the full 'vendor/name/version' of an imported API",
+            )
         api = await ApiRepository.get_by_identifier(session, vendor, name, version)
         if api is None:
             raise InvalidApiFilterError(api_key)

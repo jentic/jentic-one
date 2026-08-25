@@ -98,6 +98,22 @@ def test_combined_app_mounts_auth(ctx: Context) -> None:
     assert resp.json() == {"status": "ok", "surface": "auth", "version": __version__}
 
 
+def test_sso_callback_not_shadowed_by_credentials_connect_callback(ctx: Context) -> None:
+    """The SSO login callback must resolve to its own root path, not /credentials.
+
+    The auth surface's login callback and the control surface's credential-connect
+    callback are both Python functions named ``oauth_callback``. ``/authorize``
+    builds its redirect_uri via ``url_path_for``, so the SSO route carries a unique
+    name (``authorize_oauth_callback``) to avoid the connect route winning the
+    name lookup and sending Google's login code to the wrong handler.
+    """
+    app = create_combined_app(ctx, ["control", "auth"])
+    # SSO login callback resolves to the root path...
+    assert app.url_path_for("authorize_oauth_callback") == "/oauth/callback"
+    # ...distinct from the credentials-connect callback, which is unchanged.
+    assert app.url_path_for("oauth_callback") == "/credentials/oauth/callback"
+
+
 def test_auth_standalone_app(ctx: Context) -> None:
     app = create_auth_app(ctx)
     client = TestClient(app, raise_server_exceptions=False)
@@ -139,3 +155,72 @@ def test_reference_endpoint_hidden_from_schema(ctx: Context) -> None:
     """The reference endpoint is tooling metadata, kept out of the OpenAPI spec."""
     app = create_combined_app(ctx, ["control"])
     assert "/reference/endpoints.json" not in app.openapi()["paths"]
+
+
+# ── Anonymous HTML navigations that 401 land in the SPA (#813) ──────────────
+
+
+def _html_headers() -> dict[str, str]:
+    # What a browser address-bar navigation sends: HTML preferred, no credential.
+    return {"Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"}
+
+
+def test_anonymous_html_get_401_redirects_to_spa(ctx: Context) -> None:
+    """An anonymous browser navigation to a protected URL lands in the SPA."""
+    app = create_combined_app(ctx, ["admin"])
+    app.state.spa_mounted = True  # Simulate a bundled UI (tests ship no bundle).
+    client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
+    resp = client.get("/users", headers=_html_headers())
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/app/"
+
+
+def test_json_get_401_keeps_problem_details(ctx: Context) -> None:
+    """API clients (JSON Accept) still get the RFC 9457 body, never a redirect."""
+    app = create_combined_app(ctx, ["admin"])
+    app.state.spa_mounted = True
+    client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
+    resp = client.get("/users", headers={"Accept": "application/json"})
+    assert resp.status_code == 401
+    assert resp.json()["status"] == 401
+
+
+def test_html_get_401_with_credential_keeps_problem_details(ctx: Context) -> None:
+    """A request that presented a (bad) credential is an API call, not a navigation."""
+    app = create_combined_app(ctx, ["admin"])
+    app.state.spa_mounted = True
+    client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
+    resp = client.get(
+        "/users", headers={**_html_headers(), "Authorization": "Bearer not-a-valid-token"}
+    )
+    assert resp.status_code == 401
+
+
+def test_html_get_401_with_api_key_keeps_problem_details(ctx: Context) -> None:
+    """The API-key header counts as a credential too — no redirect."""
+    app = create_combined_app(ctx, ["admin"])
+    app.state.spa_mounted = True
+    client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
+    resp = client.get("/users", headers={**_html_headers(), "x-jentic-api-key": "not-a-key"})
+    assert resp.status_code == 401
+
+
+def test_html_post_401_keeps_problem_details(ctx: Context) -> None:
+    """Only GET navigations redirect — non-GETs keep the JSON error."""
+    app = create_combined_app(ctx, ["admin"])
+    app.state.spa_mounted = True
+    client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
+    resp = client.post("/users", headers=_html_headers(), json={})
+    assert resp.status_code == 401
+
+
+def test_html_get_401_without_spa_keeps_problem_details(ctx: Context) -> None:
+    """Headless deployments (no UI bundle) never redirect."""
+    app = create_combined_app(ctx, ["admin"])
+    # Force headless: a developer's local `ui/dist` build would otherwise get
+    # auto-mounted and flip this test into the redirect path (mirror of the
+    # `spa_mounted = True` forcing in the redirect tests above).
+    app.state.spa_mounted = False
+    client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
+    resp = client.get("/users", headers=_html_headers())
+    assert resp.status_code == 401

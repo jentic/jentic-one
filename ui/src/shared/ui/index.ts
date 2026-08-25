@@ -3,6 +3,33 @@ export type { ButtonProps } from '@/shared/ui/Button';
 
 export { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@/shared/ui/Card';
 
+export { DetailSection, EmptyRow } from '@/shared/ui/DetailSection';
+export type { DetailSectionProps, SectionActionProps } from '@/shared/ui/DetailSection';
+
+export { AuditTrailCard } from '@/shared/ui/AuditTrailCard';
+export type { AuditTrailCardProps, AuditTrailEntry } from '@/shared/ui/AuditTrailCard';
+
+export { ExecutionVolumeCharts } from '@/shared/ui/ExecutionVolumeCharts';
+export type {
+	ExecutionVolumeChartsProps,
+	UsageChartBucket,
+} from '@/shared/ui/ExecutionVolumeCharts';
+
+export { RecentExecutionsCard } from '@/shared/ui/RecentExecutionsCard';
+export type {
+	RecentExecutionItem,
+	RecentExecutionsCardProps,
+} from '@/shared/ui/RecentExecutionsCard';
+
+export { KillSwitch } from '@/shared/ui/KillSwitch';
+export type { KillSwitchProps } from '@/shared/ui/KillSwitch';
+
+export { DangerZone } from '@/shared/ui/DangerZone';
+export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
+
+export { IdentitySettingsCard } from '@/shared/ui/IdentitySettingsCard';
+export type { IdentitySettingsCardProps } from '@/shared/ui/IdentitySettingsCard';
+
 export { Badge, MethodBadge, StatusBadge } from '@/shared/ui/Badge';
 export type { Variant as BadgeVariant } from '@/shared/ui/Badge';
 
@@ -27,6 +54,12 @@ export type { SearchInputProps } from '@/shared/ui/SearchInput';
 
 export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
+export { StatCard } from '@/shared/ui/StatCard';
+export type { StatAccent } from '@/shared/ui/StatCard';
+export { ToolkitGlyph } from '@/shared/ui/ToolkitGlyph';
+export type { ToolkitGlyphProps } from '@/shared/ui/ToolkitGlyph';
+export { TabNav } from '@/shared/ui/TabNav';
+export type { TabNavOption } from '@/shared/ui/TabNav';
 
 export { Kbd } from '@/shared/ui/Kbd';
 
@@ -45,6 +78,9 @@ export type {
 export { EmptyState } from '@/shared/ui/EmptyState';
 
 export { ErrorAlert } from '@/shared/ui/ErrorAlert';
+
+export { Banner } from '@/shared/ui/Banner';
+export type { BannerProps } from '@/shared/ui/Banner';
 
 export { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 
@@ -88,8 +124,15 @@ export type { KeyboardShortcut, KeyboardShortcutsBarProps } from '@/shared/ui/Ke
 export { JenticLogo } from '@/shared/ui/Logo';
 export type { JenticLogoProps } from '@/shared/ui/Logo';
 
-export { useDismissable, MenuPanel, MenuSeparator, menuItemClass } from '@/shared/ui/Menu';
-export type { MenuPanelProps } from '@/shared/ui/Menu';
+export {
+	useDismissable,
+	useViewportClamp,
+	MenuPanel,
+	AnchoredMenuPanel,
+	MenuSeparator,
+	menuItemClass,
+} from '@/shared/ui/Menu';
+export type { MenuPanelProps, AnchoredMenuPanelProps } from '@/shared/ui/Menu';
 
 export { Markdown } from '@/shared/ui/Markdown';
 
@@ -97,6 +140,8 @@ export { LazyMount } from '@/shared/ui/LazyMount';
 export type { LazyMountProps } from '@/shared/ui/LazyMount';
 
 export { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
+
+export { Tooltip } from '@/shared/ui/Tooltip';
 
 export { OperationDetail } from '@/shared/ui/OperationDetail';
 export type {
@@ -126,3 +171,22 @@ export type { ScopeGroupProps } from '@/shared/ui/ScopeGroup';
 
 export { ActorLabel } from '@/shared/ui/ActorLabel';
 export type { ActorLabelProps } from '@/shared/ui/ActorLabel';
+
+export { SparklineChart } from '@/shared/ui/charts/SparklineChart';
+export { TrendLineChart } from '@/shared/ui/charts/TrendLineChart';
+export type { TrendPoint } from '@/shared/ui/charts/TrendLineChart';
+export { StackedBarChart } from '@/shared/ui/charts/StackedBarChart';
+export type { StackedBarDatum, StackedBarSegment } from '@/shared/ui/charts/StackedBarChart';
+
+export {
+	PermissionRuleEditor,
+	isEmptyAllowRule,
+	cleanPermissionRule,
+	PERMISSION_EFFECTS,
+	PERMISSION_MATCH_MODES,
+} from '@/shared/ui/PermissionRuleEditor';
+export type {
+	PermissionRuleEditorProps,
+	PermissionRuleInput,
+	PermissionEffect,
+} from '@/shared/ui/PermissionRuleEditor';

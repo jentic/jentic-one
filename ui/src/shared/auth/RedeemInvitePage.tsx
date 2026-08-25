@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { ApiError } from '@/shared/api';
 import { ROUTES } from '@/shared/app/routes';

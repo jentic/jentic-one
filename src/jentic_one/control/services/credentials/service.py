@@ -13,6 +13,7 @@ from jentic_one.control.repos import (
     CredentialRepository,
     CustomerAPIKeyRepository,
     OAuthClientCredentialRepository,
+    Sigv4CredentialRepository,
     TokenValueCredentialRepository,
 )
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
@@ -37,9 +38,13 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialPage,
     CredentialRedactedView,
     CredentialUpdate,
+    NoAuthFull,
+    NoAuthRedacted,
     OAuth2Full,
     OAuth2Redacted,
     ProviderDiscoveryEntry,
+    Sigv4Full,
+    Sigv4Redacted,
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -47,7 +52,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
-from jentic_one.shared.models.api_identity import slugify_api_field
+from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -114,6 +119,14 @@ class CredentialService:
 
         self._validate_create_fields(payload, managed=provider_obj.managed)
 
+        # Canonicalize the API identity at the service boundary: slug vendor/name,
+        # coerce an unset name/version to NULL (the single wildcard sentinel), and
+        # trim the version. This is what makes credential scoping (vendor /
+        # vendor.name / vendor.name.version) resolve against a concrete operation
+        # identity at execute time (#775), and stores github.com as github-com
+        # rather than a dead-on-arrival identity (#746).
+        api_scope = self._canonical_api_scope(payload.api)
+
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
 
@@ -122,15 +135,22 @@ class CredentialService:
                 session,
                 type=stored_type.value,
                 name=payload.name,
-                api_vendor=slugify_api_field(payload.api.vendor),
-                api_name=slugify_api_field(payload.api.name),
-                api_version=payload.api.version,
+                api_vendor=api_scope.vendor,
+                api_name=api_scope.name,
+                api_version=api_scope.version,
+                # Verbatim, deliberately outside the canonicalisation above:
+                # the slug is display-only provenance (`domain[/sub-api]`) and
+                # slugifying it would destroy the separable structure it exists
+                # to preserve.
+                catalog_api_id=payload.catalog_api_id,
                 provider=payload.provider,
                 created_by=identity.sub,
                 server_variables=payload.server_variables,
             )
 
-            secret: ApiKeyFull | BearerTokenFull | BasicAuthFull | OAuth2Full
+            secret: (
+                ApiKeyFull | BearerTokenFull | BasicAuthFull | OAuth2Full | NoAuthFull | Sigv4Full
+            )
 
             if payload.type == CredentialType.BEARER_TOKEN:
                 assert payload.token
@@ -216,6 +236,40 @@ class CredentialService:
                     grant_type=grant,
                     scopes=payload.scopes,
                 )
+            elif payload.type == CredentialType.NO_AUTH:
+                # A no-auth credential is a marker that the API needs no secret
+                # (e.g. open-meteo). No sub-table row and no secret are stored;
+                # the broker injects nothing for it. This lets a provisioning
+                # plan reach first execution without a credential secret (#603).
+                secret = NoAuthFull()
+            elif payload.type == CredentialType.SIGV4:
+                assert payload.access_key_id
+                assert payload.secret_access_key
+                assert payload.aws_region
+                assert payload.aws_service
+                encrypted = encryption.encrypt(payload.secret_access_key)
+                preview = encryption.preview(payload.secret_access_key)
+                encrypted_session = (
+                    encryption.encrypt(payload.session_token) if payload.session_token else None
+                )
+                await Sigv4CredentialRepository.create(
+                    session,
+                    credential_id=credential.id,
+                    access_key_id=payload.access_key_id,
+                    encrypted_secret_access_key=encrypted,
+                    secret_preview=preview,
+                    encrypted_session_token=encrypted_session,
+                    region=payload.aws_region,
+                    service=payload.aws_service,
+                    created_by=identity.sub,
+                )
+                secret = Sigv4Full(
+                    access_key_id=payload.access_key_id,
+                    secret_access_key=payload.secret_access_key,
+                    session_token=payload.session_token,
+                    aws_region=payload.aws_region,
+                    aws_service=payload.aws_service,
+                )
             else:
                 raise InvalidCredentialInputError(f"Unsupported credential type: {payload.type}")
 
@@ -228,6 +282,7 @@ class CredentialService:
                     name=credential.api_name or "",
                     version=credential.api_version or "",
                 ),
+                catalog_api_id=credential.catalog_api_id,
                 provider=credential.provider,
                 active=credential.active,
                 created_at=credential.created_at,
@@ -270,7 +325,10 @@ class CredentialService:
     async def get(self, credential_id: str, *, identity: Identity) -> CredentialRedactedView:
         """Get a credential by ID with redacted secrets."""
         access_filters = build_access_filters(
-            identity, Credential, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+            identity,
+            Credential,
+            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(
@@ -295,7 +353,10 @@ class CredentialService:
             decoded_cursor = (ts, cid)
 
         access_filters = build_access_filters(
-            identity, Credential, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+            identity,
+            Credential,
+            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            include_shared=True,
         )
 
         async with self._ctx.control_db.session() as session:
@@ -333,6 +394,31 @@ class CredentialService:
             if payload.type != wire_type:
                 raise ImmutableFieldError("type")
 
+            # The api_key parameter binding (field_name/location) is derived from
+            # the API spec at create time and must not drift afterwards — a wrong
+            # binding silently mis-injects the key (e.g. ?Default=<key>, #589).
+            # The SPA still echoes the stored values on every PATCH, so only an
+            # actual *change* is a violation; matching echoes are a no-op.
+            if payload.type == CredentialType.API_KEY and (
+                payload.field_name is not None or payload.location is not None
+            ):
+                cak = await CustomerAPIKeyRepository.get_by_credential(session, credential_id)
+                if cak is not None:
+                    if payload.field_name is not None and payload.field_name != cak.field_name:
+                        raise ImmutableFieldError("field_name")
+                    if payload.location is not None and str(payload.location) != cak.location:
+                        raise ImmutableFieldError("location")
+
+            # Track whether a mutating field was provided so `updated_at` moves
+            # iff the PATCH could persist a change — an unconditional bump makes
+            # the timestamp a lying signal (#739): a PATCH that only echoes the
+            # stored field_name/location (or provides nothing) must leave it
+            # frozen. Note this keys off "a mutating field was provided", not a
+            # value diff: re-sending the current name/active still counts as
+            # changed. The SPA omits unchanged fields, so this is a no-op in
+            # practice; value-comparing every branch isn't worth the complexity.
+            changed = False
+
             if (
                 payload.name is not None
                 or payload.active is not None
@@ -345,6 +431,7 @@ class CredentialService:
                     active=payload.active,
                     server_variables=payload.server_variables,
                 )
+                changed = True
 
             encryption = self._ctx.encryption
 
@@ -357,6 +444,7 @@ class CredentialService:
                     encrypted_token_value=encrypted,
                     token_preview=preview,
                 )
+                changed = True
 
             elif payload.type == CredentialType.API_KEY and payload.key is not None:
                 encrypted = encryption.encrypt(payload.key)
@@ -367,6 +455,7 @@ class CredentialService:
                     encrypted_key=encrypted,
                     key_preview=preview,
                 )
+                changed = True
 
             elif payload.type == CredentialType.BASIC:
                 if payload.username is not None or payload.password is not None:
@@ -379,6 +468,7 @@ class CredentialService:
                         username=payload.username,
                         encrypted_password=encrypted_pw,
                     )
+                    changed = True
 
             elif payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
                 validated_token_url: str | None = None
@@ -396,28 +486,74 @@ class CredentialService:
                     token_url=validated_token_url,
                     scope=scope,
                 )
+                changed = True
+
+            elif payload.type == CredentialType.SIGV4:
+                # A keypair rotation must supply both halves together; the
+                # access_key_id alone is meaningless without its secret.
+                if (payload.access_key_id is None) != (payload.secret_access_key is None):
+                    raise InvalidCredentialInputError(
+                        "access_key_id and secret_access_key must be rotated together"
+                    )
+                encrypted_sig = (
+                    encryption.encrypt(payload.secret_access_key)
+                    if payload.secret_access_key
+                    else None
+                )
+                sig_preview = (
+                    encryption.preview(payload.secret_access_key)
+                    if payload.secret_access_key
+                    else None
+                )
+                encrypted_session = (
+                    encryption.encrypt(payload.session_token) if payload.session_token else None
+                )
+                if (
+                    payload.access_key_id is not None
+                    or encrypted_sig is not None
+                    or encrypted_session is not None
+                    or payload.clear_session_token
+                    or payload.aws_region is not None
+                    or payload.aws_service is not None
+                ):
+                    await Sigv4CredentialRepository.update(
+                        session,
+                        credential_id,
+                        access_key_id=payload.access_key_id,
+                        encrypted_secret_access_key=encrypted_sig,
+                        secret_preview=sig_preview,
+                        encrypted_session_token=encrypted_session,
+                        clear_session_token=payload.clear_session_token,
+                        region=payload.aws_region,
+                        service=payload.aws_service,
+                    )
+                    changed = True
 
             credential = await CredentialRepository.get_by_id(session, credential_id)
             assert credential is not None
-            credential.updated_at = datetime.now(UTC)
+            if changed:
+                credential.updated_at = datetime.now(UTC)
             await session.flush()
             view = self._to_redacted(credential)
             after_state = {"name": credential.name, "active": credential.active}
 
-        action = AuditAction.UPDATE
-        if payload.active is not None and before_state["active"] != payload.active:
-            action = AuditAction.ENABLE if payload.active else AuditAction.DISABLE
-        await record_audit_best_effort(
-            self._ctx,
-            action=action,
-            target_type=AuditTargetType.CREDENTIAL,
-            target_id=credential_id,
-            actor_type=identity.actor_type,
-            actor_id=identity.sub,
-            before=before_state,
-            after=after_state,
-            origin=identity.origin.value,
-        )
+        # A PATCH that persisted nothing (e.g. only echoed field_name/location)
+        # is a no-op — no timestamp bump and no audit noise.
+        if changed:
+            action = AuditAction.UPDATE
+            if payload.active is not None and before_state["active"] != payload.active:
+                action = AuditAction.ENABLE if payload.active else AuditAction.DISABLE
+            await record_audit_best_effort(
+                self._ctx,
+                action=action,
+                target_type=AuditTargetType.CREDENTIAL,
+                target_id=credential_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before=before_state,
+                after=after_state,
+                origin=identity.origin.value,
+            )
         return view
 
     async def delete(self, credential_id: str, *, identity: Identity) -> None:
@@ -449,7 +585,14 @@ class CredentialService:
         stored_type = StoredCredentialType(credential.type)
         wire_type = to_wire(stored_type)
 
-        details: BearerTokenRedacted | ApiKeyRedacted | BasicAuthRedacted | OAuth2Redacted
+        details: (
+            BearerTokenRedacted
+            | ApiKeyRedacted
+            | BasicAuthRedacted
+            | OAuth2Redacted
+            | NoAuthRedacted
+            | Sigv4Redacted
+        )
 
         if wire_type == CredentialType.BEARER_TOKEN:
             tvc = credential.token_value_credential
@@ -472,11 +615,44 @@ class CredentialService:
 
         elif wire_type == CredentialType.OAUTH2:
             occ = credential.oauth_client_credential
+            is_auth_code = stored_type == StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
+            connected: bool | None = None
+            if is_auth_code:
+                # Managed providers (e.g. Pipedream) complete connect by
+                # stamping `provider_account_ref` without a local token row —
+                # the ref alone means the sign-in finished.
+                if credential.provider_account_ref:
+                    connected = True
+                else:
+                    # oauth_token is selectin-eager on the ORM, so this is free.
+                    token = credential.oauth_token
+                    if token is None or token.revoked_at is not None:
+                        connected = False
+                    else:
+                        # A live row that has expired with no refresh token
+                        # cannot mint again — the sign-in must be redone.
+                        connected = (
+                            token.encrypted_refresh_token is not None
+                            or token.expires_at is None
+                            or token.expires_at > datetime.now(UTC)
+                        )
             details = OAuth2Redacted(
                 client_id=occ.client_id if occ else "",
                 token_url=occ.token_url if occ else "",
-                grant_type="client_credentials",
+                grant_type="authorization_code" if is_auth_code else "client_credentials",
                 scopes=occ.scope.split() if occ and occ.scope else None,
+                connected=connected,
+            )
+        elif wire_type == CredentialType.NO_AUTH:
+            details = NoAuthRedacted()
+        elif wire_type == CredentialType.SIGV4:
+            sig = credential.sigv4_credential
+            details = Sigv4Redacted(
+                access_key_id=sig.access_key_id if sig else "",
+                secret_preview=sig.secret_preview if sig else None,
+                has_session_token=bool(sig and sig.encrypted_session_token),
+                aws_region=sig.region if sig else "",
+                aws_service=sig.service if sig else "",
             )
         else:
             details = BearerTokenRedacted(token_preview=None)
@@ -490,6 +666,7 @@ class CredentialService:
                 name=credential.api_name or "",
                 version=credential.api_version or "",
             ),
+            catalog_api_id=credential.catalog_api_id,
             provider=credential.provider,
             provider_account_ref=credential.provider_account_ref,
             active=credential.active,
@@ -524,3 +701,28 @@ class CredentialService:
                 raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
             if not payload.client_secret:
                 raise InvalidCredentialInputError("Field 'client_secret' is required for oauth2")
+        elif payload.type == CredentialType.SIGV4:
+            if not payload.access_key_id:
+                raise InvalidCredentialInputError("Field 'access_key_id' is required for sigv4")
+            if not payload.secret_access_key:
+                raise InvalidCredentialInputError("Field 'secret_access_key' is required for sigv4")
+            if not payload.aws_region:
+                raise InvalidCredentialInputError("Field 'aws_region' is required for sigv4")
+            if not payload.aws_service:
+                raise InvalidCredentialInputError("Field 'aws_service' is required for sigv4")
+
+    @staticmethod
+    def _canonical_api_scope(api: APIReference) -> CredentialScope:
+        """Canonicalize the credential's API scope, rejecting a path-shaped identity.
+
+        A ``name``/``version`` containing a path separator is a strong signal the
+        caller sent a spec *file path* segment rather than an identity (e.g.
+        ``api_version='api.github.com/main/1.1.4'``, #746). Reject it loudly as a
+        400 rather than persisting a credential that can never resolve.
+        """
+        for axis, value in (("name", api.name), ("version", api.version)):
+            if value and "/" in value:
+                raise InvalidCredentialInputError(
+                    f"api.{axis} '{value}' is not an identity — it looks like a spec path"
+                )
+        return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)

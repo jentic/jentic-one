@@ -20,6 +20,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from jentic.problem_details import Forbidden
+from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
     RunnerRequest,
@@ -28,8 +29,9 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
-    AgentDirective,
     AmbiguousMatchError,
+    BrokerError,
+    CredentialIdentityMismatchError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     OperationNotFoundError,
@@ -38,6 +40,7 @@ from jentic_one.broker.core.exceptions import (
     UpstreamUrlNotAllowedError,
     action_denied_directive,
     ambiguous_toolkit_directive,
+    credential_identity_mismatch_directive,
     no_toolkit_binding_directive,
     switch_toolkit_directive,
 )
@@ -47,6 +50,7 @@ from jentic_one.broker.core.headers import (
     REGION_MISMATCH_HINT,
     TRACESTATE_HEADER,
     JenticHeader,
+    header_safe_value,
 )
 from jentic_one.broker.core.idempotency import fingerprint
 from jentic_one.broker.core.proxy_headers import (
@@ -87,11 +91,16 @@ from jentic_one.shared.broker.protocols import (
     RegistryResolverProtocol,
     ResolveResult,
     RuleEvaluatorProtocol,
+    ToolkitDerivation,
     ToolkitDeriverProtocol,
 )
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import (
+    emit_event_best_effort,
+    mint_trace_id,
+    valid_trace_id_or_none,
+)
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
@@ -99,7 +108,11 @@ from jentic_one.shared.models import ActorType, ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.schemas import APIReference
-from jentic_one.shared.tracing import JENTIC_TRACESTATE_KEY, pack_jentic_tracestate
+from jentic_one.shared.tracing import (
+    JENTIC_TRACESTATE_KEY,
+    current_trace_id,
+    pack_jentic_tracestate,
+)
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url
 from jentic_one.shared.web.deps import get_ctx
@@ -233,6 +246,52 @@ def _revision_header(request: Request) -> str | None:
     return ",".join(values)
 
 
+def _parse_traceparent(value: str | None) -> str | None:
+    """Extract the trace-id field from a W3C ``traceparent`` header value.
+
+    ``version-traceid-spanid-flags`` → the 32-hex ``traceid`` field, or ``None``
+    when the header is absent/malformed or carries the all-zeros (invalid per
+    W3C) trace id — ``valid_trace_id_or_none`` rejects both.
+    """
+    if not value:
+        return None
+    parts = value.split("-")
+    if len(parts) < 4:
+        return None
+    return valid_trace_id_or_none(parts[1].lower())
+
+
+def _derive_trace_id(headers: Headers) -> str:
+    """Derive a valid 32-hex trace id for this request (#903).
+
+    Preference order:
+
+    1. The active OTel span — the inbound instrumentation already parsed the
+       W3C ``traceparent`` (or started a fresh trace), so this is the id the
+       rest of the platform correlates on. Every production surface is
+       instrumented (``attach_http_observability``), so this branch always
+       wins there; the rest are fallbacks for uninstrumented contexts
+       (tests, embedded use).
+    2. The ``traceparent`` header's trace-id field, parsed per W3C (never the
+       raw header value, which is not a trace id).
+    3. A 32-hex ``x-request-id`` (the #903 workaround header). Superseded by
+       the span id on instrumented surfaces — a caller who needs to pick the
+       trace id must send ``traceparent``.
+    4. A freshly minted random id — never the literal ``"unknown"``, which
+       failed event emission and 500'd the whole execute request.
+    """
+    from_span = current_trace_id()
+    if from_span is not None:
+        return from_span
+    from_traceparent = _parse_traceparent(headers.get("traceparent"))
+    if from_traceparent is not None:
+        return from_traceparent
+    from_request_id = valid_trace_id_or_none((headers.get("x-request-id") or "").lower())
+    if from_request_id is not None:
+        return from_request_id
+    return mint_trace_id()
+
+
 def _context_from_discovery(
     *, upstream_url: str, method: str, request: Request, resolved: ResolveResult
 ) -> ExecuteRequestContext:
@@ -240,7 +299,7 @@ def _context_from_discovery(
     return ExecuteRequestContext(
         upstream_url=upstream_url,
         method=method,
-        trace_id=headers.get("traceparent", headers.get("x-request-id", "unknown")),
+        trace_id=_derive_trace_id(headers),
         # toolkit_id is intentionally left unset here — it is derived from the
         # discovered API identity by ``select_toolkit`` after discovery (§03),
         # never taken verbatim from the inbound header.
@@ -254,24 +313,92 @@ def _context_from_discovery(
     )
 
 
-async def _no_toolkit_binding_directive(
-    deriver: ToolkitDeriverProtocol, api: APIReference
-) -> AgentDirective:
-    """Build the ``no_toolkit_binding`` directive with the right recovery step.
+def _empty_derivation_denial(
+    d: ToolkitDerivation, api: APIReference, *, instance: str
+) -> BrokerError:
+    """Pick the right denial for an empty toolkit derivation (#683 + #747/#748).
 
-    The caller is bound to no toolkit serving ``api``. Whether the right recovery
-    is "provision a credential first" or "file a toolkit binding" depends on
-    whether a toolkit serves the API *at all* — a state the broker can read
-    (independent of the caller's bindings). Consulted only on this denial path,
-    never on the success path, so the extra read costs nothing in the common
-    case. See issue #683.
+    Two cases, distinguished by the structured derivation result — each with its
+    own ``detail`` so the problem+json ``type`` and ``detail`` never tell
+    different stories (e.g. a ``credential_identity_mismatch`` must not carry a
+    "not bound to toolkit" detail):
+
+    - Bound + a bound credential is a near-miss for the API → the credential's
+      identity does not cover the operation (#747/#748). Fix the *credential*,
+      never file an access request (that auto-denies).
+    - Otherwise → ``no_toolkit_binding``, whose recovery (file a bind request vs.
+      provision a credential first) is chosen by ``no_toolkit_binding_directive``
+      from whether any toolkit serves the API at all (#683).
     """
-    serves = await deriver.any_toolkit_serves_api(
-        vendor=api.vendor, name=api.name, version=api.version
+    serves = bool(d.api_served_toolkits)
+    if d.agent_bound_any and not serves and d.identity_mismatch is not None:
+        return CredentialIdentityMismatchError(
+            "A bound credential's identity does not cover this API",
+            type="credential_identity_mismatch",
+            instance=instance,
+            directive=credential_identity_mismatch_directive(mismatch=d.identity_mismatch),
+        )
+    return ActionDeniedError(
+        "No toolkit binding for this API",
+        type="no_toolkit_binding",
+        instance=instance,
+        directive=no_toolkit_binding_directive(
+            vendor=api.vendor, name=api.name, version=api.version, toolkit_serves_api=serves
+        ),
     )
-    return no_toolkit_binding_directive(
-        vendor=api.vendor, name=api.name, version=api.version, toolkit_serves_api=serves
-    )
+
+
+def _is_unserved_no_toolkit_binding(exc: ActionDeniedError) -> bool:
+    """True when ``exc`` denies with the pre-binding "no toolkit serves this API" case.
+
+    Splits the two ``no_toolkit_binding`` flavours ``_empty_derivation_denial``
+    emits: ``serves=True`` (a toolkit exists, the caller just isn't bound) is
+    agent-recoverable via an access request and does not warrant an operator
+    event; ``serves=False`` (nothing serves this API yet — a credential must be
+    provisioned first) is the operator-attention case, mirroring the 424
+    ``CREDENTIAL_NOT_PROVISIONED`` event on the post-binding side.
+    """
+    if exc.type != "no_toolkit_binding" or exc.directive is None:
+        return False
+    return exc.directive.parameters.get("toolkit_serves_api") is False
+
+
+async def _emit_toolkit_binding_unserved(
+    ctx: Context, *, api: APIReference, identity: Identity
+) -> None:
+    """Emit ``TOOLKIT_BINDING_UNSERVED`` best-effort (mirrors the PBAC_DENIED emit).
+
+    Fires once per denied execute request (the caller wraps `select_toolkit`);
+    the caller's own retry loop will re-emit — acceptable at WARNING severity,
+    and consistent with how ``CREDENTIAL_NOT_PROVISIONED`` (424) already emits
+    per attempt without in-process debouncing.
+    """
+    api_id = "/".join(part for part in (api.vendor, api.name) if part) or api.vendor
+    summary = f"No toolkit serves API '{api_id}' — provision a credential to enable binding."
+    try:
+        async with ctx.admin_db.transaction() as session:
+            await emit_event_best_effort(
+                session,
+                type=EventType.TOOLKIT_BINDING_UNSERVED,
+                severity=EventSeverity.WARNING,
+                summary=summary,
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                data={
+                    "api": {
+                        "vendor": api.vendor,
+                        "name": api.name,
+                        "version": api.version,
+                    },
+                },
+            )
+    except Exception:
+        logger.warning(
+            "telemetry_emit_failed",
+            event_type=EventType.TOOLKIT_BINDING_UNSERVED,
+            exc_info=True,
+        )
 
 
 async def select_toolkit(
@@ -284,9 +411,10 @@ async def select_toolkit(
 ) -> str:
     """Derive the toolkit for this execution from the caller's bindings (§03).
 
-    ``0 → 403`` (no binding), ``1 → use it``, ``N → 409`` (caller must disambiguate
-    with ``Jentic-Toolkit-Id``). A supplied header is validated against the derived
-    candidates; never silently honoured or silently picked.
+    ``0 → 403`` (no binding / credential identity mismatch), ``1 → use it``,
+    ``N → 409`` (caller must disambiguate with ``Jentic-Toolkit-Id``). A supplied
+    header is validated against the derived candidates; never silently honoured or
+    silently picked.
 
     Non-agent actors (service accounts, users) currently follow the **same**
     derivation rule — there is no implicit bypass. Broadening this for service
@@ -310,19 +438,29 @@ async def select_toolkit(
             )
         return identity.sub
 
-    candidates = await deriver.derive_toolkits(
+    # Invariant: the API identity here is the *discovered* spec identity, which is
+    # always concrete (vendor/name/version all set) — the registry never yields a
+    # wildcard. Derivation and the nearest-miss diagnostic (#748) rely on this
+    # (they slugify and compare each axis), so assert it at the boundary rather
+    # than silently deriving against a blank axis.
+    assert api.vendor and api.name and api.version, (
+        "select_toolkit requires a concrete discovered API identity"
+    )
+
+    derivation = await deriver.derive_toolkits(
         agent_id=identity.sub,
         vendor=api.vendor,
         name=api.name,
         version=api.version,
     )
+    candidates = list(derivation.toolkits)
 
     if header_toolkit:
         if header_toolkit not in candidates:
             # Recoverable: the agent named a toolkit it isn't bound to. Carry the
             # agent-recovery contract like every other broker denial — point it at
             # the toolkits it *is* bound to (switch_toolkit) or, if it has none,
-            # at the correct provisioning/binding step (prompt_human). A bare
+            # at the correct provisioning/binding/credential-fix step. A bare
             # Forbidden here would be a dead-end 403 with no directive (§03 invariant).
             if candidates:
                 raise ActionDeniedError(
@@ -331,21 +469,11 @@ async def select_toolkit(
                     instance=instance,
                     directive=ambiguous_toolkit_directive(candidates),
                 )
-            raise ActionDeniedError(
-                f"Not bound to toolkit '{header_toolkit}' for this API",
-                type="no_toolkit_binding",
-                instance=instance,
-                directive=await _no_toolkit_binding_directive(deriver, api),
-            )
+            raise _empty_derivation_denial(derivation, api, instance=instance)
         return header_toolkit
 
     if not candidates:
-        raise ActionDeniedError(
-            "No toolkit binding for this API",
-            type="no_toolkit_binding",
-            instance=instance,
-            directive=await _no_toolkit_binding_directive(deriver, api),
-        )
+        raise _empty_derivation_denial(derivation, api, instance=instance)
     if len(candidates) > 1:
         raise AmbiguousMatchError(
             "Multiple toolkits match this API; resend with the Jentic-Toolkit-Id header.",
@@ -374,6 +502,15 @@ def _metadata_headers(ctx_req: ExecuteRequestContext, execution_id: str) -> dict
         meta[JenticHeader.OPERATION.value] = ctx_req.operation_id
     if ctx_req.api_vendor:
         meta[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
+    # Credential attribution (#740). Emitted only when the resolver actually
+    # picked a stored credential — a broker-origin failure before injection,
+    # inline auth, or a credential-less API leaves both ``None`` and both
+    # headers absent, so a missing header unambiguously means "no credential".
+    # The name is operator-authored free text: sanitize before emission.
+    if ctx_req.credential_id:
+        meta[JenticHeader.CREDENTIAL_ID.value] = ctx_req.credential_id
+    if ctx_req.credential_name:
+        meta[JenticHeader.CREDENTIAL_NAME.value] = header_safe_value(ctx_req.credential_name)
     # Echo the jentic= tracestate member (same who/what payload as the outbound
     # request) so a caller can correlate the response to its distributed trace
     # without re-deriving it (§04 / OpenAPI Tracestate).
@@ -401,6 +538,7 @@ async def _resolve_credentials(
         api_version=ctx_req.api_version or "",
         identity=identity,
         credential_name=credential_name,
+        trace_id=ctx_req.trace_id,
     )
 
 
@@ -514,32 +652,61 @@ async def _handle(
     ctx_req.has_server_variable = has_host_server_variable(upstream_url)
     # Toolkit is derived from the discovered API identity (never the inbound header
     # verbatim); drives credential injection and execution attribution (§03).
-    ctx_req.toolkit_id = await select_toolkit(
-        deriver=deriver,
-        identity=identity,
-        api=resolved.api,
-        header_toolkit=request.headers.get("jentic-toolkit-id"),
-        instance=request.url.path,
-    )
+    try:
+        ctx_req.toolkit_id = await select_toolkit(
+            deriver=deriver,
+            identity=identity,
+            api=resolved.api,
+            header_toolkit=request.headers.get("jentic-toolkit-id"),
+            instance=request.url.path,
+        )
+    except ActionDeniedError as exc:
+        # Emit the operator-visible signal for the pre-binding no-toolkit case
+        # (nothing serves this API yet) before re-raising. The 424
+        # ``credential_not_provisioned`` path already emits
+        # ``CREDENTIAL_NOT_PROVISIONED`` (post-binding); this is the missing
+        # pre-binding twin. See ``TOOLKIT_BINDING_UNSERVED``.
+        if _is_unserved_no_toolkit_binding(exc):
+            await _emit_toolkit_binding_unserved(ctx, api=resolved.api, identity=identity)
+        raise
 
     # Evaluate toolkit permission rules — default-deny when no rule matches.
-    # Unconditional: even if toolkit_id were empty the evaluator returns False
-    # (no rules → deny), preserving the secure-by-default posture.
-    allowed = await rule_evaluator.evaluate(
+    # Unconditional: even if toolkit_id were empty the evaluator returns a
+    # zero-rules-loaded denial, preserving the secure-by-default posture.
+    evaluation = await rule_evaluator.evaluate(
         toolkit_id=ctx_req.toolkit_id,
         method=method,
         path=urlparse(upstream_url).path,
         operation_id=resolved.operation_id,
         api_vendor=resolved.api.vendor,
     )
-    if not allowed:
+    if not evaluation.allowed:
+        # #578: distinguish the two deny paths in the caller-visible detail.
+        # ``rules_loaded == 0`` means the vendor-pooled rule set is empty —
+        # nothing to match (wrong vendor, empty binding, misconfigured store);
+        # otherwise we loaded rules but none matched the request shape. Both
+        # branches emit ``PBAC_DENIED`` telemetry with the corresponding
+        # summary so operators can grep for the branch.
+        no_rules = evaluation.rules_loaded == 0
+        summary = (
+            "Operation denied by toolkit permission rule (no rules loaded for this vendor)"
+            if no_rules
+            else "Operation denied by toolkit permission rule (no rule matched)"
+        )
+        detail = (
+            "The requested operation is denied — this toolkit has no permission rules "
+            "loaded for the target API's vendor. Attach rules to the vendor's binding "
+            "under PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions."
+            if no_rules
+            else "The requested operation is denied by a toolkit permission rule."
+        )
         try:
             async with ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
                     session,
                     type=EventType.PBAC_DENIED,
                     severity=EventSeverity.WARNING,
-                    summary="Operation denied by toolkit permission rule",
+                    summary=summary,
                     created_by=identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
@@ -547,7 +714,7 @@ async def _handle(
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
         raise ActionDeniedError(
-            detail="The requested operation is denied by a toolkit permission rule.",
+            detail=detail,
             type="action_denied",
             instance=request.url.path,
             directive=action_denied_directive(),
@@ -596,6 +763,8 @@ async def _handle(
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(ctx_req, ctx, identity, credential_name)
     ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
+    ctx_req.credential_id = injection.credential_id
+    ctx_req.credential_name = injection.credential_name
     if injection.server_variables:
         try:
             validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
@@ -616,6 +785,7 @@ async def _handle(
             actor_type=identity.actor_type.value,
             origin=identity.origin.value,
             security_config=ctx.config.security,
+            signing=injection.signing,
         )
 
     response = _assemble_response(outcome, ctx_req)
@@ -654,6 +824,8 @@ async def _handle_streaming(
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(ctx_req, ctx, identity, credential_name)
     ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
+    ctx_req.credential_id = injection.credential_id
+    ctx_req.credential_name = injection.credential_name
     if injection.server_variables:
         try:
             validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
@@ -669,6 +841,7 @@ async def _handle_streaming(
         headers=forwarded,
         body=body,
         timeout_s=ctx.config.broker.upstream_timeout_s,
+        signing=injection.signing,
     )
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:

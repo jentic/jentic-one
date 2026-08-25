@@ -164,7 +164,12 @@ function RuleBlock({ filtered }: { filtered: FilteredRule }) {
 					<span className="text-muted-foreground">any request</span>
 				) : null}
 				{rule.path ? (
-					<span className="text-muted-foreground font-mono break-all">{rule.path}</span>
+					<span className="text-muted-foreground font-mono break-all">
+						{rule.match_mode === 'prefix' || rule.match_mode === 'exact' ? (
+							<span className="text-muted-foreground/70">{rule.match_mode}:</span>
+						) : null}
+						{rule.path}
+					</span>
 				) : null}
 				{totalOps > 0 && (
 					<span className="text-muted-foreground/70 ml-auto font-mono text-[10px]">

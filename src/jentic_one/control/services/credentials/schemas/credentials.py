@@ -27,6 +27,9 @@ class CredentialCreate(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    # Catalog identity slug of the target API when the client knows it —
+    # display-only, stored verbatim (never part of resolution identity).
+    catalog_api_id: str | None = None
     provider: str = "static"
     server_variables: dict[str, str] | None = None
 
@@ -50,6 +53,13 @@ class CredentialCreate(BaseModel):
     client_secret: str | None = None
     scopes: list[str] | None = None
 
+    # sigv4 fields
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    session_token: str | None = None
+    aws_region: str | None = None
+    aws_service: str | None = None
+
 
 class CredentialUpdate(BaseModel):
     """Payload for updating/rotating a credential."""
@@ -64,6 +74,9 @@ class CredentialUpdate(BaseModel):
 
     # api_key rotation/update
     key: str | None = None
+    # field_name/location are immutable after create; accepted here only so the
+    # service can reject a *changed* value (the SPA still echoes the stored
+    # ones on every PATCH). See CredentialService.update (#589).
     location: str | None = None
     field_name: str | None = None
 
@@ -75,6 +88,14 @@ class CredentialUpdate(BaseModel):
     client_secret: str | None = None
     token_url: str | None = None
     scopes: list[str] | None = None
+
+    # sigv4 rotation/update
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    session_token: str | None = None
+    clear_session_token: bool = False
+    aws_region: str | None = None
+    aws_service: str | None = None
 
 
 class BearerTokenFull(BaseModel):
@@ -108,6 +129,20 @@ class OAuth2Full(BaseModel):
     scopes: list[str] | None = None
 
 
+class NoAuthFull(BaseModel):
+    """Placeholder detail block for a no-auth credential (no secret)."""
+
+
+class Sigv4Full(BaseModel):
+    """Full SigV4 details (shown once on create)."""
+
+    access_key_id: str
+    secret_access_key: str
+    session_token: str | None = None
+    aws_region: str
+    aws_service: str
+
+
 class BearerTokenRedacted(BaseModel):
     """Redacted bearer token details."""
 
@@ -135,6 +170,29 @@ class OAuth2Redacted(BaseModel):
     token_url: str
     grant_type: str
     scopes: list[str] | None = None
+    # Whether the interactive sign-in completed and is still usable: a
+    # provider_account_ref (managed providers store no local token), or a live
+    # un-revoked token row that can still mint (has a refresh token, or an
+    # unexpired/never-expiring access token). Only meaningful for
+    # authorization_code credentials — client_credentials need no interactive
+    # step, so it stays None there. Lets list consumers (e.g. the fulfilment
+    # wizard's adopt picker) warn about a never-connected credential before
+    # adopting it.
+    connected: bool | None = None
+
+
+class NoAuthRedacted(BaseModel):
+    """Redacted detail block for a no-auth credential (no secret)."""
+
+
+class Sigv4Redacted(BaseModel):
+    """Redacted SigV4 details — identifier + preview, never the secret."""
+
+    access_key_id: str
+    secret_preview: str | None = None
+    has_session_token: bool = False
+    aws_region: str
+    aws_service: str
 
 
 class CredentialFullView(BaseModel):
@@ -144,11 +202,12 @@ class CredentialFullView(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    catalog_api_id: str | None = None
     provider: str
     active: bool
     created_at: datetime
     server_variables: dict[str, str] | None = None
-    secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full
+    secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull | Sigv4Full
 
 
 class CredentialRedactedView(BaseModel):
@@ -158,13 +217,21 @@ class CredentialRedactedView(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    catalog_api_id: str | None = None
     provider: str
     provider_account_ref: str | None = None
     active: bool
     created_by: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
-    details: BearerTokenRedacted | ApiKeyRedacted | BasicAuthRedacted | OAuth2Redacted
+    details: (
+        BearerTokenRedacted
+        | ApiKeyRedacted
+        | BasicAuthRedacted
+        | OAuth2Redacted
+        | NoAuthRedacted
+        | Sigv4Redacted
+    )
     server_variables: dict[str, str] | None = None
 
     model_config = {"from_attributes": True}

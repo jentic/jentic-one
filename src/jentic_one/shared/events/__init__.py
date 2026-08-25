@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from typing import Any
 
 import structlog
@@ -16,6 +17,37 @@ from jentic_one.shared.telemetry.sink import get_active_sink
 logger = structlog.get_logger(__name__)
 
 _TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_ZERO_TRACE_ID = "0" * 32
+
+
+def valid_trace_id_or_none(trace_id: str | None) -> str | None:
+    """Coerce ``trace_id`` to ``None`` unless it is a valid 32-hex trace id.
+
+    ``emit_event`` raises on a malformed ``trace_id`` by contract; emit sites
+    that receive a caller-supplied value (raw headers, job payload defaults)
+    must sanitise through this helper so a garbage trace id degrades to an
+    uncorrelated event instead of failing the surrounding operation (#903).
+    The all-zeros id is rejected too: W3C defines it as invalid, and an event
+    "correlated" on it would join unrelated requests together.
+    """
+    if trace_id is not None and _TRACE_ID_PATTERN.match(trace_id) and trace_id != _ZERO_TRACE_ID:
+        return trace_id
+    return None
+
+
+def mint_trace_id() -> str:
+    """Mint a fresh random 32-hex trace id."""
+    return secrets.token_hex(16)
+
+
+def valid_trace_id_or_minted(trace_id: str | None) -> str:
+    """Return ``trace_id`` when it is a valid 32-hex trace id, else mint one.
+
+    For call sites that must always carry a *usable* trace id forward (job
+    payload rebuilds, persisted execution rows) rather than degrade to ``None``
+    — never the literal ``"unknown"``, which crashed event emission (#903).
+    """
+    return valid_trace_id_or_none(trace_id) or mint_trace_id()
 
 
 def _validate_tags(type: str, tags: set[EventTag] | None) -> list[EventTag]:
@@ -141,6 +173,65 @@ async def emit_event_best_effort(
         )
     except Exception:
         logger.warning("emit_event_best_effort_failed", type=type)
+
+
+async def settle_actionable_events(
+    session: AsyncSession,
+    *,
+    event_type: str,
+    acknowledged_by: str,
+    acknowledgement_note: str,
+    actor_id: str | None = None,
+    actor_type: str | None = None,
+    data_match: dict[str, str] | None = None,
+) -> int:
+    """Acknowledge outstanding actionable events once their action is taken.
+
+    Actionable events (``requires_action=True``) prompt operators to review
+    something; when the review happens elsewhere (approving an agent, deciding
+    an access request), the prompt must be settled or it stays live on the
+    rail/dashboard forever with a working-but-pointless action button.
+
+    Matches on type + optional actor scoping via SQL, then on exact-equality
+    ``data_match`` pairs in Python (event ``data`` is unindexed JSON). Returns
+    the number of events acknowledged. Raises on DB errors — callers decide
+    whether settlement may fail the surrounding operation (it usually must
+    not; wrap in try/except + savepoint).
+    """
+    pending = await EventRepository.list_all(
+        session,
+        event_type=[event_type],
+        requires_action=True,
+        acknowledged=False,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        # Alerts are per-entity (one per registration/request), so a page of
+        # 1000 is effectively "all" — generous rather than silently partial.
+        limit=1000,
+    )
+    if len(pending) >= 1000:
+        # The page IS partial after all — an older matching alert may sit
+        # beyond it and stay live. Loud so operators can spot the backlog;
+        # the fleet reaching 1000 outstanding actionable alerts is itself
+        # the anomaly worth investigating.
+        logger.warning(
+            "settle_actionable_events_page_full",
+            event_type=event_type,
+            actor_id=actor_id,
+        )
+    settled = 0
+    for event in pending:
+        data = event.data or {}
+        if data_match and any(data.get(k) != v for k, v in data_match.items()):
+            continue
+        await EventRepository.acknowledge(
+            session,
+            event.id,
+            acknowledged_by=acknowledged_by,
+            acknowledgement_note=acknowledgement_note,
+        )
+        settled += 1
+    return settled
 
 
 async def emit_credential_access(

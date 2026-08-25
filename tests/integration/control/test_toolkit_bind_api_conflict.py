@@ -117,9 +117,9 @@ async def test_bind_credential_for_different_api_allowed(
     await _bind_directly(control_db, tk_id, "cred_v1")
 
     svc = ToolkitService(integration_context)
-    binding = await svc.bind_credential(tk_id, "cred_v2", identity=_IDENTITY)
+    result = await svc.bind_credential(tk_id, "cred_v2", identity=_IDENTITY)
 
-    assert binding.credential_id == "cred_v2"
+    assert result.binding.credential_id == "cred_v2"
 
 
 async def test_bind_credential_when_existing_is_inactive_allowed(
@@ -140,6 +140,6 @@ async def test_bind_credential_when_existing_is_inactive_allowed(
     await _bind_directly(control_db, tk_id, "cred_stale")
 
     svc = ToolkitService(integration_context)
-    binding = await svc.bind_credential(tk_id, "cred_fresh", identity=_IDENTITY)
+    result = await svc.bind_credential(tk_id, "cred_fresh", identity=_IDENTITY)
 
-    assert binding.credential_id == "cred_fresh"
+    assert result.binding.credential_id == "cred_fresh"

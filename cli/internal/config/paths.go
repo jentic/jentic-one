@@ -5,23 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 )
 
 const (
 	// DefaultBrokerScheme is the scheme of the broker target used by execute.
-	DefaultBrokerScheme = "https"
+	// Canonical value lives in the public SDK config package (ARCH-3); aliased
+	// here so CLI call sites keep using config.DefaultBrokerScheme unchanged.
+	DefaultBrokerScheme = sdkconfig.DefaultBrokerScheme
 	// DefaultBrokerHost is the host of the broker target used by execute. It is a
 	// bare host[:port] with no scheme — the scheme lives in DefaultBrokerScheme
 	// (and broker.scheme in config.yaml). Callers assemble the URL as
 	// scheme + "://" + host, so embedding a scheme here would double it.
-	DefaultBrokerHost = "127.0.0.1:8100"
+	// Canonical value lives in client/config (ARCH-3).
+	DefaultBrokerHost = sdkconfig.DefaultBrokerHost
 
 	// DefaultBaseURL is the Jentic control-plane (auth surface) base URL used for
-	// agent registration and token minting.
-	DefaultBaseURL = "http://127.0.0.1:8000"
-
-	// DefaultProfile is the profile name used when none is specified.
-	DefaultProfile = "default"
+	// agent registration and token minting. Canonical value lives in
+	// client/config (ARCH-3).
+	DefaultBaseURL = sdkconfig.DefaultBaseURL
 
 	// SPAMountPath is the URL prefix the web console (SPA) is served under. The
 	// server mounts the React app at /app (see shared/web/static.py), so every
@@ -38,11 +41,6 @@ const (
 	// HomeEnv overrides the root directory (mainly for tests and unusual setups).
 	HomeEnv = "JENTIC_HOME"
 
-	// ProfileEnv overrides the active profile for the current shell (AWS_PROFILE
-	// style). It sits between the --profile flag and config.yaml default_profile
-	// in precedence.
-	ProfileEnv = "JENTIC_PROFILE"
-
 	dataDirName     = "data"
 	logsDirName     = "logs"
 	venvDirName     = "venv"
@@ -50,11 +48,11 @@ const (
 	profilesDirName = "profiles"
 
 	// InstallConfigName is the generated app config file written by
-	// `jentic install`.
+	// `jenticctl install`.
 	InstallConfigName = "jentic-one.yaml"
 
 	// ManifestName records what was installed (repo, ref, commit, deploy mode)
-	// so `jentic update` knows what to track and how to refresh it.
+	// so `jenticctl update` knows what to track and how to refresh it.
 	ManifestName = "install.json"
 
 	caCertName = "ca.pem"
@@ -70,8 +68,13 @@ const (
 	caTrustedName = "ca.trusted"
 
 	// appPidName holds the PID of the app started in the background by
-	// `jentic install`.
+	// `jenticctl install`.
 	appPidName = "app.pid"
+
+	// updateCheckName caches the last CLI update-notify probe (timestamp +
+	// latest release tag) so ordinary commands nudge about a new release at most
+	// once per day without a network call on every invocation.
+	updateCheckName = "update-check.json"
 
 	// brokerPidName holds the PID of the broker service started in the
 	// background by `jenticctl install`/`jenticctl start` on the local path.
@@ -137,11 +140,37 @@ func (p Paths) ConfigPath() string { return filepath.Join(p.Root, ConfigName) }
 // InstallConfigPath returns the generated app config path (~/.jentic/jentic-one.yaml).
 func (p Paths) InstallConfigPath() string { return filepath.Join(p.Root, InstallConfigName) }
 
+// BackupName turns "name.ext" into "name-old.ext" (or "name-old" if no ext).
+// Uninstall renames its preserved config files with this transform; install's
+// secret-reuse path resolves the backup with the same rule.
+func BackupName(name string) string {
+	ext := filepath.Ext(name)
+	return strings.TrimSuffix(name, ext) + "-old" + ext
+}
+
+// BackupNextTo returns the backup path that would sit beside path (same
+// directory, name transformed by [BackupName]). Empty path returns "".
+// Install's secret-reuse fallback resolves the operator's --out this way so
+// a non-default install target still finds its jentic-one-old.yaml.
+func BackupNextTo(path string) string {
+	if path == "" {
+		return ""
+	}
+	dir, base := filepath.Split(path)
+	return filepath.Join(dir, BackupName(base))
+}
+
 // ManifestPath returns the install manifest path (~/.jentic/install.json).
 func (p Paths) ManifestPath() string { return filepath.Join(p.Root, ManifestName) }
 
 // AppPIDPath returns the background app PID file path (~/.jentic/app.pid).
 func (p Paths) AppPIDPath() string { return filepath.Join(p.Root, appPidName) }
+
+// UpdateCheckPath returns the CLI update-notify cache path
+// (~/.jentic/update-check.json), holding the last probe time + latest release
+// tag so ordinary commands can nudge about a new release without re-probing
+// GitHub on every run.
+func (p Paths) UpdateCheckPath() string { return filepath.Join(p.Root, updateCheckName) }
 
 // BrokerPIDPath returns the background broker PID file path
 // (~/.jentic/broker.pid). The broker runs as its own process on the local path.

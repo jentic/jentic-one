@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import ActorScopeGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
+from jentic_one.auth.core.claim import get_claim_token_minter
 from jentic_one.auth.services.errors import InvalidGrantError, RegistrationAccessDeniedError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.context import Context
@@ -33,6 +34,9 @@ class RegisterResult:
     registration_access_token: str
     registration_client_uri: str
     status: str
+    # Opaque, single-use ownership-claim token — present only when a claim-token
+    # minter is installed (auth/core/claim.py). None on OSS single-user default.
+    claim_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +106,17 @@ class RegistrationService:
         rat_ttl = self._ctx.config.auth.rat_ttl_seconds
         rat_expires_at = datetime.now(UTC) + timedelta(seconds=rat_ttl)
 
+        claim_ttl = self._ctx.config.auth.claim_ttl_seconds
+        claim_minter = get_claim_token_minter()
+        # Minted lazily inside _write (needs the agent id). A transaction retry
+        # creates a NEW agent id (create_dcr generates a fresh KSUID each attempt),
+        # so we cache the plaintext per-agent-id and re-mint for a new id: the
+        # token returned to the caller is always the one whose hash was stored on
+        # the row that actually committed, and a minter that *encodes* the id (per
+        # the ClaimTokenMinter contract) never embeds a stale one. OSS default
+        # minter returns None → no claim token, response identical to today.
+        minted: dict[str, str | None] = {}
+
         async def _write(session: AsyncSession) -> Agent:
             agent = await AgentRepository.create_dcr(
                 session,
@@ -110,6 +125,13 @@ class RegistrationService:
                 rat_hash=rat_hash,
                 rat_expires_at=rat_expires_at,
             )
+            if agent.id not in minted:
+                minted[agent.id] = claim_minter(agent.id)
+            claim_plain = minted[agent.id]
+            if claim_plain is not None:
+                agent.claim_token_hash = _hash_rat(claim_plain)
+                agent.claim_expires_at = datetime.now(UTC) + timedelta(seconds=claim_ttl)
+                await session.flush()
             if scope:
                 for scope_value in list(dict.fromkeys(scope.split())):
                     await ActorScopeGrantRepository.grant(
@@ -135,7 +157,13 @@ class RegistrationService:
                 session,
                 type=EventType.AGENT_SELF_REGISTERED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent.id} self-registered",
+                summary=f"Agent '{client_name}' self-registered and awaits approval",
+                # An operator has to approve/deny the registration, so surface it
+                # on the dashboard alerts card and give the rail row its inline
+                # Review action. `agent_id` in data powers the UI deep-link to
+                # the agent's approval page.
+                requires_action=True,
+                data={"agent_id": agent.id, "agent_name": client_name},
                 created_by="dcr",
                 actor_id=agent.id,
                 actor_type=ActorType.AGENT.value,
@@ -155,6 +183,7 @@ class RegistrationService:
             registration_access_token=rat_plain,
             registration_client_uri=f"{base_url}/register/{agent.id}",
             status=agent.status,
+            claim_token=minted.get(agent.id),
         )
 
     async def poll_status(self, agent_id: str, rat: str) -> PollResult:
