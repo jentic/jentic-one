@@ -13,13 +13,15 @@ from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
     AgentRepository,
     RefreshTokenRepository,
+    ServiceAccountRepository,
+    UserRepository,
 )
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ActorStatus, ActorType
 
 ACCESS_TOKEN_PREFIX = "at_"
 REFRESH_TOKEN_PREFIX = "rt_"
@@ -31,6 +33,27 @@ def _hash_token(token: str) -> str:
 
 def _generate_token(prefix: str) -> str:
     return f"{prefix}{secrets.token_urlsafe(32)}"
+
+
+async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str) -> bool:
+    """Whether the token's actor is currently allowed to authenticate.
+
+    Disabling an actor must kill its *outstanding* tokens, not just block new
+    mints (#1136) — so every token verdict re-checks the actor row. Fails
+    closed when the actor row is missing (e.g. a hard-deleted user whose
+    tokens were never revoked). Unknown actor types are left to their token's
+    own revocation/expiry checks.
+    """
+    if actor_type == ActorType.AGENT:
+        agent = await AgentRepository.get_by_id(session, actor_id)
+        return agent is not None and agent.status == ActorStatus.ACTIVE
+    if actor_type == ActorType.SERVICE_ACCOUNT:
+        sa = await ServiceAccountRepository.get_by_id(session, actor_id)
+        return sa is not None and sa.status == ActorStatus.ACTIVE
+    if actor_type == ActorType.USER:
+        user = await UserRepository.get_by_id(session, actor_id)
+        return user is not None and user.active
+    return True
 
 
 class TokenService:
@@ -177,6 +200,12 @@ class TokenService:
                     origin=None,
                 )
             else:
+                # A disabled/archived actor must not rotate its way to fresh
+                # access tokens — refresh is a mint path, gate it like the
+                # jwt-bearer exchange does (#1136).
+                if not await _actor_is_active(session, rt.actor_id, rt.actor_type):
+                    raise InvalidGrantError("actor is not active")
+
                 access_plain = _generate_token(ACCESS_TOKEN_PREFIX)
                 refresh_plain = _generate_token(REFRESH_TOKEN_PREFIX)
                 now = datetime.now(UTC)
@@ -259,7 +288,12 @@ class TokenService:
                 )
 
     async def introspect(self, token: str) -> dict[str, bool | str | int | None]:
-        """Introspect a token per RFC 7662."""
+        """Introspect a token per RFC 7662.
+
+        ``active`` reflects the same verdict the resolvers enforce — including
+        the actor-status check — so an operator inspecting a token after a
+        disable sees the truth, not just the token row's own state.
+        """
         token_hash = _hash_token(token)
         now = datetime.now(UTC)
 
@@ -268,7 +302,11 @@ class TokenService:
                 at = await AccessTokenRepository.get_by_hash(session, token_hash)
                 if at is None:
                     return {"active": False}
-                active = at.revoked_at is None and at.expires_at > now
+                active = (
+                    at.revoked_at is None
+                    and at.expires_at > now
+                    and await _actor_is_active(session, at.actor_id, at.actor_type)
+                )
                 return {
                     "active": active,
                     "sub": at.actor_id,
@@ -280,7 +318,12 @@ class TokenService:
                 rt = await RefreshTokenRepository.get_by_hash(session, token_hash)
                 if rt is None:
                     return {"active": False}
-                active = rt.revoked_at is None and rt.consumed_at is None and rt.expires_at > now
+                active = (
+                    rt.revoked_at is None
+                    and rt.consumed_at is None
+                    and rt.expires_at > now
+                    and await _actor_is_active(session, rt.actor_id, rt.actor_type)
+                )
                 return {
                     "active": active,
                     "sub": rt.actor_id,
@@ -307,6 +350,11 @@ class TokenService:
         deliberate downscoped subset of the host's grants and must not be
         re-broadened. User tokens also keep their snapshot (their permissions do
         not come from ``ActorScopeGrant``).
+
+        The verdict also re-checks the actor's own status (#1136): a disabled
+        or archived actor's outstanding tokens resolve as inactive immediately,
+        so disable alone is a working kill switch — no separate token-family
+        revocation required.
         """
         if not token.startswith(ACCESS_TOKEN_PREFIX):
             return None
@@ -323,9 +371,12 @@ class TokenService:
             scopes = list(at.scopes)
             parent_actor_id: str | None = None
             if at.actor_type == ActorType.AGENT:
+                # One lookup serves both parent resolution and the status check.
                 agent = await AgentRepository.get_by_id(session, at.actor_id)
-                if agent is not None:
-                    parent_actor_id = agent.owner_id
+                parent_actor_id = agent.owner_id if agent is not None else None
+                actor_active = agent is not None and agent.status == ActorStatus.ACTIVE
+            else:
+                actor_active = await _actor_is_active(session, at.actor_id, at.actor_type)
 
             if not at.is_ephemeral and at.actor_type in (
                 ActorType.AGENT,
@@ -336,7 +387,7 @@ class TokenService:
                 )
                 scopes = [g.scope for g in grants]
 
-        active = at.revoked_at is None and at.expires_at > now
+        active = at.revoked_at is None and at.expires_at > now and actor_active
         return Identity(
             sub=at.actor_id,
             actor_type=ActorType(at.actor_type),

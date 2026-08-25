@@ -32,10 +32,26 @@ class InProcessTokenResolver:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         now = datetime.now(UTC)
 
+        # actor_status re-checks the actor row on every resolve (#1136): a
+        # disabled/archived agent's outstanding token must stop resolving as
+        # active, bounded only by the broker's short verdict-cache TTL. NULL
+        # (actor row missing) fails closed; the users table models "disabled"
+        # as active=false, normalised here to the same status string.
         stmt = text(
-            "SELECT actor_id, actor_type, scopes, is_ephemeral, expires_at, revoked_at"
-            " FROM access_tokens"
-            " WHERE token_hash = :token_hash"
+            "SELECT t.actor_id, t.actor_type, t.scopes, t.is_ephemeral,"
+            " t.expires_at, t.revoked_at,"
+            " CASE t.actor_type"
+            "  WHEN 'agent' THEN"
+            "   (SELECT a.status FROM agents a WHERE a.id = t.actor_id)"
+            "  WHEN 'service_account' THEN"
+            "   (SELECT sa.status FROM service_accounts sa WHERE sa.id = t.actor_id)"
+            "  WHEN 'user' THEN"
+            "   (SELECT CASE WHEN u.active THEN 'active' ELSE 'disabled' END"
+            "    FROM users u WHERE u.id = t.actor_id)"
+            "  ELSE 'active'"
+            " END AS actor_status"
+            " FROM access_tokens t"
+            " WHERE t.token_hash = :token_hash"
         ).columns(is_ephemeral=Boolean)
         async with self._admin_db.session() as session:
             result = await session.execute(stmt, {"token_hash": token_hash})
@@ -70,7 +86,7 @@ class InProcessTokenResolver:
         expires_at = _as_aware_datetime(row.expires_at)
         revoked_at = _as_aware_datetime(row.revoked_at) if row.revoked_at is not None else None
 
-        active = revoked_at is None and expires_at > now
+        active = revoked_at is None and expires_at > now and row.actor_status == "active"
         return Identity(
             sub=row.actor_id,
             actor_type=ActorType(row.actor_type),
