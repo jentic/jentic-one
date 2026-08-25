@@ -206,7 +206,7 @@ class OverlayRepository:
         overlay_id: str,
         *,
         document: dict[str, Any] | None = None,
-        target_revision_id: uuid.UUID | None | _Unset = _UNSET,
+        target_revision_id: uuid.UUID | _Unset | None = _UNSET,
         reset_to_pending: bool = False,
     ) -> int:
         values: dict[str, Any] = {"updated_at": func.now()}
