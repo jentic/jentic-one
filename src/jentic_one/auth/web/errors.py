@@ -12,6 +12,7 @@ from jentic_one.auth.services.errors import (
     InvalidTransitionError,
     NoApiKeyError,
     OperationNotSupportedError,
+    RateLimitExceededError,
     RegistrationAccessDeniedError,
     ToolkitBindingConflictError,
     ToolkitBindingNotFoundError,
@@ -30,6 +31,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     NoApiKeyError: (409, "no_api_key"),
     ToolkitBindingConflictError: (409, "toolkit_binding_conflict"),
     ToolkitBindingNotFoundError: (404, "toolkit_binding_not_found"),
+    RateLimitExceededError: (429, "rate_limit_exceeded"),
     RegistrationAccessDeniedError: (401, "registration_access_denied"),
     OperationNotSupportedError: (403, "operation_not_supported"),
 }

@@ -1,4 +1,10 @@
-"""AuthCode+PKCE authorization endpoints with consent screen support."""
+"""AuthCode+PKCE authorization endpoints with consent screen support.
+
+Flow overview:
+  GET /authorize        — validate client + redirect_uri, redirect to IdP
+  GET /oauth/callback   — verify IdP response, show consent screen (or skip)
+  POST /oauth/consent   — verify consent token, issue authorization code, redirect to client
+"""
 
 from __future__ import annotations
 
@@ -13,12 +19,16 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.auth.services.authorize_service import AuthorizeService
-from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
+from jentic_one.auth.services.errors import (
+    InvalidGrantError,
+    RateLimitExceededError,
+    UserNotAdmittedError,
+)
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
     AGENTS_WRITE,
@@ -30,29 +40,26 @@ from jentic_one.shared.auth.permission_catalog import (
     compute_implies_transitive,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.state.backend import MemoryStateBackend
 from jentic_one.shared.web.deps import get_ctx
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
-_RATE_LIMIT_RPM = 30
-_RATE_LIMIT_WINDOW = 60.0
-_ip_request_log: dict[str, list[float]] = {}
+_AUTHORIZE_RATE_LIMIT_RPM = 30
+_rate_limit_store = MemoryStateBackend()
+_ip_rate_limiter = RateLimiter(_rate_limit_store, default_rpm=_AUTHORIZE_RATE_LIMIT_RPM, burst=30)
 
 
-def _check_rate_limit(request: Request) -> None:
-    """Lightweight per-IP rate limiter for unauthenticated authorization endpoints."""
+async def _check_rate_limit(request: Request) -> None:
+    """Per-IP rate limiter for unauthenticated authorization endpoints."""
     ip = request.client.host if request.client else "unknown"
-    now = time.time()
-    window_start = now - _RATE_LIMIT_WINDOW
+    outcome = await _ip_rate_limiter.acquire(ip)
+    if not outcome.allowed:
+        raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
-    timestamps = _ip_request_log.get(ip, [])
-    timestamps = [t for t in timestamps if t > window_start]
-    if len(timestamps) >= _RATE_LIMIT_RPM:
-        raise HTTPException(status_code=429, detail="Too many requests")
-    timestamps.append(now)
-    _ip_request_log[ip] = timestamps
 
 _ALLOWED_CANONICAL_PATHS: frozenset[str] = frozenset(
     {
@@ -81,9 +88,7 @@ def _matches_canonical_origin(redirect_uri: str, canonical_base_url: str) -> boo
     return normalised_path in _ALLOWED_CANONICAL_PATHS
 
 
-async def _is_allowed_redirect_uri(
-    redirect_uri: str, client_id: str, ctx: Context
-) -> bool:
+async def _is_allowed_redirect_uri(redirect_uri: str, client_id: str, ctx: Context) -> bool:
     """Validate redirect_uri against the platform's canonical origin or registered clients.
 
     First checks if the redirect_uri matches the canonical base URL (for jentic-one's
@@ -102,15 +107,13 @@ async def _is_allowed_redirect_uri(
     return redirect_uri in client.redirect_uris
 
 
-async def _get_client_allowed_scopes(
-    client_id: str, ctx: Context
-) -> frozenset[str] | None:
+async def _get_client_allowed_scopes(client_id: str, ctx: Context) -> frozenset[str] | None:
     """Return allowed scopes for a registered client, or None for first-party."""
     async with ctx.admin_db.session() as session:
         client = await OAuthClientRepository.get_by_client_id(session, client_id)
     if client is None:
         return None
-    if hasattr(client, "allowed_scopes") and client.allowed_scopes:
+    if client.allowed_scopes:
         return frozenset(client.allowed_scopes)
     return None
 
@@ -353,7 +356,7 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
             </form>
         </div>
         <div class="footer">
-            By authorizing, you agree to Jentic One's <a href="#">Terms of Service</a>
+            Authorizing grants the application the permissions listed above.
         </div>
     </div>
 </body>
@@ -361,9 +364,7 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def _sign_payload(
-    payload: dict[str, str | None], secret: str, *, purpose: str
-) -> str:
+def _sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:
     """Encode and HMAC-sign a payload with a purpose discriminator."""
     payload["_purpose"] = purpose
     data = urlsafe_b64encode(json.dumps(payload).encode()).decode()
@@ -408,9 +409,7 @@ def _consume_consent_nonce(nonce: str) -> bool:
         expired = [n for t, n in _consumed_nonce_expiry if t < cutoff]
         for n in expired:
             _consumed_consent_nonces.discard(n)
-        _consumed_nonce_expiry[:] = [
-            (t, n) for t, n in _consumed_nonce_expiry if t >= cutoff
-        ]
+        _consumed_nonce_expiry[:] = [(t, n) for t, n in _consumed_nonce_expiry if t >= cutoff]
     if nonce in _consumed_consent_nonces:
         return False
     _consumed_consent_nonces.add(nonce)

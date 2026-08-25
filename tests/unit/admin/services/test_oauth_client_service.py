@@ -13,10 +13,12 @@ def test_accepts_valid_https_uris() -> None:
 
 
 def test_accepts_multiple_https_uris() -> None:
-    _validate_redirect_uris([
-        "https://example.com/callback",
-        "https://app.example.org/oauth/redirect",
-    ])
+    _validate_redirect_uris(
+        [
+            "https://example.com/callback",
+            "https://app.example.org/oauth/redirect",
+        ]
+    )
 
 
 def test_accepts_http_localhost() -> None:

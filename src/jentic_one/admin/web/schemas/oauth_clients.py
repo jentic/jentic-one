@@ -25,9 +25,7 @@ class OAuthClientCreateRequest(BaseModel):
     )
 
     name: str = Field(description="Human-readable name for the client.", max_length=255)
-    description: str | None = Field(
-        default=None, description="Optional description of the client."
-    )
+    description: str | None = Field(default=None, description="Optional description of the client.")
     redirect_uris: list[Annotated[str, Field(max_length=2048)]] = Field(
         description="Allowed OAuth callback URLs. At least one required.",
         min_length=1,
@@ -55,7 +53,11 @@ class OAuthClientUpdateRequest(BaseModel):
     )
     active: bool | None = None
     require_consent: bool | None = None
-    allowed_scopes: list[str] | None = None
+    allowed_scopes: list[str] | None = Field(
+        default=None,
+        description="Scope restriction list. Null means no change; "
+        "an empty list clears the restriction (all scopes permitted).",
+    )
 
 
 class OAuthClientResponse(BaseModel):

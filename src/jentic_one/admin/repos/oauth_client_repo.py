@@ -91,7 +91,7 @@ class OAuthClientRepository:
         if require_consent is not None:
             client.require_consent = require_consent
         if allowed_scopes is not None:
-            client.allowed_scopes = allowed_scopes
+            client.allowed_scopes = allowed_scopes if allowed_scopes else None
 
         await session.flush()
         return client
@@ -99,11 +99,7 @@ class OAuthClientRepository:
     @staticmethod
     async def deactivate(session: AsyncSession, id: str) -> bool:
         """Soft-delete by setting active=False. Returns True if updated."""
-        stmt = (
-            update(OAuthClient)
-            .where(OAuthClient.id == id)
-            .values(active=False)
-        )
+        stmt = update(OAuthClient).where(OAuthClient.id == id).values(active=False)
         result = await session.execute(stmt)
         await session.flush()
         return int(result.rowcount) > 0  # type: ignore[attr-defined]

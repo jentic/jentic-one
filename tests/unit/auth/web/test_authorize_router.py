@@ -116,7 +116,9 @@ def test_redirect_disallowed_path_rejected() -> None:
 
 
 def test_redirect_different_host_rejected() -> None:
-    assert not _matches_canonical_origin("https://evil.com/oauth/callback", "https://app.example.com")
+    assert not _matches_canonical_origin(
+        "https://evil.com/oauth/callback", "https://app.example.com"
+    )
 
 
 def test_redirect_different_scheme_rejected() -> None:

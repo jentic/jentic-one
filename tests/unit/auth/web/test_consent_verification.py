@@ -40,9 +40,7 @@ def test_expired_consent_token_rejected() -> None:
     }
     token = _sign_payload(payload, SECRET, purpose="consent")
     with pytest.raises(InvalidGrantError, match="expired"):
-        _verify_payload(
-            token, SECRET, purpose="consent", max_age=CONSENT_STATE_MAX_AGE_SECONDS
-        )
+        _verify_payload(token, SECRET, purpose="consent", max_age=CONSENT_STATE_MAX_AGE_SECONDS)
 
 
 def test_future_iat_rejected() -> None:
@@ -53,9 +51,7 @@ def test_future_iat_rejected() -> None:
     }
     token = _sign_payload(payload, SECRET, purpose="consent")
     with pytest.raises(InvalidGrantError, match="expired"):
-        _verify_payload(
-            token, SECRET, purpose="consent", max_age=CONSENT_STATE_MAX_AGE_SECONDS
-        )
+        _verify_payload(token, SECRET, purpose="consent", max_age=CONSENT_STATE_MAX_AGE_SECONDS)
 
 
 def test_tampered_signature_rejected() -> None:
@@ -66,9 +62,7 @@ def test_tampered_signature_rejected() -> None:
     token = _sign_payload(payload, SECRET, purpose="consent")
     tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
     with pytest.raises(InvalidGrantError, match="signature invalid"):
-        _verify_payload(
-            tampered, SECRET, purpose="consent", max_age=CONSENT_STATE_MAX_AGE_SECONDS
-        )
+        _verify_payload(tampered, SECRET, purpose="consent", max_age=CONSENT_STATE_MAX_AGE_SECONDS)
 
 
 def test_malformed_token_no_dot() -> None:

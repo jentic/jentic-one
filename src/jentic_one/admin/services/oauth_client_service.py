@@ -42,15 +42,11 @@ def _validate_redirect_uris(uris: list[str]) -> None:
         if not parsed.scheme or not parsed.netloc:
             raise InvalidInputError(f"invalid redirect_uri: {uri}")
         if parsed.fragment:
-            raise InvalidInputError(
-                f"redirect_uri must not contain a fragment component: {uri}"
-            )
+            raise InvalidInputError(f"redirect_uri must not contain a fragment component: {uri}")
         if parsed.scheme not in ("https", "http"):
             raise InvalidInputError(f"redirect_uri must use https or http: {uri}")
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
-            raise InvalidInputError(
-                f"http redirect_uri only allowed for localhost: {uri}"
-            )
+            raise InvalidInputError(f"http redirect_uri only allowed for localhost: {uri}")
 
 
 def _to_view(client: OAuthClient) -> OAuthClientView:
