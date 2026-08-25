@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { KeyRound, LogOut } from 'lucide-react';
+import { KeyRound, LogOut, Settings } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { MenuPanel, MenuSeparator, menuItemClass, useDismissable } from '@/shared/ui/Menu';
@@ -74,6 +74,16 @@ export function UserMenu() {
 					>
 						<KeyRound className="h-4 w-4 shrink-0" aria-hidden="true" />
 						Change password
+					</AppLink>
+
+					<AppLink
+						href="/settings"
+						role="menuitem"
+						onClick={close}
+						className={menuItemClass()}
+					>
+						<Settings className="h-4 w-4 shrink-0" aria-hidden="true" />
+						Settings
 					</AppLink>
 
 					<MenuSeparator />

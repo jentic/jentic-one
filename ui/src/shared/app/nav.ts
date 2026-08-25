@@ -7,7 +7,6 @@ import {
 	LayoutGrid,
 	KeyRound,
 	Activity,
-	Settings,
 } from 'lucide-react';
 
 /**
@@ -55,15 +54,6 @@ export const navItems: NavItem[] = [
 	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
 	{ id: 'agents', label: 'Agents', to: '/agents', order: 60, icon: Bot },
 	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 70, icon: Activity },
-	{
-		id: 'settings',
-		label: 'Settings',
-		to: '/settings',
-		order: 80,
-		icon: Settings,
-		requiredPermission: 'org:admin',
-		secondary: true,
-	},
 	// NOTE: the docs portal ("API Reference", /docs) deliberately does NOT live
 	// in this registry. It's reference material, not a product destination, so
 	// the TopNavbar renders it as a standalone icon next to the user menu.

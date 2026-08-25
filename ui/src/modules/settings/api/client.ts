@@ -32,6 +32,14 @@ export interface OAuthClientUpdateInput {
 	require_consent?: boolean;
 }
 
+export interface OAuthClientCreateResponse extends OAuthClient {
+	client_secret: string;
+}
+
+export interface OAuthClientRotateSecretResponse {
+	client_secret: string;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 	const token = getToken();
 	const res = await fetch(path, {
@@ -63,8 +71,10 @@ export async function getOAuthClient(id: string): Promise<OAuthClient> {
 	return apiFetch<OAuthClient>(`/admin/oauth-clients/${encodeURIComponent(id)}`);
 }
 
-export async function createOAuthClient(input: OAuthClientCreateInput): Promise<OAuthClient> {
-	return apiFetch<OAuthClient>('/admin/oauth-clients', {
+export async function createOAuthClient(
+	input: OAuthClientCreateInput,
+): Promise<OAuthClientCreateResponse> {
+	return apiFetch<OAuthClientCreateResponse>('/admin/oauth-clients', {
 		method: 'POST',
 		body: JSON.stringify(input),
 	});
@@ -84,4 +94,13 @@ export async function deactivateOAuthClient(id: string): Promise<void> {
 	await apiFetch<void>(`/admin/oauth-clients/${encodeURIComponent(id)}`, {
 		method: 'DELETE',
 	});
+}
+
+export async function rotateOAuthClientSecret(
+	id: string,
+): Promise<OAuthClientRotateSecretResponse> {
+	return apiFetch<OAuthClientRotateSecretResponse>(
+		`/admin/oauth-clients/${encodeURIComponent(id)}/rotate-secret`,
+		{ method: 'POST' },
+	);
 }

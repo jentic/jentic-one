@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Copy, Check, Trash2, Pencil, KeyRound, RotateCcw } from 'lucide-react';
+import { Plus, Copy, Check, Trash2, Pencil, KeyRound, RotateCcw, ShieldAlert } from 'lucide-react';
 import {
 	Button,
 	Dialog,
@@ -8,7 +8,6 @@ import {
 	Label,
 	LoadingState,
 	PageHelp,
-	Textarea,
 	toast,
 } from '@/shared/ui';
 import {
@@ -17,6 +16,7 @@ import {
 	useUpdateOAuthClient,
 	useDeactivateOAuthClient,
 	useReactivateOAuthClient,
+	useRotateOAuthClientSecret,
 	type OAuthClient,
 } from '@/modules/settings/api/hooks';
 
@@ -41,16 +41,104 @@ function CopyButton({ value }: { value: string }) {
 	);
 }
 
+interface SecretDialogProps {
+	open: boolean;
+	onClose: () => void;
+	secret: string;
+	title: string;
+}
+
+function SecretDialog({ open, onClose, secret, title }: SecretDialogProps) {
+	return (
+		<Dialog
+			open={open}
+			onClose={onClose}
+			title={title}
+			dismissOnBackdrop={false}
+			footer={
+				<Button onClick={onClose}>Done</Button>
+			}
+		>
+			<div className="space-y-4">
+				<div className="bg-destructive/10 border-destructive/20 rounded-md border p-3">
+					<p className="text-destructive text-sm font-medium">
+						Copy this secret now. It will not be shown again.
+					</p>
+				</div>
+				<div className="flex items-center gap-2">
+					<code className="bg-muted flex-1 overflow-x-auto rounded px-3 py-2 font-mono text-sm">
+						{secret}
+					</code>
+					<CopyButton value={secret} />
+				</div>
+			</div>
+		</Dialog>
+	);
+}
+
+interface RedirectUriListProps {
+	uris: string[];
+	onChange: (uris: string[]) => void;
+}
+
+function RedirectUriList({ uris, onChange }: RedirectUriListProps) {
+	const handleChange = (index: number, value: string): void => {
+		const updated = [...uris];
+		updated[index] = value;
+		onChange(updated);
+	};
+
+	const handleRemove = (index: number): void => {
+		onChange(uris.filter((_, i) => i !== index));
+	};
+
+	const handleAdd = (): void => {
+		onChange([...uris, '']);
+	};
+
+	return (
+		<div className="space-y-2">
+			{uris.map((uri, index) => (
+				<div key={index} className="flex items-center gap-2">
+					<Input
+						value={uri}
+						onChange={(e): void => handleChange(index, e.target.value)}
+						placeholder="https://example.com/callback"
+						className="flex-1"
+					/>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={(): void => handleRemove(index)}
+						disabled={uris.length <= 1}
+						aria-label="Remove URI"
+					>
+						<Trash2 className="h-4 w-4" />
+					</Button>
+				</div>
+			))}
+			<Button type="button" variant="outline" size="sm" onClick={handleAdd}>
+				<Plus className="mr-1 h-3 w-3" />
+				Add URI
+			</Button>
+		</div>
+	);
+}
+
 interface CreateEditDialogProps {
 	open: boolean;
 	onClose: () => void;
+	onSecretRevealed?: (secret: string) => void;
 	client?: OAuthClient;
 }
 
-function CreateEditDialog({ open, onClose, client }: CreateEditDialogProps) {
+function CreateEditDialog({ open, onClose, onSecretRevealed, client }: CreateEditDialogProps) {
 	const [name, setName] = useState(client?.name ?? '');
 	const [description, setDescription] = useState(client?.description ?? '');
-	const [redirectUris, setRedirectUris] = useState(client?.redirect_uris.join('\n') ?? '');
+	const [redirectUris, setRedirectUris] = useState<string[]>(
+		client?.redirect_uris.length ? client.redirect_uris : [''],
+	);
 	const [requireConsent, setRequireConsent] = useState(client?.require_consent ?? true);
 
 	const createMutation = useCreateOAuthClient();
@@ -61,10 +149,7 @@ function CreateEditDialog({ open, onClose, client }: CreateEditDialogProps) {
 
 	const handleSubmit = async (e: React.FormEvent): Promise<void> => {
 		e.preventDefault();
-		const uris = redirectUris
-			.split('\n')
-			.map((s) => s.trim())
-			.filter(Boolean);
+		const uris = redirectUris.map((s) => s.trim()).filter(Boolean);
 
 		if (!name.trim() || uris.length === 0) {
 			toast({ title: 'Name and at least one redirect URI required', variant: 'error' });
@@ -83,16 +168,19 @@ function CreateEditDialog({ open, onClose, client }: CreateEditDialogProps) {
 					},
 				});
 				toast({ title: 'OAuth client updated', variant: 'success' });
+				onClose();
 			} else {
-				await createMutation.mutateAsync({
+				const result = await createMutation.mutateAsync({
 					name: name.trim(),
 					description: description.trim() || undefined,
 					redirect_uris: uris,
 					require_consent: requireConsent,
 				});
-				toast({ title: 'OAuth client created', variant: 'success' });
+				onClose();
+				if (result.client_secret) {
+					onSecretRevealed?.(result.client_secret);
+				}
 			}
-			onClose();
 		} catch (err) {
 			toast({
 				title: isEdit ? 'Failed to update client' : 'Failed to create client',
@@ -144,15 +232,8 @@ function CreateEditDialog({ open, onClose, client }: CreateEditDialogProps) {
 					/>
 				</div>
 				<div>
-					<Label htmlFor="redirect_uris">Redirect URIs (one per line)</Label>
-					<Textarea
-						id="redirect_uris"
-						value={redirectUris}
-						onChange={(e): void => setRedirectUris(e.target.value)}
-						placeholder="https://example.com/callback"
-						rows={3}
-						required
-					/>
+					<Label>Redirect URIs</Label>
+					<RedirectUriList uris={redirectUris} onChange={setRedirectUris} />
 				</div>
 				<div className="flex items-center gap-2">
 					<input
@@ -169,15 +250,59 @@ function CreateEditDialog({ open, onClose, client }: CreateEditDialogProps) {
 	);
 }
 
+interface RotateConfirmDialogProps {
+	open: boolean;
+	onClose: () => void;
+	onConfirm: () => void;
+	isPending: boolean;
+	clientName: string;
+}
+
+function RotateConfirmDialog({
+	open,
+	onClose,
+	onConfirm,
+	isPending,
+	clientName,
+}: RotateConfirmDialogProps) {
+	return (
+		<Dialog
+			open={open}
+			onClose={onClose}
+			title="Rotate Client Secret?"
+			footer={
+				<>
+					<Button variant="outline" onClick={onClose}>
+						Cancel
+					</Button>
+					<Button variant="danger" onClick={onConfirm} disabled={isPending}>
+						{isPending ? 'Rotating...' : 'Rotate Secret'}
+					</Button>
+				</>
+			}
+		>
+			<p className="text-muted-foreground">
+				This will invalidate the current secret for{' '}
+				<strong>{clientName}</strong> immediately. Any application using the
+				old secret will lose access.
+			</p>
+		</Dialog>
+	);
+}
+
 export function OAuthClientsSection() {
 	const [createOpen, setCreateOpen] = useState(false);
 	const [editClient, setEditClient] = useState<OAuthClient | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<OAuthClient | null>(null);
+	const [rotateTarget, setRotateTarget] = useState<OAuthClient | null>(null);
+	const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+	const [secretDialogTitle, setSecretDialogTitle] = useState('Client Secret');
 	const [showInactive, setShowInactive] = useState(false);
 
 	const { data: clients, isLoading, error, refetch } = useOAuthClients(showInactive);
 	const deactivateMutation = useDeactivateOAuthClient();
 	const reactivateMutation = useReactivateOAuthClient();
+	const rotateMutation = useRotateOAuthClientSecret();
 
 	const handleDeactivate = async (): Promise<void> => {
 		if (!deleteTarget) return;
@@ -207,6 +332,27 @@ export function OAuthClientsSection() {
 		}
 	};
 
+	const handleRotateConfirm = async (): Promise<void> => {
+		if (!rotateTarget) return;
+		try {
+			const result = await rotateMutation.mutateAsync(rotateTarget.id);
+			setRotateTarget(null);
+			setSecretDialogTitle(`New Secret for ${rotateTarget.name}`);
+			setRevealedSecret(result.client_secret);
+		} catch (err) {
+			toast({
+				title: 'Failed to rotate secret',
+				description: err instanceof Error ? err.message : undefined,
+				variant: 'error',
+			});
+		}
+	};
+
+	const handleSecretRevealed = (secret: string): void => {
+		setSecretDialogTitle('Client Secret Created');
+		setRevealedSecret(secret);
+	};
+
 	return (
 		<section>
 			<div className="mb-6 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
@@ -231,6 +377,10 @@ export function OAuthClientsSection() {
 							{
 								heading: 'Client ID',
 								body: 'The client_id is a public identifier used in OAuth flows. Configure it in the third-party application.',
+							},
+							{
+								heading: 'Client Secret',
+								body: 'The client secret is shown once at creation and after rotation. Store it securely — it cannot be retrieved later.',
 							},
 							{
 								heading: 'Redirect URIs',
@@ -302,7 +452,17 @@ export function OAuthClientsSection() {
 										</p>
 									)}
 								</div>
-								<div className="flex gap-2">
+								<div className="flex gap-1">
+									{client.active && (
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={(): void => setRotateTarget(client)}
+											title="Rotate secret"
+										>
+											<ShieldAlert className="h-4 w-4" />
+										</Button>
+									)}
 									<Button
 										variant="ghost"
 										size="sm"
@@ -342,9 +502,13 @@ export function OAuthClientsSection() {
 								</div>
 								<div>
 									<span className="text-muted-foreground">Redirect URIs: </span>
-									<span className="text-foreground">
-										{client.redirect_uris.join(', ')}
-									</span>
+									<ul className="text-foreground mt-1 list-inside list-disc pl-1">
+										{client.redirect_uris.map((uri) => (
+											<li key={uri} className="truncate font-mono text-xs">
+												{uri}
+											</li>
+										))}
+									</ul>
 								</div>
 								<div>
 									<span className="text-muted-foreground">
@@ -365,6 +529,7 @@ export function OAuthClientsSection() {
 					key="create"
 					open={createOpen}
 					onClose={(): void => setCreateOpen(false)}
+					onSecretRevealed={handleSecretRevealed}
 				/>
 			)}
 
@@ -410,6 +575,25 @@ export function OAuthClientsSection() {
 						</p>
 					)}
 				</Dialog>
+			)}
+
+			{rotateTarget != null && (
+				<RotateConfirmDialog
+					open
+					onClose={(): void => setRotateTarget(null)}
+					onConfirm={(): void => void handleRotateConfirm()}
+					isPending={rotateMutation.isPending}
+					clientName={rotateTarget.name}
+				/>
+			)}
+
+			{revealedSecret != null && (
+				<SecretDialog
+					open
+					onClose={(): void => setRevealedSecret(null)}
+					secret={revealedSecret}
+					title={secretDialogTitle}
+				/>
 			)}
 		</section>
 	);

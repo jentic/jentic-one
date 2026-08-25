@@ -6,9 +6,12 @@ import {
 	createOAuthClient,
 	deactivateOAuthClient,
 	listOAuthClients,
+	rotateOAuthClientSecret,
 	updateOAuthClient,
 	type OAuthClient,
 	type OAuthClientCreateInput,
+	type OAuthClientCreateResponse,
+	type OAuthClientRotateSecretResponse,
 	type OAuthClientUpdateInput,
 } from './client';
 
@@ -62,4 +65,16 @@ export function useReactivateOAuthClient() {
 	});
 }
 
-export type { OAuthClient, OAuthClientCreateInput, OAuthClientUpdateInput };
+export function useRotateOAuthClientSecret() {
+	return useMutation({
+		mutationFn: (id: string) => rotateOAuthClientSecret(id),
+	});
+}
+
+export type {
+	OAuthClient,
+	OAuthClientCreateInput,
+	OAuthClientCreateResponse,
+	OAuthClientRotateSecretResponse,
+	OAuthClientUpdateInput,
+};
