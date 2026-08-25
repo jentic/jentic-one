@@ -42,9 +42,7 @@
 Giving an agent API access normally means giving it an API key. Jentic One removes that step.
 Register the APIs an agent may use, store the credentials once, and the agent makes its calls
 through the Broker. The Broker checks the agent's permissions, attaches the credential at
-execution time, and writes an audit record. Credential read APIs return redacted data; cleartext
-secret material is shown only in the create response. Rotation accepts a new secret but returns
-redacted data.
+execution time, and writes an audit record. The agent never sees your keys.
 
 Jentic One is self-hosted and licensed under Apache-2.0.
 
