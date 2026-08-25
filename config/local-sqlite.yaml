@@ -26,6 +26,13 @@ server:
   port: 8000
   reload: true
 
+auth:
+  canonical_base_url: "http://127.0.0.1:8000"
+  platform_clients:
+    - client_id: "jentic-one-spa"
+      redirect_uris:
+        - "http://127.0.0.1:8000/app/auth/callback"
+
 search:
   enabled: true
   search_enabled: true

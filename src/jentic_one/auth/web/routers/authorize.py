@@ -4,6 +4,7 @@ Flow overview:
   GET /authorize        — validate client + redirect_uri, redirect to IdP
   GET /oauth/callback   — verify IdP response, show consent screen (or skip)
   POST /oauth/consent   — verify consent token, issue authorization code, redirect to client
+  POST /oauth/token     — exchange code + PKCE verifier + client_secret for tokens
 """
 
 from __future__ import annotations
@@ -88,15 +89,28 @@ def _matches_canonical_origin(redirect_uri: str, canonical_base_url: str) -> boo
     return normalised_path in _ALLOWED_CANONICAL_PATHS
 
 
-async def _is_allowed_redirect_uri(redirect_uri: str, client_id: str, ctx: Context) -> bool:
-    """Validate redirect_uri against the platform's canonical origin or registered clients.
+def _is_platform_client(client_id: str, ctx: Context) -> bool:
+    """Check if client_id is a known platform client from config."""
+    return any(pc.client_id == client_id for pc in ctx.config.auth.platform_clients)
 
-    First checks if the redirect_uri matches the canonical base URL (for jentic-one's
-    own UI). If not, looks up the client_id in the OAuth client registry and checks
-    if the redirect_uri is in the client's allowed list.
+
+def _platform_client_allows_redirect(redirect_uri: str, client_id: str, ctx: Context) -> bool:
+    """Check if a platform client's config allows the given redirect_uri."""
+    for pc in ctx.config.auth.platform_clients:
+        if pc.client_id == client_id:
+            return redirect_uri in pc.redirect_uris
+    return False
+
+
+async def _is_allowed_redirect_uri(redirect_uri: str, client_id: str, ctx: Context) -> bool:
+    """Validate redirect_uri against platform clients (config) or registered clients (DB).
+
+    Platform clients are validated against their configured redirect_uris.
+    Third-party clients are looked up in the oauth_clients registry.
+    Unknown client_ids are rejected.
     """
-    if _matches_canonical_origin(redirect_uri, ctx.config.auth.canonical_base_url):
-        return True
+    if _is_platform_client(client_id, ctx):
+        return _platform_client_allows_redirect(redirect_uri, client_id, ctx)
 
     async with ctx.admin_db.session() as session:
         client = await OAuthClientRepository.get_by_client_id(session, client_id)
@@ -108,7 +122,9 @@ async def _is_allowed_redirect_uri(redirect_uri: str, client_id: str, ctx: Conte
 
 
 async def _get_client_allowed_scopes(client_id: str, ctx: Context) -> frozenset[str] | None:
-    """Return allowed scopes for a registered client, or None for first-party."""
+    """Return allowed scopes for a registered client, or None for platform clients."""
+    if _is_platform_client(client_id, ctx):
+        return None
     async with ctx.admin_db.session() as session:
         client = await OAuthClientRepository.get_by_client_id(session, client_id)
     if client is None:

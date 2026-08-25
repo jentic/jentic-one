@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Response
 
+from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
+from jentic_one.admin.services._support.passwords import verify_password
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.assertion_service import AssertionService
 from jentic_one.auth.services.authorize_service import AuthorizeService
@@ -55,6 +57,7 @@ def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
 @router.post("/oauth/token")
 async def token_endpoint(
     body: TokenRequest,
+    ctx: Context = Depends(get_ctx),
     token_svc: TokenService = Depends(get_token_service),
     assertion_svc: AssertionService = Depends(get_assertion_service),
     sa_auth_svc: ServiceAccountAuthService = Depends(get_sa_auth_service),
@@ -65,6 +68,14 @@ async def token_endpoint(
     if body.grant_type == _AUTHORIZATION_CODE_GRANT:
         if not body.code or not body.code_verifier or not body.redirect_uri or not body.client_id:
             raise InvalidGrantError("code, code_verifier, redirect_uri, and client_id are required")
+        is_platform = any(pc.client_id == body.client_id for pc in ctx.config.auth.platform_clients)
+        if not is_platform:
+            if not body.client_secret:
+                raise InvalidGrantError("invalid_client")
+            async with ctx.admin_db.session() as session:
+                client = await OAuthClientRepository.get_by_client_id(session, body.client_id)
+            if client is None or not verify_password(body.client_secret, client.client_secret_hash):
+                raise InvalidGrantError("invalid_client")
         access_token, refresh_token, id_token = await authorize_svc.exchange_code(
             code=body.code,
             code_verifier=body.code_verifier,

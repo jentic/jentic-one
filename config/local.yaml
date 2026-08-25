@@ -80,6 +80,10 @@ credentials:
 # the assertion audience collapses to "/oauth/token".
 auth:
   canonical_base_url: "http://127.0.0.1:8000"
+  platform_clients:
+    - client_id: "jentic-one-spa"
+      redirect_uris:
+        - "http://127.0.0.1:8000/app/auth/callback"
   # ES256 signing key for ID token issuance (local dev only - never use in prod)
   id_signing:
     - kid: "local-dev-key"

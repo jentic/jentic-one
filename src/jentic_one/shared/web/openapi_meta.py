@@ -771,6 +771,9 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # OAuth redirect callbacks (bound by a signed state param, not a session).
         "oauthCallback",
         "authorizeOauthCallback",
+        # OAuth consent screen (presented after IdP login, before issuing the code).
+        "consentPage",
+        "consentSubmit",
         # Browser-facing OAuth error page (no auth; just renders an error code).
         "errorPage",
         # Unauthenticated discovery metadata.

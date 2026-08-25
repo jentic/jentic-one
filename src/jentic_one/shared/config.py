@@ -260,6 +260,22 @@ class IdpConfig(BaseModel):
     hosted_domain: str | None = None
 
 
+class PlatformClientConfig(BaseModel):
+    """A static first-party OAuth client (e.g. the operator SPA).
+
+    Platform clients authenticate via PKCE only — no client secret. They are
+    defined in config (not the oauth_clients DB table) because they are
+    deployment-time constants, not admin-managed dynamic registrations.
+    """
+
+    client_id: str
+    redirect_uris: list[str] = Field(min_length=1)
+
+
+_SPA_CLIENT_ID = "jentic-one-spa"
+_SPA_CALLBACK_PATH = "/app/auth/callback"
+
+
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
@@ -275,6 +291,24 @@ class AuthConfig(BaseModel):
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
+    platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
+
+    def model_post_init(self, __context: object) -> None:
+        """Ensure the SPA platform client is always registered.
+
+        If no platform_clients entry exists for the operator SPA and a
+        canonical_base_url is configured, synthesise one so existing
+        deployments continue to work without a config change on upgrade.
+        """
+        spa_present = any(pc.client_id == _SPA_CLIENT_ID for pc in self.platform_clients)
+        if not spa_present and self.canonical_base_url:
+            base = self.canonical_base_url.rstrip("/")
+            self.platform_clients.append(
+                PlatformClientConfig(
+                    client_id=_SPA_CLIENT_ID,
+                    redirect_uris=[f"{base}{_SPA_CALLBACK_PATH}"],
+                )
+            )
 
 
 _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
