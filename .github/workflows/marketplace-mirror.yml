@@ -1,0 +1,103 @@
+# Mirrors the bundled Postgres image into the AWS Marketplace ECR repo.
+#
+# The Marketplace disallows docker.io pulls at install time, so the postgresql
+# subchart's image (deploy/docker/postgres-mirror.Dockerfile — a one-FROM
+# retag whose digest Dependabot keeps fresh) must exist in the listing's ECR.
+# Weekly cron + manual dispatch: cheap to re-run, and a re-push of the same
+# digest is a no-op registry-side.
+#
+# Same publish policy as the release image (release.yml publish-image):
+# Trivy gates BEFORE login/push, cosign signs the pushed digest after. The
+# job is dormant until the repo variables exist (forks and pre-listing runs
+# skip cleanly):
+#   MARKETPLACE_ECR_ROLE_ARN     — IAM role trusting GitHub's OIDC provider
+#   MARKETPLACE_ECR_POSTGRES     — full mirror repo URI from the portal
+#                                  (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/postgresql)
+#
+# Tag contract: pushes the source tag (matching the Helm values pin) and the
+# source digest as a tag suffix — tags float, digests pin, same as the app
+# image (release.yml).
+name: marketplace-mirror
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC — offset from the Dependabot run
+
+permissions: {}
+
+concurrency:
+  group: marketplace-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror postgres to Marketplace ECR
+    # `if` on the job (not per-step) so the scheduled run is a skip, not a red.
+    if: vars.MARKETPLACE_ECR_ROLE_ARN != '' && vars.MARKETPLACE_ECR_POSTGRES != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # configure-aws-credentials (OIDC) + cosign keyless
+    steps:
+      - uses: actions/checkout@v7
+
+      # Installers before any credential lands on disk — same posture as
+      # release.yml publish-image.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Resolve mirror tag from the Dockerfile pin
+        id: src
+        run: |
+          set -euo pipefail
+          FROM_LINE="$(grep -oE '^FROM [^ ]+' deploy/docker/postgres-mirror.Dockerfile | cut -d' ' -f2)"
+          TAG="$(sed -E 's/^[^:]+:([^@]+)@.*$/\1/' <<<"${FROM_LINE}")"
+          test -n "${TAG}"
+          echo "from=${FROM_LINE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      # A single-FROM build is a retag: layers are preserved byte-for-byte
+      # from the pinned digest.
+      - name: Build the mirror image (retag of the pinned digest)
+        run: docker build -f deploy/docker/postgres-mirror.Dockerfile -t postgres-mirror:local deploy/docker
+
+      # Same CVE bar as everything else this repo publishes: fixable
+      # HIGH/CRITICAL fail; overrides go in .trivyignore with justification +
+      # expiry. NOTE: the source image is Bitnami *legacy* (frozen, unpatched
+      # upstream — see the Dockerfile header), so expect this gate to start
+      # failing eventually; that is the signal to switch the chart's bundled
+      # DB or make RDS the Marketplace default, not to allowlist blindly.
+      - name: Trivy image scan (publish gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: postgres-mirror:local
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      # Credential-issuing steps after build + scan, directly before use.
+      - name: Configure AWS credentials (Marketplace ECR)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.MARKETPLACE_ECR_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Push to Marketplace ECR and sign
+        env:
+          COSIGN_YES: "true"
+          ECR_POSTGRES: ${{ vars.MARKETPLACE_ECR_POSTGRES }}
+          TAG: ${{ steps.src.outputs.tag }}
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin "${ECR_POSTGRES%%/*}"
+          docker tag postgres-mirror:local "${ECR_POSTGRES}:${TAG}"
+          docker push "${ECR_POSTGRES}:${TAG}"
+          DIGEST="$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${ECR_POSTGRES}:${TAG}" \
+            | grep -oE "^${ECR_POSTGRES}@sha256:[0-9a-f]+" | head -n1 | cut -d@ -f2)"
+          test -n "${DIGEST}"
+          echo "Mirrored ${ECR_POSTGRES}:${TAG} @ ${DIGEST}"
+          cosign sign "${ECR_POSTGRES}@${DIGEST}"
