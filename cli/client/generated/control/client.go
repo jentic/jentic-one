@@ -2390,10 +2390,13 @@ type SearchLinksResponse struct {
 
 // SearchRequest POST /search request body.
 type SearchRequest struct {
-	Apis         *[]string          `json:"apis,omitempty"`
-	Cursor       *string            `json:"cursor,omitempty"`
-	Limit        *int               `json:"limit,omitempty"`
-	Query        string             `json:"query"`
+	// Apis Restrict results to these APIs. Each entry is a 'vendor[/name[/version]]' identifier of an imported API (e.g. 'github-com/api-github-com/1.1.4'); vendor and name are normalized like ingest, so raw spellings such as 'stripe.com/api' also resolve. The legacy colon-separated form 'vendor[:name[:version]]' is also accepted.
+	Apis   *[]string `json:"apis,omitempty"`
+	Cursor *string   `json:"cursor,omitempty"`
+	Limit  *int      `json:"limit,omitempty"`
+	Query  string    `json:"query"`
+
+	// RevisionPins Pin specific APIs to a revision for this search. Keys are full 'vendor/name/version' identifiers (colon-separated also accepted); values are revision UUIDs.
 	RevisionPins *map[string]string `json:"revision_pins,omitempty"`
 }
 
