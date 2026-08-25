@@ -13,8 +13,8 @@
 
 Jentic One is a **self-hosted gateway for secure third-party API execution by AI
 agents**: you register the APIs an agent may use, store the credentials once, and
-the agent calls out through a credential-injecting Broker so **secrets never leave
-your infrastructure and never reach the agent** (`README.md`, `SECURITY.md`).
+the agent calls out through a credential-injecting Broker with default-deny access
+checks and redacted credential reads (`README.md`, `SECURITY.md`).
 
 ## Who it's for
 
@@ -33,9 +33,9 @@ Deployment personas the public docs call out (`docs/security/hardening.md`):
 - **Issue filer / contributor** — including AI agents filing issues (this harness's
   own audience; see `CONTRIBUTING.md`).
 
-**Commercial-support boundary:** self-hosting is free and is the real product;
-"host it for me / run it at scale / SLAs / managed edition" is a commercial
-conversation, **not** a product issue (`README.md` Enterprise section, `SUPPORT.md`).
+**Commercial-support boundary:** self-hosting is free; managed operation, deployment
+reviews, and SLAs are commercial support requests rather than product issues
+(`README.md` Enterprise section, `SUPPORT.md`).
 
 ## What's in scope (the product is about this)
 
@@ -63,8 +63,8 @@ Supported specifics worth knowing (so the harness doesn't mis-score them as out 
 scope):
 
 - **Credential schemes:** API key (header/query/cookie), basic, static bearer,
-  session token, and OAuth2 (client-credentials, authorization-code, implicit), plus
-  no-auth (`shared/models/credentials.py`).
+  OAuth2 (client-credentials and authorization-code), no-auth, and AWS SigV4
+  (`control/web/schemas/credentials.py`).
 - **Database backends:** Postgres **and** SQLite — SQLite is a supported *production*
   target, not dev-only (`shared/db/backends/sqlite.py`).
 - **ML/embeddings** exist but are **registry-search-only**; core surfaces don't use
@@ -80,12 +80,11 @@ usability, or operability of one of these surfaces for the audience above.
   governed upstream call per execution, not branching multi-step workflows. An agent
   that needs multi-step orchestration composes broker calls itself.
 - **Not co-located with the agent for _real / high-value credentials_.** *(Grounded —
-  security model.)* The "credentials never leave the data plane" guarantee does not
-  hold when the agent runs as the same OS user / same host as the broker
-  (`SECURITY.md`, `docs/security/hardening.md`). **Nuance:** same-host use *is*
-  supported for trying it out / non-real credentials — so a local/dev-mode request is
-  **not** automatically out of scope; only "use real credentials in the agent's trust
-  boundary" is.
+  security model.)* API-level controls cannot protect the key or database from an
+  agent running as the same OS user as Jentic One (`SECURITY.md`,
+  `docs/security/hardening.md`). **Nuance:** same-host use *is* supported for trying
+  it out / non-real credentials — so a local/dev-mode request is **not** automatically
+  out of scope; only "use real credentials in the agent's trust boundary" is.
 - **Not a general-purpose API gateway for _non-agent_ traffic** (Kong/NGINX). The
   Broker governs credential-injecting **agent** calls, not arbitrary traffic
   management.
@@ -106,11 +105,12 @@ usability, or operability of one of these surfaces for the audience above.
 
 Ordered by how strongly the public docs emphasize each.
 
-1. **Secrets never leave / never reach the agent.** The most-repeated value across
-   the tagline, `README.md`, `SECURITY.md`, and the hardening threat model, and
-   enforced in code (credentials "never returned after create"; central redaction).
-   Anything risking credential exposure is at least `severity:major` regardless of
-   size.
+1. **Credential confidentiality.** Stored credentials are encrypted, read APIs are
+   redacted, and the Broker injects credentials only after access checks. Creation
+   responses expose cleartext once, while rotation responses are redacted. Upstream
+   responses pass through the Broker, so both response handling and upstream trust
+   are part of the boundary. Anything risking unintended credential exposure is at
+   least `severity:major` regardless of size.
 2. **Secure & auditable by default.** Default-deny permissions (a rule-less binding
    blocks everything); append-only audit log; operator-supplied encryption keyset
    required (`SECURITY.md`, `control/web/schemas/toolkits.py`).

@@ -2,12 +2,17 @@
 #
 # Jentic CLI installer.
 #
-# Detects your OS/arch, ensures a Go toolchain, fetches the `cli/` source from
-# GitHub, builds the `jenticctl` (installer/lifecycle) and `jentic` (API-spec)
-# binaries, and installs both onto your PATH.
+# Detects your OS/arch, installs release binaries when available, and falls
+# back to building the CLI from source. Release downloads install `jentic` by
+# default; set JENTIC_INSTALL_BINARIES=both to add `jenticctl`.
 #
-# Quick start:
-#   curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+# Quick start (agent CLI for an existing remote deployment):
+#   curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh \
+#     | JENTIC_INSTALL_METHOD=binary sh
+#
+# Local stack (both binaries + interactive install wizard):
+#   curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh \
+#     | JENTIC_INSTALL_BINARIES=both sh
 #
 # For a private fork or a repo you must authenticate to, pass a GitHub token
 # with `repo` (read) scope:
@@ -17,12 +22,15 @@
 #
 # Configuration (environment variables, all optional):
 #   JENTIC_REPO         owner/name of the source repo   (default: jentic/jentic-one)
-#   JENTIC_REF          branch, tag, or commit to build  (default: latest release
-#                       tag, e.g. v0.24.0; falls back to main if none is found.
-#                       Set explicitly to build main or a dev branch.)
+#   JENTIC_REF          release tag to download, or branch/tag/commit to build
+#                       (default: latest release tag)
 #   JENTIC_INSTALL_DIR  where to install the binaries     (default: ~/.jentic/bin)
 #   JENTIC_GO_VERSION   Go to download if none suitable   (default: 1.26.2)
 #   GITHUB_TOKEN        token for cloning a private fork  (default: unset/anonymous)
+#   JENTIC_INSTALL_METHOD
+#                       auto | binary | source             (default: auto)
+#   JENTIC_INSTALL_BINARIES
+#                       jentic | both                      (default: jentic)
 #   JENTIC_NO_INSTALL   set to 1 to stop after installing the binaries, skipping
 #                       the automatic hand-off into `jenticctl install`
 #   JENTIC_INSTALL_SOURCE_URL

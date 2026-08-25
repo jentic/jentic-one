@@ -30,13 +30,21 @@ We follow coordinated disclosure. We ask that you:
 
 We will credit reporters in release notes unless anonymity is requested.
 
-## Security Model — what you should know as an operator
+## Security Model — what operators should know
 
-Jentic One is designed so that **credentials never leave the data plane**:
+Jentic One keeps credential custody within the operator's deployment:
 
-- Stored credentials are **encrypted at rest** and are only decrypted inside the
-  Broker at execution time. They are never returned to callers, never logged in
-  cleartext, and never exposed to the agent.
+- Stored credentials are **encrypted at rest**. The credential creation response
+  returns cleartext secret material once; subsequent reads and rotation responses
+  are redacted.
+- The Broker decrypts credentials for governed execution. Control also handles
+  cleartext secret material during creation and rotation and decrypts managed
+  OAuth secrets during connect and refresh flows.
+- The intended upstream receives the injected credential. Broker responses are
+  passthrough responses, so a reflective or malicious upstream can return
+  request data, including an injected credential, to the caller. Register only
+  trusted upstreams for credentialed execution.
+- Jentic One does not intentionally write secret values to application logs.
 - The credential-at-rest encryption keyset is **required** and must be supplied
   by the operator (environment variable or secret manager). Never commit a real
   key to source control.
@@ -48,13 +56,12 @@ Jentic One is designed so that **credentials never leave the data plane**:
   `event`/`actor_type` are fixed enums and `tags` are fixed labels — with no
   credentials, request data, or PII. Observability exporters are self-hosted.
 
-> **Most important operator guidance:** the "credentials never leave the data
-> plane" guarantee holds on the network, but **not** when the agent runs as the
-> same OS user as the broker — a same-user process can read the key and database
-> directly. Do not run the broker in the same trust boundary as your agent for
-> real credentials. See **[docs/security/hardening.md](docs/security/hardening.md)**
-> for the deployment-tier ladder, agent-sandboxing options, and a production
-> checklist.
+> **Most important operator guidance:** API-level controls do not protect
+> credentials from an agent running as the same OS user as Jentic One. A
+> same-user process can read the encryption key and database directly. Do not
+> run the broker in the same trust boundary as your agent for real credentials.
+> See **[docs/security/hardening.md](docs/security/hardening.md)** for the
+> deployment-tier ladder, agent-sandboxing options, and a production checklist.
 
 ## Secrets in the Repository
 

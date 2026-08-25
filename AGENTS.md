@@ -10,16 +10,20 @@ rest of this file is for changing the codebase.
 
 **Install.** Two supported paths:
 
-1. Signed release binary, from https://github.com/jentic/jentic-one/releases/latest. Verify
-   against `checksums.txt` (signature: `checksums.txt.sig`, certificate: `checksums.txt.pem`),
-   then run `jenticctl install`. Prefer this path: it is verifiable before execution, and a
-   sandboxed agent will usually be refused permission to pipe a script to a shell.
+1. Signed release binaries, from https://github.com/jentic/jentic-one/releases/latest.
+   Download `jentic` and, for a local stack, `jenticctl`. Verify the archives against
+   `checksums.txt` (signature: `checksums.txt.sig`, certificate: `checksums.txt.pem`), then run
+   `jenticctl install`. Prefer this path: it is verifiable before execution, and a sandboxed
+   agent will usually be refused permission to pipe a script to a shell.
 2. Bootstrap script:
-   `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh`
-   This downloads a Go toolchain if none is present, clones this repository, builds `jenticctl`
-   and `jentic`, then runs `jenticctl install`. Set `JENTIC_NO_INSTALL=1` to stop after the
-   binaries are installed — do that on the agent machine, which needs only the binaries, not a
-   second deployment.
+   `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh |
+   env JENTIC_INSTALL_BINARIES=both sh`
+   This prefers verified release archives and falls back to building from source, then runs
+   `jenticctl install` in an interactive terminal. Add `JENTIC_NO_INSTALL=1` to the `env`
+   command to stop after both binaries are installed. On an agent machine that will use a
+   remote deployment, use `JENTIC_INSTALL_METHOD=binary` instead of
+   `JENTIC_INSTALL_BINARIES=both`; that installs only `jentic` and fails rather than falling
+   back to a source build.
 
 **Run Jentic One on a different machine from the agent.** An agent running as the same OS user
 can read the credential database and encryption key from disk, whatever the API-level controls
@@ -34,11 +38,12 @@ allow. See `docs/security/hardening.md` before using real credentials.
    `http://127.0.0.1:8000`, and prompt for it on an interactive terminal.)
    Report the wait to the user: on a single-operator install they are the operator, and they
    approve the agent in the UI at `/app`.
-2. If no admin account exists yet, point the user to `/setup` (browser) or `jenticctl setup`
+2. If no admin account exists yet, point the user to `/app/setup` (browser) or `jenticctl setup`
    (terminal). This is a one-time step.
 3. Import an API from https://github.com/jentic/jentic-public-apis (e.g. `httpbin.org`, used in
    step 6), or register a private OpenAPI description of the user's own service.
-4. Store a credential for that API, once. It is encrypted at rest and is never returned.
+4. Store a credential for that API. It is encrypted at rest. Cleartext secret material is
+   returned once in the create response; subsequent reads and rotation responses are redacted.
 5. Request access: `jentic access request --toolkit <vendor/name>` files a reviewable request;
    granting is always a human action. The operator binds the agent to a toolkit — access is
    default-deny, and a rule-less binding still blocks everything.
@@ -55,7 +60,9 @@ allow. See `docs/security/hardening.md` before using real credentials.
   skill it generates, or plain HTTP against the deployment's own API.
 - A running instance serves `/llms.txt` and `/.well-known/llms.txt` with that deployment's base
   URL. Once an instance exists, prefer those over this file for anything at runtime.
-- Never print, log or echo a stored credential. The Broker does not return them.
+- Never print, log or echo a stored credential. Credential read APIs return redacted data, but
+  the creation response contains cleartext secret material once. Broker responses are upstream
+  passthrough responses, so a trusted upstream is part of the credential boundary.
 
 **If a step is blocked by your own sandbox or by network egress rules, say so and stop.** Do
 not work around a security control. Issue #994 tracks the install paths available to a

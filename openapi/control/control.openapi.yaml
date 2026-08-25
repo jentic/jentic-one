@@ -17190,7 +17190,7 @@ servers:
 - description: Same-origin (relative)
   url: /
 tags:
-- description: Part of the **Core / Access** bounded context — the authoritative record of "who can call what, with which secret". A `Credential` is the auth secret + header configuration the Broker injects on the way out to an upstream API. Credentials reference registry content via the loose `(vendor, name, version)` identity tuple (see `APIReference`) — there is no foreign key between Core and Registry, by design. Cleartext secret material is returned **exactly once** at creation (and on rotation via `PATCH`). Read paths return a redacted projection — last-N characters, hints, never the secret itself.
+- description: Part of the **Core / Access** bounded context — the authoritative record of "who can call what, with which secret". A `Credential` is the auth secret + header configuration the Broker injects on the way out to an upstream API. Credentials reference registry content via the loose `(vendor, name, version)` identity tuple (see `APIReference`) — there is no foreign key between Core and Registry, by design. Cleartext secret material is returned **exactly once**, in the creation response. Read and rotation paths return a redacted projection — last-N characters, hints, never the secret itself.
   name: Credentials
 - description: |-
     Part of the **Core / Access** bounded context — a `Toolkit` is a scoped bundle of credentials and permissions issued to an agent or service. This tag covers **toolkit lifecycle**: list, create, read, update, delete. Sub-resources (keys, credential bindings, per-binding permission rules) live under the sibling tags `Toolkit Keys`, `Toolkit Credentials`, and `Toolkit Permissions`.

@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>A self-hosted execution layer for AI agents.</strong><br>
-  Connect an agent to any API you need, and enforce exactly what it is allowed to call.
+  <strong>A self-hosted credential broker for AI agents.</strong><br>
+  Register HTTP APIs, approve the operations an agent may call, and inject credentials after access checks.
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
   <a href="https://github.com/jentic/jentic-one/actions/workflows/ci.yml"><img src="https://github.com/jentic/jentic-one/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-A3CACC.svg" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/Python-3.12-68BAEC.svg?logo=python&logoColor=white" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Go-1.26-5EDEB9.svg?logo=go&logoColor=white" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/Go-1.25.7-5EDEB9.svg?logo=go&logoColor=white" alt="Go 1.25.7">
   <img src="https://img.shields.io/badge/PostgreSQL-16-A3CACC.svg?logo=postgresql&logoColor=white" alt="PostgreSQL">
   <img src="https://img.shields.io/badge/SQLite-3-A3CACC.svg?logo=sqlite&logoColor=white" alt="SQLite">
   <br>
@@ -30,21 +30,23 @@
 
 > [!NOTE]
 > **Public Beta.** Schemas and CLI commands can change between 0.x releases. Pin a version if
-> you need stability. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-> [open issues](https://github.com/jentic/jentic-one/issues).
+> you need stability. Production use is not yet recommended. Contributions are welcome: see
+> [CONTRIBUTING.md](CONTRIBUTING.md) and the [open issues](https://github.com/jentic/jentic-one/issues).
 
 ## What Jentic One is
 
 <p align="center">
-  <img src="docs/assets/how-it-works.gif" alt="Any agent calls Jentic One, which applies default-deny policies, injects credentials at execution time, and logs every call on your own instance, before reaching any public or private API. One call is allowed and returns 201; a second is denied by rule and never leaves the layer." width="100%">
+  <img src="docs/assets/how-it-works.gif" alt="An agent calls a registered API through Jentic One, which applies default-deny policies, injects credentials at execution time, and logs each call. One call is allowed and returns 201; a second is denied by rule and never reaches the upstream." width="100%">
 </p>
 
 Giving an agent API access normally means giving it an API key. Jentic One removes that step.
 Register the APIs an agent may use, store the credentials once, and the agent makes its calls
 through the Broker. The Broker checks the agent's permissions, attaches the credential at
-execution time, and writes an audit record. Your agent never sees your keys.
+execution time, and writes an audit record. Credential read APIs return redacted data; cleartext
+secret material is shown only in the create response. Rotation accepts a new secret but returns
+redacted data.
 
-Self-hosted and Apache-2.0. The open-source build is the real thing, not a trial.
+Jentic One is self-hosted and licensed under Apache-2.0.
 
 **Who it's for**
 
@@ -52,7 +54,7 @@ Self-hosted and Apache-2.0. The open-source build is the real thing, not a trial
   one you built — that needs access to real APIs.
 - Small teams running an agent in a private network or VPC, with the agent calling Jentic One
   over private DNS.
-- Anyone who needs to pass a security review before an agent touches production credentials.
+- Teams that need reviewable access controls and audit records before agents call protected APIs.
 
 **What it is not**
 
@@ -60,42 +62,57 @@ Self-hosted and Apache-2.0. The open-source build is the real thing, not a trial
 | --- | ------ |
 | A workflow or orchestration engine | The Broker makes one governed upstream call per execution. An agent that needs multi-step orchestration composes calls itself. |
 | A secrets manager | It stores and injects the credentials it brokers. It does not replace Vault for your wider infrastructure. |
-| A hosted service | You run it. No tier exists in which Jentic holds your keys. |
-| Safe to run as the same OS user as your agent, with real credentials | The network guarantee holds. The same-OS-user guarantee does not. See [Security](#security--telemetry). |
+| A hosted service | The open-source product runs in infrastructure you operate. |
+| Safe to run as the same OS user as your agent, with real credentials | API controls cannot stop a same-user process from reading the encryption key and database. See [Security](#security--telemetry). |
 
 ## Why self-hosted
 
 Most tools in this category are hosted: the credentials live in the vendor's infrastructure.
-Jentic One runs on infrastructure you control. Credentials are encrypted at rest in your own
-database and are decrypted only inside the Broker, at execution time.
+Jentic One runs on infrastructure you control. Credentials are encrypted at rest in your
+database. The Broker decrypts them for execution; Control also handles secret material during
+credential creation, rotation, and managed OAuth connect or refresh flows.
 
-Jentic One exposes no MCP endpoint. An MCP server running beside an agent gives that agent a
-credential-bearing surface to call, which is what the Broker exists to avoid. Agents integrate
-through the `jentic` CLI, a generated skill, or plain HTTP.
+Jentic One exposes no MCP endpoint. Agents integrate through the `jentic` CLI, a generated
+skill, or the deployment's HTTP APIs.
 
 ## Quickstart
 
-**Prerequisites:** `git`, [`uv`](https://docs.astral.sh/uv/), and Docker running. Node is
-required only to build the UI from source.
+The bootstrap script supports macOS and Linux. The `jentic` release binary also supports native
+Windows; use WSL for local-stack workflows. A source checkout requires `git` and
+[`uv`](https://docs.astral.sh/uv/). Docker is required for the default development database,
+and Node is optional when building the UI.
 
-### Option A — signed release binary
+### Option A — signed release binaries
 
-Download the binary for your platform from the
-[latest release](https://github.com/jentic/jentic-one/releases/latest), verify it against
-`checksums.txt` (signed: `checksums.txt.sig`, `checksums.txt.pem`), then run
-`jenticctl install`. Each release also ships an SBOM. Use this path where the binary must be
-verified before it runs.
+Download `jentic` and, for a local stack, `jenticctl` from the
+[latest release](https://github.com/jentic/jentic-one/releases/latest). Verify each archive
+against `checksums.txt`, then verify that file with `checksums.txt.sig` and
+`checksums.txt.pem`. Run `jenticctl install` to configure and start the local stack. Each
+release also ships an SBOM. The [CLI guide](cli/README.md#3-manual-download--verify) has the
+complete verification commands.
 
 ### Option B — bootstrap script
 
+To install only the agent CLI from a published release for use with an existing remote
+deployment:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh \
+  | env JENTIC_INSTALL_METHOD=binary sh
 ```
 
-The script checks for a suitable Go toolchain and downloads Go 1.26.2 if it does not find one,
-clones this repository, builds the two CLI binaries (`jenticctl` and `jentic`), then runs
-`jenticctl install`, which configures and starts a local stack. Set `JENTIC_NO_INSTALL=1` to
-stop after the binaries are installed.
+To install both binaries and start the local-stack wizard:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh \
+  | env JENTIC_INSTALL_BINARIES=both sh
+```
+
+The script prefers checksummed release archives and falls back to a source build when no
+matching release asset exists. The default download installs only `jentic`; setting
+`JENTIC_INSTALL_BINARIES=both` adds `jenticctl` and, in an interactive terminal, starts
+`jenticctl install`. Add `JENTIC_NO_INSTALL=1` to the `env` command to install both binaries
+without starting the stack wizard.
 
 ### Option C — from source
 
@@ -104,23 +121,26 @@ make install   # install dependencies and git hooks
 make dev       # idempotent local bring-up: fixtures + migrations + UI, then run the app
 ```
 
-`make dev` is the one-command local flow and is safe to re-run, including after a reboot. See
-[Local development setup](docs/development/local-setup.md).
+`make dev` is the one-command local flow and is safe to re-run, including after a reboot. It
+builds the UI when Node is available and otherwise starts the backend without rebuilding the
+UI. See [Local development setup](docs/development/local-setup.md).
 
 ## First brokered call
 
 Six steps from a running instance to a response from a real API.
 
-1. **Create your admin account** at `/setup` (the wizard opens this automatically, or run
+1. **Create your admin account** at `/app/setup` (the wizard opens this automatically, or run
    `jenticctl setup` to do it from the terminal).
 2. **Import an API** from the [Jentic API Directory](https://github.com/jentic/jentic-public-apis)
    (e.g. `httpbin.org`, used in step 6), or upload your own specification.
-3. **Store a credential** for that API. It is encrypted at rest and is never returned to a
-   caller.
-4. **Register the agent:** `jentic register` (add `--base-url <URL>` when the agent runs on a
-   different machine). Registration waits for an operator to approve the
-   agent. On a single-operator install, approve it in the UI and the command completes.
-5. **Grant access** by binding the agent to a toolkit. A rule-less binding blocks everything;
+3. **Store a credential** for that API. Cleartext secret material is returned once in the
+   create response; subsequent reads and rotation responses are redacted.
+4. **Register the agent:** run `jentic setup` for a coding agent, or `jentic register` for
+   identity-only onboarding. For a remote deployment, pass both `--url <control-plane URL>`
+   and `--broker-url <broker URL>`. Registration waits for an operator to approve the agent.
+   On a single-operator install, approve it in the UI and the command completes.
+5. **Request access:** `jentic access request --toolkit <vendor/name>`. The operator grants
+   the request by binding the agent to the toolkit. A rule-less binding blocks everything;
    the default is deny.
 6. **Make the call:** `jentic execute GET:https://httpbin.org/get --json` — the operation's
    full URL, as returned by `jentic search`/`jentic inspect`.
@@ -132,34 +152,42 @@ of these docs for assistants evaluating the project.
 ## How it works
 
 Jentic One handles secure third-party API execution for agents. It deploys as two peer units
-above a shared database. **App** is the control plane and contains the Registry, Control and
-Admin surfaces. **Broker** is the data plane. Configuration happens through App; the agent
-talks only to the Broker.
+above shared persistence. **App** is the control plane and contains the Registry, Control,
+Admin, and Auth surfaces. **Broker** is the data plane. Agents use App for registration,
+discovery, and access requests, and Broker for governed execution.
 
-<p align="center">
-  <img src="docs/assets/architecture.png" alt="Two peer units above one database. App is the control plane, containing the Registry, Control and Admin surfaces, and is where the operator configures the instance. Broker is the data plane: a stateless credential-injecting HTTP proxy, and the only surface that touches a secret. Both sit above PostgreSQL or SQLite with registry, control and admin schemas." width="100%">
-</p>
+```mermaid
+flowchart TB
+    Operator[Operator] --> App[App: Registry, Control, Admin, Auth]
+    Agent[Agent or jentic CLI] --> App
+    Agent --> Broker[Broker: governed HTTP execution]
+    App --> Data[(PostgreSQL or per-surface SQLite)]
+    Broker --> Data
+    Broker --> Upstream[Registered upstream HTTP API]
+```
 
 On each call the Broker checks the agent's permissions, attaches the stored credential,
-forwards the request, and writes an audit record. The credential is added inside the Broker,
-after the permission check, and is never returned to the caller.
+forwards the request, and writes an audit record. The upstream status, headers, and body are
+relayed to the caller. Use trusted upstreams: an upstream can reflect request data, including
+an injected credential, in its response.
 
 ## Components
 
 | Component | Responsibility |
 | --------- | -------------- |
-| **Broker** | A stateless Broker: a credential-injecting HTTP proxy. Receives an HTTP request with the upstream URL as the path, injects the caller's stored credentials, forwards method/headers/body, and returns the upstream response. Secrets never leave the Broker. |
+| **Broker** | A stateless credential-injecting HTTP proxy. Receives an HTTP request with the upstream URL as the path, resolves permissions and credentials, forwards method/headers/body, and relays the upstream response. |
 | **Registry** | API specification directory. Stores registered APIs with immutable revisions, operations, security schemes, and server definitions. Owns what APIs are available and at which version. |
-| **Control** | Credential storage. Manages polymorphic API credentials (API key in header, query or cookie; basic; static bearer; session token; OAuth2 in client-credentials, authorization-code and implicit flows) used by the Broker at execution time. |
-| **Admin** | Permissions, jobs, audit, and execution telemetry. Owns the operator account, role-based access grants, async job lifecycle, append-only audit log, and execution records. |
+| **Control** | Credential storage, toolkit bindings, permission rules, and access requests. Supports API keys, basic and bearer authentication, OAuth2 client-credentials and authorization-code flows, no-auth bindings, and AWS SigV4. |
+| **Admin** | Operator administration, jobs, audit, and execution telemetry. Owns role grants, async job lifecycle, the append-only audit log, and execution records. |
+| **Auth** | Operator and agent authentication. Owns agent registration, token minting, OAuth clients, service accounts, and identity discovery. |
 | **Shared** | Internal infrastructure layer: configuration loading, async database sessions, structured logging, metrics facade, and the multi-surface application factory. |
-| **CLI** | Two Go binaries: `jenticctl` onboards and operates the platform (`jenticctl install`), and `jentic` registers agent identities (`jentic register`) and drives the catalog/broker (`jentic catalog`, `jentic execute`). See [`cli/`](cli/README.md). |
+| **CLI** | Two Go binaries: `jenticctl` installs and operates the platform, while `jentic` onboards agents, manages the catalog and access requests, and executes operations. See [`cli/`](cli/README.md). |
 
 Agent identity is per-agent. Each agent registers with its own Ed25519 keypair through dynamic
 client registration, and an operator approves it before it can call anything. Revoking one
 agent does not affect the others.
 
-Both PostgreSQL and SQLite are supported production backends.
+Both PostgreSQL and SQLite are supported persistence backends.
 
 ## Does Jentic One replace my API gateway?
 
@@ -168,10 +196,9 @@ which agent may make a given call, which stored credential is attached to it, an
 recorded afterwards. Both sit on the same request path and address different concerns, so
 Jentic One runs alongside an existing gateway.
 
-Jentic One works with any API you can reach, public or private, third-party or your own.
-Registering internal services is a supported path: the same credential custody, per-agent
-permissions and audit trail apply whether the upstream is Stripe or an API that exists only
-inside your network. The public
+Jentic One works with registered HTTP APIs the deployment can reach, whether public, private,
+third-party, or internal. The same credential custody, per-agent permissions, and audit trail
+apply whether the upstream is Stripe or an API that exists only inside your network. The public
 [Jentic API Directory](https://github.com/jentic/jentic-public-apis) supplies specifications
 for APIs that already have one.
 
@@ -179,7 +206,8 @@ for APIs that already have one.
 
 ```bash
 jenticctl install                                    # interactive wizard: config + install (local venv or Docker)
-jentic register                                      # mint an agent identity, then wait for operator approval
+jentic setup                                         # coding-agent setup: identity, skill, optional isolation
+jentic register                                      # identity-only onboarding, then wait for operator approval
 jentic catalog search stripe                         # find an API in the directory
 jentic execute GET:https://httpbin.org/get --json    # run a call through the Broker with the credential injected
 ```
@@ -197,7 +225,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | [Local coding agents](docs/local-agent.md) | Run Claude Code, Codex, Cursor, or Hermes as an isolated Unix user with `jentic run` — flow, examples, grants, and troubleshooting |
 | [CLI reference](cli/README.md) | Every `jenticctl` and `jentic` command |
 
-**Running it somewhere real**
+**Deployment and security**
 
 | Guide | Covers |
 | ----- | ------ |
@@ -216,13 +244,17 @@ Full reference: [`cli/README.md`](cli/README.md).
 
 ## Security & telemetry
 
-- **Credentials stay local.** Stored credentials are encrypted at rest and are only ever
-  decrypted inside the Broker at execution time. They are never returned to callers, logged in
-  cleartext, or exposed to the agent.
-- **Run Jentic One separately from your agent.** The guarantee above holds on the network path,
-  but a process running as the same OS user as Jentic One can read the key and credential
-  database directly. For real credentials, do not run Jentic One in the same trust boundary as
-  your agent: sandbox the agent, or run Jentic One on a separate host or network. The
+- **Credential custody is self-hosted.** Stored credentials are encrypted at rest. The create
+  response returns cleartext secret material once; later reads and rotation responses are
+  redacted. The Broker decrypts credentials for execution, and Control handles managed OAuth
+  connect and refresh flows. Secret values are not intentionally written to application logs.
+- **Use trusted upstreams.** The Broker injects a credential only after its access check, but
+  it relays the upstream response. A reflective or malicious upstream can return request data,
+  including the injected credential, to the caller.
+- **Run Jentic One separately from your agent.** A process running as the same OS user as
+  Jentic One can read the key and credential database directly. For real credentials, do not
+  run Jentic One in the same trust boundary as your agent: sandbox the agent, or run Jentic One
+  on a separate host or network. The
   [security hardening guide](docs/security/hardening.md) contains the deployment-tier ladder
   and a production checklist.
 - **Access is default-deny.** A rule-less binding blocks everything. Permissions are
@@ -247,7 +279,7 @@ Common `make` targets (run `make help` for the full list):
 | ------ | ----------- |
 | `make install` | Full dev setup: sync deps + install git hooks |
 | `make dev` | One-command local bring-up (idempotent): fixtures + migrations + UI, then start the app |
-| `make check` | Lint, score, secrets audit, unit + arch tests |
+| `make check` | Lint, API score, secrets audit, and architecture tests |
 | `make fix` | Auto-fix lint issues and reformat code |
 | `make test` | Run unit tests |
 | `make start-app` | Start the combined app (all surfaces) |
@@ -259,18 +291,14 @@ Tests are split into tiers:
 - **Architecture** — enforcement of layering and conventions (`make test-arch`).
 - **Smoke** — liveness against running services (`make test-smoke`).
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/) with a mandatory
-scope, enforced repo-wide by a `commit-msg` hook. The architecture tests run against a small
-vendored subset of rule facts ([`tests/arch/vendored/`](tests/arch/vendored/)), so a plain clone
-requires no additional setup. [CONTRIBUTING.md](CONTRIBUTING.md) covers pointing them at a
-fuller set.
-
 ## Contributing
 
-Commit messages follow Conventional Commits, and `make check` must pass before opening a pull
-request. [CONTRIBUTING.md](CONTRIBUTING.md) has the full workflow, the
-[open issues](https://github.com/jentic/jentic-one/issues) list where help is wanted, and the
-Jentic [Code of Conduct](https://github.com/jentic/.github/blob/main/CODE_OF_CONDUCT.md)
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) with a
+mandatory scope, enforced by the `commit-msg` hook. Run `make check` before opening a pull
+request. The architecture tests use a vendored subset of rule facts
+([`tests/arch/vendored/`](tests/arch/vendored/)), so a plain clone requires no additional
+setup. [CONTRIBUTING.md](CONTRIBUTING.md) has the full workflow and links to issues where help
+is wanted. The Jentic [Code of Conduct](https://github.com/jentic/.github/blob/main/CODE_OF_CONDUCT.md)
 applies.
 
 Use [Discussions](https://github.com/jentic/jentic-one/discussions) for questions and proposals.
@@ -278,14 +306,15 @@ Use [Discussions](https://github.com/jentic/jentic-one/discussions) for question
 ## Migrating from the hosted platform or Jentic Mini
 
 Read [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) before running Jentic One alongside
-the hosted Jentic platform or a self-hosted Jentic Mini instance: the failure mode is silent
-wrong answers, not errors. New installations should start with Jentic One.
+the hosted Jentic platform or a self-hosted Jentic Mini instance. The CLI and cloud MCP can
+query different backends, making APIs or credentials appear missing. New installations should
+start with Jentic One.
 
 ## Enterprise & commercial support
 
-Jentic One is fully open source (Apache-2.0) and free to self-host. For help operating a
-credential broker at scale — security hardening reviews, deployment architecture, SLAs, or a
-managed option — contact [jentic.com/contact](https://jentic.com/contact).
+Jentic One is licensed under Apache-2.0 and is free to self-host. For security hardening
+reviews, deployment architecture, SLAs, or managed operation, contact
+[jentic.com/contact](https://jentic.com/contact).
 [SUPPORT.md](SUPPORT.md) lists community and commercial support options.
 
 ## License

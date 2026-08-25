@@ -12,7 +12,9 @@ resolution unambiguous.
   **toolkit-credential binding** (`toolkit_credential_bindings`) associates a
   toolkit with a credential.
 - At execution time the Broker resolves the **single active** credential for the
-  requested API and injects its secret — the secret never reaches the agent.
+  requested API and injects its secret after the access check. Credential read
+  APIs are redacted; upstream responses pass through the Broker, so the
+  registered upstream remains part of the credential boundary.
 
 Registry (the `apis` table) and Control (`credentials`,
 `toolkit_credential_bindings`) are **separate databases** with no foreign key
