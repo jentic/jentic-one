@@ -1094,6 +1094,19 @@ Publishing a new **listing version** stays a portal step (product → Request
 changes → *Add version*, pinning the pushed tag/digest); automate via the
 Marketplace Catalog API only after the manual loop has worked once.
 
+The version's **Helm delivery option** must carry two AWS-substituted
+override parameters (portal validation rejects paid products without them):
+
+| Override parameter key | DefaultValue |
+| ---------------------- | ------------ |
+| `global.serviceAccount.name` | `${AWSMP_SERVICE_ACCOUNT}` — the buyer's (IRSA) service account; the app/broker pods run under it (chart support: `global.serviceAccount`) |
+| `global.awsmp.licenseSecret` | `${AWSMP_LICENSE_SECRET}` — an AWS-created Secret, mounted read-only at `/var/run/secrets/aws-marketplace/license` (chart support: `global.awsmp.licenseSecret`) |
+
+plus the deployment values from
+[`aws-marketplace.yaml`](helm/values/aws-marketplace.yaml) (ECR image
+repositories, `broker.enabled=true`, the tag pin, and buyer-supplied
+`global.databases.*` host/password parameters).
+
 The IAM role lives in the **seller account** and trusts GitHub's OIDC
 provider — no long-lived AWS keys anywhere. Trust policy (create the
 `token.actions.githubusercontent.com` OIDC provider first if the account

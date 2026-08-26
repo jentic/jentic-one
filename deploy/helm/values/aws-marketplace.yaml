@@ -43,6 +43,17 @@ global:
   # or (preferred) replace common.db-env with a Secret-backed env block —
   # see deploy/README.md "Production secrets".
 
+  # AWS Marketplace launch wiring — the listing's delivery option carries
+  # these two override parameters (values substituted by AWS at launch):
+  #   global.serviceAccount.name = ${AWSMP_SERVICE_ACCOUNT}
+  #     the buyer's (IRSA) service account the app/broker pods run under —
+  #     on EKS this carries the IAM role the entitlement gate calls AWS with
+  #   global.awsmp.licenseSecret = ${AWSMP_LICENSE_SECRET}
+  #     a Secret AWS creates at launch, mounted read-only at
+  #     /var/run/secrets/aws-marketplace/license (license-file flows)
+  # Manual installs: set serviceAccount.name + serviceAccount.create=true to
+  # have the chart create the account, then attach IAM out of band.
+
 # app and broker run the same jentic-one-app image, differentiated by the
 # JENTIC__APPS env each subchart sets. If the Marketplace portal provisions a
 # single ECR repository for the product, keep the explicit repository values

@@ -111,6 +111,26 @@ global:
       exporter: otlp
   postgresql:
     enabled: false
+  # Pod service account for the app and broker deployments. `name` — when
+  # set, those pods run under this service account (on EKS typically an
+  # IRSA-annotated account carrying the IAM role the AWS Marketplace
+  # entitlement gate calls AWS with); empty means the namespace default and
+  # zero rendered change. The Marketplace launch experience substitutes the
+  # buyer-chosen account into `name` (delivery-option override parameter
+  # with DefaultValue ${AWSMP_SERVICE_ACCOUNT}). `create` — set true for
+  # manual installs to have the chart create the (un-annotated) account;
+  # leave false when it's created out of band (EKS QuickLaunch creates it
+  # with the IAM role attached — creating it here too would collide).
+  serviceAccount:
+    create: false
+    name: ""
+  # AWS Marketplace license secret (delivery-option override parameter with
+  # DefaultValue ${AWSMP_LICENSE_SECRET}): when set, mounted read-only into
+  # the app and broker pods at /var/run/secrets/aws-marketplace/license.
+  # Reserved for AWS's license-file flows (e.g. EKS Anywhere); the
+  # IRSA-based entitlement gate does not read it. Empty = nothing rendered.
+  awsmp:
+    licenseSecret: ""
   # Bitnami chart 16.4.x rejects images outside its expected registry; we
   # need to pin `bitnamilegacy/postgresql` (see the postgresql block below)
   # so this gate has to be opened. Production deployments that use a
