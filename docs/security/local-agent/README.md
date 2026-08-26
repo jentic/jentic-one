@@ -13,7 +13,7 @@ agent as its own unprivileged Unix user so the isolated posture is the default.
 
 > **Just want to use it?** The operator-facing guide — flow, examples, and
 > troubleshooting for `jentic setup` / `jentic run` / `jentic reset` — is
-> [`docs/local-agent.md`](../../local-agent.md). The documents below are the
+> [`docs/guides/local-agent.md`](../../guides/local-agent.md). The documents below are the
 > security analysis and design rationale behind it.
 
 | Doc | What it covers |

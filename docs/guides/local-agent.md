@@ -7,7 +7,7 @@ your SSH keys, browser session, cloud credentials, or the jentic-one credential
 store.
 
 It covers the flow and day-to-day usage with examples. For the security design
-and rationale, see [`docs/security/local-agent/`](security/local-agent/README.md);
+and rationale, see [`docs/security/local-agent/`](../security/local-agent/README.md);
 for the generated per-flag reference, see the platform docs (Reference → CLI).
 
 - [The mental model](#the-mental-model)
@@ -51,7 +51,7 @@ The result, from the agent's point of view:
 | System trees (`/etc`, `/usr`, `/var`, `/`) | ❌ not grantable | Hard-banned |
 
 Two honest limits (details in the
-[security docs](security/local-agent/local-agent-isolation.md)): the boundary
+[security docs](../security/local-agent/local-agent-isolation.md)): the boundary
 protects **you from the agent** — it does not partition the agent from itself
 (anything seeded into the agent's home is readable by it), and it does **not**
 restrict network egress.
@@ -277,7 +277,7 @@ boundary.
 
 `cursor` here is the **headless `cursor-agent` CLI** — the Cursor GUI cannot run
 under a separate Unix account (see
-[GUI IDEs](security/local-agent/local-agent-isolation.md#gui-ides-cursor--vs-code)
+[GUI IDEs](../security/local-agent/local-agent-isolation.md#gui-ides-cursor--vs-code)
 for the Remote-SSH pattern). `generic` is a skill-only target for
 `jentic skill`; `jentic run generic` is refused with a pointer.
 
@@ -383,7 +383,7 @@ confirmation. To remove a single context or identity instead of everything, use
 
 ## Further reading
 
-- [Security design index](security/local-agent/README.md) — the problem
+- [Security design index](../security/local-agent/README.md) — the problem
   analysis, the full isolation design, the filesystem access model, and the
   confinement layer, including the residual risks and the mechanisms' exact
   commands.

@@ -31,7 +31,7 @@ author — by name — for the specific missing pieces. Do all of this in one pa
 - The two issue forms (`.github/ISSUE_TEMPLATE/bug.yml`, `request.yml`) — the body
   structure follows these, but treat every field as best-effort (the templates are
   intentionally lightly required).
-- The product-fit rubric: [`docs/product-scope.md`](../docs/product-scope.md).
+- The product-fit rubric: [`docs/development/product-scope.md`](../docs/development/product-scope.md).
 - The label taxonomy: [`.github/labels.yml`](../.github/labels.yml) — the labels you
   may apply. Do **not** invent labels outside this file.
 
@@ -73,7 +73,7 @@ These are additive: a `pain-point` about confusing UI copy is both `pain-point` 
 Judge two **independent** axes and apply the matching labels:
 
 - **Product-fit** — *should this exist in Jentic One?* Score against
-  `docs/product-scope.md` (in-scope surfaces, **non-goals**, principles). Apply one
+  `docs/development/product-scope.md` (in-scope surfaces, **non-goals**, principles). Apply one
   of `fit:high` / `fit:med` / `fit:low`.
 - **Feasibility** — *can it realistically be built here?* Consider architecture,
   effort, and risk. Apply one of `feasibility:high` / `feasibility:med` /
@@ -82,7 +82,7 @@ Judge two **independent** axes and apply the matching labels:
 Fit and feasibility are orthogonal (a great-fit idea can be low-feasibility, and
 vice versa). Do not let one bleed into the other.
 
-`docs/product-scope.md` settles most fit questions, but some requests are
+`docs/development/product-scope.md` settles most fit questions, but some requests are
 **forward-looking product calls** it explicitly defers (e.g. a new capability /
 module). When the fit decision depends on one of those, cap fit at `fit:med`, pair
 it with **`needs-human`**, and say so in the comment rather than asserting
@@ -376,5 +376,5 @@ outside the model**, and are what make intake safe to run for everyone:
 
 ## Detection assets
 
-None beyond this note and `docs/product-scope.md`. The classification rubric *is*
+None beyond this note and `docs/development/product-scope.md`. The classification rubric *is*
 `product-scope.md` + `labels.yml`; keep those two authoritative and this note thin.

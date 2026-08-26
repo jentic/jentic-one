@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
-  <a href="docs/quickstart.md">First brokered call</a> ·
+  <a href="docs/guides/first-call.md">First brokered call</a> ·
   <a href="https://github.com/jentic/jentic-public-apis">API Directory</a> ·
   <a href="docs/security/hardening.md">Security</a> ·
   <a href="https://github.com/jentic/jentic-one/discussions">Discussions</a>
@@ -125,7 +125,7 @@ Six steps from a running instance to a response from a real API.
 6. **Make the call:** `jentic execute GET:https://httpbin.org/get --json` — the operation's
    full URL, as returned by `jentic search`/`jentic inspect`.
 
-Full walkthrough: [docs/quickstart.md](docs/quickstart.md). To have a coding agent install and
+Full walkthrough: [docs/guides/first-call.md](docs/guides/first-call.md). To have a coding agent install and
 register itself, see [AGENTS.md](AGENTS.md); [llms.txt](llms.txt) is the machine-readable index
 of these docs for assistants evaluating the project.
 
@@ -193,8 +193,8 @@ Full reference: [`cli/README.md`](cli/README.md).
 | Guide | Covers |
 | ----- | ------ |
 | [Local development setup](docs/development/local-setup.md) | Running a stack on your machine |
-| [Credentials and toolkits](docs/credentials-and-toolkits.md) | Storing a credential and binding an agent to it |
-| [Local coding agents](docs/local-agent.md) | Run Claude Code, Codex, Cursor, or Hermes as an isolated Unix user with `jentic run` — flow, examples, grants, and troubleshooting |
+| [Credentials and toolkits](docs/guides/credentials-and-toolkits.md) | Storing a credential and binding an agent to it |
+| [Local coding agents](docs/guides/local-agent.md) | Run Claude Code, Codex, Cursor, or Hermes as an isolated Unix user with `jentic run` — flow, examples, grants, and troubleshooting |
 | [CLI reference](cli/README.md) | Every `jenticctl` and `jentic` command |
 
 **Running it somewhere real**
@@ -204,7 +204,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | [Security hardening](docs/security/hardening.md) | Deployment-tier ladder and production checklist. Read before using real credentials. |
 | [Build & deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, kind, observability |
 | [Self-hosted containers + external Postgres](deploy/README.md#self-hosted-containers--external-postgres) | Production-shaped deployment without Kubernetes |
-| [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, why there is no MCP endpoint, and how to run both (or migrate) without silent cross-talk |
+| [Cloud vs self-hosted](docs/guides/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, why there is no MCP endpoint, and how to run both (or migrate) without silent cross-talk |
 
 **Reference**
 
@@ -279,7 +279,7 @@ Use [Discussions](https://github.com/jentic/jentic-one/discussions) for question
 
 ## Migrating from the hosted platform or Jentic Mini
 
-Read [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) before running Jentic One alongside
+Read [Cloud vs self-hosted](docs/guides/cloud-vs-self-hosted.md) before running Jentic One alongside
 the hosted Jentic platform or a self-hosted Jentic Mini instance: the failure mode is silent
 wrong answers, not errors. New installations should start with Jentic One.
 

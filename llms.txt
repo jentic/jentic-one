@@ -38,7 +38,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 
 - [Hardening guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/hardening.md): the threat model and a tiered set of deployment postures, from trying it out to handling production credentials. Explains why the network guarantee holds and the same-host, same-user case does not.
 - [Local agent isolation](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/local-agent/README.md): the options for the case where the agent must share a machine with the instance, and what each one actually buys.
-- [Credentials and toolkits](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/credentials-and-toolkits.md): how a credential is stored, encrypted and injected, and how one credential is shared across the operations of an API.
+- [Credentials and toolkits](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/credentials-and-toolkits.md): how a credential is stored, encrypted and injected, and how one credential is shared across the operations of an API.
 - [SECURITY.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/SECURITY.md): supported versions and how to report a vulnerability.
 
 ## How it works
@@ -47,8 +47,8 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 - [Endpoint and authorization reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/reference/endpoints.md): every HTTP endpoint with the scopes it requires. This is the authoritative source for authorization, because the OpenAPI documents model authentication only.
 - [Control plane OpenAPI](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/openapi/control/control.openapi.yaml) and [Broker OpenAPI](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/openapi/broker/broker.openapi.yaml): the two machine-readable API descriptions, for calling an instance over raw HTTP instead of through the CLI.
 - [Agent skill](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/skills/jentic/SKILL.md): the instructions installed into an agent runtime by `jentic skill init` (or `jentic setup`), describing the identity, discover, request access, execute loop.
-- [Context and configuration](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/context-and-config.md): how a deployment is configured, and what an agent's execution context carries.
-- [Overlays](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/overlays.md): correcting or adapting an imported API description without editing the original.
+- [Context and configuration](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/context-and-config.md): how a deployment is configured, and what an agent's execution context carries.
+- [Overlays](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/overlays.md): correcting or adapting an imported API description without editing the original.
 
 ## APIs to run against
 
@@ -65,7 +65,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 
 ## Optional
 
-- [Cloud platform compared with self-hosted](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/cloud-vs-self-hosted.md): the two products are easy to conflate and share no state. Read this before copying integration instructions from one into the other.
+- [Cloud platform compared with self-hosted](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/cloud-vs-self-hosted.md): the two products are easy to conflate and share no state. Read this before copying integration instructions from one into the other.
 - [Extending Jentic One](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/extending-jentic-one.md): adding a surface or a capability to the codebase itself.
 - [VERSIONING.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/VERSIONING.md): what the version number promises while the project is in public beta.
 - [Jentic documentation](https://docs.jentic.com/): the documentation site. A deployment also serves generated references at `/docs` (interactive Swagger) and `/redoc`.

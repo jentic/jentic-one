@@ -100,7 +100,7 @@ is still production-shaped.
 > and secret handling are the real thing — not that the product is done.
 > Also note a self-hosted instance serves the HTTP APIs + UI; the hosted MCP
 > endpoint is a cloud-tier feature — see
-> [`docs/cloud-vs-self-hosted.md`](../docs/cloud-vs-self-hosted.md).
+> [`docs/guides/cloud-vs-self-hosted.md`](../docs/guides/cloud-vs-self-hosted.md).
 
 ### The one-image, two-surfaces model
 
@@ -150,7 +150,7 @@ version tag but never touch `:latest`.
 
 If `docker pull` returns `denied`, the GHCR package may not have been made
 public yet (it starts private on first publish — see the first-release
-checklist in [`docs/releasing.md`](../docs/releasing.md)); open an issue if
+checklist in [`docs/development/releasing.md`](../docs/development/releasing.md)); open an issue if
 you hit this.
 
 ### Verify the image signature
@@ -796,7 +796,7 @@ uv run python -m tools.deploy cluster down              # Destroy the cluster
 > `instance_id`, `null` when telemetry is off). To migrate a
 > client to this install, point *its* backend base URL at your local
 > `canonical_base_url` and re-check `/instance`.
-> See [`docs/context-and-config.md`](../docs/context-and-config.md#local--remote-coexistence-which-backend-am-i-talking-to).
+> See [`docs/development/context-and-config.md`](../docs/development/context-and-config.md#local--remote-coexistence-which-backend-am-i-talking-to).
 
 Add `--otel` to `up` to wire app OTel sidecars to the observability stack
 (requires `obs up` first):

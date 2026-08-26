@@ -1,7 +1,7 @@
 # Product Scope
 
 > **Purpose.** This document gives the issue-intake harness (see
-> [`.harness/ISSUE_INTAKE_STANDARDS.md`](../.harness/ISSUE_INTAKE_STANDARDS.md)) a
+> [`.harness/ISSUE_INTAKE_STANDARDS.md`](../../.harness/ISSUE_INTAKE_STANDARDS.md)) a
 > rubric for scoring an issue's **product fit** (`fit:high/med/low`). It is grounded
 > only in **public** sources — `README.md`, `SECURITY.md`, `SUPPORT.md`,
 > `docs/security/hardening.md`, and the code in this repo. It deliberately does **not**
@@ -46,7 +46,7 @@ The runtime surfaces (from the public code / `README.md`):
   service.
 - **Registry** — catalogue of registered APIs (immutable revisions, operations,
   security schemes, servers); **APIs only**. Operator/agent spec fixes are applied as
-  [overlays](overlays.md) (see the stacking contract + update loop there).
+  [overlays](../guides/overlays.md) (see the stacking contract + update loop there).
 - **Control** — credential storage + toolkit/credential bindings + access-request
   lifecycle.
 - **Admin** — operator accounts, role-based permissions/access grants, async jobs,

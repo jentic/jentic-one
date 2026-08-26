@@ -43,7 +43,7 @@ _RAW_LINK_RE = re.compile(
     r"(?:refs/(?:heads|tags)/)?[\w.-]+/([\w./-]*[\w-])"
 )
 
-#: Relative markdown link targets, e.g. ``[text](docs/quickstart.md)``.
+#: Relative markdown link targets, e.g. ``[text](docs/guides/first-call.md)``.
 #: Root-absolute targets (``](/app)``) are excluded: joining them onto
 #: ``REPO_ROOT`` would silently discard the root and check the host filesystem.
 _MD_LINK_RE = re.compile(r"\]\((?!https?://|#|mailto:|/)([\w./-]+?)(?:#[^)]*)?\)")

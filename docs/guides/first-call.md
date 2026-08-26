@@ -1,11 +1,11 @@
 # Quickstart — your first brokered call
 
 This is the full walkthrough behind the six steps in the
-[README](../README.md#first-brokered-call): from a running Jentic One instance
+[README](../../README.md#first-brokered-call): from a running Jentic One instance
 to a response from a real API, with the agent never seeing your credentials.
 
 If you do not have an instance yet, install one first — see
-[Quickstart → install options](../README.md#quickstart) (signed release binary,
+[Quickstart → install options](../../README.md#quickstart) (signed release binary,
 bootstrap script, or from source). This guide assumes the App control plane and
 the Broker are running and reachable (the local default is
 `http://127.0.0.1:8000`).
@@ -13,7 +13,7 @@ the Broker are running and reachable (the local default is
 > **Run the agent on a different machine from Jentic One.** An agent running as
 > the same OS user can read the credential database and encryption key off disk,
 > whatever the API-level controls allow. Read the
-> [security hardening guide](security/hardening.md) before pointing an instance
+> [security hardening guide](../security/hardening.md) before pointing an instance
 > at a real credential.
 
 ## 1. Create your admin account
@@ -37,7 +37,7 @@ jentic catalog search httpbin   # find an API in the public directory (used in s
 
 `jentic catalog` opens an interactive browser to search the public directory and
 import an API into your local registry; `jentic apis` manages the ones you have
-imported. See [`cli/README.md`](../cli/README.md) for the full command surface.
+imported. See [`cli/README.md`](../../cli/README.md) for the full command surface.
 
 Or register your own OpenAPI description for a private or internal service — the
 same credential custody, per-agent permissions and audit trail apply whether the
@@ -73,7 +73,7 @@ agent.** On a single-operator install you are the operator: approve the pending
 agent in the UI at `/app`, and the command completes automatically once the
 agent is active. Re-running `register` is idempotent. (Registering with a
 **remote** deployment instead? Pass `--url` and `--broker-url` — see the
-[CLI README](../cli/README.md#usage).)
+[CLI README](../../cli/README.md#usage).)
 
 ## 5. Grant access
 
@@ -107,14 +107,14 @@ credential is added inside the Broker and is never returned to the caller.
 
 ## Where to go next
 
-- **Have a coding agent do this for you.** [AGENTS.md](../AGENTS.md) has an
+- **Have a coding agent do this for you.** [AGENTS.md](../../AGENTS.md) has an
   install-and-use section a coding agent can follow to install Jentic One and
   register itself against it.
 - **Full CLI reference.** Every `jenticctl` and `jentic` command:
-  [`cli/README.md`](../cli/README.md).
+  [`cli/README.md`](../../cli/README.md).
 - **In-app API reference.** On a running deployment, `/docs` serves interactive
   Swagger and `/redoc` the rendered reference — both generated from code.
 - **Endpoint & scope reference.** Every HTTP route and the scope it requires:
-  [endpoint reference](reference/endpoints.md).
-- **Run it somewhere real.** [Build & deploy](../deploy/README.md) and the
-  [security hardening guide](security/hardening.md).
+  [endpoint reference](../reference/endpoints.md).
+- **Run it somewhere real.** [Build & deploy](../../deploy/README.md) and the
+  [security hardening guide](../security/hardening.md).

@@ -24,7 +24,7 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 | `jentic` | **Identity & access** | `register` · `setup` · `logout` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. (The old `profile` command was removed — use `context`; run `jentic migrate` to bring a legacy `~/.jentic` profile store across.) |
 | `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds. |
 | `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
-| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. Flow + examples: [`docs/local-agent.md`](../docs/local-agent.md). |
+| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
 | `jentic` | **Administration** | `admin` · `theme` | Manage OAuth provider config and the persisted color theme. |
 
 The table mirrors the CLI's own command groups (what `jentic` with no args
@@ -629,7 +629,7 @@ Directory spec, and `jentic migrate` copies a legacy profile store into it
 
 ```
 ~/.config/jentic/config.yaml         # environments, identities, contexts, active_context, theme
-~/.config/jentic/agent-account.yaml  # local-agent account record + directory grants (see docs/local-agent.md)
+~/.config/jentic/agent-account.yaml  # local-agent account record + directory grants (see docs/guides/local-agent.md)
 ~/.local/state/jentic/               # per-identity key material and cached tokens
 ~/.cache/jentic/                     # disposable caches
 ```

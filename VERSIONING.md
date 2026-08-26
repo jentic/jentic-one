@@ -48,7 +48,7 @@ a standing **Release PR** (`chore(main): release X.Y.Z`) accumulates
 Conventional-Commit changes into a proposed version bump + `CHANGELOG.md`.
 **Merging that PR is the release** — it tags `vX.Y.Z`, creates the GitHub
 Release, and triggers the tag pipeline (build/migrate/`/health` gate →
-signed CLI binaries). See [`docs/releasing.md`](docs/releasing.md) for the full
+signed CLI binaries). See [`docs/development/releasing.md`](docs/development/releasing.md) for the full
 procedure; release-please generates `CHANGELOG.md` on the first release.
 
 The baseline is the restored `v0.1.0`…`v0.13.2` tag line; the next release is

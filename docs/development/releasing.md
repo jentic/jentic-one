@@ -1,13 +1,13 @@
 # Releasing jentic-one
 
 Operational runbook for cutting a release. The *why* (versioning policy, the
-decisions behind this setup) lives in [`VERSIONING.md`](../VERSIONING.md); this
+decisions behind this setup) lives in [`VERSIONING.md`](../../VERSIONING.md); this
 is the *how*.
 
 ## Cutting a release
 
 Releases are automated with [release-please](https://github.com/googleapis/release-please)
-(config: [`release-please-config.json`](../release-please-config.json)):
+(config: [`release-please-config.json`](../../release-please-config.json)):
 
 1. Merge feature/fix PRs to `main` as usual (Conventional Commits, squash-merge).
 2. release-please keeps a standing **Release PR** titled `chore(main): release X.Y.Z`.
@@ -16,7 +16,7 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
    changelog directly in that PR (optional).
 3. **Merging the Release PR is the release.** release-please then tags `vX.Y.Z`,
    creates the GitHub Release, and (because the tag is pushed with the release
-   App token) triggers [`release.yml`](../.github/workflows/release.yml):
+   App token) triggers [`release.yml`](../../.github/workflows/release.yml):
    - **gate** — builds the app, runs every migration on a fresh ephemeral
      SQLite DB, asserts each DB reached an Alembic head, and checks `/health`
      serves the tag version. Nothing publishes if this fails.
@@ -29,7 +29,7 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
      — and the short SHA; `latest` moves only on stable releases). One image
      serves every surface via `JENTIC__APPS`; this is the image self-hosters
      pull — see
-     [`deploy/README.md`](../deploy/README.md#self-hosted-containers--external-postgres).
+     [`deploy/README.md`](../../deploy/README.md#self-hosted-containers--external-postgres).
    - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and pushes the Homebrew cask.
 

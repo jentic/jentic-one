@@ -5,8 +5,8 @@ spec — a small JSONPath-based document that fixes a broken or incomplete upstr
 spec without forking it. This page documents the **stacking contract** and how
 overlays interact with the Flow-3 catalog-update loop, so the behaviour is
 predictable rather than surprising. For the endpoint list and scopes, see
-[`reference/endpoints.md`](reference/endpoints.md); for the agent-facing authoring
-workflow, see the [`contribute-spec-fix`](../skills/contribute-spec-fix/SKILL.md) skill.
+[`reference/endpoints.md`](../reference/endpoints.md); for the agent-facing authoring
+workflow, see the [`contribute-spec-fix`](../../skills/contribute-spec-fix/SKILL.md) skill.
 
 ## Lifecycle
 

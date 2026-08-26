@@ -8,7 +8,7 @@ persistence, cobra wiring) lives in
 **only** one that performs privileged host mutation, and this one produces the
 `*exec.Cmd` values and pure data it runs.
 
-Operator-facing guide: [`docs/local-agent.md`](../../../docs/local-agent.md).
+Operator-facing guide: [`docs/guides/local-agent.md`](../../../docs/guides/local-agent.md).
 Security design: [`docs/security/local-agent/`](../../../docs/security/local-agent/README.md).
 
 ## Layering contract
