@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.1](https://github.com/jentic/jentic-one/compare/v0.32.0...v0.32.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **auth:** re-check actor status on every token verdict so disable kills outstanding tokens ([#1137](https://github.com/jentic/jentic-one/issues/1137)) ([4dd7acd](https://github.com/jentic/jentic-one/commit/4dd7acd456a68c01faccfd2556a35d8cf351897a))
+
 ## [0.32.0](https://github.com/jentic/jentic-one/compare/v0.31.1...v0.32.0) (2026-08-25)
 
 
