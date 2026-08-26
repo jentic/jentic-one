@@ -6,6 +6,7 @@ import hmac
 
 from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
+    AgentRepository,
     ServiceAccountCredentialRepository,
     ServiceAccountRepository,
 )
@@ -160,6 +161,9 @@ class ServiceAccountAuthService:
         """Mint a short-lived ephemeral token for a task/agent.
 
         Security-critical: requested_scopes MUST be a subset of host_sa_scopes.
+        The target agent must exist and be ACTIVE — resolvers re-check actor
+        status on every verdict (#1136), so minting for a non-active agent
+        would return a token that is dead on arrival; fail fast instead.
         Returns an opaque access token (no refresh token for ephemeral mints).
         """
         host_scope_set = set(host_sa_scopes)
@@ -176,6 +180,14 @@ class ServiceAccountAuthService:
             raise InvalidGrantError(
                 f"invalid_request: ttl_seconds must be between"
                 f" {_MINT_TTL_MIN_SECONDS} and {_MINT_TTL_MAX_SECONDS}"
+            )
+
+        # One message for missing and non-active: no oracle for probing agent ids.
+        async with self._ctx.admin_db.session() as session:
+            agent = await AgentRepository.get_by_id(session, target_agent_id)
+        if agent is None or agent.status != ActorStatus.ACTIVE:
+            raise InvalidGrantError(
+                "invalid_request: target_agent_id does not resolve to an active agent"
             )
 
         return await self._token_svc.issue_access_only(

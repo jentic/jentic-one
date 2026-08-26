@@ -161,10 +161,19 @@ async def test_authenticate_client_credentials_sa_not_active(
         await svc.authenticate_client_credentials("sva_test123", "jcs_anything")
 
 
+def _make_agent_row(*, status: str = "active") -> MagicMock:
+    row = MagicMock()
+    row.id = "agnt_task1"
+    row.status = status
+    return row
+
+
 @pytest.mark.asyncio
-async def test_mint_task_token_success() -> None:
+@patch("jentic_one.auth.services.service_account_auth_service.AgentRepository")
+async def test_mint_task_token_success(mock_agent_repo: MagicMock) -> None:
     ctx = _make_ctx()
     svc = ServiceAccountAuthService(ctx)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row())
 
     with patch.object(svc._token_svc, "issue_access_only", new_callable=AsyncMock) as mock_issue:
         mock_issue.return_value = "at_ephemeral"
@@ -211,9 +220,11 @@ async def test_mint_task_token_rejects_empty_scopes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mint_task_token_default_ttl() -> None:
+@patch("jentic_one.auth.services.service_account_auth_service.AgentRepository")
+async def test_mint_task_token_default_ttl(mock_agent_repo: MagicMock) -> None:
     ctx = _make_ctx()
     svc = ServiceAccountAuthService(ctx)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row())
 
     with patch.object(svc._token_svc, "issue_access_only", new_callable=AsyncMock) as mock_issue:
         mock_issue.return_value = "at_ephemeral"
@@ -256,6 +267,50 @@ async def test_mint_task_token_rejects_ttl_zero() -> None:
             requested_scopes=["capabilities:execute"],
             target_agent_id="agnt_task1",
             ttl_seconds=0,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["pending", "rejected", "disabled", "archived"])
+@patch("jentic_one.auth.services.service_account_auth_service.AgentRepository")
+async def test_mint_task_token_rejects_non_active_target_agent(
+    mock_agent_repo: MagicMock, status: str
+) -> None:
+    """Resolvers reject non-active agents' tokens (#1136), so minting one would
+    be dead on arrival — the mint must fail fast instead of returning it."""
+    ctx = _make_ctx()
+    svc = ServiceAccountAuthService(ctx)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status=status))
+
+    with (
+        patch.object(svc._token_svc, "issue_access_only", new_callable=AsyncMock) as mock_issue,
+        pytest.raises(InvalidGrantError, match="active agent"),
+    ):
+        await svc.mint_task_token(
+            host_sa_id="sva_host",
+            host_sa_scopes=["capabilities:execute"],
+            requested_scopes=["capabilities:execute"],
+            target_agent_id="agnt_task1",
+        )
+
+    mock_issue.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("jentic_one.auth.services.service_account_auth_service.AgentRepository")
+async def test_mint_task_token_rejects_missing_target_agent(
+    mock_agent_repo: MagicMock,
+) -> None:
+    ctx = _make_ctx()
+    svc = ServiceAccountAuthService(ctx)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=None)
+
+    with pytest.raises(InvalidGrantError, match="active agent"):
+        await svc.mint_task_token(
+            host_sa_id="sva_host",
+            host_sa_scopes=["capabilities:execute"],
+            requested_scopes=["capabilities:execute"],
+            target_agent_id="agnt_never_existed",
         )
 
 

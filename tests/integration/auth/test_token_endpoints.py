@@ -172,11 +172,14 @@ async def test_introspect_expired_returns_inactive(
     integration_context: Context, clean_tokens: None
 ) -> None:
     """Expired token introspection returns inactive."""
+    # Seed the actor active so this pins *expiry*, not the missing-actor
+    # fail-closed path (#1136).
+    user_id = await _seed_user(integration_context, "usr_expired")
     async with integration_context.admin_db.transaction() as session:
         await AccessTokenRepository.create(
             session,
             token_hash=_hash_token("at_expired_test"),
-            actor_id="usr_expired",
+            actor_id=user_id,
             actor_type="user",
             scopes=["read"],
             token_family_id="tfam_expired",
@@ -359,12 +362,16 @@ async def test_issue_pair_transient_lock_then_success(
 
 
 async def test_revoke_refresh_token_revokes_family(
-    token_service: TokenService, clean_tokens: None
+    token_service: TokenService, integration_context: Context, clean_tokens: None
 ) -> None:
     """Revoking a refresh token revokes the entire token family."""
-    access, refresh = await token_service.issue_pair("usr_fam1", ActorType.USER, ["read"])
+    # Seed the actor active so the inactive verdicts below can only come from
+    # the revocation itself, not the missing-actor fail-closed path (#1136).
+    user_id = await _seed_user(integration_context, "usr_fam1")
+    access, refresh = await token_service.issue_pair(user_id, ActorType.USER, ["read"])
+    assert (await token_service.introspect(access))["active"] is True
 
-    await token_service.revoke(refresh, identity=Identity(sub="usr_fam1", email="test@local"))
+    await token_service.revoke(refresh, identity=Identity(sub=user_id, email="test@local"))
 
     at_result = await token_service.introspect(access)
     assert at_result["active"] is False

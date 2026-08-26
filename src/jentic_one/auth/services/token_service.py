@@ -200,9 +200,12 @@ class TokenService:
                     origin=None,
                 )
             else:
-                # A disabled/archived actor must not rotate its way to fresh
-                # access tokens — refresh is a mint path, gate it like the
-                # jwt-bearer exchange does (#1136).
+                # A non-active actor must not rotate its way to fresh access
+                # tokens — refresh is a mint path, so it gets a status gate
+                # too (#1136). Unlike the jwt-bearer exchange, PENDING gets no
+                # distinct detail here: a refresh token only exists after a
+                # successful exchange, so pending-approval polling never
+                # reaches this path.
                 if not await _actor_is_active(session, rt.actor_id, rt.actor_type):
                     raise InvalidGrantError("actor is not active")
 
