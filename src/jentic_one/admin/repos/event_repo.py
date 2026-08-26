@@ -124,6 +124,7 @@ class EventRepository:
         cursor: tuple[datetime, str],
         *,
         limit: int = 100,
+        before: datetime | None = None,
         event_type: list[str] | None = None,
         severity: list[str] | None = None,
         requires_action: bool | None = None,
@@ -135,6 +136,11 @@ class EventRepository:
 
         Unlike pure KSUID ordering, this correctly handles events created within
         the same second whose random payload yields out-of-order IDs.
+
+        ``before`` is an optional upper bound on ``created_at`` (exclusive of
+        nothing — it is ``<=``): the webhook relay passes ``now - relay_lag`` so
+        that a transaction which stamped an early ``created_at`` but commits late
+        is not skipped by an already-advanced cursor (see ``InternalEventRelay``).
         """
         cursor_dt, cursor_id = cursor
         stmt = (
@@ -148,6 +154,8 @@ class EventRepository:
             .order_by(Event.created_at.asc(), Event.id.asc())
             .limit(limit)
         )
+        if before is not None:
+            stmt = stmt.where(Event.created_at <= before)
         if event_type is not None:
             stmt = stmt.where(Event.type.in_(event_type))
         if severity is not None:
