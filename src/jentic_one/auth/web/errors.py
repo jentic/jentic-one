@@ -5,6 +5,7 @@ from __future__ import annotations
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
+    AgentWriteAccessDeniedError,
     ClaimActorNotAllowedError,
     ClaimTokenInvalidError,
     InvalidGrantError,
@@ -23,6 +24,7 @@ from jentic_one.shared.web.errors import make_service_error_handler
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ActorNotFoundError: (404, "actor_not_found"),
     AgentAlreadyOwnedError: (409, "agent_already_owned"),
+    AgentWriteAccessDeniedError: (403, "agent_write_access_denied"),
     ClaimActorNotAllowedError: (403, "claim_actor_not_allowed"),
     ClaimTokenInvalidError: (400, "invalid_claim_token"),
     InvalidGrantError: (400, "invalid_grant"),
