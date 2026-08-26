@@ -68,6 +68,18 @@ class WebhookEndpoint(AuditableMixin, AdminBase):
     event_types: Mapped[list] = mapped_column(  # type: ignore[type-arg]
         json_variant(), nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
+    # Per-endpoint IP/CIDR allowlist (Phase 3). When non-empty it is a
+    # *restrictive* allowlist enforced on the *pinned* IP at send (rebind-proof):
+    # the outbound send is refused unless the resolved IP falls inside one of these
+    # CIDRs — so it both permits an otherwise-private/blocked target that is listed
+    # AND blocks an out-of-range target that is not (e.g. a Slack/relay whose IP
+    # is not listed). Layered on ``config.webhooks.egress``. The cloud-metadata
+    # hard-deny is never re-opened, whatever is listed here. Empty (the default)
+    # means "no restriction" — only the operator-wide egress policy applies. Best
+    # for stable/internal/single-IP targets (cloud ranges rotate).
+    allowed_cidrs: Mapped[list] = mapped_column(  # type: ignore[type-arg]
+        json_variant(), nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )

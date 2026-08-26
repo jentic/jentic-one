@@ -66,3 +66,7 @@ class WebhookDelivery(AuditableMixin, AdminBase):
     last_attempt_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Wall-clock duration of the most recent HTTP attempt in milliseconds
+    # (measured in ``delivery._send``). Null until the first attempt completes.
+    # Powers the response-time view in the endpoint drawer.
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
