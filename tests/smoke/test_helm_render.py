@@ -80,3 +80,62 @@ def test_render_marketplace_images_all_ecr() -> None:
     assert images, "no image references rendered"
     for image in images:
         assert image.startswith("709825985650.dkr.ecr."), f"non-ECR image rendered: {image}"
+
+
+@pytest.mark.smoke
+def test_render_awsmp_launch_parameters() -> None:
+    """The Marketplace launch substitutions render into the pod specs.
+
+    The listing's delivery option passes the buyer's service account
+    (${AWSMP_SERVICE_ACCOUNT}) into global.serviceAccount.name and the
+    AWS-created license secret (${AWSMP_LICENSE_SECRET}) into
+    global.awsmp.licenseSecret — both must land on the app AND broker pods.
+    """
+    result = _helm_template(
+        "-f",
+        str(VALUES_DIR / "aws-marketplace.yaml"),
+        "--set",
+        "global.image.tag=0.0.0-test",
+        "--set",
+        "global.serviceAccount.name=buyer-sa",
+        "--set",
+        "global.awsmp.licenseSecret=buyer-license",
+        *DEV_PASSWORD_SETS,
+    )
+    assert result.returncode == 0, result.stderr
+    # Both enabled deployments (app + broker) carry the account and mount.
+    assert result.stdout.count("serviceAccountName: buyer-sa") == 2
+    assert result.stdout.count("secretName: buyer-license") == 2
+    assert result.stdout.count("mountPath: /var/run/secrets/aws-marketplace/license") == 2
+
+
+@pytest.mark.smoke
+def test_render_awsmp_defaults_are_inert() -> None:
+    """Unset, the Marketplace launch values must render nothing at all."""
+    result = _helm_template(
+        "-f",
+        str(VALUES_DIR / "aws-marketplace.yaml"),
+        "--set",
+        "global.image.tag=0.0.0-test",
+        *DEV_PASSWORD_SETS,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "serviceAccountName" not in result.stdout
+    assert "awsmp-license" not in result.stdout
+    assert "kind: ServiceAccount" not in result.stdout
+
+
+@pytest.mark.smoke
+def test_render_service_account_create_requires_name() -> None:
+    """create=true without a name must fail loudly, not render a broken SA."""
+    result = _helm_template(
+        "-f",
+        str(VALUES_DIR / "aws-marketplace.yaml"),
+        "--set",
+        "global.image.tag=0.0.0-test",
+        "--set",
+        "global.serviceAccount.create=true",
+        *DEV_PASSWORD_SETS,
+    )
+    assert result.returncode != 0
+    assert "global.serviceAccount.name is required" in result.stderr
