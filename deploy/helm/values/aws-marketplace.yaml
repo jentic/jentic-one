@@ -19,29 +19,28 @@ global:
     # Marketplace does not allow floating tags like :latest).
     tag: ""
 
-  # RDS-ONLY LISTING (decided 2026-08-26): the bundled in-cluster Postgres is
-  # disabled — buyers bring an external Postgres (RDS or equivalent) and point
-  # global.databases.*.host at it. Rationale: the only image the postgresql
-  # subchart supports is bitnamilegacy/postgresql, frozen upstream since
-  # Bitnami's Aug 2025 catalog change — it already fails our CVE gate (52
-  # fixable HIGH/CRITICAL on 2026-08-26) and would fail AWS's listing scan.
-  # Revisit if the chart moves to a maintained Postgres image.
+  # Bundled in-cluster Postgres: ON by default (decided 2026-08-26, reversing
+  # the brief RDS-only stance) — the first-party postgresql subchart runs the
+  # official library/postgres image mirrored into the listing's ECR, so a
+  # plain `helm install` is self-contained. Production buyers should still
+  # prefer RDS: set postgresql.enabled=false + global.postgresql.enabled=false
+  # and point global.databases.*.host at the endpoint instead.
   postgresql:
-    enabled: false
+    enabled: true
 
   # NOTE: global.observability.otel.enabled must stay false for Marketplace
   # deploys — the sidecar image (otel/opentelemetry-collector-contrib) is
   # pulled from docker.io, which the Marketplace disallows. Mirror it into
   # the listing's ECR first if observability is needed.
 
-  # No database password defaults ship with the chart; point the DBs at your
-  # external Postgres and set the passwords at install:
-  #   --set global.databases.registry.host=<rds-endpoint> \
+  # No database password defaults ship with the chart; set the per-surface
+  # passwords (used both by the app and by the bundled DB's init scripts) at
+  # install:
   #   --set global.databases.registry.password=… \
   #   --set global.databases.control.password=…  \
   #   --set global.databases.admin.password=…
-  # or (preferred) replace common.db-env with a Secret-backed env block —
-  # see deploy/README.md "Production secrets".
+  # RDS variant: also set the three global.databases.*.host values and
+  # disable the bundled DB (see the postgresql blocks).
 
   # AWS Marketplace launch wiring — the listing's delivery option carries
   # these two override parameters (values substituted by AWS at launch):
@@ -94,11 +93,12 @@ control:
 gateway:
   enabled: false
 
-# Bundled in-cluster Postgres: OFF for the Marketplace listing (RDS-only —
-# see the global.postgresql note above). The jentic/jentic-one-psql ECR repo
-# and the marketplace-mirror workflow exist but are parked: the mirror's CVE
-# gate correctly rejects the frozen bitnamilegacy image. If the chart ever
-# moves to a maintained Postgres image, re-enable this block and set the
-# MARKETPLACE_ECR_POSTGRES repo variable to resume mirroring.
+# Bundled in-cluster Postgres from the ECR-mirrored official image (the
+# marketplace-mirror workflow pushes it — repo jentic/jentic-one-psql). The
+# first-party subchart requires postgresql.auth.password at install.
 postgresql:
-  enabled: false
+  enabled: true
+  image:
+    registry: ""
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql"
+    tag: "17.11"

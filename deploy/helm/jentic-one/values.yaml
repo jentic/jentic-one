@@ -131,12 +131,6 @@ global:
   # IRSA-based entitlement gate does not read it. Empty = nothing rendered.
   awsmp:
     licenseSecret: ""
-  # Bitnami chart 16.4.x rejects images outside its expected registry; we
-  # need to pin `bitnamilegacy/postgresql` (see the postgresql block below)
-  # so this gate has to be opened. Production deployments that use a
-  # different registry/image can leave this off.
-  security:
-    allowInsecureImages: true
   # Database credentials. `password` has NO default — the chart refuses to
   # render without one (see common.db-env), so every deployment states its
   # credentials explicitly. Dev/kind values live in
@@ -166,22 +160,23 @@ global:
 
 postgresql:
   enabled: false
-  # Bitnami moved free-tier images to `bitnamilegacy/` in Aug 2025; the
-  # default `bitnami/postgresql:17.2.0-debian-12-r6` was pruned from Docker
-  # Hub and now ImagePullBackOffs. Pin to the legacy mirror until the
-  # bundled chart version is upgraded (or we vendor postgres ourselves).
-  # Production environments should override this with their own image.
+  # First-party subchart (charts/postgresql) on the official library/postgres
+  # image — the former Bitnami dependency pinned the frozen `bitnamilegacy`
+  # image (no CVE fixes since Aug 2025), which the Trivy publish gate and the
+  # AWS Marketplace scan both reject. Dev/eval-grade single instance;
+  # production should use a managed database (deploy/README.md).
   image:
     registry: docker.io
-    repository: bitnamilegacy/postgresql
-    tag: 17.2.0-debian-12-r6
+    repository: postgres
+    tag: "17.11"
   auth:
     username: postgres
     # No default password — set one in your values file (dev files:
-    # deploy/helm/values/local-*.yaml). Left unset, the Bitnami chart
-    # generates a random one, which breaks the pg-init scripts that the
-    # local deploys rely on.
+    # deploy/helm/values/local-*.yaml).
     database: jentic
   primary:
     initdb:
+      # Empty = the umbrella chart's auto-created <release>-pg-init ConfigMap
+      # (templates/pg-init-configmap.yaml) — per-surface schemas, roles and
+      # grants derived from global.databases.
       scriptsConfigMap: ""
