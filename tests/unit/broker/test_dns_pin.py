@@ -119,7 +119,8 @@ async def test_transport_blocks_rebind(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_transport_passes_through_ip_literal(monkeypatch: pytest.MonkeyPatch) -> None:
-    # An IP-literal host has nothing to rebind; no resolution should occur.
+    # A public IP-literal host has nothing to rebind; no resolution should occur,
+    # and a public address passes the egress policy unchanged.
     def _should_not_resolve(*_a, **_k):
         raise AssertionError("getaddrinfo must not be called for an IP literal")
 
@@ -130,6 +131,74 @@ async def test_transport_passes_through_ip_literal(monkeypatch: pytest.MonkeyPat
         await client.get("http://93.184.216.34/x")
     assert inner.seen is not None
     assert inner.seen.url.host == "93.184.216.34"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target_url",
+    [
+        "http://169.254.169.254/latest/meta-data/",  # cloud metadata IMDS
+        "http://10.0.0.5/",  # private range
+        "http://127.0.0.1:6379/",  # loopback (e.g. local Redis)
+        "http://[::1]/",  # IPv6 loopback literal
+    ],
+)
+async def test_transport_blocks_ip_literal_ssrf_targets(
+    monkeypatch: pytest.MonkeyPatch, target_url: str
+) -> None:
+    """An IP-literal SSRF target is rejected by the transport, not silently sent.
+
+    This is the Phase-0 blocker: previously an IP literal skipped the egress
+    policy entirely. It must now hit the same ``assert_ip_allowed`` guard the DNS
+    path uses (no resolution needed — there is no name to rebind).
+    """
+
+    def _should_not_resolve(*_a, **_k):
+        raise AssertionError("getaddrinfo must not be called for an IP literal")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _should_not_resolve)
+    inner = _RecordingTransport()
+    transport = DnsPinningTransport(inner, None)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(ValueError, match="blocked address range"):
+            await client.get(target_url)
+    # The blocked request never reached the inner transport.
+    assert inner.seen is None
+
+
+@pytest.mark.asyncio
+async def test_transport_allows_public_ipv6_literal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A public IPv6 literal still passes (only blocked ranges are rejected)."""
+
+    def _should_not_resolve(*_a, **_k):
+        raise AssertionError("getaddrinfo must not be called for an IP literal")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _should_not_resolve)
+    inner = _RecordingTransport()
+    transport = DnsPinningTransport(inner, None)
+    async with httpx.AsyncClient(transport=transport) as client:
+        await client.get("http://[2606:2800:220:1:248:1893:25c8:1946]/")
+    assert inner.seen is not None
+    assert inner.seen.url.host == "2606:2800:220:1:248:1893:25c8:1946"
+
+
+@pytest.mark.asyncio
+async def test_transport_allows_allowlisted_private_ip_literal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operator-allowlisted private literal is permitted — same policy as DNS."""
+
+    def _should_not_resolve(*_a, **_k):
+        raise AssertionError("getaddrinfo must not be called for an IP literal")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _should_not_resolve)
+    inner = _RecordingTransport()
+    egress = EgressConfig(allowed_private_subnets=["10.0.0.0/8"])
+    transport = DnsPinningTransport(inner, egress)
+    async with httpx.AsyncClient(transport=transport) as client:
+        await client.get("http://10.1.2.3/")
+    assert inner.seen is not None
+    assert inner.seen.url.host == "10.1.2.3"
 
 
 def test_build_client_wraps_transport_when_pinning_enabled() -> None:

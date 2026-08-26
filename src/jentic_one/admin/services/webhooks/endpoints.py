@@ -35,6 +35,7 @@ from jentic_one.admin.services.webhooks.secrets import WebhookSecretService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger(__name__)
 
@@ -319,7 +320,7 @@ class WebhookEndpointService:
         """Reject configurations that cannot be safe or cannot work."""
         if not target_url:
             raise InvalidInputError("A notification endpoint requires a target_url.")
-        self._validate_url_scheme(target_url)
+        self._validate_target_url(target_url)
 
     def _validate_shape_for_update(self, *, target_url: str | None | _Unset) -> None:
         """Validate a PATCH's ``target_url`` with the same rules as create.
@@ -333,14 +334,32 @@ class WebhookEndpointService:
             return
         if not target_url:
             raise InvalidInputError("A notification endpoint requires a target_url.")
-        self._validate_url_scheme(target_url)
+        self._validate_target_url(target_url)
 
-    def _validate_url_scheme(self, target_url: str) -> None:
-        # Only the scheme is checked here; the address itself is validated at
-        # send time by the SSRF-guarding egress transport, which is the only
-        # place that can do it correctly (DNS can change after this check).
+    def _validate_target_url(self, target_url: str) -> None:
+        """Reject a target_url that can never be delivered to, at config time.
+
+        Defence-in-depth + good UX: an obviously-bad ``target_url`` (a non-http(s)
+        scheme, or an IP literal that fails the egress SSRF policy — loopback,
+        private, link-local, cloud-metadata) is refused here so the operator gets
+        a clear error at create/update time, not a silent dead-letter at send.
+
+        A DNS-name host cannot be fully validated here (it can rebind between now
+        and send), so the connection-time ``DnsPinningTransport`` guard remains the
+        source of truth; this is just the early, friendly rejection of the
+        clear-cut cases. The same egress policy the dispatcher sends under is
+        applied so an operator-allowlisted internal subnet is accepted here too.
+        """
+        # An explicit scheme gate first: ``validate_upstream_url`` assumes a bare
+        # host and would prepend ``https://`` to a schemed-but-non-http value
+        # (e.g. ``file:///…``), masking the bad scheme — a webhook target must be
+        # an http(s) URL as given.
         if not target_url.startswith(("http://", "https://")):
             raise InvalidInputError("target_url must be an http(s) URL.")
+        try:
+            validate_upstream_url(target_url, self._ctx.config.broker.egress)
+        except ValueError as exc:
+            raise InvalidInputError(f"target_url is not allowed: {exc}") from exc
 
 
 def _now_token() -> str:

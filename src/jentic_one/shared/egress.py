@@ -60,10 +60,15 @@ def resolve_and_validate(host: str, egress: EgressConfig | None) -> _IpAddress:
 class DnsPinningTransport(httpx.AsyncBaseTransport):
     """Wraps a transport to resolve+validate+pin the host IP per request.
 
-    An IP-literal host is passed through unchanged (nothing to rebind). For a DNS
-    name the request URL host is rewritten to the validated IP, the original host
-    is preserved as the ``Host`` header, and ``sni_hostname`` is set so TLS still
-    validates against the real certificate name.
+    An IP-literal host has nothing to rebind (there is no name to re-resolve), but
+    it is still validated against the *same* egress policy the DNS path uses —
+    ``assert_ip_allowed`` — so a request straight to a loopback / private /
+    link-local / metadata literal (``http://169.254.169.254``, ``http://10.0.0.5``,
+    ``http://127.0.0.1``, ``http://[::1]``) is rejected instead of silently
+    bypassing the SSRF guard. For a DNS name the request URL host is rewritten to
+    the validated IP, the original host is preserved as the ``Host`` header, and
+    ``sni_hostname`` is set so TLS still validates against the real certificate
+    name.
     """
 
     def __init__(self, inner: httpx.AsyncBaseTransport, egress: EgressConfig | None) -> None:
@@ -73,11 +78,17 @@ class DnsPinningTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
         try:
-            ipaddress.ip_address(host)
+            literal = ipaddress.ip_address(host)
         except ValueError:
             # A DNS name: resolve, validate (rebind guard), and pin.
             pinned = resolve_and_validate(host, self._egress)
             request = self._pin(request, host, pinned)
+        else:
+            # An IP literal: no name to rebind, but still subject to the egress
+            # policy. No domain-suffix exemption applies (hostname=None), matching
+            # the IP-literal branch of validate_upstream_url. Raises ValueError,
+            # exactly like the DNS path, when the address is disallowed.
+            assert_ip_allowed(literal, self._egress, hostname=None)
         return await self._inner.handle_async_request(request)
 
     @staticmethod

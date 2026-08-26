@@ -97,8 +97,10 @@ async def test_target_url_scheme_is_validated(
 ) -> None:
     """A non-http scheme can never work, so it is refused up front.
 
-    The address itself is validated at send time by the SSRF-guarding transport —
-    the only place that can do it correctly, since DNS can change afterwards.
+    A DNS-name address is still validated at send time by the SSRF-guarding
+    transport — the only place that can do it correctly, since DNS can change
+    afterwards — but the clear-cut cases (bad scheme, disallowed IP literal) are
+    rejected here for a friendly, immediate error.
     """
     service = WebhookEndpointService(integration_context)
     with pytest.raises(InvalidInputError, match="http"):
@@ -107,6 +109,37 @@ async def test_target_url_scheme_is_validated(
             identity=OPERATOR,
             target_url="file:///etc/passwd",
         )
+
+
+@pytest.mark.parametrize(
+    "target_url",
+    [
+        "http://169.254.169.254/latest/meta-data/",  # cloud metadata IMDS
+        "http://10.0.0.5/",  # private range
+        "http://127.0.0.1:6379/",  # loopback
+        "http://[::1]/",  # IPv6 loopback literal
+    ],
+)
+async def test_create_rejects_disallowed_ip_literal(
+    integration_context: Context, clean_webhooks: None, target_url: str
+) -> None:
+    """An IP-literal SSRF target is refused at create time (defence-in-depth)."""
+    service = WebhookEndpointService(integration_context)
+    with pytest.raises(InvalidInputError, match="not allowed"):
+        await service.create(name="ssrf", identity=OPERATOR, target_url=target_url)
+
+
+async def test_create_accepts_a_valid_public_url(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    """A well-formed public https URL is accepted at create time."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="valid",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+    )
+    assert created.endpoint.target_url == "https://receiver.test/hook"
 
 
 # --- read / delete -----------------------------------------------------------
@@ -263,6 +296,52 @@ async def test_update_rejects_a_bad_target_url(
     # The bad edit must not have partially applied.
     refetched = await service.get(created.endpoint.id)
     assert refetched.target_url == "https://receiver.test/hook"
+
+
+@pytest.mark.parametrize(
+    "target_url",
+    [
+        "http://169.254.169.254/latest/meta-data/",  # cloud metadata IMDS
+        "http://10.0.0.5/",  # private range
+        "http://127.0.0.1:6379/",  # loopback
+        "http://[::1]/",  # IPv6 loopback literal
+    ],
+)
+async def test_update_rejects_disallowed_ip_literal(
+    integration_context: Context, clean_webhooks: None, target_url: str
+) -> None:
+    """An IP-literal SSRF target is refused at update time, and does not apply."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="guarded-update",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+    )
+
+    with pytest.raises(InvalidInputError, match="not allowed"):
+        await service.update(created.endpoint.id, identity=OPERATOR, target_url=target_url)
+
+    refetched = await service.get(created.endpoint.id)
+    assert refetched.target_url == "https://receiver.test/hook", "the bad edit did not apply"
+
+
+async def test_update_accepts_a_valid_public_url(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    """A well-formed public https URL is accepted at update time."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="update-valid",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+    )
+
+    updated = await service.update(
+        created.endpoint.id,
+        identity=OPERATOR,
+        target_url="https://receiver.test/new-hook",
+    )
+    assert updated.target_url == "https://receiver.test/new-hook"
 
 
 async def test_update_unknown_endpoint_raises_not_found(
