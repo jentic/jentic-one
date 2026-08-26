@@ -44,31 +44,35 @@ Register the APIs an agent may use, store the credentials once, and the agent ma
 
 ## Quickstart
 
-### Self-hosted (Build local)
+### Self-hosted (build from source)
 
 ```bash
-# Build and start service
+# Build and start the service
 git clone https://github.com/jentic/jentic-one.git && cd jentic-one
 make install   # install dependencies and git hooks
 make dev       # idempotent local bring-up: fixtures + migrations + UI, then run the app
 open http://127.0.0.1:8000/app/setup
 
-# Build CLI's
+# Build the CLIs
 cd cli && make build
-./jenticctl    # Jentic CTL (Control, Admin of the System)
-./jentic       # Jentic CLI (search, inspect, execute - agent entrypoint)
+./jenticctl    # operator CLI — install, manage, admin
+./jentic       # agent CLI — search, inspect, execute
 ```
 
-### Self-hosted (Guided installation)
+[More on local development](docs/development/local-setup.md).
+
+### Self-hosted (guided install)
+
+One line, no clone: installs the CLIs, then an interactive wizard stands the stack up.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 ```
 
-### Self-hosted(Docker)
+### Self-hosted (Docker)
 
 ```bash
-# Download the Jentic One App and Broker
+# Pull the image — one image runs both the app and the broker
 docker pull ghcr.io/jentic/jentic-one-app:latest
 
 # Minimal config needed (all options: docs/reference/config.md)
@@ -93,29 +97,27 @@ docker run --rm \
   -e JENTIC_CONFIG_FILE=/etc/jentic/jentic-one.yaml \
   ghcr.io/jentic/jentic-one-app:latest python -m jentic_one.migrations.run
 
-# Start the Control Plane
+# Start the control plane (UI + APIs)
 docker run -d --name jentic-app \
   -v jentic-data:/data \
   -v "$PWD/jentic-one.yaml":/etc/jentic/jentic-one.yaml:ro \
   -e JENTIC_CONFIG_FILE=/etc/jentic/jentic-one.yaml \
   -p 127.0.0.1:8000:8000 ghcr.io/jentic/jentic-one-app:latest
 
-# Start the Broker
+# Start the broker (the execution edge agents call)
 docker run -d --name jentic-broker -v jentic-data:/data \
   -v "$PWD/jentic-one.yaml":/etc/jentic/jentic-one.yaml:ro \
   -e JENTIC_CONFIG_FILE=/etc/jentic/jentic-one.yaml -e JENTIC__APPS=broker \
   -p 127.0.0.1:8100:8000 ghcr.io/jentic/jentic-one-app:latest
 
-# Open Web UI and create admin account
+# Open the web UI and create the admin account
 open http://127.0.0.1:8000/app/setup
 ```
 
-[More information on Local Installations](docs/development/local-setup.md).
+### Managed install
 
-### Managed Install
-
-AWS Marketplace (*coming soon*)
-For Commercial use get in touch [jentic.com/contact](https://jentic.com/contact).
+AWS Marketplace (*coming soon*).
+For commercial use, get in touch: [jentic.com/contact](https://jentic.com/contact).
 
 ## How it works
 
@@ -165,16 +167,15 @@ Agents can read [llms.txt](llms.txt) for a machine-oriented map of the project.
 
 ## Contributing
 
-Commit messages follow Conventional Commits, and `make check` must pass before opening a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) has the full workflow, the
-[open issues](https://github.com/jentic/jentic-one/issues) list where help is wanted, and the Jentic [Code of Conduct](https://github.com/jentic/.github/blob/main/CODE_OF_CONDUCT.md) applies.
-
-Use [Discussions](https://github.com/jentic/jentic-one/discussions) for questions and proposals.
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[open issues](https://github.com/jentic/jentic-one/issues). Questions and proposals go in
+[Discussions](https://github.com/jentic/jentic-one/discussions).
 
 ## Links
 
-[Jentic One](https://jentic.com/jentic-one)
+[Jentic One](https://jentic.com/jentic-one) ·
 [API Directory](https://github.com/jentic/jentic-public-apis)
 
 ## License
 
-Jentic One is licensed under the [Apache 2.0](LICENSE).
+Jentic One is licensed under [Apache 2.0](LICENSE).
