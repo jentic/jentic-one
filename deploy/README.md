@@ -1070,7 +1070,7 @@ values are sensitive; the trust policy below is what protects the role):
 | -------- | ----- |
 | `MARKETPLACE_ECR_ROLE_ARN` | The IAM role below, e.g. `arn:aws:iam::<seller-account-id>:role/jentic-one-marketplace-publish` |
 | `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app` |
-| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` — **leave unset: the listing is RDS-only** (decided 2026-08-26; the only chart-supported Postgres image is the frozen `bitnamilegacy` one, which fails the CVE gate). Setting this resumes the mirror if the chart ever moves to a maintained image |
+| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` — **leave unset: the listing is RDS-only** (decided 2026-08-26; the only chart-supported Postgres image is the frozen `bitnamilegacy` one, which fails the CVE gate). Resuming the mirror needs this variable **and** the repo's ARN re-added to the role policy below (removed for least-privilege) |
 | `MARKETPLACE_ECR_CHART` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one` — the Helm chart as an OCI artifact (the listing's deployment-template URI). The final path segment **must equal the chart name** (`jentic-one`): `helm push` derives it from `Chart.yaml` |
 
 Once set:
@@ -1167,7 +1167,6 @@ portal (`aws-marketplace` actions may be required by newer portal setups; add
       ],
       "Resource": [
         "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-app",
-        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-psql",
         "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one"
       ]
     }
