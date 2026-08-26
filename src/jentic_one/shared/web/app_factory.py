@@ -310,22 +310,34 @@ async def _stop_catalog_update_scanner(
 
 def _start_webhook_dispatcher(
     ctx: Context,
+    enabled_apps: set[str],
 ) -> tuple[WebhookDeliveryDispatcher, asyncio.Task[None]] | None:
-    """Start the outbound webhook delivery dispatcher when the admin DB exists.
+    """Start the outbound webhook delivery dispatcher when the admin surface runs it.
 
     Everything it touches — endpoints, events, deliveries — lives in the
-    **admin** DB, so without it there is no queue to drain.
+    **admin** DB, so without it there is no queue to drain. But DB reachability
+    alone is not enough: ``SURFACE_DB_DEPS`` grants the admin DB to the
+    auth/broker/control/registry surfaces too, so gating on ``has_db("admin")``
+    alone would spin up a dispatcher (and relay) on ~4 processes, all racing the
+    same queue. Gate on the **owning surface** (``"admin" in enabled_apps``) as
+    well — mirroring ``_start_expiry_scanner`` — so exactly one owner drains it.
 
     A dispatcher rather than a ``JobKind`` handler on the shared ``WorkerLoop``:
     the worker wraps each handler call in a single transaction, which would hold
     a pooled connection for the whole of every outbound POST. The dispatcher
     owns its own sessions so it can close them before sending.
+
+    Egress is sourced from the webhook pipeline's **own** ``config.webhooks.egress``
+    (a dedicated, always-non-None ``EgressConfig``), not ``broker.egress``:
+    outbound webhook delivery is semantically owned by this feature and must have
+    a safe policy even on a process with no broker surface.
     """
-    if not ctx.has_db("admin"):
+    if "admin" not in enabled_apps or not ctx.has_db("admin"):
         return None
     dispatcher = WebhookDeliveryDispatcher(
         ctx.admin_db,
-        egress=ctx.config.broker.egress,
+        egress=ctx.config.webhooks.egress,
+        config=ctx.config.webhooks,
         secret_resolver=_build_secret_resolver(ctx),
     )
     task = asyncio.create_task(dispatcher.run())
@@ -349,17 +361,23 @@ async def _stop_webhook_dispatcher(
 
 def _start_webhook_relay(
     ctx: Context,
+    enabled_apps: set[str],
 ) -> tuple[InternalEventRelay, asyncio.Task[None]] | None:
-    """Start the internal-event relay when the admin DB exists.
+    """Start the internal-event relay when the admin surface runs it.
 
     The relay reads the ``events`` table and queues outbound deliveries, both in
     the **admin** DB. It is what makes notifications react to real platform
     activity (a credential expiring, a job dying) rather than to hand-inserted
     rows.
+
+    Like the dispatcher it is gated on the **owning surface**
+    (``"admin" in enabled_apps``), not just ``has_db("admin")``: the admin DB is
+    granted to several surfaces, and running one relay per surface would fan the
+    same event out multiple times.
     """
-    if not ctx.has_db("admin"):
+    if "admin" not in enabled_apps or not ctx.has_db("admin"):
         return None
-    relay = InternalEventRelay(ctx)
+    relay = InternalEventRelay(ctx, config=ctx.config.webhooks)
     task = asyncio.create_task(relay.run())
     _logger.info("webhook_event_relay_task_started")
     return relay, task
@@ -556,8 +574,8 @@ def create_surface_app(
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
-            webhook_task = _start_webhook_dispatcher(ctx)
-            webhook_relay_task = _start_webhook_relay(ctx)
+            webhook_task = _start_webhook_dispatcher(ctx, enabled_apps)
+            webhook_relay_task = _start_webhook_relay(ctx, enabled_apps)
             try:
                 yield
             finally:
@@ -650,8 +668,8 @@ def create_combined_app(
         worker_task = _start_worker(ctx, set(apps))
         scanner_task = _start_expiry_scanner(ctx, set(apps))
         catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
-        webhook_task = _start_webhook_dispatcher(ctx)
-        webhook_relay_task = _start_webhook_relay(ctx)
+        webhook_task = _start_webhook_dispatcher(ctx, set(apps))
+        webhook_relay_task = _start_webhook_relay(ctx, set(apps))
         try:
             yield
         finally:

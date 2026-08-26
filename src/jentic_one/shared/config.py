@@ -680,6 +680,74 @@ class SecurityConfig(BaseModel):
     execution_repeated_failure_critical_threshold: int = Field(default=20, ge=1)
 
 
+class WebhookConfig(BaseModel):
+    """Outbound-webhook pipeline knobs (relay + delivery dispatcher).
+
+    These were module-level literals baked into ``InternalEventRelay`` and
+    ``WebhookDeliveryDispatcher`` as constructor defaults; lifting them here makes
+    the poll cadence, batch size, retry policy, delivery lease, relay lag, and
+    delivery-log retention operator-tunable without a code change (mirrors
+    ``WorkerConfig`` for the job worker).
+
+    ``egress`` is the webhook pipeline's **own** SSRF/egress policy, deliberately
+    independent of ``broker.egress``: outbound webhook delivery is semantically
+    owned by this feature, not the broker's upstream-proxy path. It defaults to a
+    strict ``EgressConfig`` (private ranges + cloud-metadata blocked) so a webhook
+    is guaranteed a non-None policy even when the broker surface is not deployed.
+    Phase 3's per-endpoint allowlist extends this seam.
+    """
+
+    # --- relay (event → outbound queue) ---
+    # How often the relay polls the events table for newly-emitted rows.
+    relay_poll_interval_s: float = 2.0
+    # Max events fanned out per relay tick.
+    relay_batch_limit: int = 100
+    # Only relay events older than ``now - relay_lag_s``. The relay orders by
+    # ``created_at`` (insert time) but a row becomes visible at *commit* time; a
+    # transaction that inserts an early ``created_at`` yet commits late would be
+    # skipped by a cursor that has already advanced past it. Holding the cursor a
+    # few seconds behind wall-clock closes that gap at the cost of a small,
+    # bounded notification latency. 0 disables the lag (immediate relay).
+    relay_lag_s: float = 5.0
+
+    # --- delivery dispatcher (outbound queue → signed POST) ---
+    dispatch_poll_interval_s: float = 2.0
+    dispatch_batch_limit: int = 10
+    # Total attempts before a delivery is dead-lettered.
+    max_attempts: int = 5
+    request_timeout_s: float = 10.0
+    # Capped exponential backoff between retries: min(base * 2**(n-1), max),
+    # jittered (full jitter) so a fleet failing at once doesn't retry in lockstep.
+    base_backoff_s: float = 5.0
+    max_backoff_s: float = 3600.0
+    # Delivery lease / visibility timeout. When a dispatcher claims a row it moves
+    # it to ``sending`` and pushes ``next_attempt_at`` this far into the future,
+    # so a crashed/hung dispatcher's row is not immediately reclaimed (duplicate
+    # send). Size it safely above the request timeout + record slack.
+    lease_s: float = 60.0
+    # Cap on the number of deliveries in flight to a single endpoint per claim
+    # batch — a fleet of dispatchers times batch size with no per-endpoint cap
+    # is an accidental customer DoS. Enforced in ``claim_due`` (Postgres ``DISTINCT ON``;
+    # a portable fallback on SQLite). 0 disables the cap.
+    max_in_flight_per_endpoint: int = 1
+
+    # --- delivery-log retention / pruning ---
+    # Delete ``succeeded`` deliveries older than this many days so the log does
+    # not grow unbounded. ``dead`` rows are kept (until acknowledged/resent) so a
+    # failure stays inspectable. 0 disables pruning entirely.
+    retention_succeeded_days: int = 30
+    # The pruning scanner runs on the dispatcher tick clock, sweeping every Nth
+    # tick rather than every tick (retention shifts on the scale of days). One
+    # tick ≈ ``dispatch_poll_interval_s`` (~2s), so the default ~1800 ticks is
+    # roughly hourly.
+    prune_interval_ticks: int = 1800
+    # Max rows deleted per prune sweep, so a large backlog is drained in bounded
+    # batches instead of one long-locking delete.
+    prune_batch_limit: int = 1000
+
+    egress: EgressConfig = Field(default_factory=EgressConfig)
+
+
 class BrokerConfig(BaseModel):
     """Broker surface configuration."""
 
@@ -897,6 +965,7 @@ class AppConfig(BaseModel):
     credentials: CredentialsConfig = Field(default_factory=CredentialsConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    webhooks: WebhookConfig = Field(default_factory=WebhookConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])

@@ -347,8 +347,10 @@ class WebhookEndpointService:
         A DNS-name host cannot be fully validated here (it can rebind between now
         and send), so the connection-time ``DnsPinningTransport`` guard remains the
         source of truth; this is just the early, friendly rejection of the
-        clear-cut cases. The same egress policy the dispatcher sends under is
-        applied so an operator-allowlisted internal subnet is accepted here too.
+        clear-cut cases. The same egress policy the dispatcher sends under
+        (``config.webhooks.egress`` — the webhook pipeline's own SSRF policy, not
+        the broker's) is applied so an operator-allowlisted internal subnet is
+        accepted here too.
         """
         # An explicit scheme gate first: ``validate_upstream_url`` assumes a bare
         # host and would prepend ``https://`` to a schemed-but-non-http value
@@ -357,7 +359,7 @@ class WebhookEndpointService:
         if not target_url.startswith(("http://", "https://")):
             raise InvalidInputError("target_url must be an http(s) URL.")
         try:
-            validate_upstream_url(target_url, self._ctx.config.broker.egress)
+            validate_upstream_url(target_url, self._ctx.config.webhooks.egress)
         except ValueError as exc:
             raise InvalidInputError(f"target_url is not allowed: {exc}") from exc
 
