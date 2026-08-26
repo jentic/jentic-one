@@ -55,6 +55,45 @@ _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
 }
 
 
+def _binding_summary(
+    verb: str,
+    *,
+    toolkit_id: str,
+    agent_id: str,
+    agent_name: str | None,
+) -> str:
+    """Human summary for a toolkit⇄agent (un)binding.
+
+    Uses the toolkit **id** (its human name lives in the control DB and is not
+    resolved on the write path — that cross-DB lookup was display-only overhead)
+    and the already-loaded agent name, falling back to the agent id when unknown.
+    Reads like ``Toolkit tk_… bound to agent "billing-bot"``. ``verb`` is the
+    linking phrase ("bound to" / "unbound from"); the relay degrades gracefully
+    to ids and keeps them in its de-emphasised footer.
+    """
+    agent = f'"{agent_name}"' if agent_name else agent_id
+    return f"Toolkit {toolkit_id} {verb} agent {agent}"
+
+
+def _binding_data(
+    *,
+    toolkit_id: str,
+    agent_id: str,
+    agent_name: str | None,
+) -> dict[str, str]:
+    """`data` for a binding event: ids always, the resolved agent name when known.
+
+    Names/labels/ids only — never secrets. The relay shows the agent name as a
+    chip and keeps the ids in its de-emphasised footer. The toolkit name is
+    intentionally not resolved here (it would be a cross-DB read on the write
+    path); consumers that want it can resolve it lazily on read.
+    """
+    data = {"toolkit_id": toolkit_id, "agent_id": agent_id}
+    if agent_name:
+        data["agent_name"] = agent_name
+    return data
+
+
 class AgentService:
     """Manages agent lifecycle: create, list, get, approve, deny, disable, enable, archive."""
 
@@ -102,7 +141,11 @@ class AgentService:
                 session,
                 type=EventType.AGENT_CREATED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent.id} created",
+                summary=f"Agent '{agent.name}' created",
+                # Carry the human name + the id (id footer-only in the relay) so
+                # a notification reads "Agent 'billing-bot' created", not a raw
+                # ``agnt_…`` id. Names/ids only — never secrets.
+                data={"agent_id": agent.id, "agent_name": agent.name},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
@@ -336,6 +379,10 @@ class AgentService:
                 type=EventType.AGENT_REGISTRATION_DENIED,
                 severity=EventSeverity.INFO,
                 summary=f"Agent '{agent.name}' registration denied",
+                # `reason` is operator free-text — it rides as `detail` (dropped
+                # by fan-out) not `data`, respecting the anti-exfil boundary. The
+                # relay message stays clean from name + id alone.
+                detail=reason,
                 data={"agent_id": agent_id, "agent_name": agent.name},
                 created_by=identity.sub,
                 actor_id=identity.sub,
@@ -421,7 +468,7 @@ class AgentService:
     async def bind_toolkit(
         self, agent_id: str, *, toolkit_id: str, identity: Identity
     ) -> ToolkitBindingView:
-        await self.get_agent(agent_id, identity=identity)
+        agent = await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.transaction() as session:
             try:
                 binding = await AgentToolkitBindingRepository.bind(
@@ -444,7 +491,20 @@ class AgentService:
                 session,
                 type=EventType.TOOLKIT_BOUND_TO_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Toolkit {toolkit_id} bound to agent {agent_id}",
+                summary=_binding_summary(
+                    "bound to",
+                    toolkit_id=toolkit_id,
+                    agent_id=agent_id,
+                    agent_name=agent.name,
+                ),
+                # The toolkit id + the already-loaded agent name (never a
+                # cross-DB name lookup) so the relay can show the agent name and
+                # keep ids footer-only. Names/ids only — no secrets.
+                data=_binding_data(
+                    toolkit_id=toolkit_id,
+                    agent_id=agent_id,
+                    agent_name=agent.name,
+                ),
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
@@ -452,7 +512,7 @@ class AgentService:
         return ToolkitBindingView.model_validate(binding)
 
     async def unbind_toolkit(self, agent_id: str, *, toolkit_id: str, identity: Identity) -> None:
-        await self.get_agent(agent_id, identity=identity)
+        agent = await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.transaction() as session:
             removed = await AgentToolkitBindingRepository.unbind(
                 session, agent_id=agent_id, toolkit_id=toolkit_id
@@ -474,7 +534,17 @@ class AgentService:
                 session,
                 type=EventType.TOOLKIT_UNBOUND_FROM_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Toolkit {toolkit_id} unbound from agent {agent_id}",
+                summary=_binding_summary(
+                    "unbound from",
+                    toolkit_id=toolkit_id,
+                    agent_id=agent_id,
+                    agent_name=agent.name,
+                ),
+                data=_binding_data(
+                    toolkit_id=toolkit_id,
+                    agent_id=agent_id,
+                    agent_name=agent.name,
+                ),
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,

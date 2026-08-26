@@ -33,6 +33,7 @@ from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events import emit_event, valid_trace_id_or_none
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.executions import record_execution
+from jentic_one.shared.executions.display import execution_display_data, execution_summary
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
@@ -54,7 +55,6 @@ _execution_duration = _meter.create_histogram(
 )
 
 _circuit_event_last_emitted: dict[str, datetime] = {}
-_MAX_EVENT_SUMMARY_LEN = 128
 
 #: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
 #: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
@@ -455,76 +455,6 @@ async def _persist(
     )
 
 
-def _execution_display_data(
-    *,
-    execution_id: str,
-    toolkit_id: str | None,
-    operation_id: str | None,
-    api_vendor: str | None,
-    api_name: str | None,
-    api_version: str | None,
-    duration_ms: int | None,
-    http_status: int | None,
-) -> dict[str, Any]:
-    """Build the non-secret DISPLAY ``data`` for an execution lifecycle event.
-
-    Every field here is a **pre-resolved identifier or metric already on the
-    execution context** — ids, the toolkit/operation slugs, the discovery-driven
-    api vendor/name/version, the measured duration, and the upstream HTTP status.
-    None of it is a secret, a credential, or an upstream response body: it is the
-    same non-sensitive metadata already persisted on the ``executions`` row and
-    stamped on trace spans. Empty/absent fields are dropped so the payload only
-    carries what actually resolved at the emit site (no ``null`` noise on the
-    wire, and the Slack relay's field renderer stays clean).
-    """
-    api = {
-        key: value
-        for key, value in (
-            ("vendor", api_vendor),
-            ("name", api_name),
-            ("version", api_version),
-        )
-        if value
-    }
-    data: dict[str, Any] = {"execution_id": execution_id}
-    if toolkit_id:
-        data["toolkit_id"] = toolkit_id
-    if operation_id:
-        data["operation_id"] = operation_id
-    if api:
-        data["api"] = api
-    if duration_ms is not None:
-        data["duration_ms"] = duration_ms
-    if http_status is not None:
-        data["http_status"] = http_status
-    return data
-
-
-def _execution_summary(
-    *,
-    status: ExecutionStatus,
-    operation_id: str | None,
-    api_vendor: str | None,
-    duration_ms: int | None,
-    error_msg: str | None,
-) -> str:
-    """Human-readable one-liner for an execution lifecycle event.
-
-    Prefers the operation id (falling back to the api vendor, then a generic
-    label) so a Slack/email reader sees *what ran* instead of a bare execution
-    id. On the failed branch the already-sanitised ``error_msg`` is appended —
-    it is the same short, upstream-status-only string persisted to the execution
-    record (never an upstream response body).
-    """
-    what = operation_id or api_vendor or "operation"
-    if status == ExecutionStatus.COMPLETED:
-        if duration_ms is not None:
-            return f"Execution of {what} completed in {duration_ms}ms"
-        return f"Execution of {what} completed"
-    reason = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
-    return f"Execution of {what} failed: {reason}"
-
-
 async def _emit_execution_lifecycle(
     session: Any,
     *,
@@ -557,12 +487,13 @@ async def _emit_execution_lifecycle(
     could never dedupe downstream.
 
     The ``api_*`` / ``duration_ms`` / ``http_status`` metadata is folded into the
-    event ``data`` as pre-resolved DISPLAY fields (see ``_execution_display_data``)
-    so an outbound webhook carries a human-readable summary and safe identifiers
-    instead of an id-only string with an empty ``data`` — never secrets or bodies.
+    event ``data`` as pre-resolved DISPLAY fields (see ``execution_display_data``
+    in ``shared/executions/display.py``) so an outbound webhook carries a
+    human-readable summary and safe identifiers instead of an id-only string with
+    an empty ``data`` — never secrets or bodies.
     """
     event_trace_id = valid_trace_id_or_none(trace_id)
-    display_data = _execution_display_data(
+    display_data = execution_display_data(
         execution_id=execution_id,
         toolkit_id=toolkit_id,
         operation_id=operation_id,
@@ -572,7 +503,7 @@ async def _emit_execution_lifecycle(
         duration_ms=duration_ms,
         http_status=http_status,
     )
-    summary = _execution_summary(
+    summary = execution_summary(
         status=status,
         operation_id=operation_id,
         api_vendor=api_vendor,

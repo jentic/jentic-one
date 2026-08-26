@@ -28,33 +28,72 @@ import socket
 import httpx
 
 from jentic_one.shared.config import EgressConfig
-from jentic_one.shared.url_validation import assert_ip_allowed
+from jentic_one.shared.url_validation import DnsResolutionError, assert_ip_allowed
 
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
-def resolve_and_validate(host: str, egress: EgressConfig | None) -> _IpAddress:
-    """Resolve *host* and return the first IP that passes the egress policy.
+def resolve_and_validate(
+    host: str,
+    egress: EgressConfig | None,
+    *,
+    extra_allowed_cidrs: list[str] | None = None,
+) -> _IpAddress:
+    """Resolve *host*, validate it against the egress policy, and return the pinned IP.
 
-    Validates **every** resolved address against ``assert_ip_allowed`` so a
-    multi-record answer can't smuggle a blocked IP past the check, then returns
-    the first one to pin the connection to. Raises ``ValueError`` if the host
-    can't be resolved or any resolved IP is blocked (the rebind guard).
+    A name can resolve to **several** addresses while the connection is pinned to
+    just one, so the two SSRF checks apply at different scopes here:
+
+    * the **egress hard-deny** (cloud-metadata + private/loopback/link-local) is
+      enforced against **every** resolved address — the anti-rebind guarantee, so
+      a hostile resolver can't smuggle a private/metadata record in alongside a
+      public one and have us pin the public one;
+    * the caller's **restrictive** per-endpoint allowlist (``extra_allowed_cidrs``,
+      Phase 3 per-endpoint ``allowed_cidrs``) gates **only the pinned address** —
+      the one the connection actually uses — because it is an operator-controlled
+      positive filter on the destination, and a sibling record we never connect to
+      must not veto the delivery. (Applying it to every sibling was the bug: one
+      out-of-range address in a rotating pool, e.g. ngrok, blocked everything.)
+
+    The pinned address is the first record, for determinism and to match
+    :meth:`DnsPinningTransport._pin`. Raises ``DnsResolutionError`` if the host
+    can't be resolved, ``EgressBlockedError`` if any resolved IP is blocked (the
+    rebind guard), or ``AllowlistBlockedError`` if the pinned IP falls outside a
+    non-empty allowlist. The metadata hard-deny is never re-opened.
     """
     try:
         results = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise ValueError(f"upstream host did not resolve: {host}") from exc
+        raise DnsResolutionError(f"upstream host did not resolve: {host}") from exc
 
     addrs = [ipaddress.ip_address(sockaddr[0]) for *_rest, sockaddr in results]
     if not addrs:
-        raise ValueError(f"upstream host did not resolve: {host}")
+        raise DnsResolutionError(f"upstream host did not resolve: {host}")
 
     for addr in addrs:
-        # A DNS name re-resolved here, so pass the hostname for the suffix
-        # exemption — matches the validation-time semantics.
-        assert_ip_allowed(addr, egress, hostname=host)
-    return addrs[0]
+        # Egress hard-deny on every resolved address (the rebind guard). Pass the
+        # hostname for the suffix exemption — matches validation-time semantics —
+        # and the allowlist so it may still *widen* a listed private range, but
+        # NOT enforce the restrictive gate here (that is scoped to the pin below).
+        assert_ip_allowed(
+            addr,
+            egress,
+            hostname=host,
+            extra_allowed_cidrs=extra_allowed_cidrs,
+            enforce_allowlist=False,
+        )
+
+    pinned = addrs[0]
+    # Restrictive allowlist gates only the pinned address the connection uses.
+    # Re-running the (idempotent) egress hard-deny on it is harmless.
+    assert_ip_allowed(
+        pinned,
+        egress,
+        hostname=host,
+        extra_allowed_cidrs=extra_allowed_cidrs,
+        enforce_allowlist=True,
+    )
+    return pinned
 
 
 class DnsPinningTransport(httpx.AsyncBaseTransport):
@@ -69,7 +108,18 @@ class DnsPinningTransport(httpx.AsyncBaseTransport):
     the validated IP, the original host is preserved as the ``Host`` header, and
     ``sni_hostname`` is set so TLS still validates against the real certificate
     name.
+
+    A caller may attach a **per-request** allowlist under the
+    ``jentic_allowed_cidrs`` request extension — the Phase 3 per-endpoint
+    ``allowed_cidrs``. When non-empty it is applied to the **pinned** IP as a
+    *restrictive* allowlist (rebind-proof: the check runs on the address the
+    connection actually uses), so a target that resolves outside the allowlist is
+    refused for that one request — without ever re-opening the cloud-metadata
+    hard-deny.
     """
+
+    #: Request-extension key carrying a per-request ``list[str]`` of extra CIDRs.
+    EXTRA_CIDRS_EXTENSION = "jentic_allowed_cidrs"
 
     def __init__(self, inner: httpx.AsyncBaseTransport, egress: EgressConfig | None) -> None:
         self._inner = inner
@@ -77,18 +127,19 @@ class DnsPinningTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
+        extra_cidrs = request.extensions.get(self.EXTRA_CIDRS_EXTENSION)
         try:
             literal = ipaddress.ip_address(host)
         except ValueError:
             # A DNS name: resolve, validate (rebind guard), and pin.
-            pinned = resolve_and_validate(host, self._egress)
+            pinned = resolve_and_validate(host, self._egress, extra_allowed_cidrs=extra_cidrs)
             request = self._pin(request, host, pinned)
         else:
             # An IP literal: no name to rebind, but still subject to the egress
             # policy. No domain-suffix exemption applies (hostname=None), matching
             # the IP-literal branch of validate_upstream_url. Raises ValueError,
             # exactly like the DNS path, when the address is disallowed.
-            assert_ip_allowed(literal, self._egress, hostname=None)
+            assert_ip_allowed(literal, self._egress, hostname=None, extra_allowed_cidrs=extra_cidrs)
         return await self._inner.handle_async_request(request)
 
     @staticmethod

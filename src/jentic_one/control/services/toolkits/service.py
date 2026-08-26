@@ -88,11 +88,20 @@ class ToolkitService:
             raise ToolkitAccessDeniedError(toolkit_id)
         raise ToolkitNotFoundError(toolkit_id)
 
-    async def _emit_telemetry(self, *, type: str, summary: str, identity: Identity) -> None:
+    async def _emit_telemetry(
+        self,
+        *,
+        type: str,
+        summary: str,
+        identity: Identity,
+        data: dict[str, str] | None = None,
+    ) -> None:
         """Emit a telemetry event on the admin DB (best-effort).
 
         Toolkit writes land in the control DB; telemetry lives in the admin DB,
         so we open a separate short admin transaction next to the audit write.
+        ``data`` carries resolved names/ids only (never secrets) so the outbound
+        relay can render names instead of opaque ``tk_…`` ids.
         """
         try:
             async with self._ctx.admin_db.transaction() as session:
@@ -104,6 +113,7 @@ class ToolkitService:
                     created_by=identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
+                    data=data,
                 )
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=type, exc_info=True)
@@ -182,7 +192,8 @@ class ToolkitService:
         )
         await self._emit_telemetry(
             type=EventType.TOOLKIT_CREATED,
-            summary=f"Toolkit {toolkit.id} created",
+            summary=f"Toolkit '{toolkit.name}' created",
+            data={"toolkit_id": toolkit.id, "toolkit_name": toolkit.name},
             identity=identity,
         )
         return ToolkitCreateResult(toolkit=toolkit, plaintext_key=plaintext, warnings=warnings)
@@ -408,7 +419,8 @@ class ToolkitService:
         )
         await self._emit_telemetry(
             type=EventType.TOOLKIT_KEY_CREATED,
-            summary=f"Toolkit key {key.id} created",
+            summary=f"API key created on toolkit '{toolkit.name}'",
+            data={"toolkit_id": toolkit_id, "toolkit_name": toolkit.name, "key_id": key.id},
             identity=identity,
         )
         return key, plaintext
@@ -616,7 +628,12 @@ class ToolkitService:
         )
         await self._emit_telemetry(
             type=EventType.CREDENTIAL_BOUND_TO_TOOLKIT,
-            summary=f"Credential {credential_id} bound to toolkit {toolkit_id}",
+            summary=f"Credential bound to toolkit '{toolkit.name}'",
+            data={
+                "toolkit_id": toolkit_id,
+                "toolkit_name": toolkit.name,
+                "credential_id": credential_id,
+            },
             identity=identity,
         )
         return BindResult(binding=binding, rules=rules, warnings=warnings)
@@ -689,7 +706,12 @@ class ToolkitService:
         )
         await self._emit_telemetry(
             type=EventType.CREDENTIAL_UNBOUND_FROM_TOOLKIT,
-            summary=f"Credential {credential_id} unbound from toolkit {toolkit_id}",
+            summary=f"Credential unbound from toolkit '{toolkit.name}'",
+            data={
+                "toolkit_id": toolkit_id,
+                "toolkit_name": toolkit.name,
+                "credential_id": credential_id,
+            },
             identity=identity,
         )
 
@@ -747,7 +769,8 @@ class ToolkitService:
         )
         await self._emit_telemetry(
             type=EventType.TOOLKIT_PERMISSION_RULE_SET,
-            summary=f"Permission rules set on toolkit {toolkit_id}",
+            summary=f"Permission rules set on toolkit '{toolkit.name}'",
+            data={"toolkit_id": toolkit_id, "toolkit_name": toolkit.name},
             identity=identity,
         )
         return result
@@ -787,7 +810,8 @@ class ToolkitService:
         )
         await self._emit_telemetry(
             type=EventType.TOOLKIT_PERMISSION_RULE_SET,
-            summary=f"Permission rules patched on toolkit {toolkit_id}",
+            summary=f"Permission rules patched on toolkit '{toolkit.name}'",
+            data={"toolkit_id": toolkit_id, "toolkit_name": toolkit.name},
             identity=identity,
         )
         return result

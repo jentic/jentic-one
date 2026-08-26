@@ -14,6 +14,7 @@ every read endpoint into a secret-disclosure endpoint. Lost secret ⇒ rotate.
 
 from __future__ import annotations
 
+import ipaddress
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -76,9 +77,11 @@ class WebhookEndpointService:
         identity: Identity,
         target_url: str | None = None,
         event_types: list[str] | None = None,
+        allowed_cidrs: list[str] | None = None,
     ) -> CreatedEndpoint:
         """Create an endpoint, returning the plaintext secret exactly once."""
         self._validate_shape(target_url=target_url)
+        normalised_cidrs = self._validate_cidrs(allowed_cidrs or [])
 
         secret, encrypted, fingerprint = self._secrets.new_secret()
 
@@ -90,6 +93,7 @@ class WebhookEndpointService:
                 secret_encrypted=encrypted,
                 target_url=target_url,
                 event_types=event_types or [],
+                allowed_cidrs=normalised_cidrs,
                 created_by=identity.sub,
             )
 
@@ -104,6 +108,7 @@ class WebhookEndpointService:
                     "name": name,
                     "target_url": target_url,
                     "event_types": event_types or [],
+                    "allowed_cidrs": normalised_cidrs,
                 },
             )
 
@@ -122,6 +127,7 @@ class WebhookEndpointService:
         name: str | None = None,
         target_url: str | None | _Unset = _UNSET,
         event_types: list[str] | None | _Unset = _UNSET,
+        allowed_cidrs: list[str] | None | _Unset = _UNSET,
         active: bool | None = None,
     ) -> WebhookEndpoint:
         """Partially update an endpoint's configuration (audited).
@@ -138,6 +144,9 @@ class WebhookEndpointService:
         retroactively to the durable delivery queue.
         """
         self._validate_shape_for_update(target_url=target_url)
+        resolved_cidrs = (
+            None if isinstance(allowed_cidrs, _Unset) else self._validate_cidrs(allowed_cidrs or [])
+        )
 
         async with self._ctx.admin_db.transaction() as session:
             existing = await WebhookEndpointRepository.get_by_id(session, endpoint_id)
@@ -148,6 +157,7 @@ class WebhookEndpointService:
                 "name": existing.name,
                 "target_url": existing.target_url,
                 "event_types": list(existing.event_types or []),
+                "allowed_cidrs": list(existing.allowed_cidrs or []),
                 "active": existing.active,
             }
 
@@ -159,6 +169,7 @@ class WebhookEndpointService:
                 name=name,
                 target_url=None if isinstance(target_url, _Unset) else target_url,
                 event_types=resolved_event_types,
+                allowed_cidrs=resolved_cidrs,
                 active=active,
             )
             if endpoint is None:  # pragma: no cover - guarded by the get above
@@ -168,6 +179,7 @@ class WebhookEndpointService:
                 "name": endpoint.name,
                 "target_url": endpoint.target_url,
                 "event_types": list(endpoint.event_types or []),
+                "allowed_cidrs": list(endpoint.allowed_cidrs or []),
                 "active": endpoint.active,
             }
             await AuditRepository.record(
@@ -261,6 +273,24 @@ class WebhookEndpointService:
             if endpoint is None:
                 raise WebhookEndpointNotFoundError(endpoint_id)
             return await WebhookDeliveryRepository.list_for_endpoint(session, endpoint_id)
+
+    async def get_stats(self, endpoint_id: str) -> dict:  # type: ignore[type-arg]
+        """Aggregate delivery health for the endpoint drawer's Overview.
+
+        Surfaces the counts / last-24h / last-attempt / next-attempt / average
+        response-time data that already lives in ``webhook_deliveries`` — no new
+        storage, just a couple of grouped reads.
+        """
+        async with self._ctx.admin_db.session() as session:
+            endpoint = await WebhookEndpointRepository.get_by_id(session, endpoint_id)
+            if endpoint is None:
+                raise WebhookEndpointNotFoundError(endpoint_id)
+            return await WebhookDeliveryRepository.aggregate_for_endpoint(session, endpoint_id)
+
+    async def list_delivery_attempts(self, delivery_id: str) -> list:  # type: ignore[type-arg]
+        """Per-attempt history for one delivery (newest first)."""
+        async with self._ctx.admin_db.session() as session:
+            return await WebhookDeliveryRepository.list_attempts(session, delivery_id)
 
     async def resend(self, delivery_id: str, *, identity: Identity) -> None:
         """Requeue a delivery for another attempt.
@@ -362,6 +392,40 @@ class WebhookEndpointService:
             validate_upstream_url(target_url, self._ctx.config.webhooks.egress)
         except ValueError as exc:
             raise InvalidInputError(f"target_url is not allowed: {exc}") from exc
+
+    @staticmethod
+    def _validate_cidrs(raw_cidrs: list[str]) -> list[str]:
+        """Validate + normalise a per-endpoint ``allowed_cidrs`` list.
+
+        Each entry must parse as an IPv4/IPv6 network (``ipaddress.ip_network``
+        with ``strict=False`` so a host address like ``10.0.0.5`` is accepted and
+        canonicalised to its ``/32`` — or ``/128`` for v6). Duplicates are
+        removed while preserving order. Rejecting garbage here means the stored
+        allowlist is always a set of real networks the send-time guard can trust.
+
+        This does **not** widen the metadata hard-deny: an operator can list the
+        metadata range here, but ``assert_ip_allowed`` still refuses those IPs at
+        send regardless of any allowlist — this validation only guarantees the
+        stored values are well-formed CIDRs.
+        """
+        normalised: list[str] = []
+        seen: set[str] = set()
+        for raw in raw_cidrs:
+            entry = raw.strip()
+            if not entry:
+                continue
+            try:
+                network = ipaddress.ip_network(entry, strict=False)
+            except ValueError as exc:
+                raise InvalidInputError(
+                    f"allowed_cidrs entry is not a valid CIDR: {entry!r} ({exc})"
+                ) from exc
+            canonical = str(network)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            normalised.append(canonical)
+        return normalised
 
 
 def _now_token() -> str:

@@ -29,6 +29,11 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events import emit_event, valid_trace_id_or_minted, valid_trace_id_or_none
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
+from jentic_one.shared.executions.display import (
+    MAX_EVENT_SUMMARY_LEN,
+    execution_display_data,
+    execution_summary,
+)
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.protocols import (
     CredentialInjector,
@@ -44,7 +49,7 @@ from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger(__name__)
 
-_MAX_EVENT_SUMMARY_LEN = 128
+_MAX_EVENT_SUMMARY_LEN = MAX_EVENT_SUMMARY_LEN
 # A far-future expiry so the resolved-identity dataclass is well-formed; the
 # worker only runs an already-authorized, enqueued job — the inbound token was
 # validated at enqueue time, so credential resolution here is by actor identity.
@@ -196,6 +201,11 @@ class ExecutionHandler:
             actor_type=actor_type,
             toolkit_id=payload.get("toolkit_id"),
             operation_id=payload.get("operation_id"),
+            api_vendor=api_vendor,
+            api_name=api_name,
+            api_version=api_version,
+            duration_ms=duration_ms,
+            http_status=http_status,
         )
 
         result_body: dict[str, Any] = {
@@ -222,15 +232,49 @@ class ExecutionHandler:
         actor_type: str,
         toolkit_id: str | None = None,
         operation_id: str | None = None,
+        api_vendor: str | None = None,
+        api_name: str | None = None,
+        api_version: str | None = None,
+        duration_ms: int | None = None,
+        http_status: int | None = None,
     ) -> None:
+        """Emit EXECUTION_COMPLETED/EXECUTION_FAILED for the async-worker path.
+
+        Populates the event ``summary`` + ``data`` with the **same** pre-resolved,
+        non-secret DISPLAY fields as the sync/streaming broker path (via the
+        shared ``execution_display_data`` / ``execution_summary`` helpers), so an
+        outbound webhook renders "Execution of <operation> completed in <N>ms"
+        with Operation / API / HTTP status / Duration fields instead of an
+        id-only summary with an empty ``data`` — regardless of which path ran the
+        call. Never carries secrets, credential material, or an upstream response
+        body (the anti-exfiltration boundary the fan-out enforces).
+        """
         event_trace_id = valid_trace_id_or_none(trace_id)
+        display_data = execution_display_data(
+            execution_id=execution_id,
+            toolkit_id=toolkit_id,
+            operation_id=operation_id,
+            api_vendor=api_vendor,
+            api_name=api_name,
+            api_version=api_version,
+            duration_ms=duration_ms,
+            http_status=http_status,
+        )
+        summary = execution_summary(
+            status=status,
+            operation_id=operation_id,
+            api_vendor=api_vendor,
+            duration_ms=duration_ms,
+            error_msg=error_msg,
+        )
         try:
             if status == ExecutionStatus.COMPLETED:
                 await emit_event(
                     session,
                     type=EventType.EXECUTION_COMPLETED,
                     severity=EventSeverity.INFO,
-                    summary=f"Execution completed (job {job_id})",
+                    summary=summary,
+                    data=display_data,
                     execution_id=execution_id,
                     trace_id=event_trace_id,
                     job_id=job_id,
@@ -239,13 +283,13 @@ class ExecutionHandler:
                     actor_type=actor_type,
                 )
             else:
-                sanitized = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
                 await emit_event(
                     session,
                     type=EventType.EXECUTION_FAILED,
                     severity=EventSeverity.ERROR,
-                    summary=f"Execution failed: {sanitized}",
+                    summary=summary,
                     requires_action=True,
+                    data=display_data,
                     execution_id=execution_id,
                     trace_id=event_trace_id,
                     job_id=job_id,

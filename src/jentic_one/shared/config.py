@@ -725,10 +725,11 @@ class WebhookConfig(BaseModel):
     # so a crashed/hung dispatcher's row is not immediately reclaimed (duplicate
     # send). Size it safely above the request timeout + record slack.
     lease_s: float = 60.0
-    # Cap on the number of deliveries in flight to a single endpoint per claim
-    # batch — a fleet of dispatchers times batch size with no per-endpoint cap
-    # is an accidental customer DoS. Enforced in ``claim_due`` (Postgres ``DISTINCT ON``;
-    # a portable fallback on SQLite). 0 disables the cap.
+    # Cap on the number of deliveries in flight to a single endpoint at once — a
+    # fleet of dispatchers times batch size with no per-endpoint cap is an
+    # accidental customer DoS. Enforced across dispatchers in ``claim_due`` by
+    # counting each endpoint's live leases (``sending`` rows with a future
+    # ``next_attempt_at``) against the budget before claiming. 0 disables the cap.
     max_in_flight_per_endpoint: int = 1
 
     # --- delivery-log retention / pruning ---

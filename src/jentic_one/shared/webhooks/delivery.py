@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import ssl
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -46,7 +47,12 @@ from jentic_one.admin.repos.webhook_repo import (
     WebhookEventRepository,
 )
 from jentic_one.shared.config import WebhookConfig
-from jentic_one.shared.egress import build_pinned_transport
+from jentic_one.shared.egress import DnsPinningTransport, build_pinned_transport
+from jentic_one.shared.url_validation import (
+    AllowlistBlockedError,
+    DnsResolutionError,
+    EgressBlockedError,
+)
 from jentic_one.shared.webhooks import metrics as webhook_metrics
 from jentic_one.shared.webhooks.signing import sign_payload
 
@@ -58,7 +64,6 @@ logger = structlog.get_logger(__name__)
 # Resolves an endpoint's plaintext signing secret, or None when unavailable.
 SecretResolver = Callable[[WebhookEndpoint], str | None]
 
-_MAX_ERROR_LEN = 500
 # Receivers that answer 2xx-but-huge would otherwise let us buffer arbitrary
 # data from an untrusted endpoint; we only ever need the status code.
 _MAX_RESPONSE_BYTES = 8192
@@ -66,29 +71,76 @@ _HTTP_GONE = 410
 
 
 def _categorize_error(exc: Exception) -> str:
-    """Map a send exception to a **categorized, non-sensitive** reason.
+    """Map a send exception to a **stable, non-sensitive** failure reason.
 
     The raw ``str(exc)`` can embed the pinned internal IP or the full target URL
-    (``httpx`` includes them), and this string is persisted to ``last_error`` and
-    returned by the read API + shown in the UI — so it must never carry that
-    detail. We record only a stable low-cardinality category here; the full
-    exception (with detail) is logged server-side by the caller for diagnosis.
+    (``httpx`` includes them; the SSRF guard's exception may name the host), and
+    this string is persisted to ``last_error`` and returned by the read API +
+    shown in the UI — so it must never carry that detail. We record only a stable
+    label drawn from a **closed set** of safe categories; the full exception
+    (with detail) is logged server-side by the caller for diagnosis.
+
+    The category set is deliberately small and closed. Each label is a
+    non-sensitive *reason* — it names the class of failure (DNS, allowlist,
+    egress policy, timeout, TLS, …) without ever echoing a resolved IP, a raw
+    exception repr, or an upstream body. The UI maps each label to a human
+    sentence + remediation hint. ``delivery_error`` is retained solely as the
+    final unknown fallback.
+
+    Ordering matters: the SSRF-guard refusals surface as ``ValueError``
+    subclasses that the pinning transport raises *before* httpx ever attempts a
+    socket, and ``AllowlistBlockedError`` is a subclass of ``EgressBlockedError``
+    so it must be checked first to attribute the block to the endpoint's own
+    allowlist rather than the operator-wide egress policy.
     """
+    # SSRF/egress refusals (raised by the DNS-pinning transport before connect).
+    # AllowlistBlockedError ⊂ EgressBlockedError, so test the specific one first.
+    if isinstance(exc, AllowlistBlockedError):
+        return "blocked_by_allowlist"
+    if isinstance(exc, EgressBlockedError):
+        return "blocked_egress_policy"
+    if isinstance(exc, DnsResolutionError):
+        return "dns_unresolved"
+    # Transport-level failures from httpx.
     if isinstance(exc, httpx.ConnectTimeout | httpx.PoolTimeout):
         return "connection_timeout"
     if isinstance(exc, httpx.ReadTimeout | httpx.WriteTimeout | httpx.TimeoutException):
         return "read_timeout"
+    if isinstance(exc, httpx.ProxyError):
+        return "connect_failed"
     if isinstance(exc, httpx.ConnectError):
-        # An SSRF-guard refusal, a DNS failure and an ordinary connect refusal
-        # all surface as ConnectError; distinguishing them would require parsing
-        # the message (which is exactly the sensitive text we must not expose),
-        # so they share one safe category.
-        return "connection_error"
+        # A TLS handshake failure surfaces as a ConnectError whose cause is an
+        # ssl.SSLError; surface it as its own reason so the UI can suggest a
+        # certificate/protocol mismatch rather than a generic connect failure.
+        # Only the *type* of the cause is inspected — never its message.
+        if _is_tls_failure(exc):
+            return "tls_error"
+        # An ordinary connect refusal / unreachable host (a DNS failure that
+        # slips past the pinning transport, e.g. an IP-literal target, also lands
+        # here). Distinct from a timeout: the peer actively refused or is down.
+        return "connect_failed"
     if isinstance(exc, httpx.ProtocolError):
         return "protocol_error"
     if isinstance(exc, httpx.TransportError):
         return "transport_error"
     return "delivery_error"
+
+
+def _is_tls_failure(exc: BaseException) -> bool:
+    """Whether *exc* (or a cause in its chain) is an SSL/TLS handshake error.
+
+    Walks the ``__cause__``/``__context__`` chain looking for an ``ssl.SSLError``
+    — httpx wraps a handshake failure in a ``ConnectError`` — inspecting only the
+    exception *types*, never any message, so no host/cert detail is read.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, ssl.SSLError):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +160,12 @@ class _PreparedDelivery:
     body: bytes
     event_id: str
     event_type: str
+    # Per-endpoint IP/CIDR allowlist (Phase 3), snapshotted while the session was
+    # open. Threaded to the pinning transport as a per-request extension so a
+    # non-empty allowlist is enforced *restrictively* on the *pinned* IP
+    # (rebind-proof): a target resolving outside the allowlist is refused. Empty =
+    # no restriction.
+    allowed_cidrs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +178,9 @@ class _SendOutcome:
     status_code: int | None
     error: str | None
     gone: bool = False
+    # Wall-clock duration of this attempt in milliseconds (None if timing was
+    # not captured). Persisted on the delivery + the attempt-history row.
+    duration_ms: int | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -314,6 +375,7 @@ class WebhookDeliveryDispatcher:
                         body=_serialise(event.id, event.event_type, event.payload),
                         event_id=event.id,
                         event_type=event.event_type,
+                        allowed_cidrs=tuple(endpoint.allowed_cidrs or ()),
                     )
                 )
         return prepared
@@ -331,6 +393,12 @@ class WebhookDeliveryDispatcher:
         headers = sign_payload(item.secret, item.event_id, item.body).as_dict()
         headers["content-type"] = "application/json"
         headers["user-agent"] = "JenticOne-Webhooks/1.0"
+        # Per-endpoint allowlist rides along as a request extension so the
+        # pinning transport enforces it on the *pinned* IP (rebind-proof). Empty
+        # allowlist -> omit the extension entirely (no behaviour change).
+        extensions: dict[str, Any] = {}
+        if item.allowed_cidrs:
+            extensions[DnsPinningTransport.EXTRA_CIDRS_EXTENSION] = list(item.allowed_cidrs)
         started = time.monotonic()
         try:
             client = await self._ensure_client()
@@ -340,10 +408,12 @@ class WebhookDeliveryDispatcher:
                 content=item.body,
                 headers=headers,
                 timeout=self._timeout,
+                extensions=extensions or None,
             ) as response:
                 too_large = await self._body_exceeds_cap(response)
                 status_code = response.status_code
             duration = time.monotonic() - started
+            duration_ms = int(duration * 1000)
             if too_large:
                 logger.warning(
                     "webhook_response_too_large",
@@ -360,6 +430,7 @@ class WebhookDeliveryDispatcher:
                     status_code=status_code,
                     error="response_too_large",
                     gone=status_code == _HTTP_GONE,
+                    duration_ms=duration_ms,
                 )
             error = None if status_code < 300 else f"http_error_{status_code}"
             webhook_metrics.record_send_duration(
@@ -372,6 +443,7 @@ class WebhookDeliveryDispatcher:
                 status_code=status_code,
                 error=error,
                 gone=status_code == _HTTP_GONE,
+                duration_ms=duration_ms,
             )
         except Exception as exc:
             # Any failure to reach the target is a delivery failure, never a
@@ -396,6 +468,7 @@ class WebhookDeliveryDispatcher:
                 attempt=item.attempt,
                 status_code=None,
                 error=category,
+                duration_ms=int(duration * 1000),
             )
 
     @staticmethod
@@ -419,7 +492,11 @@ class WebhookDeliveryDispatcher:
                 if outcome.succeeded:
                     assert outcome.status_code is not None
                     await WebhookDeliveryRepository.mark_succeeded(
-                        session, outcome.delivery_id, status_code=outcome.status_code
+                        session,
+                        outcome.delivery_id,
+                        status_code=outcome.status_code,
+                        duration_ms=outcome.duration_ms,
+                        attempt_number=outcome.attempt,
                     )
                     webhook_metrics.record_delivery("succeeded")
                     continue
@@ -434,6 +511,8 @@ class WebhookDeliveryDispatcher:
                         status_code=outcome.status_code,
                         error="endpoint_gone_deactivated",
                         retry_in=None,
+                        duration_ms=outcome.duration_ms,
+                        attempt_number=outcome.attempt,
                     )
                     logger.warning(
                         "webhook_endpoint_deactivated",
@@ -452,6 +531,8 @@ class WebhookDeliveryDispatcher:
                     status_code=outcome.status_code,
                     error=outcome.error or "delivery_error",
                     retry_in=None if exhausted else self._backoff_delay(outcome.attempt),
+                    duration_ms=outcome.duration_ms,
+                    attempt_number=outcome.attempt,
                 )
                 logger.warning(
                     "webhook_delivery_failed",
