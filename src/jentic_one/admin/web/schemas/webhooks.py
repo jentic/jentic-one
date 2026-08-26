@@ -27,6 +27,16 @@ class WebhookEndpointCreateRequest(BaseModel):
         default_factory=list,
         description="Event types to subscribe to. Empty means all relayable types.",
     )
+    allowed_cidrs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-endpoint IP/CIDR allowlist. When non-empty, an otherwise-"
+            "blocked (private/internal) pinned IP inside one of these CIDRs is "
+            "permitted at send — best for stable internal targets. The cloud-"
+            "metadata range is never re-opened, whatever is listed. Empty means "
+            "only the operator-wide egress policy applies."
+        ),
+    )
 
 
 class WebhookEndpointUpdateRequest(BaseModel):
@@ -50,6 +60,13 @@ class WebhookEndpointUpdateRequest(BaseModel):
         default=None,
         description="Event types to subscribe to. Empty means all relayable types.",
     )
+    allowed_cidrs: list[str] | None = Field(
+        default=None,
+        description=(
+            "Per-endpoint IP/CIDR allowlist. Omit to leave unchanged; send an "
+            "empty list to clear it. Never re-opens the cloud-metadata hard-deny."
+        ),
+    )
     active: bool | None = Field(
         default=None,
         description="Whether the endpoint receives deliveries. Set false to pause it.",
@@ -63,8 +80,12 @@ class WebhookEndpointResponse(BaseModel):
     name: str
     target_url: str | None
     event_types: list[str]
+    allowed_cidrs: list[str]
     active: bool
     created_at: datetime | None
+    # Exposes the rotation grace window so the UI can show a "previous secret
+    # still valid until …" badge. Null when no rotation grace is in effect.
+    previous_secret_expires_at: datetime | None = None
 
 
 class WebhookEndpointCreatedResponse(BaseModel):
@@ -127,6 +148,10 @@ class WebhookDeliveryResponse(BaseModel):
     # server-side logs only, so this is safe to return to the API and show in the
     # UI. See ``WebhookDeliveryDispatcher._categorize_error``.
     last_error: str | None
+    duration_ms: int | None = Field(
+        default=None,
+        description="Wall-clock duration of the most recent attempt, in milliseconds.",
+    )
     created_at: datetime | None
 
 
@@ -134,6 +159,61 @@ class WebhookDeliveryListResponse(BaseModel):
     """Delivery history for an endpoint."""
 
     data: list[WebhookDeliveryResponse]
+
+
+class WebhookDeliveryAttemptResponse(BaseModel):
+    """One recorded attempt in a delivery's history."""
+
+    attempt_id: str
+    delivery_id: str
+    attempt_number: int
+    status_code: int | None
+    error: str | None
+    duration_ms: int | None
+    created_at: datetime | None
+
+
+class WebhookDeliveryAttemptListResponse(BaseModel):
+    """Per-attempt history for one delivery (newest first)."""
+
+    data: list[WebhookDeliveryAttemptResponse]
+
+
+class WebhookEndpointStatsResponse(BaseModel):
+    """Aggregate delivery health for an endpoint's Overview.
+
+    All derived from ``webhook_deliveries`` — counts by status, last-24h volume
+    and failures, the most recent attempt, the next scheduled attempt, and the
+    average response time.
+    """
+
+    total: int
+    counts_by_status: dict[str, int]
+    recent_total: int
+    recent_failed: int
+    last_status_code: int | None
+    last_attempt_at: datetime | None
+    last_duration_ms: int | None
+    next_attempt_at: datetime | None
+    avg_duration_ms: float | None
+
+
+class WebhookEventCatalogEntry(BaseModel):
+    """One subscribable event type in the catalog."""
+
+    event_type: str
+    noun: str = Field(description="The grouping prefix (before the first '.').")
+
+
+class WebhookEventCatalogResponse(BaseModel):
+    """The canonical set of subscribable event types.
+
+    Served so the UI's event picker cannot drift from the backend
+    ``EventType.ALL`` minus the never-relayed set. The synthetic ``webhook.test``
+    type is deliberately excluded — it is not subscribable.
+    """
+
+    data: list[WebhookEventCatalogEntry]
 
 
 class WebhookTestQueuedResponse(BaseModel):

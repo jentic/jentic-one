@@ -3652,6 +3652,30 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
+        "webhooks:read": []
+      },
+      "method": "GET",
+      "operation_id": "listDeliveryAttempts",
+      "path": "/webhooks/deliveries/{delivery_id}/attempts",
+      "public": false,
+      "required_scopes": [
+        "webhooks:read"
+      ],
+      "summary": "List per-attempt history for a delivery",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
         "webhooks:write": [
           "webhooks:read"
         ]
@@ -3828,6 +3852,30 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
+        "webhooks:read": []
+      },
+      "method": "GET",
+      "operation_id": "getEndpointStats",
+      "path": "/webhooks/endpoints/{endpoint_id}/stats",
+      "public": false,
+      "required_scopes": [
+        "webhooks:read"
+      ],
+      "summary": "Aggregate delivery stats for an endpoint",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
         "webhooks:write": [
           "webhooks:read"
         ]
@@ -3866,6 +3914,30 @@
         "webhooks:write"
       ],
       "summary": "Send a test event",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:read": []
+      },
+      "method": "GET",
+      "operation_id": "getEventCatalog",
+      "path": "/webhooks/event-catalog",
+      "public": false,
+      "required_scopes": [
+        "webhooks:read"
+      ],
+      "summary": "List subscribable event types",
       "surface": "webhooks",
       "typical_caller": "any"
     },
@@ -4973,5 +5045,5 @@
     ],
     "total": 33
   },
-  "total": 168
+  "total": 171
 }

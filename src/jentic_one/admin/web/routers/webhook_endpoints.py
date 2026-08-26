@@ -17,19 +17,25 @@ from jentic_one.admin.core.schema.webhook_endpoints import WebhookEndpoint
 from jentic_one.admin.services.webhooks.endpoints import WebhookEndpointService
 from jentic_one.admin.web.deps import get_webhook_endpoint_service
 from jentic_one.admin.web.schemas.webhooks import (
+    WebhookDeliveryAttemptListResponse,
+    WebhookDeliveryAttemptResponse,
     WebhookDeliveryListResponse,
     WebhookDeliveryResponse,
     WebhookEndpointCreatedResponse,
     WebhookEndpointCreateRequest,
     WebhookEndpointListResponse,
     WebhookEndpointResponse,
+    WebhookEndpointStatsResponse,
     WebhookEndpointUpdateRequest,
+    WebhookEventCatalogEntry,
+    WebhookEventCatalogResponse,
     WebhookSecretRotatedResponse,
     WebhookSecretRotateRequest,
     WebhookTestQueuedResponse,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.webhooks.event_catalog import subscribable_event_catalog
 
 router = APIRouter()
 
@@ -40,15 +46,18 @@ def _endpoint_response(endpoint: WebhookEndpoint) -> WebhookEndpointResponse:
     Built field-by-field rather than with ``from_orm``/``model_validate`` so that
     adding a column to the model can never silently start publishing it — the
     columns being excluded here are ``secret_encrypted`` and
-    ``previous_secret_encrypted``.
+    ``previous_secret_encrypted``. ``previous_secret_expires_at`` *is* exposed
+    (it carries no secret material) so the UI can show a rotation-grace badge.
     """
     return WebhookEndpointResponse(
         endpoint_id=endpoint.id,
         name=endpoint.name,
         target_url=endpoint.target_url,
         event_types=list(endpoint.event_types or []),
+        allowed_cidrs=list(endpoint.allowed_cidrs or []),
         active=endpoint.active,
         created_at=endpoint.created_at,
+        previous_secret_expires_at=endpoint.previous_secret_expires_at,
     )
 
 
@@ -73,6 +82,7 @@ async def create_endpoint(
         identity=identity,
         target_url=payload.target_url,
         event_types=payload.event_types,
+        allowed_cidrs=payload.allowed_cidrs,
     )
     return WebhookEndpointCreatedResponse(
         endpoint=_endpoint_response(created.endpoint),
@@ -208,9 +218,84 @@ async def list_deliveries(
                 last_attempt_at=d.last_attempt_at,
                 last_status_code=d.last_status_code,
                 last_error=d.last_error,
+                duration_ms=d.duration_ms,
                 created_at=d.created_at,
             )
             for d in deliveries
+        ]
+    )
+
+
+@router.get(
+    "/webhooks/endpoints/{endpoint_id}/stats",
+    summary="Aggregate delivery stats for an endpoint",
+    description=(
+        "Summarises the endpoint's delivery health — counts by status, last-24h "
+        "volume and failures, the most recent attempt, the next scheduled "
+        "attempt, and the average response time — for the Overview view. Derived "
+        "entirely from the delivery log; adds no new storage."
+    ),
+)
+async def get_endpoint_stats(
+    endpoint_id: str,
+    identity: Identity = get_current_identity(required_permissions=[WEBHOOKS_READ]),
+    service: WebhookEndpointService = Depends(get_webhook_endpoint_service),
+) -> WebhookEndpointStatsResponse:
+    """Aggregate delivery health for one endpoint."""
+    stats = await service.get_stats(endpoint_id)
+    return WebhookEndpointStatsResponse(**stats)
+
+
+@router.get(
+    "/webhooks/deliveries/{delivery_id}/attempts",
+    summary="List per-attempt history for a delivery",
+    description=(
+        "Every recorded attempt for one delivery (newest first): status code, "
+        "categorised error, response time, and when. The parent delivery keeps "
+        "only the last outcome; this is the full timeline."
+    ),
+)
+async def list_delivery_attempts(
+    delivery_id: str,
+    identity: Identity = get_current_identity(required_permissions=[WEBHOOKS_READ]),
+    service: WebhookEndpointService = Depends(get_webhook_endpoint_service),
+) -> WebhookDeliveryAttemptListResponse:
+    """Per-attempt history for one delivery."""
+    attempts = await service.list_delivery_attempts(delivery_id)
+    return WebhookDeliveryAttemptListResponse(
+        data=[
+            WebhookDeliveryAttemptResponse(
+                attempt_id=a.id,
+                delivery_id=a.delivery_id,
+                attempt_number=a.attempt_number,
+                status_code=a.status_code,
+                error=a.error,
+                duration_ms=a.duration_ms,
+                created_at=a.created_at,
+            )
+            for a in attempts
+        ]
+    )
+
+
+@router.get(
+    "/webhooks/event-catalog",
+    summary="List subscribable event types",
+    description=(
+        "The canonical set of event types an endpoint can subscribe to — "
+        "``EventType.ALL`` minus the never-relayed set, and excluding the "
+        "synthetic ``webhook.test``. Served so the UI's event picker cannot drift "
+        "from the backend."
+    ),
+)
+async def get_event_catalog(
+    identity: Identity = get_current_identity(required_permissions=[WEBHOOKS_READ]),
+) -> WebhookEventCatalogResponse:
+    """The subscribable event catalog (backend source of truth)."""
+    return WebhookEventCatalogResponse(
+        data=[
+            WebhookEventCatalogEntry(event_type=event_type, noun=event_type.split(".", 1)[0])
+            for event_type in subscribable_event_catalog()
         ]
     )
 

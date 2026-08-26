@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **168**._
+_Total endpoints: **171**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -221,7 +221,7 @@ _Total endpoints: **168**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (69)
+## Any authenticated actor (72)
 
 
 ### `access-requests`
@@ -363,6 +363,7 @@ _Total endpoints: **168**._
 
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
+| GET | `/webhooks/deliveries/{delivery_id}/attempts` | `webhooks:read` | any | List per-attempt history for a delivery |
 | POST | `/webhooks/deliveries/{delivery_id}:resend` | `webhooks:write` | any | Resend a delivery |
 | GET | `/webhooks/endpoints` | `webhooks:read` | any | List webhook endpoints |
 | POST | `/webhooks/endpoints` | `webhooks:write` | any | Create a webhook endpoint |
@@ -370,8 +371,10 @@ _Total endpoints: **168**._
 | GET | `/webhooks/endpoints/{endpoint_id}` | `webhooks:read` | any | Get a webhook endpoint |
 | PATCH | `/webhooks/endpoints/{endpoint_id}` | `webhooks:write` | any | Update a webhook endpoint |
 | GET | `/webhooks/endpoints/{endpoint_id}/deliveries` | `webhooks:read` | any | List delivery attempts for an endpoint |
+| GET | `/webhooks/endpoints/{endpoint_id}/stats` | `webhooks:read` | any | Aggregate delivery stats for an endpoint |
 | POST | `/webhooks/endpoints/{endpoint_id}:rotate-secret` | `webhooks:write` | any | Rotate an endpoint's signing secret |
 | POST | `/webhooks/endpoints/{endpoint_id}:test` | `webhooks:write` | any | Send a test event |
+| GET | `/webhooks/event-catalog` | `webhooks:read` | any | List subscribable event types |
 
 ## Public (unauthenticated) (19)
 
