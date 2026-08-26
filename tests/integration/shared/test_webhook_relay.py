@@ -241,6 +241,40 @@ async def test_notification_payload_excludes_internal_detail() -> None:
     assert "actor_id" not in payload
 
 
+async def test_notification_payload_forwards_enriched_display_data_but_drops_detail() -> None:
+    """Phase 2 enrichment: pre-resolved DISPLAY fields ride through fan-out verbatim.
+
+    ``build_notification_payload`` takes only the already-shaped ``data`` an emit
+    site produced, so the anti-exfiltration boundary is structural: there is no
+    parameter through which ``detail`` or an actor column could reach the wire.
+    This pins both halves — the enriched display fields survive, and no forbidden
+    field appears — so a future regression that widens the payload trips a test.
+    """
+    enriched = {
+        "execution_id": "exec_123",
+        "operation_id": "chargesCreate",
+        "api": {"vendor": "stripe", "name": "api", "version": "2020-08-27"},
+        "duration_ms": 142,
+        "http_status": 200,
+    }
+    payload = build_notification_payload(
+        event_id="evt_2",
+        event_type=EventType.EXECUTION_COMPLETED,
+        severity=EventSeverity.INFO,
+        summary="Execution of chargesCreate completed in 142ms",
+        data=enriched,
+        created_at="2026-08-13T00:00:00+00:00",
+    )
+    # Enriched display data is forwarded unchanged.
+    assert payload["data"] == enriched
+    assert payload["summary"] == "Execution of chargesCreate completed in 142ms"
+    # Anti-exfil: no dropped/forbidden field can appear at the top level or in data.
+    for forbidden in ("detail", "actor_id", "actor_type", "created_by", "requires_action"):
+        assert forbidden not in payload
+    for forbidden in ("secret", "credential", "token", "body", "response", "detail"):
+        assert forbidden not in payload["data"]
+
+
 # --- the relay ----------------------------------------------------------------
 
 
