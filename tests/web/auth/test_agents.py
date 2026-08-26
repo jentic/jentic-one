@@ -245,6 +245,73 @@ def test_toolkit_crud(admin_client: TestClient, toolkit_agent_id: str) -> None:
     assert resp.status_code == 404
 
 
+async def test_created_event_carries_agent_name_not_id(
+    admin_client: TestClient, web_context: Context
+) -> None:
+    """`agent.created` reads like a sentence with the name, and carries the id in
+    `data` (not the summary) so the relay renders a clean message + footer id."""
+    resp = admin_client.post("/agents", json={"name": "webhook-created-bot"})
+    assert resp.status_code == 201
+    agent_id = resp.json()["id"]
+
+    try:
+        async with web_context.admin_db.session() as session:
+            events = await EventRepository.list_all(session, event_type=[EventType.AGENT_CREATED])
+            created = next(e for e in events if e.data.get("agent_id") == agent_id)
+        # Summary uses the human name, never the opaque id.
+        assert created.summary == "Agent 'webhook-created-bot' created"
+        assert agent_id not in created.summary
+        # The id + name ride in `data` for the relay (id footer-only there).
+        assert created.data["agent_id"] == agent_id
+        assert created.data["agent_name"] == "webhook-created-bot"
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(delete(Event).where(Event.data["agent_id"].astext == agent_id))
+            await session.execute(
+                delete(ActorScopeGrant).where(ActorScopeGrant.actor_id == agent_id)
+            )
+            await session.execute(delete(Agent).where(Agent.id == agent_id))
+            await session.commit()
+
+
+async def test_toolkit_bind_unbind_events_carry_ids_and_clean_summary(
+    admin_client: TestClient, web_context: Context, toolkit_agent_id: str
+) -> None:
+    """Binding an (unnamed-in-control-DB) toolkit still emits a clean event.
+
+    The toolkit id is unknown to the control DB here, so the name can't be
+    resolved — but the ids belong in `data`, the summary stays clean, and the
+    relay's generic degradation keeps ids out of the headline. When a name IS
+    resolvable the summary/data carry it (see relay tests + curated renderer)."""
+    agent_id = toolkit_agent_id
+    resp = admin_client.post(f"/agents/{agent_id}/toolkits", json={"toolkit_id": "tk_bindtest"})
+    assert resp.status_code == 201
+
+    async with web_context.admin_db.session() as session:
+        events = await EventRepository.list_all(
+            session, event_type=[EventType.TOOLKIT_BOUND_TO_AGENT]
+        )
+        bound = next(e for e in events if e.data.get("agent_id") == agent_id)
+    # Ids live in `data`, and the agent name (loaded at the emit site) is present.
+    assert bound.data["toolkit_id"] == "tk_bindtest"
+    assert bound.data["agent_id"] == agent_id
+    assert bound.data["agent_name"] == "toolkit-agent"
+    # Summary reads with the resolved agent name and the toolkit id (no name).
+    assert bound.summary == 'Toolkit tk_bindtest bound to agent "toolkit-agent"'
+
+    resp = admin_client.delete(f"/agents/{agent_id}/toolkits/tk_bindtest")
+    assert resp.status_code == 204
+
+    async with web_context.admin_db.session() as session:
+        events = await EventRepository.list_all(
+            session, event_type=[EventType.TOOLKIT_UNBOUND_FROM_AGENT]
+        )
+        unbound = next(e for e in events if e.data.get("agent_id") == agent_id)
+    assert unbound.data["toolkit_id"] == "tk_bindtest"
+    assert unbound.data["agent_name"] == "toolkit-agent"
+    assert unbound.summary == 'Toolkit tk_bindtest unbound from agent "toolkit-agent"'
+
+
 @pytest.fixture()
 async def dcr_agent_id(web_context: Context) -> AsyncGenerator[str, None]:
     """A self-registered (DCR) agent with no human owner (owner_id is NULL)."""

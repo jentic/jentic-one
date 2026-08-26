@@ -10,9 +10,12 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import delete, text
 
+from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.repos import EventRepository
 from jentic_one.shared.context import Context
+from jentic_one.shared.models.events import EventType
 
 pytestmark = pytest.mark.integration
 
@@ -407,4 +410,34 @@ async def test_served_apis_scoped_by_credential_visibility(
     finally:
         async with web_context.control_db.session() as session:
             await session.execute(text("DELETE FROM credentials WHERE id = 'cred_srvapi_foreign'"))
+            await session.commit()
+
+
+# --- Enriched telemetry/event summaries (webhook relay readability) ---
+
+
+async def test_toolkit_created_event_uses_name_not_id(
+    tk_owner_client: TestClient, web_context: Context
+) -> None:
+    """`toolkit.created` reads with the human name and carries the id in `data`.
+
+    The emit site already has the toolkit loaded, so the summary is a sentence
+    (``Toolkit 'x' created``) and the opaque ``tk_…`` id rides in ``data`` for
+    the relay to keep footer-only — never a headline chip or the summary."""
+    created = _create_toolkit(tk_owner_client, name="event-name-test")
+    toolkit_id = created["toolkit"]["toolkit_id"]
+
+    try:
+        async with web_context.admin_db.session() as session:
+            events = await EventRepository.list_all(session, event_type=[EventType.TOOLKIT_CREATED])
+            evt = next(e for e in events if e.data.get("toolkit_id") == toolkit_id)
+        assert evt.summary == "Toolkit 'event-name-test' created"
+        assert toolkit_id not in evt.summary
+        assert evt.data["toolkit_name"] == "event-name-test"
+        assert evt.data["toolkit_id"] == toolkit_id
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(
+                delete(Event).where(Event.data["toolkit_id"].astext == toolkit_id)
+            )
             await session.commit()

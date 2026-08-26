@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import delete
@@ -30,6 +31,12 @@ from jentic_one.admin.services.webhooks.fanout import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.jobs.execution_handler import ExecutionHandler
+from jentic_one.shared.jobs.protocols import (
+    UpstreamExecRequest,
+    UpstreamExecResult,
+    UpstreamExecutor,
+)
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.webhooks.relay import InternalEventRelay
 
@@ -489,6 +496,100 @@ async def test_list_subscribers_matches_type_and_catch_all(
     assert catch_all in ids
     assert other not in ids, "a type-mismatched endpoint must not match"
     assert off not in ids, "an inactive endpoint must not match"
+
+
+# --- delivered-payload enrichment (async worker path) ------------------------
+
+
+class _OkExecutor(UpstreamExecutor):
+    """Executor stub returning a fixed 200 with a measured duration.
+
+    Stands in for the broker's ``PipelineExecutor`` so the async worker path can
+    be driven without a real upstream call — the handler is what builds the
+    lifecycle event, which is what this test pins.
+    """
+
+    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+        return UpstreamExecResult(
+            status_code=200, body=b"ok", content_type="application/json", duration_ms=42
+        )
+
+
+async def test_async_worker_execution_delivers_enriched_payload(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    clean_all: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The async worker's ``execution.completed`` must reach the wire ENRICHED.
+
+    Regression for the Phase-2 gap: the async ``ExecutionHandler`` emit site was
+    left with an id-based summary and empty ``data`` while only the sync/streaming
+    broker path was enriched, so an enqueued (202) execution delivered
+    ``{"summary": "Execution completed (job …)", "data": {}}`` — the ugly Slack
+    output. This drives the REAL worker → relay fan-out and asserts the payload
+    the receiver would get (the persisted ``webhook_events.payload``) carries the
+    human summary + resolved display fields, not merely that a helper returns them.
+    """
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[EventType.EXECUTION_COMPLETED])
+    relay = InternalEventRelay(integration_context, relay_lag=0.0)
+    await relay.relay_once()  # establish the cursor before emitting
+
+    # SSRF validation is orthogonal here — the executor is a stub, so keep the
+    # url as-is rather than resolving DNS in this test.
+    monkeypatch.setattr(
+        "jentic_one.shared.jobs.execution_handler.validate_upstream_url",
+        lambda url, egress: url,
+    )
+
+    handler = ExecutionHandler(executor=_OkExecutor())
+    async with admin_db.transaction() as session:
+        await handler.execute(
+            "job_06e08d4c9a1b2c3d4e5f6a7b",
+            session=session,
+            payload={
+                "upstream_url": "https://api.stripe.com/v1/charges",
+                "method": "POST",
+                "execution_id": "exec_06e08d4c9a1b2c3d4e5f6a7b",
+                "toolkit_id": "tk_stripe0000000000000000",
+                "operation_id": "createCharge",
+                "api_vendor": "stripe",
+                "api_name": "api",
+                "api_version": "2024-06-20",
+                "trace_id": "a" * 32,
+            },
+            created_by="agt_abc",
+            actor_type="agent",
+        )
+
+    handled = await relay.relay_once()
+    assert handled == 1, "the worker's execution.completed must be relayed"
+
+    rows = await _deliveries(admin_db, endpoint_id)
+    assert len(rows) == 1
+    async with admin_db.session() as session:
+        webhook_event = await WebhookEventRepository.get_by_id(session, rows[0].event_id)
+    assert webhook_event is not None
+    payload = webhook_event.payload
+
+    # The human summary names WHAT ran + how long — never the bare id/job form.
+    assert payload["summary"] == "Execution of createCharge completed in 42ms"
+    assert "(job " not in payload["summary"], "must not be the id-based worker summary"
+
+    # The curated display fields the Slack relay reads are present on the wire.
+    data = payload["data"]
+    assert data["operation_id"] == "createCharge"
+    assert data["toolkit_id"] == "tk_stripe0000000000000000"
+    assert data["api"] == {"vendor": "stripe", "name": "api", "version": "2024-06-20"}
+    assert data["duration_ms"] == 42
+    assert data["http_status"] == 200
+
+    # Anti-exfil: no secrets, credential material, raw body, or dropped columns.
+    for forbidden in ("detail", "actor_id", "actor_type", "created_by"):
+        assert forbidden not in payload
+    assert not any(
+        k in data for k in ("secret", "credential", "token", "body", "response", "detail")
+    )
 
 
 # --- resend resets the attempt budget (item 12) ------------------------------

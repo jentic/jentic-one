@@ -335,3 +335,108 @@ async def test_deliveries_for_unknown_endpoint_is_404(
 ) -> None:
     response = await writer.get(f"{ENDPOINTS_PATH}/whep_missing/deliveries")
     assert response.status_code == 404
+
+
+# --- allowed_cidrs round-trip (Phase 3) --------------------------------------
+
+
+async def test_create_and_read_allowed_cidrs(writer: AsyncClient, clean_webhooks: None) -> None:
+    """The per-endpoint allowlist round-trips through create + read, canonicalised."""
+    response = await writer.post(
+        ENDPOINTS_PATH,
+        json={
+            "name": "cidr-endpoint",
+            "target_url": "https://receiver.test/hook",
+            "allowed_cidrs": ["10.0.0.5", "10.0.0.0/8"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    endpoint_id = response.json()["endpoint"]["endpoint_id"]
+    assert response.json()["endpoint"]["allowed_cidrs"] == ["10.0.0.5/32", "10.0.0.0/8"]
+
+    fetched = await writer.get(f"{ENDPOINTS_PATH}/{endpoint_id}")
+    assert fetched.json()["allowed_cidrs"] == ["10.0.0.5/32", "10.0.0.0/8"]
+
+
+async def test_create_rejects_malformed_allowed_cidr(
+    writer: AsyncClient, clean_webhooks: None
+) -> None:
+    response = await writer.post(
+        ENDPOINTS_PATH,
+        json={
+            "name": "cidr-bad",
+            "target_url": "https://receiver.test/hook",
+            "allowed_cidrs": ["nonsense"],
+        },
+    )
+    assert response.status_code == 400, response.text
+
+
+async def test_update_replaces_allowed_cidrs_over_http(
+    writer: AsyncClient, clean_webhooks: None
+) -> None:
+    created = await _create_notification(writer)
+    endpoint_id = created["endpoint"]["endpoint_id"]
+
+    updated = await writer.patch(
+        f"{ENDPOINTS_PATH}/{endpoint_id}", json={"allowed_cidrs": ["192.168.0.0/16"]}
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["allowed_cidrs"] == ["192.168.0.0/16"]
+
+
+# --- aggregate stats / per-attempt history / event catalog (Phase 3) ---------
+
+
+async def test_stats_endpoint_returns_aggregate_shape(
+    writer: AsyncClient, clean_webhooks: None
+) -> None:
+    created = await _create_notification(writer)
+    endpoint_id = created["endpoint"]["endpoint_id"]
+    await writer.post(f"{ENDPOINTS_PATH}/{endpoint_id}:test")
+
+    response = await writer.get(f"{ENDPOINTS_PATH}/{endpoint_id}/stats")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 1
+    assert body["counts_by_status"]["pending"] == 1
+
+
+async def test_stats_endpoint_requires_read(reader: AsyncClient, writer: AsyncClient) -> None:
+    # A reader *can* read stats; an unauthenticated request cannot (covered
+    # elsewhere). Here we simply assert the read scope is sufficient.
+    created = await _create_notification(writer)
+    endpoint_id = created["endpoint"]["endpoint_id"]
+    response = await reader.get(f"{ENDPOINTS_PATH}/{endpoint_id}/stats")
+    assert response.status_code == 200
+
+
+async def test_attempts_endpoint_lists_per_attempt_history(
+    writer: AsyncClient, clean_webhooks: None
+) -> None:
+    created = await _create_notification(writer)
+    endpoint_id = created["endpoint"]["endpoint_id"]
+    queued = await writer.post(f"{ENDPOINTS_PATH}/{endpoint_id}:test")
+    delivery_id = queued.json()["delivery_id"]
+
+    # No sends have run in this test, so the history is empty but well-formed.
+    response = await writer.get(f"/webhooks/deliveries/{delivery_id}/attempts")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+
+async def test_event_catalog_endpoint_lists_subscribable_types(
+    reader: AsyncClient, clean_webhooks: None
+) -> None:
+    """The catalog the picker consumes is served by the backend (no drift)."""
+    response = await reader.get("/webhooks/event-catalog")
+    assert response.status_code == 200, response.text
+    entries = response.json()["data"]
+    types = {e["event_type"] for e in entries}
+    # A representative subscribable type is present; the synthetic + never-relayed
+    # ones are not.
+    assert "credential.expired" in types
+    assert "webhook.test" not in types
+    # Each entry carries its noun grouping (before the first dot).
+    sample = next(e for e in entries if e["event_type"] == "credential.expired")
+    assert sample["noun"] == "credential"

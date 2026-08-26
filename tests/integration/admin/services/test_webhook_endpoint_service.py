@@ -344,6 +344,102 @@ async def test_update_accepts_a_valid_public_url(
     assert updated.target_url == "https://receiver.test/new-hook"
 
 
+# --- per-endpoint allowed_cidrs validation (Phase 3) -------------------------
+
+
+async def test_create_normalises_and_dedupes_allowed_cidrs(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    """Valid CIDRs are canonicalised (host->/32|/128), deduped, order preserved."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="cidr-ok",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+        allowed_cidrs=["10.0.0.0/8", "10.0.0.5", "10.0.0.0/8", "fc00::/7"],
+    )
+    # "10.0.0.5" canonicalises to its /32; the duplicate /8 is dropped.
+    assert created.endpoint.allowed_cidrs == ["10.0.0.0/8", "10.0.0.5/32", "fc00::/7"]
+
+
+async def test_create_rejects_a_malformed_cidr(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    service = WebhookEndpointService(integration_context)
+    with pytest.raises(InvalidInputError, match="not a valid CIDR"):
+        await service.create(
+            name="cidr-bad",
+            identity=OPERATOR,
+            target_url="https://receiver.test/hook",
+            allowed_cidrs=["not-a-cidr"],
+        )
+
+
+async def test_update_replaces_allowed_cidrs(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    """Sending a new list replaces the stored allowlist; omitting it leaves it."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="cidr-edit",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+        allowed_cidrs=["10.0.0.0/8"],
+    )
+
+    # Omitting allowed_cidrs must leave the current value untouched.
+    await service.update(created.endpoint.id, identity=OPERATOR, name="cidr-edit-2")
+    assert (await service.get(created.endpoint.id)).allowed_cidrs == ["10.0.0.0/8"]
+
+    # Sending a new list replaces it.
+    updated = await service.update(
+        created.endpoint.id, identity=OPERATOR, allowed_cidrs=["192.168.0.0/16"]
+    )
+    assert updated.allowed_cidrs == ["192.168.0.0/16"]
+
+    # Sending an empty list clears it.
+    cleared = await service.update(created.endpoint.id, identity=OPERATOR, allowed_cidrs=[])
+    assert cleared.allowed_cidrs == []
+
+
+async def test_update_rejects_a_malformed_cidr(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="cidr-edit-bad",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+        allowed_cidrs=["10.0.0.0/8"],
+    )
+    with pytest.raises(InvalidInputError, match="not a valid CIDR"):
+        await service.update(
+            created.endpoint.id, identity=OPERATOR, allowed_cidrs=["999.999.0.0/8"]
+        )
+    # The bad edit did not apply.
+    assert (await service.get(created.endpoint.id)).allowed_cidrs == ["10.0.0.0/8"]
+
+
+async def test_metadata_cidr_stored_but_never_widens_deny(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    """Storing the metadata range is allowed at config time (it's a valid CIDR)…
+
+    …but this only proves the CIDR validator accepts a well-formed network; the
+    ``assert_ip_allowed`` hard-deny (covered in the egress-allowlist unit tests)
+    still refuses the metadata IPs at send regardless of this stored list. Config
+    validation and send-time enforcement are separate layers.
+    """
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="cidr-metadata",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+        allowed_cidrs=["169.254.0.0/16"],
+    )
+    assert created.endpoint.allowed_cidrs == ["169.254.0.0/16"]
+
+
 async def test_update_unknown_endpoint_raises_not_found(
     integration_context: Context, clean_webhooks: None
 ) -> None:
@@ -540,3 +636,74 @@ async def test_repeated_test_events_are_not_deduplicated(
 
     assert first != second
     assert len(await service.list_deliveries(created.endpoint.id)) == 2
+
+
+# --- aggregate stats + per-attempt history via the service (Phase 3) ---------
+
+
+async def test_get_stats_summarises_pending_deliveries(
+    integration_context: Context, admin_db: DatabaseSession, clean_webhooks: None
+) -> None:
+    """The Overview aggregate exposes the shape the drawer's KpiStrip renders."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="stats",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+    )
+
+    async with admin_db.transaction() as session:
+        event = await WebhookEventRepository.record_event(
+            session,
+            endpoint_id=created.endpoint.id,
+            source_event_id="evt_stats",
+            event_type="credential.expired",
+            payload={},
+        )
+        assert event is not None
+        await WebhookDeliveryRepository.enqueue(
+            session, event_id=event.id, endpoint_id=created.endpoint.id
+        )
+
+    stats = await service.get_stats(created.endpoint.id)
+    assert stats["total"] == 1
+    assert stats["counts_by_status"].get(STATUS_PENDING) == 1
+    # A never-attempted delivery has no last attempt / recent activity yet.
+    assert stats["last_status_code"] is None
+    assert stats["recent_total"] == 0
+
+
+async def test_get_stats_unknown_endpoint_raises_not_found(
+    integration_context: Context, clean_webhooks: None
+) -> None:
+    service = WebhookEndpointService(integration_context)
+    with pytest.raises(WebhookEndpointNotFoundError):
+        await service.get_stats("whep_nope")
+
+
+async def test_list_delivery_attempts_is_empty_before_any_send(
+    integration_context: Context, admin_db: DatabaseSession, clean_webhooks: None
+) -> None:
+    """A freshly-queued delivery has no attempt-history rows yet."""
+    service = WebhookEndpointService(integration_context)
+    created = await service.create(
+        name="attempts",
+        identity=OPERATOR,
+        target_url="https://receiver.test/hook",
+    )
+
+    async with admin_db.transaction() as session:
+        event = await WebhookEventRepository.record_event(
+            session,
+            endpoint_id=created.endpoint.id,
+            source_event_id="evt_attempts",
+            event_type="credential.expired",
+            payload={},
+        )
+        assert event is not None
+        delivery = await WebhookDeliveryRepository.enqueue(
+            session, event_id=event.id, endpoint_id=created.endpoint.id
+        )
+        delivery_id = delivery.id
+
+    assert await service.list_delivery_attempts(delivery_id) == []
