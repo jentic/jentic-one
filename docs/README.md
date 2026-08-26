@@ -1,60 +1,41 @@
 # Jentic One documentation
 
-Jentic One is a self-hosted execution layer for AI agents: register the APIs
-an agent may use, store each credential once, and the agent calls out through
-a credential-injecting Broker — it never sees your keys. The
-[repository README](../README.md) has the architecture and component overview;
-this page maps the docs.
+Docs index. What Jentic One is and how it works: [repository README](../README.md).
 
-## Install it
+## Install
 
-Start at the [installation overview](installation/quickstart.md) — the
-released artifacts, and a guide per deployment shape:
-[Docker](installation/docker.md) · [systemd](installation/systemd.md) ·
-[Helm](installation/helm.md) · [AWS](installation/cloud/aws.md). Building and
-running from a source checkout is covered under
-[development](development/local-setup.md) instead.
+- [Installation overview](installation/quickstart.md) — artifacts, verification, air-gapped transfer
+- [Docker](installation/docker.md)
+- [systemd](installation/systemd.md)
+- [Helm](installation/helm.md)
+- [AWS](installation/cloud/aws.md)
 
-## Use it
+## Use
 
-| Guide | Covers |
-| ----- | ------ |
-| [First brokered call](guides/first-call.md) | From a running instance to a response from a real API, in six steps |
-| [Credentials and toolkits](guides/credentials-and-toolkits.md) | How a stored credential relates to APIs and toolkits, and the one-active-credential invariant |
-| [Overlays](guides/overlays.md) | Correcting an imported API description without editing the original |
-| [Local coding agents](guides/local-agent.md) | Running Claude Code, Codex, Cursor, or Hermes isolated with `jentic run` |
-| [Cloud vs self-hosted](guides/cloud-vs-self-hosted.md) | How Jentic One differs from the hosted Jentic platform, and running both without cross-talk |
+- [First brokered call](guides/first-call.md)
+- [Credentials and toolkits](guides/credentials-and-toolkits.md)
+- [Overlays](guides/overlays.md)
+- [Local coding agents](guides/local-agent.md)
+- [Cloud vs self-hosted](guides/cloud-vs-self-hosted.md)
+- [CLI README](../cli/README.md) — the full `jentic` / `jenticctl` command surface
 
-The full `jenticctl`/`jentic` command surface is in the
-[CLI README](../cli/README.md).
+## Secure
 
-## Secure it
+- [Deploying Jentic One securely](security/security.md)
+- [Local-agent sandbox design](security/local-agent/README.md)
 
-Read [Deploying Jentic One securely](security/security.md) before pointing an
-instance at a real credential — the threat model and the deployment-posture
-ladder. The design rationale behind the local-agent sandbox lives in
-[security/local-agent/](security/local-agent/README.md).
+## Develop
 
-## Develop and extend it
+- [Local development setup](development/local-setup.md)
+- [Extending Jentic One](development/extending-jentic-one.md)
+- [Context and configuration](development/context-and-config.md)
+- [Releasing](development/releasing.md)
+- [Product scope](development/product-scope.md)
+- [deploy/README.md](../deploy/README.md) — images, charts, Terraform, observability
 
-| Guide | Covers |
-| ----- | ------ |
-| [Local development setup](development/local-setup.md) | `make dev` — the one-command local bring-up from source |
-| [Extending Jentic One](development/extending-jentic-one.md) | The backward-compatible seams for injecting implementations without editing core code |
-| [Context and configuration](development/context-and-config.md) | The `jentic_one.shared` config and context system |
-| [Releasing](development/releasing.md) | The maintainer runbook for cutting a release |
-| [Product scope](development/product-scope.md) | The product-fit rubric used by issue intake |
+## Reference (generated — never hand-edit)
 
-Build and deployment tooling (images, charts, Terraform, observability) is
-documented in [deploy/README.md](../deploy/README.md).
+- [Configuration](reference/config.md) — every config key, default, and env var (`make config-reference`)
+- [Endpoints & scopes](reference/endpoints.md) — every HTTP route and its required scope (`make endpoints`)
+- [reference/README.md](reference/README.md) — how the generated material works
 
-## Reference
-
-[reference/](reference/README.md) holds **generated** material — the endpoint
-and scope reference (`endpoints.md` / `endpoints.json`, `make endpoints`) and
-the [configuration reference](reference/config.md) listing every config key
-with its type, default, and env var (`make config-reference`). All of it is
-drift-guarded in CI — never hand-edit it. A running deployment also serves
-interactive references at `/docs` and `/redoc`.
-
-`assets/` holds the images used by these docs and the repository README.
