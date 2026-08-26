@@ -13,6 +13,10 @@ Configuration is loaded via `load_config()` which merges two sources in priority
 
 Environment variables override file values. Types are coerced automatically by pydantic (booleans, ints, floats).
 
+The full key-by-key reference — every section, type, default, and env var — is
+generated at [docs/reference/config.md](../reference/config.md)
+(`make config-reference`, drift-guarded in CI).
+
 ### Minimal config file
 
 ```yaml

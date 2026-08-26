@@ -8,6 +8,7 @@ This folder holds **generated** API reference material. **Do not hand-edit these
 |---|---|---|
 | [`endpoints.md`](endpoints.md) | Human-readable endpoint + scope tree, grouped by typical caller and surface. | `make endpoints` |
 | `endpoints.json` | Portable, stack-agnostic machine-readable version of the same join (schema `jentic.endpoint-scope-tree/v1`). Safe to consume from other repos/sites/tools. | `make endpoints` |
+| [`config.md`](config.md) | Every configuration key with its type, default, and `JENTIC__*` env var, generated from the `AppConfig` Pydantic model (the same source as `config/config-schema.json`). | `make config-reference` |
 
 A running server also serves this join live at **`GET /reference/endpoints.json`** (public), which is what the `jentic endpoints` CLI and the docs SPA consume. It returns the **same payload** as the committed `endpoints.json`: the offline `make endpoints` introspects a freshly-built broker app, while the live endpoint (mounted on the control-plane app, which never runs the separate broker process) supplies the broker's small static surface from a declaration in `endpoint_reference.py`. A drift test pins that declaration to the real broker app and asserts the live payload equals the committed file, so the two cannot diverge.
 
