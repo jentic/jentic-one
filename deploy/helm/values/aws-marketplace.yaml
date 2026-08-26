@@ -19,17 +19,24 @@ global:
     # Marketplace does not allow floating tags like :latest).
     tag: ""
 
-  # Combined mode: the app pod serves registry/admin/control; only the app
-  # and broker deployments (and their shared image) exist.
+  # RDS-ONLY LISTING (decided 2026-08-26): the bundled in-cluster Postgres is
+  # disabled — buyers bring an external Postgres (RDS or equivalent) and point
+  # global.databases.*.host at it. Rationale: the only image the postgresql
+  # subchart supports is bitnamilegacy/postgresql, frozen upstream since
+  # Bitnami's Aug 2025 catalog change — it already fails our CVE gate (52
+  # fixable HIGH/CRITICAL on 2026-08-26) and would fail AWS's listing scan.
+  # Revisit if the chart moves to a maintained Postgres image.
   postgresql:
-    enabled: true
+    enabled: false
 
   # NOTE: global.observability.otel.enabled must stay false for Marketplace
   # deploys — the sidecar image (otel/opentelemetry-collector-contrib) is
   # pulled from docker.io, which the Marketplace disallows. Mirror it into
   # the listing's ECR first if observability is needed.
 
-  # No database password defaults ship with the chart; set them at install:
+  # No database password defaults ship with the chart; point the DBs at your
+  # external Postgres and set the passwords at install:
+  #   --set global.databases.registry.host=<rds-endpoint> \
   #   --set global.databases.registry.password=… \
   #   --set global.databases.control.password=…  \
   #   --set global.databases.admin.password=…
@@ -76,25 +83,11 @@ control:
 gateway:
   enabled: false
 
-# In-cluster Postgres from the ECR-mirrored image (plan PR 6 mirrors it —
-# portal repo jentic/jentic-one-psql, created 2026-08-25).
-# RDS variant: set postgresql.enabled=false, global.postgresql.enabled=false,
-# and point global.databases.*.host at the RDS endpoint instead.
+# Bundled in-cluster Postgres: OFF for the Marketplace listing (RDS-only —
+# see the global.postgresql note above). The jentic/jentic-one-psql ECR repo
+# and the marketplace-mirror workflow exist but are parked: the mirror's CVE
+# gate correctly rejects the frozen bitnamilegacy image. If the chart ever
+# moves to a maintained Postgres image, re-enable this block and set the
+# MARKETPLACE_ECR_POSTGRES repo variable to resume mirroring.
 postgresql:
-  enabled: true
-  image:
-    registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com"
-    repository: "jentic/jentic-one-psql"
-    tag: "17.2.0-debian-12-r6"
-  auth:
-    username: postgres
-    # password: set at install (--set postgresql.auth.password=…) or via
-    # auth.existingSecret; no default ships with the chart.
-    database: jentic
-  # The per-surface DB roles/schemas (registry/control/admin) must exist
-  # before the app boots — create a ConfigMap from
-  # docker/local-setup/init-schemas.sql (with real passwords) and reference
-  # it here, as the local deploy tooling does:
-  # primary:
-  #   initdb:
-  #     scriptsConfigMap: "jentic-pg-init"
+  enabled: false
