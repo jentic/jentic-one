@@ -1070,7 +1070,7 @@ values are sensitive; the trust policy below is what protects the role):
 | -------- | ----- |
 | `MARKETPLACE_ECR_ROLE_ARN` | The IAM role below, e.g. `arn:aws:iam::<seller-account-id>:role/jentic-one-marketplace-publish` |
 | `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app` |
-| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` (only if the listing ships the bundled DB) |
+| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` — **leave unset: the listing is RDS-only** (decided 2026-08-26; the only chart-supported Postgres image is the frozen `bitnamilegacy` one, which fails the CVE gate). Setting this resumes the mirror if the chart ever moves to a maintained image |
 
 Once set:
 
