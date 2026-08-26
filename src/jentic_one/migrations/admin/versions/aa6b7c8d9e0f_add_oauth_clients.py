@@ -68,8 +68,29 @@ def upgrade() -> None:
     op.create_index("ix_oauth_clients_created_by", "oauth_clients", ["created_by"])
     op.create_index("ix_oauth_clients_active", "oauth_clients", ["active"])
 
+    # Add oauth_client_id to token tables — tracks which third-party OAuth client
+    # issued the token, so tokens can be invalidated on client deactivation.
+    op.add_column(
+        "access_tokens",
+        sa.Column("oauth_client_id", sa.String(64), nullable=True),
+    )
+    op.create_index(
+        "ix_access_tokens_oauth_client_id", "access_tokens", ["oauth_client_id"]
+    )
+    op.add_column(
+        "refresh_tokens",
+        sa.Column("oauth_client_id", sa.String(64), nullable=True),
+    )
+    op.create_index(
+        "ix_refresh_tokens_oauth_client_id", "refresh_tokens", ["oauth_client_id"]
+    )
+
 
 def downgrade() -> None:
+    op.drop_index("ix_refresh_tokens_oauth_client_id", table_name="refresh_tokens")
+    op.drop_column("refresh_tokens", "oauth_client_id")
+    op.drop_index("ix_access_tokens_oauth_client_id", table_name="access_tokens")
+    op.drop_column("access_tokens", "oauth_client_id")
     op.drop_index("ix_oauth_clients_active", table_name="oauth_clients")
     op.drop_index("ix_oauth_clients_created_by", table_name="oauth_clients")
     op.drop_index("ix_oauth_clients_created_at", table_name="oauth_clients")

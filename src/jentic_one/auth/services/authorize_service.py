@@ -216,6 +216,7 @@ class AuthorizeService:
         code_verifier: str,
         redirect_uri: str,
         client_id: str,
+        oauth_client_id: str | None = None,
     ) -> tuple[str, str, str]:
         """Exchange auth code + PKCE verifier for tokens.
 
@@ -268,7 +269,7 @@ class AuthorizeService:
 
         scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
         access_token, refresh_token = await self._token_svc.issue_pair(
-            user.id, ActorType.USER, scopes
+            user.id, ActorType.USER, scopes, oauth_client_id=oauth_client_id
         )
 
         id_token = issue_id_token(

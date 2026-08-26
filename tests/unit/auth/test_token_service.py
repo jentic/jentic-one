@@ -59,6 +59,7 @@ def _make_access_token_row(
     row.created_at = datetime.now(UTC)
     row.revoked_at = revoked_at
     row.is_ephemeral = is_ephemeral
+    row.oauth_client_id = None
     return row
 
 
@@ -86,6 +87,7 @@ def _make_refresh_token_row(
     row.revoked_at = revoked_at
     row.consumed_at = consumed_at
     row.replaced_by_id = replaced_by_id
+    row.oauth_client_id = None
     return row
 
 

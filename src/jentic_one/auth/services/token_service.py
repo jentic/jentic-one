@@ -12,6 +12,7 @@ from jentic_one.admin.repos import (
     AccessTokenRepository,
     ActorScopeGrantRepository,
     AgentRepository,
+    OAuthClientRepository,
     RefreshTokenRepository,
     ServiceAccountRepository,
     UserRepository,
@@ -117,7 +118,12 @@ class TokenService:
         return access_plain
 
     async def issue_pair(
-        self, actor_id: str, actor_type: ActorType, scopes: list[str]
+        self,
+        actor_id: str,
+        actor_type: ActorType,
+        scopes: list[str],
+        *,
+        oauth_client_id: str | None = None,
     ) -> tuple[str, str]:
         """Issue a new access + refresh token pair. Returns (access_token, refresh_token)."""
         access_plain = _generate_token(ACCESS_TOKEN_PREFIX)
@@ -138,6 +144,7 @@ class TokenService:
                 expires_at=now + timedelta(seconds=self.access_ttl_seconds),
                 created_by=actor_id,
                 is_ephemeral=False,
+                oauth_client_id=oauth_client_id,
             )
             await RefreshTokenRepository.create(
                 session,
@@ -148,6 +155,7 @@ class TokenService:
                 token_family_id=family_id,
                 expires_at=now + timedelta(seconds=self._refresh_ttl),
                 created_by=actor_id,
+                oauth_client_id=oauth_client_id,
             )
             await record_audit(
                 session,
@@ -184,6 +192,13 @@ class TokenService:
 
             if rt.expires_at <= datetime.now(UTC):
                 raise InvalidGrantError("refresh token expired")
+
+            if rt.oauth_client_id is not None:
+                oauth_client = await OAuthClientRepository.get_by_client_id(
+                    session, rt.oauth_client_id
+                )
+                if oauth_client is None or not oauth_client.active:
+                    raise InvalidGrantError("issuing OAuth client has been deactivated")
 
             if rt.consumed_at is not None:
                 await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
@@ -222,6 +237,7 @@ class TokenService:
                     token_family_id=rt.token_family_id,
                     expires_at=now + timedelta(seconds=self.access_ttl_seconds),
                     created_by=rt.actor_id,
+                    oauth_client_id=rt.oauth_client_id,
                 )
                 new_refresh = await RefreshTokenRepository.create(
                     session,
@@ -232,6 +248,7 @@ class TokenService:
                     token_family_id=rt.token_family_id,
                     expires_at=now + timedelta(seconds=self._refresh_ttl),
                     created_by=rt.actor_id,
+                    oauth_client_id=rt.oauth_client_id,
                 )
 
                 await RefreshTokenRepository.consume(session, rt.id, replaced_by_id=new_refresh.id)
@@ -370,6 +387,13 @@ class TokenService:
 
             if at is None:
                 return None
+
+            if at.oauth_client_id is not None:
+                oauth_client = await OAuthClientRepository.get_by_client_id(
+                    session, at.oauth_client_id
+                )
+                if oauth_client is None or not oauth_client.active:
+                    return None
 
             scopes = list(at.scopes)
             parent_actor_id: str | None = None

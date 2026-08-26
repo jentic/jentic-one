@@ -69,6 +69,7 @@ async def token_endpoint(
         if not body.code or not body.code_verifier or not body.redirect_uri or not body.client_id:
             raise InvalidGrantError("code, code_verifier, redirect_uri, and client_id are required")
         is_platform = any(pc.client_id == body.client_id for pc in ctx.config.auth.platform_clients)
+        third_party_client_id: str | None = None
         if not is_platform:
             if not body.client_secret:
                 raise InvalidGrantError("invalid_client")
@@ -76,11 +77,13 @@ async def token_endpoint(
                 client = await OAuthClientRepository.get_by_client_id(session, body.client_id)
             if client is None or not verify_password(body.client_secret, client.client_secret_hash):
                 raise InvalidGrantError("invalid_client")
+            third_party_client_id = body.client_id
         access_token, refresh_token, id_token = await authorize_svc.exchange_code(
             code=body.code,
             code_verifier=body.code_verifier,
             redirect_uri=body.redirect_uri,
             client_id=body.client_id,
+            oauth_client_id=third_party_client_id,
         )
         return TokenResponse(
             access_token=access_token,
