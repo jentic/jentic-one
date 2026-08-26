@@ -278,3 +278,13 @@ export type { WebhookDeliveryListResponse } from '@/shared/api/generated/models/
 export type { WebhookSecretRotateRequest } from '@/shared/api/generated/models/WebhookSecretRotateRequest';
 export type { WebhookSecretRotatedResponse } from '@/shared/api/generated/models/WebhookSecretRotatedResponse';
 export type { WebhookTestQueuedResponse } from '@/shared/api/generated/models/WebhookTestQueuedResponse';
+
+// Webhooks Phase 3 (UX redesign): the endpoint detail drawer's richer-data
+// surface — the aggregate delivery-health stats, the per-attempt history, and
+// the backend-served subscribable event catalog the picker pins itself to.
+// Append-only, like the rest.
+export type { WebhookEndpointStatsResponse } from '@/shared/api/generated/models/WebhookEndpointStatsResponse';
+export type { WebhookDeliveryAttemptResponse } from '@/shared/api/generated/models/WebhookDeliveryAttemptResponse';
+export type { WebhookDeliveryAttemptListResponse } from '@/shared/api/generated/models/WebhookDeliveryAttemptListResponse';
+export type { WebhookEventCatalogResponse } from '@/shared/api/generated/models/WebhookEventCatalogResponse';
+export type { WebhookEventCatalogEntry } from '@/shared/api/generated/models/WebhookEventCatalogEntry';

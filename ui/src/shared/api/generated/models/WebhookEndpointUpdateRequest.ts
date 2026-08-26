@@ -18,6 +18,10 @@ export type WebhookEndpointUpdateRequest = {
      */
     active?: (boolean | null);
     /**
+     * Per-endpoint IP/CIDR allowlist. Omit to leave unchanged; send an empty list to clear it. Never re-opens the cloud-metadata hard-deny.
+     */
+    allowed_cidrs?: (Array<string> | null);
+    /**
      * Event types to subscribe to. Empty means all relayable types.
      */
     event_types?: (Array<string> | null);

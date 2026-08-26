@@ -8594,6 +8594,96 @@
         "title": "VersionResponse",
         "type": "object"
       },
+      "WebhookDeliveryAttemptListResponse": {
+        "description": "Per-attempt history for one delivery (newest first).",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/WebhookDeliveryAttemptResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WebhookDeliveryAttemptListResponse",
+        "type": "object"
+      },
+      "WebhookDeliveryAttemptResponse": {
+        "description": "One recorded attempt in a delivery's history.",
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "attempt_number": {
+            "title": "Attempt Number",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "delivery_id": {
+            "title": "Delivery Id",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "delivery_id",
+          "attempt_number",
+          "status_code",
+          "error",
+          "duration_ms",
+          "created_at"
+        ],
+        "title": "WebhookDeliveryAttemptResponse",
+        "type": "object"
+      },
       "WebhookDeliveryListResponse": {
         "description": "Delivery history for an endpoint.",
         "properties": {
@@ -8633,6 +8723,18 @@
           "delivery_id": {
             "title": "Delivery Id",
             "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Wall-clock duration of the most recent attempt, in milliseconds.",
+            "title": "Duration Ms"
           },
           "endpoint_id": {
             "title": "Endpoint Id",
@@ -8711,6 +8813,14 @@
       "WebhookEndpointCreateRequest": {
         "description": "Request body for creating a webhook endpoint.",
         "properties": {
+          "allowed_cidrs": {
+            "description": "Optional per-endpoint IP/CIDR allowlist. When non-empty, an otherwise-blocked (private/internal) pinned IP inside one of these CIDRs is permitted at send — best for stable internal targets. The cloud-metadata range is never re-opened, whatever is listed. Empty means only the operator-wide egress policy applies.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Cidrs",
+            "type": "array"
+          },
           "event_types": {
             "description": "Event types to subscribe to. Empty means all relayable types.",
             "items": {
@@ -8788,6 +8898,13 @@
             "title": "Active",
             "type": "boolean"
           },
+          "allowed_cidrs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Cidrs",
+            "type": "array"
+          },
           "created_at": {
             "anyOf": [
               {
@@ -8815,6 +8932,18 @@
             "title": "Name",
             "type": "string"
           },
+          "previous_secret_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Secret Expires At"
+          },
           "target_url": {
             "anyOf": [
               {
@@ -8832,10 +8961,105 @@
           "name",
           "target_url",
           "event_types",
+          "allowed_cidrs",
           "active",
           "created_at"
         ],
         "title": "WebhookEndpointResponse",
+        "type": "object"
+      },
+      "WebhookEndpointStatsResponse": {
+        "description": "Aggregate delivery health for an endpoint's Overview.\n\nAll derived from ``webhook_deliveries`` — counts by status, last-24h volume\nand failures, the most recent attempt, the next scheduled attempt, and the\naverage response time.",
+        "properties": {
+          "avg_duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Duration Ms"
+          },
+          "counts_by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts By Status",
+            "type": "object"
+          },
+          "last_attempt_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Attempt At"
+          },
+          "last_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Duration Ms"
+          },
+          "last_status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Status Code"
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Attempt At"
+          },
+          "recent_failed": {
+            "title": "Recent Failed",
+            "type": "integer"
+          },
+          "recent_total": {
+            "title": "Recent Total",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "counts_by_status",
+          "recent_total",
+          "recent_failed",
+          "last_status_code",
+          "last_attempt_at",
+          "last_duration_ms",
+          "next_attempt_at",
+          "avg_duration_ms"
+        ],
+        "title": "WebhookEndpointStatsResponse",
         "type": "object"
       },
       "WebhookEndpointUpdateRequest": {
@@ -8852,6 +9076,21 @@
             ],
             "description": "Whether the endpoint receives deliveries. Set false to pause it.",
             "title": "Active"
+          },
+          "allowed_cidrs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-endpoint IP/CIDR allowlist. Omit to leave unchanged; send an empty list to clear it. Never re-opens the cloud-metadata hard-deny.",
+            "title": "Allowed Cidrs"
           },
           "event_types": {
             "anyOf": [
@@ -8896,6 +9135,43 @@
           }
         },
         "title": "WebhookEndpointUpdateRequest",
+        "type": "object"
+      },
+      "WebhookEventCatalogEntry": {
+        "description": "One subscribable event type in the catalog.",
+        "properties": {
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "noun": {
+            "description": "The grouping prefix (before the first '.').",
+            "title": "Noun",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_type",
+          "noun"
+        ],
+        "title": "WebhookEventCatalogEntry",
+        "type": "object"
+      },
+      "WebhookEventCatalogResponse": {
+        "description": "The canonical set of subscribable event types.\n\nServed so the UI's event picker cannot drift from the backend\n``EventType.ALL`` minus the never-relayed set. The synthetic ``webhook.test``\ntype is deliberately excluded — it is not subscribable.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/WebhookEventCatalogEntry"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WebhookEventCatalogResponse",
         "type": "object"
       },
       "WebhookSecretRotateRequest": {
@@ -33248,6 +33524,152 @@
         ]
       }
     },
+    "/webhooks/deliveries/{delivery_id}/attempts": {
+      "get": {
+        "description": "Every recorded attempt for one delivery (newest first): status code, categorised error, response time, and when. The parent delivery keeps only the last outcome; this is the full timeline.",
+        "operationId": "listDeliveryAttempts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "title": "Delivery Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliveryAttemptListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List per-attempt history for a delivery",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
     "/webhooks/deliveries/{delivery_id}:resend": {
       "post": {
         "description": "Requeues a delivery for another attempt — including a dead-lettered one, which is the point: an operator can retry after fixing the receiver. Requeues rather than sending inline, so the dispatcher stays the only thing doing outbound network I/O.",
@@ -34253,6 +34675,152 @@
         ]
       }
     },
+    "/webhooks/endpoints/{endpoint_id}/stats": {
+      "get": {
+        "description": "Summarises the endpoint's delivery health — counts by status, last-24h volume and failures, the most recent attempt, the next scheduled attempt, and the average response time — for the Overview view. Derived entirely from the delivery log; adds no new storage.",
+        "operationId": "getEndpointStats",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "endpoint_id",
+            "required": true,
+            "schema": {
+              "title": "Endpoint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Aggregate delivery stats for an endpoint",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
     "/webhooks/endpoints/{endpoint_id}:rotate-secret": {
       "post": {
         "description": "Issues a new secret and returns it once. The previous secret keeps working for a grace period so both sides can be updated without dropping events; pass `grace_seconds: 0` to revoke it immediately (correct for a leak).",
@@ -34557,6 +35125,141 @@
           }
         ],
         "summary": "Send a test event",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/webhooks/event-catalog": {
+      "get": {
+        "description": "The canonical set of event types an endpoint can subscribe to — ``EventType.ALL`` minus the never-relayed set, and excluding the synthetic ``webhook.test``. Served so the UI's event picker cannot drift from the backend.",
+        "operationId": "getEventCatalog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEventCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List subscribable event types",
         "tags": [
           "Webhooks"
         ]
