@@ -153,12 +153,29 @@ jobs:
           VERSION: ${{ steps.chart.outputs.version }}
         run: |
           set -euo pipefail
-          aws ecr get-login-password --region us-east-1 \
-            | helm registry login --username AWS --password-stdin "${ECR_CHART%%/*}"
+          REGISTRY="${ECR_CHART%%/*}"
+          # Two logins from one token: helm push reads Helm's registry config;
+          # cosign reads Docker's. Without the docker login the sign step 401s.
+          PASSWORD="$(aws ecr get-login-password --region us-east-1)"
+          helm registry login --username AWS --password-stdin "${REGISTRY}" <<<"${PASSWORD}"
+          docker login --username AWS --password-stdin "${REGISTRY}" <<<"${PASSWORD}"
           # helm push derives <repo>/<chart-name> from the chart, so the push
           # target is the repo path MINUS the final segment (asserted above).
-          helm push "/tmp/chart/jentic-one-${VERSION}.tgz" "oci://${ECR_CHART%/*}" 2>&1 | tee /tmp/push.log
-          DIGEST="$(grep -oE 'sha256:[0-9a-f]{64}' /tmp/push.log | head -n1)"
-          test -n "${DIGEST}"
-          echo "Pushed ${ECR_CHART}:${VERSION} @ ${DIGEST}"
+          # Marketplace ECR tags are immutable: if this exact chart version is
+          # already present (a re-run after a partial failure), skip the push
+          # and re-derive the digest from the registry so signing still runs.
+          if helm push "/tmp/chart/jentic-one-${VERSION}.tgz" "oci://${ECR_CHART%/*}" 2>&1 | tee /tmp/push.log; then
+            DIGEST="$(grep -oE 'sha256:[0-9a-f]{64}' /tmp/push.log | head -n1)"
+          elif grep -qiE 'tag.*immutable|already exists' /tmp/push.log; then
+            echo "Chart ${VERSION} already in the registry — signing the existing digest"
+            DIGEST="$(aws ecr batch-get-image --region us-east-1 \
+              --registry-id "${REGISTRY%%.*}" \
+              --repository-name "${ECR_CHART#*/}" \
+              --image-ids imageTag="${VERSION}" \
+              --query 'images[0].imageId.imageDigest' --output text)"
+          else
+            exit 1
+          fi
+          test -n "${DIGEST}" && [ "${DIGEST}" != "None" ]
+          echo "Chart ${ECR_CHART}:${VERSION} @ ${DIGEST}"
           cosign sign "${ECR_CHART}@${DIGEST}"
