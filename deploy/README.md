@@ -1070,7 +1070,8 @@ values are sensitive; the trust policy below is what protects the role):
 | -------- | ----- |
 | `MARKETPLACE_ECR_ROLE_ARN` | The IAM role below, e.g. `arn:aws:iam::<seller-account-id>:role/jentic-one-marketplace-publish` |
 | `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app` |
-| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` — **leave unset: the listing is RDS-only** (decided 2026-08-26; the only chart-supported Postgres image is the frozen `bitnamilegacy` one, which fails the CVE gate). Setting this resumes the mirror if the chart ever moves to a maintained image |
+| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` — **leave unset: the listing is RDS-only** (decided 2026-08-26; the only chart-supported Postgres image is the frozen `bitnamilegacy` one, which fails the CVE gate). Resuming the mirror needs this variable **and** the repo's ARN re-added to the role policy below (removed for least-privilege) |
+| `MARKETPLACE_ECR_CHART` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one` — the Helm chart as an OCI artifact (the listing's deployment-template URI). The final path segment **must equal the chart name** (`jentic-one`): `helm push` derives it from `Chart.yaml` |
 
 Once set:
 
@@ -1081,7 +1082,13 @@ Once set:
 - [`marketplace-mirror.yml`](../.github/workflows/marketplace-mirror.yml)
   (weekly + manual dispatch) mirrors the bundled Postgres image
   ([`postgres-mirror.Dockerfile`](docker/postgres-mirror.Dockerfile), digest
-  kept fresh by Dependabot) through the same Trivy gate.
+  kept fresh by Dependabot) through the same Trivy gate;
+- [`marketplace-chart.yml`](../.github/workflows/marketplace-chart.yml)
+  publishes the umbrella Helm chart as an OCI artifact after every successful
+  release run (chart version = tag minus the `v`), gated on a render check
+  that the Marketplace overlay resolves every image to the listing's ECR.
+  Backfill an already-released tag with
+  `gh workflow run marketplace-chart.yml -f tag=vX.Y.Z`.
 
 Publishing a new **listing version** stays a portal step (product → Request
 changes → *Add version*, pinning the pushed tag/digest); automate via the
@@ -1129,8 +1136,8 @@ doesn't have it):
 ```
 
 (The first statement covers the release workflow, which runs on `v*` tags;
-the second covers the scheduled/dispatched mirror workflow, which runs on
-`main`.)
+the second covers the mirror and chart workflows, which run on `main` —
+`workflow_run`/scheduled/dispatched workflows execute on the default branch.)
 
 Permissions policy — ECR push scoped to the listing's repos, which live in
 AWS's Marketplace registry account and are granted to the seller through the
@@ -1160,7 +1167,7 @@ portal (`aws-marketplace` actions may be required by newer portal setups; add
       ],
       "Resource": [
         "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-app",
-        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-psql"
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one"
       ]
     }
   ]
@@ -1191,7 +1198,9 @@ and will be filled when the answers exist:
   and full re-runs strand untagged manifests; nothing prunes them yet. A
   scheduled `actions/delete-package-versions` for untagged + aged SHA tags
   is the likely shape.
-- **Helm chart publishing** — chart is built locally; no OCI-registry push
-  yet.
+- **Helm chart publishing** — the chart publishes to the AWS Marketplace ECR
+  as an OCI artifact on release
+  ([`marketplace-chart.yml`](../.github/workflows/marketplace-chart.yml));
+  there is no general-purpose (non-Marketplace) OCI-registry push yet.
 - **Real Terraform env values** — cluster/namespace/ingress are TODO
   placeholders.
