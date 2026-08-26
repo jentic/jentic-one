@@ -13,7 +13,7 @@ the Broker are running and reachable (the local default is
 > **Run the agent on a different machine from Jentic One.** An agent running as
 > the same OS user can read the credential database and encryption key off disk,
 > whatever the API-level controls allow. Read the
-> [security hardening guide](../security/hardening.md) before pointing an instance
+> [security hardening guide](../security/security.md) before pointing an instance
 > at a real credential.
 
 ## 1. Create your admin account
@@ -117,4 +117,4 @@ credential is added inside the Broker and is never returned to the caller.
 - **Endpoint & scope reference.** Every HTTP route and the scope it requires:
   [endpoint reference](../reference/endpoints.md).
 - **Run it somewhere real.** [Build & deploy](../../deploy/README.md) and the
-  [security hardening guide](../security/hardening.md).
+  [security hardening guide](../security/security.md).

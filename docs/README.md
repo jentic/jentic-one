@@ -30,7 +30,7 @@ The full `jenticctl`/`jentic` command surface is in the
 
 ## Secure it
 
-Read [Deploying Jentic One securely](security/hardening.md) before pointing an
+Read [Deploying Jentic One securely](security/security.md) before pointing an
 instance at a real credential — the threat model and the deployment-posture
 ladder. The design rationale behind the local-agent sandbox lives in
 [security/local-agent/](security/local-agent/README.md).
@@ -51,8 +51,10 @@ documented in [deploy/README.md](../deploy/README.md).
 ## Reference
 
 [reference/](reference/README.md) holds **generated** material — the endpoint
-and scope reference (`endpoints.md` / `endpoints.json`), regenerated with
-`make endpoints` and drift-guarded in CI. Never hand-edit it. A running
-deployment also serves interactive references at `/docs` and `/redoc`.
+and scope reference (`endpoints.md` / `endpoints.json`, `make endpoints`) and
+the [configuration reference](reference/config.md) listing every config key
+with its type, default, and env var (`make config-reference`). All of it is
+drift-guarded in CI — never hand-edit it. A running deployment also serves
+interactive references at `/docs` and `/redoc`.
 
 `assets/` holds the images used by these docs and the repository README.

@@ -26,4 +26,4 @@ agent as its own unprivileged Unix user so the isolated posture is the default.
 | [`profile-run-as-agent-plan.md`](profile-run-as-agent-plan.md) | **A deferred, pre-V2 plan (superseded).** Written against the V1 `profile` model — switching the active profile to an agent-owned one should run subsequent operations *as* the agent's Unix user. The flat `profile` surface was removed in the V2 activation (only a hidden deprecated shim → `context` remains); the concept now maps to contexts/identities. Kept for the run-as design rationale, not as a description of the live CLI. |
 
 For the broader deployment guidance (separate host / network postures) see
-[`../hardening.md`](../hardening.md).
+[`../security.md`](../security.md).

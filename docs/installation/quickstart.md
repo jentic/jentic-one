@@ -41,4 +41,4 @@ the verify commands linked above need nothing but the downloaded files and
 Register each agent host against the instance (`jentic register --url … --broker-url …`,
 see the [CLI README](../../cli/README.md#usage)), then make the
 [first brokered call](../guides/first-call.md). Before pointing anything at a real
-credential, read the [security hardening guide](../security/hardening.md).
+credential, read the [security hardening guide](../security/security.md).
