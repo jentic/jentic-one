@@ -114,14 +114,16 @@ Six steps from a running instance to a response from a real API.
 1. **Create your admin account** at `/setup` (the wizard opens this automatically, or run
    `jenticctl setup` to do it from the terminal).
 2. **Import an API** from the [Jentic API Directory](https://github.com/jentic/jentic-public-apis)
-   (e.g. `httpbin.org`, used in step 6), or upload your own specification.
+   using the exact catalog `api_id` (e.g. `jentic catalog import httpbin.org`, used in step 6),
+   or upload your own specification.
 3. **Store a credential** for that API. It is encrypted at rest and is never returned to a
    caller.
 4. **Register the agent:** `jentic register` (add `--base-url <URL>` when the agent runs on a
    different machine). Registration waits for an operator to approve the
    agent. On a single-operator install, approve it in the UI and the command completes.
-5. **Grant access** by binding the agent to a toolkit. A rule-less binding blocks everything;
-   the default is deny.
+5. **Grant access** by binding the agent to a toolkit. Access commands use the imported API's
+   `vendor/name` reference rather than its catalog ID (the httpbin example is
+   `httpbin.org/httpbin.org`). A rule-less binding blocks everything; the default is deny.
 6. **Make the call:** `jentic execute GET:https://httpbin.org/get --json` — the operation's
    full URL, as returned by `jentic search`/`jentic inspect`.
 
