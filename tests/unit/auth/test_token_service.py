@@ -89,6 +89,28 @@ def _make_refresh_token_row(
     return row
 
 
+def _make_agent_row(*, status: str = "active", owner_id: str = "usr_owner") -> MagicMock:
+    row = MagicMock()
+    row.id = "agnt_x"
+    row.status = status
+    row.owner_id = owner_id
+    return row
+
+
+def _make_user_row(*, active: bool = True) -> MagicMock:
+    row = MagicMock()
+    row.id = "usr_test123"
+    row.active = active
+    return row
+
+
+def _make_service_account_row(*, status: str = "active") -> MagicMock:
+    row = MagicMock()
+    row.id = "sva_x"
+    row.status = status
+    return row
+
+
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_issue_pair_returns_prefixed_tokens(
@@ -127,10 +149,11 @@ async def test_issue_pair_stores_hashed_tokens(
     assert at_call_kwargs["scopes"] == ["read"]
 
 
+@patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_refresh_rotation_returns_new_pair(
-    mock_at_repo: MagicMock, mock_rt_repo: MagicMock
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_user_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
     rt_row = _make_refresh_token_row()
@@ -138,6 +161,7 @@ async def test_refresh_rotation_returns_new_pair(
     mock_rt_repo.create = AsyncMock(return_value=_make_refresh_token_row())
     mock_rt_repo.consume = AsyncMock()
     mock_at_repo.create = AsyncMock(return_value=_make_access_token_row())
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     svc = TokenService(ctx)
     access, refresh = await svc.refresh("rt_oldtoken")
@@ -267,11 +291,15 @@ async def test_revoke_correct_owner_succeeds(
     mock_at_repo.revoke.assert_called_once()
 
 
+@patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
-async def test_introspect_active_access_token(mock_at_repo: MagicMock) -> None:
+async def test_introspect_active_access_token(
+    mock_at_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
     ctx = _make_ctx()
     at_row = _make_access_token_row()
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     svc = TokenService(ctx)
     result = await svc.introspect("at_validtoken")
@@ -316,11 +344,15 @@ async def test_introspect_not_found_returns_inactive(mock_at_repo: MagicMock) ->
     assert result["active"] is False
 
 
+@patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
-async def test_resolve_valid_token_returns_identity(mock_at_repo: MagicMock) -> None:
+async def test_resolve_valid_token_returns_identity(
+    mock_at_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
     ctx = _make_ctx()
     at_row = _make_access_token_row()
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     svc = TokenService(ctx)
     resolved = await svc.resolve_access_token("at_validtoken")
@@ -331,11 +363,15 @@ async def test_resolve_valid_token_returns_identity(mock_at_repo: MagicMock) -> 
     assert resolved.permissions == at_row.scopes
 
 
+@patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
-async def test_resolve_expired_token_returns_inactive(mock_at_repo: MagicMock) -> None:
+async def test_resolve_expired_token_returns_inactive(
+    mock_at_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
     ctx = _make_ctx()
     at_row = _make_access_token_row(expires_at=datetime.now(UTC) - timedelta(hours=1))
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     svc = TokenService(ctx)
     resolved = await svc.resolve_access_token("at_expired")
@@ -378,7 +414,7 @@ async def test_resolve_long_lived_agent_token_uses_live_grants(
         actor_id="agnt_x", actor_type="agent", scopes=["apis:read"], is_ephemeral=False
     )
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
-    mock_agent_repo.get_by_id = AsyncMock(return_value=None)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row())
     mock_grant_repo.list_for_actor = AsyncMock(
         return_value=[MagicMock(scope="apis:read"), MagicMock(scope="apis:write")]
     )
@@ -387,6 +423,8 @@ async def test_resolve_long_lived_agent_token_uses_live_grants(
     resolved = await svc.resolve_access_token("at_agenttoken")
 
     assert resolved is not None
+    assert resolved.active is True
+    assert resolved.parent_actor_id == "usr_owner"
     assert resolved.permissions == ["apis:read", "apis:write"]
     mock_grant_repo.list_for_actor.assert_awaited_once()
 
@@ -409,7 +447,7 @@ async def test_resolve_ephemeral_minted_token_keeps_snapshot(
         is_ephemeral=True,
     )
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
-    mock_agent_repo.get_by_id = AsyncMock(return_value=None)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row())
     mock_grant_repo.list_for_actor = AsyncMock()
 
     svc = TokenService(ctx)
@@ -420,17 +458,20 @@ async def test_resolve_ephemeral_minted_token_keeps_snapshot(
     mock_grant_repo.list_for_actor.assert_not_awaited()
 
 
+@patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.ActorScopeGrantRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_resolve_user_token_keeps_snapshot(
     mock_at_repo: MagicMock,
     mock_grant_repo: MagicMock,
+    mock_user_repo: MagicMock,
 ) -> None:
     """User tokens do not draw scopes from actor_scope_grants."""
     ctx = _make_ctx()
     at_row = _make_access_token_row(actor_id="usr_x", actor_type="user", scopes=["openid"])
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
     mock_grant_repo.list_for_actor = AsyncMock()
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     svc = TokenService(ctx)
     resolved = await svc.resolve_access_token("at_usertoken")
@@ -438,3 +479,187 @@ async def test_resolve_user_token_keeps_snapshot(
     assert resolved is not None
     assert resolved.permissions == ["openid"]
     mock_grant_repo.list_for_actor.assert_not_awaited()
+
+
+# --- actor-status checks (#1136): disable must kill outstanding tokens ---
+
+
+@pytest.mark.parametrize("status", ["pending", "rejected", "disabled", "archived"])
+@patch("jentic_one.auth.services.token_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_non_active_agent_token_is_inactive(
+    mock_at_repo: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_grant_repo: MagicMock,
+    status: str,
+) -> None:
+    """A valid, unexpired token resolves as inactive once its agent leaves ACTIVE."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(actor_id="agnt_x", actor_type="agent")
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status=status))
+    mock_grant_repo.list_for_actor = AsyncMock(return_value=[])
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_agenttoken")
+
+    assert resolved is not None
+    assert resolved.active is False
+
+
+@patch("jentic_one.auth.services.token_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_missing_agent_row_fails_closed(
+    mock_at_repo: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_grant_repo: MagicMock,
+) -> None:
+    """An agent token whose agent row no longer exists must not stay active."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(actor_id="agnt_gone", actor_type="agent")
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=None)
+    mock_grant_repo.list_for_actor = AsyncMock(return_value=[])
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_orphan")
+
+    assert resolved is not None
+    assert resolved.active is False
+
+
+@patch("jentic_one.auth.services.token_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.token_service.ServiceAccountRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_disabled_service_account_token_is_inactive(
+    mock_at_repo: MagicMock,
+    mock_sa_repo: MagicMock,
+    mock_grant_repo: MagicMock,
+) -> None:
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(actor_id="sva_x", actor_type="service_account")
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_sa_repo.get_by_id = AsyncMock(return_value=_make_service_account_row(status="disabled"))
+    mock_grant_repo.list_for_actor = AsyncMock(return_value=[])
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_satoken")
+
+    assert resolved is not None
+    assert resolved.active is False
+
+
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_deactivated_user_token_is_inactive(
+    mock_at_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(actor_id="usr_x", actor_type="user")
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row(active=False))
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_usertoken")
+
+    assert resolved is not None
+    assert resolved.active is False
+
+
+@patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_refresh_disabled_agent_rejected_without_minting(
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_agent_repo: MagicMock
+) -> None:
+    """A disabled agent must not rotate its refresh token into fresh access tokens."""
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row(actor_id="agnt_x", actor_type="agent")
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_rt_repo.create = AsyncMock()
+    mock_rt_repo.consume = AsyncMock()
+    mock_at_repo.create = AsyncMock()
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="disabled"))
+
+    svc = TokenService(ctx)
+    with pytest.raises(InvalidGrantError, match="not active"):
+        await svc.refresh("rt_disabledagent")
+
+    mock_at_repo.create.assert_not_called()
+    mock_rt_repo.create.assert_not_called()
+    mock_rt_repo.consume.assert_not_called()
+
+
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_refresh_deactivated_user_rejected(
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row()
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row(active=False))
+
+    svc = TokenService(ctx)
+    with pytest.raises(InvalidGrantError, match="not active"):
+        await svc.refresh("rt_deactivateduser")
+
+
+@patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_refresh_reuse_detection_wins_over_disabled_actor(
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_agent_repo: MagicMock
+) -> None:
+    """Replaying a consumed refresh token still revokes the family even when the
+    actor is disabled — reuse detection must not be short-circuited."""
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row(
+        actor_id="agnt_x", actor_type="agent", consumed_at=datetime.now(UTC)
+    )
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_rt_repo.revoke_family = AsyncMock()
+    mock_at_repo.revoke_family = AsyncMock()
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="disabled"))
+
+    svc = TokenService(ctx)
+    with pytest.raises(InvalidGrantError, match="reuse detected"):
+        await svc.refresh("rt_replayed")
+
+    mock_rt_repo.revoke_family.assert_called_once()
+    mock_at_repo.revoke_family.assert_called_once()
+
+
+@patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_introspect_disabled_agent_access_token_inactive(
+    mock_at_repo: MagicMock, mock_agent_repo: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(actor_id="agnt_x", actor_type="agent")
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="disabled"))
+
+    svc = TokenService(ctx)
+    result = await svc.introspect("at_disabledagent")
+
+    assert result["active"] is False
+
+
+@patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+async def test_introspect_disabled_agent_refresh_token_inactive(
+    mock_rt_repo: MagicMock, mock_agent_repo: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row(actor_id="agnt_x", actor_type="agent")
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="disabled"))
+
+    svc = TokenService(ctx)
+    result = await svc.introspect("rt_disabledagent")
+
+    assert result["active"] is False
