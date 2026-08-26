@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **159**._
+_Total endpoints: **168**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -109,7 +109,7 @@ _Total endpoints: **159**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (49)
+## Operator-facing (typically a human operator / admin) (56)
 
 
 ### `access-requests`
@@ -124,6 +124,17 @@ _Total endpoints: **159**._
 |---|---|---|---|---|
 | GET | `/actors` | `users:read` | operator | List Actors |
 
+### `admin`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/admin/oauth-clients` | `org:admin` | operator | List OAuth clients |
+| POST | `/admin/oauth-clients` | `org:admin` | operator | Register OAuth client |
+| DELETE | `/admin/oauth-clients/{id}` | `org:admin` | operator | Deactivate OAuth client |
+| GET | `/admin/oauth-clients/{id}` | `org:admin` | operator | Get OAuth client |
+| PATCH | `/admin/oauth-clients/{id}` | `org:admin` | operator | Update OAuth client |
+| POST | `/admin/oauth-clients/{id}/rotate-secret` | `org:admin` | operator | Rotate client secret |
+
 ### `agents`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -134,6 +145,7 @@ _Total endpoints: **159**._
 | PATCH | `/agents/{agent_id}` | `agents:write` | operator | Update Agent |
 | GET | `/agents/{agent_id}/api-key` | `agents:read` | operator | Get Agent Api Key Info |
 | GET | `/agents/{agent_id}/api-key/history` | `agents:read` | operator | Get Agent Api Key History |
+| PUT | `/agents/{agent_id}/jwks` | `agents:write` | operator | Update Agent Jwks |
 | GET | `/agents/{agent_id}/scopes` | `agents:read` | operator | Get Agent Scopes |
 | PUT | `/agents/{agent_id}/scopes` | `agents:write` | operator | Replace Agent Scopes |
 | POST | `/agents/{agent_id}/toolkits` | `agents:write` | operator | Bind Toolkit |
@@ -359,7 +371,7 @@ _Total endpoints: **159**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (19)
+## Public (unauthenticated) (21)
 
 
 ### `.well-known`
@@ -424,6 +436,8 @@ _Total endpoints: **159**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/oauth/callback` | _public — no auth_ | — | Authorize Oauth Callback |
+| GET | `/oauth/consent` | _public — no auth_ | — | Consent Page |
+| POST | `/oauth/consent` | _public — no auth_ | — | Consent Submit |
 | POST | `/oauth/token` | _public — no auth_ | — | Token Endpoint |
 
 ### `ready`

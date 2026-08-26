@@ -23,7 +23,7 @@ import structlog
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
+from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import (
     InvalidGrantError,
@@ -112,26 +112,14 @@ async def _is_allowed_redirect_uri(redirect_uri: str, client_id: str, ctx: Conte
     if _is_platform_client(client_id, ctx):
         return _platform_client_allows_redirect(redirect_uri, client_id, ctx)
 
-    async with ctx.admin_db.session() as session:
-        client = await OAuthClientRepository.get_by_client_id(session, client_id)
-
-    if client is None or not client.active:
-        return False
-
-    return redirect_uri in client.redirect_uris
+    return await OAuthClientService(ctx).is_redirect_uri_allowed(client_id, redirect_uri)
 
 
 async def _get_client_allowed_scopes(client_id: str, ctx: Context) -> frozenset[str] | None:
     """Return allowed scopes for a registered client, or None for platform clients."""
     if _is_platform_client(client_id, ctx):
         return None
-    async with ctx.admin_db.session() as session:
-        client = await OAuthClientRepository.get_by_client_id(session, client_id)
-    if client is None:
-        return None
-    if client.allowed_scopes:
-        return frozenset(client.allowed_scopes)
-    return None
+    return await OAuthClientService(ctx).get_allowed_scopes(client_id)
 
 
 def _callback_uri(request: Request, canonical_base_url: str) -> str:
@@ -561,8 +549,7 @@ async def oauth_callback(
         logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
         return RedirectResponse(url="/error?error=server_error", status_code=302)
 
-    async with ctx.admin_db.session() as session:
-        oauth_client = await OAuthClientRepository.get_by_client_id(session, client_id or "")
+    oauth_client = await OAuthClientService(ctx).get_by_client_id(client_id or "")
 
     if oauth_client is not None and oauth_client.require_consent:
         consent_nonce = secrets.token_urlsafe(32)

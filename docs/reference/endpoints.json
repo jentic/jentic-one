@@ -281,6 +281,300 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "overlays:confirm",
+          "service-accounts:read",
+          "service-accounts:write",
+          "toolkits:read",
+          "toolkits:write",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "GET",
+      "operation_id": "listOauthClients",
+      "path": "/admin/oauth-clients",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "List OAuth clients",
+      "surface": "admin",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "overlays:confirm",
+          "service-accounts:read",
+          "service-accounts:write",
+          "toolkits:read",
+          "toolkits:write",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "createOauthClient",
+      "path": "/admin/oauth-clients",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Register OAuth client",
+      "surface": "admin",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "overlays:confirm",
+          "service-accounts:read",
+          "service-accounts:write",
+          "toolkits:read",
+          "toolkits:write",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "deactivateOauthClient",
+      "path": "/admin/oauth-clients/{id}",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Deactivate OAuth client",
+      "surface": "admin",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "overlays:confirm",
+          "service-accounts:read",
+          "service-accounts:write",
+          "toolkits:read",
+          "toolkits:write",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "GET",
+      "operation_id": "getOauthClient",
+      "path": "/admin/oauth-clients/{id}",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Get OAuth client",
+      "surface": "admin",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "overlays:confirm",
+          "service-accounts:read",
+          "service-accounts:write",
+          "toolkits:read",
+          "toolkits:write",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "updateOauthClient",
+      "path": "/admin/oauth-clients/{id}",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Update OAuth client",
+      "surface": "admin",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "overlays:confirm",
+          "service-accounts:read",
+          "service-accounts:write",
+          "toolkits:read",
+          "toolkits:write",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rotateOauthClientSecret",
+      "path": "/admin/oauth-clients/{id}/rotate-secret",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Rotate client secret",
+      "surface": "admin",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
         "agents:read": []
       },
       "method": "GET",
@@ -437,6 +731,32 @@
         "agents:read"
       ],
       "summary": "Get Agent Api Key History",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "PUT",
+      "operation_id": "updateAgentJwks",
+      "path": "/agents/{agent_id}/jwks",
+      "public": false,
+      "required_scopes": [
+        "agents:write"
+      ],
+      "summary": "Update Agent Jwks",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -2373,6 +2693,36 @@
       "public": true,
       "required_scopes": [],
       "summary": "Authorize Oauth Callback",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "consentPage",
+      "path": "/oauth/consent",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Consent Page",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "consentSubmit",
+      "path": "/oauth/consent",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Consent Submit",
       "surface": "oauth",
       "typical_caller": null
     },
@@ -4680,5 +5030,5 @@
     ],
     "total": 31
   },
-  "total": 159
+  "total": 168
 }

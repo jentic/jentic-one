@@ -82,22 +82,19 @@ def test_platform_client_does_not_set_oauth_client_id(
     assert call_kwargs["oauth_client_id"] is None
 
 
-@patch("jentic_one.auth.web.routers.oauth.OAuthClientRepository")
-@patch("jentic_one.auth.web.routers.oauth.verify_password", return_value=True)
+@patch("jentic_one.auth.web.routers.oauth.OAuthClientService")
 @patch("jentic_one.auth.web.routers.oauth.AuthorizeService")
 @patch("jentic_one.auth.web.routers.oauth.TokenService")
 def test_third_party_client_sets_oauth_client_id(
     mock_token_cls: MagicMock,
     mock_authorize_cls: MagicMock,
-    mock_verify_pw: MagicMock,
-    mock_oauth_repo: MagicMock,
+    mock_oauth_svc_cls: MagicMock,
     client: TestClient,
 ) -> None:
     """A third-party registered client exchange passes its client_id as oauth_client_id."""
-    mock_db_client = MagicMock()
-    mock_db_client.client_secret_hash = "hashed_secret"
-    mock_db_client.active = True
-    mock_oauth_repo.get_by_client_id = AsyncMock(return_value=mock_db_client)
+    mock_oauth_svc = MagicMock()
+    mock_oauth_svc.verify_client_secret = AsyncMock(return_value=True)
+    mock_oauth_svc_cls.return_value = mock_oauth_svc
 
     mock_authorize_svc = MagicMock()
     mock_authorize_svc.exchange_code = AsyncMock(

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Response
 
-from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
-from jentic_one.admin.services._support.passwords import verify_password
+from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.assertion_service import AssertionService
 from jentic_one.auth.services.authorize_service import AuthorizeService
@@ -54,6 +53,10 @@ def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
     return AuthorizeService(ctx)
 
 
+def get_oauth_client_service(ctx: Context = Depends(get_ctx)) -> OAuthClientService:
+    return OAuthClientService(ctx)
+
+
 @router.post("/oauth/token")
 async def token_endpoint(
     body: TokenRequest,
@@ -63,6 +66,7 @@ async def token_endpoint(
     sa_auth_svc: ServiceAccountAuthService = Depends(get_sa_auth_service),
     agent_auth_svc: AgentAuthService = Depends(get_agent_auth_service),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
+    oauth_client_svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> TokenResponse:
     """Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens."""
     if body.grant_type == _AUTHORIZATION_CODE_GRANT:
@@ -73,9 +77,9 @@ async def token_endpoint(
         if not is_platform:
             if not body.client_secret:
                 raise InvalidGrantError("invalid_client")
-            async with ctx.admin_db.session() as session:
-                client = await OAuthClientRepository.get_by_client_id(session, body.client_id)
-            if client is None or not verify_password(body.client_secret, client.client_secret_hash):
+            if not await oauth_client_svc.verify_client_secret(
+                body.client_id, body.client_secret
+            ):
                 raise InvalidGrantError("invalid_client")
             third_party_client_id = body.client_id
         access_token, refresh_token, id_token = await authorize_svc.exchange_code(

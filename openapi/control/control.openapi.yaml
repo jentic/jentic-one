@@ -7212,6 +7212,8 @@ paths:
       security:
       - BearerAuth: []
       summary: List OAuth clients
+      tags:
+      - OAuth Clients
     post:
       description: |-
         Register a new OAuth client for third-party application integration.
@@ -7277,6 +7279,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Register OAuth client
+      tags:
+      - OAuth Clients
   /admin/oauth-clients/{id}:
     delete:
       description: |-
@@ -7346,6 +7350,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Deactivate OAuth client
+      tags:
+      - OAuth Clients
     get:
       description: Get an OAuth client by its internal ID.
       operationId: getOauthClient
@@ -7415,6 +7421,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Get OAuth client
+      tags:
+      - OAuth Clients
     patch:
       description: Update an OAuth client's name, description, redirect_uris, or active status.
       operationId: updateOauthClient
@@ -7490,6 +7498,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Update OAuth client
+      tags:
+      - OAuth Clients
   /admin/oauth-clients/{id}/rotate-secret:
     post:
       description: |-
@@ -7563,6 +7573,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Rotate client secret
+      tags:
+      - OAuth Clients
   /agents:
     get:
       description: List agents — scoped by identity via dynamic query scoping.
@@ -18232,6 +18244,8 @@ tags:
   name: Monitoring
 - description: Runtime, DB-backed platform configuration. Lets an operator set, read, and list configuration that previously required hand-editing backend YAML and restarting the server — starting with credential provider configs (e.g. Pipedream). A successful write rebuilds the in-process provider registry so the change takes effect without a restart. Secret fields (e.g. `client_secret`) are encrypted at rest and redacted on read. **Topology note:** in the combined (single-process) deployment a write takes effect immediately for all surfaces. In a multi-process deployment the control/broker processes pick up the new config at their next boot, not the instant the admin write lands; cross-process propagation is a tracked follow-up.
   name: Configuration
+- description: Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). Registered clients integrate with Jentic One via the standard Authorization Code + PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. Deactivating a client immediately invalidates all tokens issued through it.
+  name: OAuth Clients
 x-tagGroups:
 - name: Core / Access
   tags:
@@ -18263,6 +18277,7 @@ x-tagGroups:
   - Audit
   - Monitoring
   - Configuration
+  - OAuth Clients
 - name: Platform Actors
   tags:
   - Identity

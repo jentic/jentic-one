@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
-from jentic_one.admin.services._support.passwords import hash_password
+from jentic_one.admin.services._support.passwords import hash_password, verify_password
 from jentic_one.admin.services._support.tokens import generate_client_secret
 from jentic_one.admin.services.errors import InvalidInputError, NotFoundError
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientCreateResult, OAuthClientView
@@ -243,3 +243,29 @@ class OAuthClientService:
         if client is None or not client.active:
             return False
         return redirect_uri in client.redirect_uris
+
+    async def verify_client_secret(self, client_id: str, client_secret: str) -> bool:
+        """Verify a client's secret. Returns False if client not found or secret invalid."""
+        async with self._ctx.admin_db.session() as session:
+            client = await OAuthClientRepository.get_by_client_id(session, client_id)
+        if client is None:
+            return False
+        return verify_password(client_secret, client.client_secret_hash)
+
+    async def get_allowed_scopes(self, client_id: str) -> frozenset[str] | None:
+        """Return allowed scopes for a registered client, or None if unrestricted/not found."""
+        async with self._ctx.admin_db.session() as session:
+            client = await OAuthClientRepository.get_by_client_id(session, client_id)
+        if client is None:
+            return None
+        if client.allowed_scopes:
+            return frozenset(client.allowed_scopes)
+        return None
+
+    async def requires_consent(self, client_id: str) -> bool:
+        """Return whether the client requires user consent. False if not found."""
+        async with self._ctx.admin_db.session() as session:
+            client = await OAuthClientRepository.get_by_client_id(session, client_id)
+        if client is None:
+            return False
+        return client.require_consent
