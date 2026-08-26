@@ -925,7 +925,7 @@ async def test_event_filed(
     filer = _filer_identity()
     filed = await svc.file(
         actor_id=FILER_SUB,
-        reason=None,
+        reason="need prod access for the payments migration",
         items=_base_items(),
         identity=filer,
     )
@@ -934,8 +934,16 @@ async def test_event_filed(
     assert len(events) == 1
     assert events[0].type == "access_request.filed"
     assert events[0].requires_action is True
-    assert events[0].data["request_id"] == filed.id
-    assert events[0].data["status"] == "pending"
+    data = events[0].data
+    assert data["request_id"] == filed.id
+    assert data["status"] == "pending"
+    # Enriched, already-resolved DISPLAY fields carried through to the wire.
+    assert data["requested_by"] == FILER_SUB
+    assert data["approve_url"].endswith(f"/access-requests/{filed.id}")
+    assert data["items"] == [{"action": "credential:read", "resource": "cred_001"}]
+    # Anti-exfil: the free-text reason must never leave the box on the wire.
+    assert "reason" not in data
+    assert "need prod access" not in (events[0].summary or "")
 
 
 async def test_event_approved(

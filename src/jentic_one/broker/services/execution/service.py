@@ -209,6 +209,9 @@ async def run_execution(
             actor_type=actor_type,
             toolkit_id=ctx_req.toolkit_id,
             operation_id=ctx_req.operation_id,
+            api_vendor=ctx_req.api_vendor,
+            api_name=ctx_req.api_name,
+            api_version=ctx_req.api_version,
             security_config=security_config,
         )
         if isinstance(exc, CircuitOpenError):
@@ -288,6 +291,11 @@ async def run_execution(
         actor_type=actor_type,
         toolkit_id=ctx_req.toolkit_id,
         operation_id=ctx_req.operation_id,
+        api_vendor=ctx_req.api_vendor,
+        api_name=ctx_req.api_name,
+        api_version=ctx_req.api_version,
+        duration_ms=result.duration_ms,
+        http_status=result.status_code,
         security_config=security_config,
         error_tags=error_tags,
     )
@@ -400,6 +408,11 @@ async def persist_streaming_execution(
         actor_type=actor_type,
         toolkit_id=ctx_req.toolkit_id,
         operation_id=ctx_req.operation_id,
+        api_vendor=ctx_req.api_vendor,
+        api_name=ctx_req.api_name,
+        api_version=ctx_req.api_version,
+        duration_ms=duration_ms,
+        http_status=http_status,
         security_config=security_config,
         error_tags=error_tags,
     )
@@ -442,6 +455,76 @@ async def _persist(
     )
 
 
+def _execution_display_data(
+    *,
+    execution_id: str,
+    toolkit_id: str | None,
+    operation_id: str | None,
+    api_vendor: str | None,
+    api_name: str | None,
+    api_version: str | None,
+    duration_ms: int | None,
+    http_status: int | None,
+) -> dict[str, Any]:
+    """Build the non-secret DISPLAY ``data`` for an execution lifecycle event.
+
+    Every field here is a **pre-resolved identifier or metric already on the
+    execution context** — ids, the toolkit/operation slugs, the discovery-driven
+    api vendor/name/version, the measured duration, and the upstream HTTP status.
+    None of it is a secret, a credential, or an upstream response body: it is the
+    same non-sensitive metadata already persisted on the ``executions`` row and
+    stamped on trace spans. Empty/absent fields are dropped so the payload only
+    carries what actually resolved at the emit site (no ``null`` noise on the
+    wire, and the Slack relay's field renderer stays clean).
+    """
+    api = {
+        key: value
+        for key, value in (
+            ("vendor", api_vendor),
+            ("name", api_name),
+            ("version", api_version),
+        )
+        if value
+    }
+    data: dict[str, Any] = {"execution_id": execution_id}
+    if toolkit_id:
+        data["toolkit_id"] = toolkit_id
+    if operation_id:
+        data["operation_id"] = operation_id
+    if api:
+        data["api"] = api
+    if duration_ms is not None:
+        data["duration_ms"] = duration_ms
+    if http_status is not None:
+        data["http_status"] = http_status
+    return data
+
+
+def _execution_summary(
+    *,
+    status: ExecutionStatus,
+    operation_id: str | None,
+    api_vendor: str | None,
+    duration_ms: int | None,
+    error_msg: str | None,
+) -> str:
+    """Human-readable one-liner for an execution lifecycle event.
+
+    Prefers the operation id (falling back to the api vendor, then a generic
+    label) so a Slack/email reader sees *what ran* instead of a bare execution
+    id. On the failed branch the already-sanitised ``error_msg`` is appended —
+    it is the same short, upstream-status-only string persisted to the execution
+    record (never an upstream response body).
+    """
+    what = operation_id or api_vendor or "operation"
+    if status == ExecutionStatus.COMPLETED:
+        if duration_ms is not None:
+            return f"Execution of {what} completed in {duration_ms}ms"
+        return f"Execution of {what} completed"
+    reason = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
+    return f"Execution of {what} failed: {reason}"
+
+
 async def _emit_execution_lifecycle(
     session: Any,
     *,
@@ -453,6 +536,11 @@ async def _emit_execution_lifecycle(
     actor_type: str,
     toolkit_id: str | None = None,
     operation_id: str | None = None,
+    api_vendor: str | None = None,
+    api_name: str | None = None,
+    api_version: str | None = None,
+    duration_ms: int | None = None,
+    http_status: int | None = None,
     security_config: SecurityConfig | None = None,
     error_tags: set[EventTag] | None = None,
 ) -> None:
@@ -467,15 +555,38 @@ async def _emit_execution_lifecycle(
     so ``broker_execution_failed`` telemetry carries the auth split *without* a
     separate ``auth_failure`` event that the flat, correlation-id-free payload
     could never dedupe downstream.
+
+    The ``api_*`` / ``duration_ms`` / ``http_status`` metadata is folded into the
+    event ``data`` as pre-resolved DISPLAY fields (see ``_execution_display_data``)
+    so an outbound webhook carries a human-readable summary and safe identifiers
+    instead of an id-only string with an empty ``data`` — never secrets or bodies.
     """
     event_trace_id = valid_trace_id_or_none(trace_id)
+    display_data = _execution_display_data(
+        execution_id=execution_id,
+        toolkit_id=toolkit_id,
+        operation_id=operation_id,
+        api_vendor=api_vendor,
+        api_name=api_name,
+        api_version=api_version,
+        duration_ms=duration_ms,
+        http_status=http_status,
+    )
+    summary = _execution_summary(
+        status=status,
+        operation_id=operation_id,
+        api_vendor=api_vendor,
+        duration_ms=duration_ms,
+        error_msg=error_msg,
+    )
     try:
         if status == ExecutionStatus.COMPLETED:
             await emit_event(
                 session,
                 type=EventType.EXECUTION_COMPLETED,
                 severity=EventSeverity.INFO,
-                summary=f"Execution {execution_id} completed",
+                summary=summary,
+                data=display_data,
                 execution_id=execution_id,
                 trace_id=event_trace_id,
                 created_by=actor_id,
@@ -483,13 +594,13 @@ async def _emit_execution_lifecycle(
                 actor_type=actor_type,
             )
         else:
-            sanitized = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
             await emit_event(
                 session,
                 type=EventType.EXECUTION_FAILED,
                 severity=EventSeverity.ERROR,
-                summary=f"Execution failed: {sanitized}",
+                summary=summary,
                 requires_action=True,
+                data=display_data,
                 execution_id=execution_id,
                 trace_id=event_trace_id,
                 created_by=actor_id,

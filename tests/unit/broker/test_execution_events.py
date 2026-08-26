@@ -98,6 +98,21 @@ async def test_run_execution_emits_completed_event() -> None:
     assert call_kwargs["severity"] == EventSeverity.INFO
     assert call_kwargs["actor_id"] == "agt_abc"
     assert call_kwargs["actor_type"] == "agent"
+    # Enriched, non-secret DISPLAY data: resolved ids + api + metrics, and a
+    # human summary instead of a bare "Execution <id> completed" string.
+    data = call_kwargs["data"]
+    assert data["execution_id"]
+    assert data["operation_id"] == "testOp"
+    assert data["toolkit_id"] == "tk_test000000000000000000"
+    assert data["api"] == {"vendor": "example", "name": "api", "version": "1.0.0"}
+    assert data["duration_ms"] == 10
+    assert data["http_status"] == 200
+    assert "testOp" in call_kwargs["summary"]
+    # Anti-exfil: no secrets, credential material, or raw upstream body on the wire.
+    assert "detail" not in call_kwargs
+    assert not any(
+        k in data for k in ("secret", "credential", "body", "response", "detail", "actor_id")
+    )
 
 
 @pytest.mark.asyncio
@@ -168,6 +183,13 @@ async def test_persist_streaming_execution_emits_completed_event() -> None:
     call_kwargs = mock_emit.call_args.kwargs
     assert call_kwargs["type"] == EventType.EXECUTION_COMPLETED
     assert call_kwargs["actor_id"] == "agt_stream"
+    # Streaming path carries the same enriched, non-secret display data.
+    data = call_kwargs["data"]
+    assert data["execution_id"] == "exec_test123"
+    assert data["operation_id"] == "testOp"
+    assert data["duration_ms"] == 50
+    assert data["http_status"] == 200
+    assert "testOp" in call_kwargs["summary"]
 
 
 @pytest.mark.asyncio

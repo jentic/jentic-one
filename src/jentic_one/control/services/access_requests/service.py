@@ -175,6 +175,7 @@ class AccessRequestService:
         created_by: str,
         actor_id: str | None = None,
         actor_type: str | None = None,
+        view: AccessRequestView | None = None,
     ) -> None:
         try:
             async with self._ctx.admin_db.transaction() as session:
@@ -184,13 +185,92 @@ class AccessRequestService:
                     severity=EventSeverity.INFO,
                     summary=summary,
                     requires_action=(type == EventType.ACCESS_REQUEST_FILED),
-                    data={"request_id": request_id, "status": status},
+                    data=self._emit_data(request_id=request_id, status=status, view=view),
                     created_by=created_by,
                     actor_id=actor_id,
                     actor_type=actor_type,
                 )
         except Exception:
             logger.warning("emit_event_failed", request_id=request_id, type=type, exc_info=True)
+
+    @staticmethod
+    def _emit_data(
+        *,
+        request_id: str,
+        status: str,
+        view: AccessRequestView | None,
+    ) -> dict[str, Any]:
+        """Build the non-secret DISPLAY ``data`` for an access-request event.
+
+        ``request_id``/``status`` are always present (unchanged wire contract).
+        When the caller has the resolved :class:`AccessRequestView` on hand it
+        also carries **already-resolved, non-secret** display fields so an
+        outbound webhook renders "who asked for what" instead of two opaque ids:
+
+        * ``requested_by`` — the filer's actor id (an identifier, already in the
+          human summary; not a secret).
+        * ``items`` — a compact ``[{action, resource}]`` list where ``action`` is
+          the ``resource_type:action`` pair and ``resource`` is the toolkit /
+          credential **display name** already resolved by ``_resolve_names`` (a
+          label, never the credential material) or the bare resource id/reference
+          when no name resolved.
+        * ``approve_url`` — the request's canonical review URL. This is the
+          same ``{canonical_base_url}/access-requests/{id}`` link already stored
+          on the request and returned by the read API; it carries **no** auth
+          token or bearer material — following it still requires the reviewer to
+          authenticate — so it is safe to relay (and lets the Slack template
+          render an *Approve* button).
+
+        Deliberately omits ``reason`` (free-text, may quote sensitive context —
+        same class as the ``detail`` the fan-out drops) and every actor column
+        beyond the filer id already in the summary.
+        """
+        data: dict[str, Any] = {"request_id": request_id, "status": status}
+        if view is None:
+            return data
+        if view.requested_by:
+            data["requested_by"] = view.requested_by
+        if view.approve_url:
+            data["approve_url"] = view.approve_url
+        items: list[dict[str, str]] = []
+        for item in view.items:
+            resource = item.toolkit_name or item.credential_name or item.resource_id
+            if not resource and item.resource_reference:
+                reference = item.resource_reference
+                resource = (
+                    "/".join(
+                        str(part)
+                        for part in (reference.get("vendor"), reference.get("name"))
+                        if part
+                    )
+                    or None
+                )
+            entry: dict[str, str] = {"action": f"{item.resource_type}:{item.action}"}
+            if resource:
+                entry["resource"] = resource
+            items.append(entry)
+        if items:
+            data["items"] = items
+        return data
+
+    @staticmethod
+    def _request_summary(view: AccessRequestView, *, verb: str, actor: str) -> str:
+        """Human-readable one-liner naming what the request is for.
+
+        Renders the resolved item labels (``credential:read on stripe-prod``)
+        rather than a bare "Access request filed by <id>", so a webhook/Slack
+        reader sees the substance. Falls back to a count when nothing resolved,
+        and never includes free-text ``reason`` (kept off the wire).
+        """
+        parts: list[str] = []
+        for item in view.items:
+            resource = item.toolkit_name or item.credential_name or item.resource_id
+            if resource:
+                parts.append(f"{item.resource_type}:{item.action} on {resource}")
+            else:
+                parts.append(f"{item.resource_type}:{item.action}")
+        what = "; ".join(parts) if parts else f"{len(view.items)} item(s)"
+        return f"Access request {verb} by {actor}: {what}"
 
     async def _settle_filed_alerts(self, request_id: str, *, acknowledged_by: str) -> int:
         """Acknowledge the actionable ``access_request.filed`` alert for a settled request.
@@ -424,12 +504,13 @@ class AccessRequestService:
 
         await self._emit(
             type=EventType.ACCESS_REQUEST_FILED,
-            summary=f"Access request filed by {requested_by}",
+            summary=self._request_summary(view, verb="filed", actor=requested_by),
             request_id=view.id,
             status=view.status,
             created_by=created_by,
             actor_id=created_by,
             actor_type=identity.actor_type,
+            view=view,
         )
         # File-time fulfillability advisory: a plain (non-plan) toolkit:bind
         # referenced by vendor/name that no owned toolkit currently serves will
@@ -870,12 +951,13 @@ class AccessRequestService:
         if event_type is not None:
             await self._emit(
                 type=event_type,
-                summary=f"Access request {view.status} by {decided_by}",
+                summary=self._request_summary(view, verb=str(view.status), actor=decided_by),
                 request_id=view.id,
                 status=view.status,
                 created_by=decided_by,
                 actor_id=decided_by,
                 actor_type=identity.actor_type,
+                view=view,
             )
         audit_action = (
             AuditAction.DENY if view.status == AccessRequestStatus.DENIED else AuditAction.APPROVE
@@ -1041,12 +1123,13 @@ class AccessRequestService:
 
         await self._emit(
             type=EventType.ACCESS_REQUEST_WITHDRAWN,
-            summary="Access request withdrawn",
+            summary=self._request_summary(view, verb="withdrawn", actor=identity.sub),
             request_id=view.id,
             status=view.status,
             created_by=identity.sub,
             actor_id=identity.sub,
             actor_type=identity.actor_type,
+            view=view,
         )
         # A withdrawn request no longer needs review — settle its filed alert
         # so the operator attention surfaces drop the dead row.
