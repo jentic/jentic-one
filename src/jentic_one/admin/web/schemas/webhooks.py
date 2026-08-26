@@ -121,6 +121,11 @@ class WebhookDeliveryResponse(BaseModel):
     next_attempt_at: datetime | None
     last_attempt_at: datetime | None
     last_status_code: int | None
+    # A **categorized** failure reason (e.g. ``connection_timeout``,
+    # ``http_error_500``, ``endpoint_gone_deactivated``), never a raw exception
+    # string — the dispatcher deliberately keeps host/IP/URL detail in
+    # server-side logs only, so this is safe to return to the API and show in the
+    # UI. See ``WebhookDeliveryDispatcher._categorize_error``.
     last_error: str | None
     created_at: datetime | None
 
