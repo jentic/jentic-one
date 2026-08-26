@@ -14,15 +14,27 @@ interface DeleteEndpointDialogProps {
 	open: boolean;
 	onClose: () => void;
 	endpoint: WebhookEndpointEntity | null;
+	/**
+	 * Fired after a successful delete (before `onClose`). The detail page uses
+	 * this to navigate back to the list, since the endpoint it was showing no
+	 * longer exists.
+	 */
+	onDeleted?: () => void;
 }
 
-export function DeleteEndpointDialog({ open, onClose, endpoint }: DeleteEndpointDialogProps) {
+export function DeleteEndpointDialog({
+	open,
+	onClose,
+	endpoint,
+	onDeleted,
+}: DeleteEndpointDialogProps) {
 	const del = useDeleteWebhookEndpoint();
 
 	async function handleDelete() {
 		if (!endpoint) return;
 		try {
 			await del.mutateAsync(endpoint.id);
+			onDeleted?.();
 			onClose();
 		} catch {
 			// The hook surfaces a toast; leave the dialog open.

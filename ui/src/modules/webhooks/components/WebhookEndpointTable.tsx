@@ -1,50 +1,124 @@
 /**
- * WebhookEndpointTable — the endpoint list, one row per configured endpoint.
+ * WebhookEndpointTable — the endpoint list as a two-up card grid.
  *
- * Rows expand to reveal that endpoint's delivery log rather than navigating to a
- * detail route: an operator's loop here is "send a test, watch what happens,
- * fix, resend", and losing list context on every check would make that worse.
+ * Clicking a card navigates to the endpoint's detail page
+ * (`/webhooks/:endpointId`) — the same routed-detail pattern the Agents and
+ * Toolkits consoles use, so the whole card is a single `AppLink` (one keyboard /
+ * AT target, middle-click friendly). Everything actionable — Send test / Edit /
+ * Rotate / Delete and the delivery log — still lives on the detail page.
  *
- * Every endpoint is an outbound **notification**: it shows the target URL we
- * POST to and can accept a test event.
+ * The layout mirrors the Toolkits console: narrower cards, two per row from `md`
+ * up (`grid grid-cols-1 gap-4 md:grid-cols-2`), each led by the shared
+ * {@link AgentBadge} identity tile (a deterministic monogram, same treatment as
+ * Toolkits/Agents/Credentials). A card surfaces the answers an operator scans a
+ * webhooks console for — is it live (active/paused), is it healthy (a
+ * success/failure pill derived from `/stats`, text + icon so it never relies on
+ * colour alone), when did it last fire ("2m ago"), and what does it listen for
+ * (event-type count). Health is per-endpoint and degrades independently: an
+ * endpoint whose stats have not loaded shows a neutral "Health unknown" pill
+ * rather than blocking the card or faking a number.
  */
-import { useState } from 'react';
-import { ChevronDown, ChevronRight, Webhook } from 'lucide-react';
-import { Badge, Button, EmptyState } from '@/shared/ui';
-import { useSendTestEvent } from '@/modules/webhooks/api';
-import type { WebhookEndpointEntity } from '@/modules/webhooks/api';
-import { DeliveryLogPanel } from '@/modules/webhooks/components/DeliveryLogPanel';
+import type { ReactNode } from 'react';
+import {
+	AlertTriangle,
+	CheckCircle2,
+	ChevronRight,
+	Clock,
+	CircleDashed,
+	CircleHelp,
+	Webhook,
+} from 'lucide-react';
+import { AgentBadge, AppLink, Badge, Button, EmptyState } from '@/shared/ui';
+import { timeAgo } from '@/shared/lib/utils';
+import type { WebhookEndpointEntity, WebhookEndpointStats } from '@/modules/webhooks/api';
+import { endpointHealth, type HealthTone } from '@/modules/webhooks/lib/health';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 
 interface WebhookEndpointTableProps {
 	endpoints: WebhookEndpointEntity[];
+	/** Per-endpoint delivery health, keyed by id. A missing/undefined entry = not yet loaded. */
+	statsById: Map<string, WebhookEndpointStats | undefined>;
 	canWrite: boolean;
-	onEdit: (endpoint: WebhookEndpointEntity) => void;
-	onRotate: (endpoint: WebhookEndpointEntity) => void;
-	onDelete: (endpoint: WebhookEndpointEntity) => void;
 	onCreate: () => void;
+}
+
+const HEALTH_STYLES: Record<HealthTone, { icon: ReactNode; className: string; srPrefix: string }> =
+	{
+		healthy: {
+			icon: <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />,
+			className: 'bg-success/12 text-success border-success/25',
+			srPrefix: 'Delivery health',
+		},
+		degraded: {
+			icon: <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />,
+			className: 'bg-accent-orange/12 text-accent-orange border-accent-orange/25',
+			srPrefix: 'Delivery health',
+		},
+		failing: {
+			icon: <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />,
+			className: 'bg-danger/12 text-danger border-danger/25',
+			srPrefix: 'Delivery health',
+		},
+		idle: {
+			icon: <CircleDashed className="h-3.5 w-3.5" aria-hidden="true" />,
+			className: 'bg-muted text-muted-foreground border-border',
+			srPrefix: 'Delivery health',
+		},
+		unknown: {
+			icon: <CircleHelp className="h-3.5 w-3.5" aria-hidden="true" />,
+			className: 'bg-muted text-muted-foreground border-border',
+			srPrefix: 'Delivery health',
+		},
+	};
+
+/**
+ * The delivery-health pill: an icon + text label so pass/fail never rests on
+ * colour alone. Aria-labelled with the endpoint name so a screen reader reading
+ * the pill in isolation still has context.
+ */
+function HealthPill({
+	tone,
+	label,
+	endpointName,
+}: {
+	tone: HealthTone;
+	label: string;
+	endpointName: string;
+}) {
+	const style = HEALTH_STYLES[tone];
+	return (
+		<span
+			className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-xs font-medium ${style.className}`}
+			aria-label={`${style.srPrefix} for ${endpointName}: ${label}`}
+		>
+			{style.icon}
+			<span>{label}</span>
+		</span>
+	);
+}
+
+function eventSummary(endpoint: WebhookEndpointEntity): string {
+	const n = endpoint.eventTypes.length;
+	if (n === 0) return 'All events';
+	return `${n} event type${n === 1 ? '' : 's'}`;
 }
 
 export function WebhookEndpointTable({
 	endpoints,
+	statsById,
 	canWrite,
-	onEdit,
-	onRotate,
-	onDelete,
 	onCreate,
 }: WebhookEndpointTableProps) {
-	const [expandedId, setExpandedId] = useState<string | null>(null);
-	const sendTest = useSendTestEvent();
-
 	if (endpoints.length === 0) {
 		return (
 			<EmptyState
 				icon={<Webhook className="h-6 w-6" />}
 				title="No webhook endpoints yet"
-				description="Create a notification endpoint to push platform events out to an external URL."
+				description="Create your first endpoint to push signed platform events — like a failed execution or an expiring credential — out to a URL you own. See the Relay guide for the payload shape and a copy-pasteable receiver."
 				action={
 					canWrite ? (
 						<Button variant="primary" onClick={onCreate}>
-							New endpoint
+							Create your first endpoint
 						</Button>
 					) : undefined
 				}
@@ -53,107 +127,90 @@ export function WebhookEndpointTable({
 	}
 
 	return (
-		<div className="space-y-3">
+		<ul className="grid grid-cols-1 gap-4 md:grid-cols-2">
 			{endpoints.map((endpoint) => {
-				const expanded = expandedId === endpoint.id;
+				const health = endpointHealth(statsById.get(endpoint.id));
 				return (
-					<div
-						key={endpoint.id}
-						className="border-border bg-card overflow-hidden rounded-xl border"
-					>
-						<div className="flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
-							<div className="min-w-0 flex-1">
-								<div className="flex flex-wrap items-center gap-2">
-									<button
-										type="button"
-										onClick={() => setExpandedId(expanded ? null : endpoint.id)}
-										className="text-foreground hover:text-primary flex items-center gap-1.5 font-medium"
-										aria-expanded={expanded}
-										aria-label={`${expanded ? 'Hide' : 'Show'} delivery log for ${endpoint.name}`}
-									>
-										{expanded ? (
-											<ChevronDown className="h-4 w-4" />
+					<li key={endpoint.id}>
+						<AppLink
+							href={ROUTE_PATHS.webhookEndpoint(endpoint.id)}
+							aria-label={`Open ${endpoint.name}`}
+							className="group border-border/60 bg-card hover:border-border hover:bg-muted/30 focus-visible:ring-primary/40 flex h-full w-full min-w-0 flex-col gap-3 overflow-hidden rounded-xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm focus-visible:ring-2 focus-visible:outline-none"
+						>
+							<div className="flex items-center gap-3">
+								<AgentBadge
+									id={endpoint.id}
+									name={endpoint.name}
+									kind="Webhook"
+									size="md"
+								/>
+								<div className="min-w-0 flex-1">
+									<div className="flex items-center gap-2">
+										<h2 className="text-foreground min-w-0 flex-1 truncate font-medium">
+											{endpoint.name}
+										</h2>
+										{endpoint.active ? (
+											<Badge variant="success" dot>
+												active
+											</Badge>
 										) : (
-											<ChevronRight className="h-4 w-4" />
+											<Badge variant="danger" dot>
+												paused
+											</Badge>
 										)}
-										{endpoint.name}
-									</button>
-									<Badge variant="success">outbound notification</Badge>
-									{!endpoint.active && <Badge variant="danger">disabled</Badge>}
+										<ChevronRight
+											size={16}
+											aria-hidden="true"
+											className="text-muted-foreground group-hover:text-foreground shrink-0 transition-colors"
+										/>
+									</div>
+									<p
+										className="text-muted-foreground mt-0.5 truncate font-mono text-xs"
+										title={endpoint.targetUrl ?? undefined}
+									>
+										{endpoint.targetUrl}
+									</p>
 								</div>
-
-								<dl className="mt-2 space-y-1.5 text-xs">
-									<div>
-										<dt className="text-muted-foreground tracking-wider uppercase">
-											Target URL
-										</dt>
-										<dd className="text-foreground mt-0.5 font-mono break-words">
-											{endpoint.targetUrl}
-										</dd>
-									</div>
-
-									<div>
-										<dt className="text-muted-foreground tracking-wider uppercase">
-											Event types
-										</dt>
-										<dd className="text-foreground mt-0.5 font-mono">
-											{endpoint.eventTypes.length > 0
-												? endpoint.eventTypes.join(', ')
-												: 'all relayable types'}
-										</dd>
-									</div>
-								</dl>
 							</div>
 
-							{canWrite && (
-								<div className="flex flex-wrap gap-2 sm:shrink-0">
-									<Button
-										variant="secondary"
-										size="sm"
-										onClick={() => {
-											sendTest.mutate(endpoint.id);
-											setExpandedId(endpoint.id);
-										}}
-										loading={sendTest.isPending}
-									>
-										Send test
-									</Button>
-									<Button
-										variant="secondary"
-										size="sm"
-										onClick={() => onEdit(endpoint)}
-									>
-										Edit
-									</Button>
-									<Button
-										variant="secondary"
-										size="sm"
-										onClick={() => onRotate(endpoint)}
-									>
-										Rotate secret
-									</Button>
-									<Button
-										variant="danger"
-										size="sm"
-										onClick={() => onDelete(endpoint)}
-									>
-										Delete
-									</Button>
-								</div>
-							)}
-						</div>
-
-						{expanded && (
-							<div className="border-border bg-muted/30 border-t p-4">
-								<h3 className="font-heading text-foreground mb-3 text-sm font-semibold">
-									Delivery log
-								</h3>
-								<DeliveryLogPanel endpointId={endpoint.id} canWrite={canWrite} />
+							<div>
+								<HealthPill
+									tone={health.tone}
+									label={health.label}
+									endpointName={endpoint.name}
+								/>
 							</div>
-						)}
-					</div>
+
+							<div className="text-muted-foreground mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+								<span className="inline-flex items-center gap-1">
+									<Clock className="h-3 w-3" aria-hidden="true" />
+									<span>
+										{(() => {
+											if (!health.lastAttemptAt) return 'never';
+											const rel = timeAgo(health.lastAttemptAt);
+											// `timeAgo` returns "now" for a sub-second delta —
+											// "now ago" would read wrong, so show it bare.
+											return rel === 'now' ? 'now' : `${rel} ago`;
+										})()}
+									</span>
+								</span>
+								<span className="inline-flex items-center gap-1">
+									<Webhook className="h-3 w-3" aria-hidden="true" />
+									{eventSummary(endpoint)}
+								</span>
+								{health.recentTotal > 0 && (
+									<span className="ml-auto">
+										<span className="text-foreground">
+											{health.recentTotal.toLocaleString()}
+										</span>{' '}
+										in 24h
+									</span>
+								)}
+							</div>
+						</AppLink>
+					</li>
 				);
 			})}
-		</div>
+		</ul>
 	);
 }

@@ -12,18 +12,25 @@
  *   PATCH  /webhooks/endpoints/{id}           → 200 + endpoint (never a secret)
  *   DELETE /webhooks/endpoints/{id}           → 204 no body (callers refetch)
  *   GET    /webhooks/endpoints/{id}/deliveries → 200
+ *   GET    /webhooks/endpoints/{id}/stats      → 200 (aggregate delivery health)
+ *   GET    /webhooks/deliveries/{id}/attempts  → 200 (per-attempt history)
+ *   GET    /webhooks/event-catalog             → 200 (subscribable event types)
  *   POST   .../{id}:rotate-secret             → 200 + the new secret, once
  *   POST   .../{id}:test                      → 202 + delivery id
  *   POST   /webhooks/deliveries/{id}:resend   → 202 no body
  */
 import { ApiError, WebhooksService } from '@/shared/api';
 import {
+	attemptToEntity,
 	deliveryToEntity,
 	endpointToEntity,
+	statsToEntity,
 	type CreatedEndpoint,
 	type RotatedSecret,
+	type WebhookDeliveryAttemptEntity,
 	type WebhookDeliveryEntity,
 	type WebhookEndpointEntity,
+	type WebhookEndpointStats,
 } from '@/modules/webhooks/api/types';
 
 /**
@@ -74,10 +81,27 @@ export async function listEndpoints(): Promise<WebhookEndpointEntity[]> {
 	}
 }
 
+/**
+ * Fetch a single endpoint by id — the detail page's own source of truth (a 404
+ * surfaces as a `WebhooksApiError` with `status: 404`, which the page renders as
+ * a not-found state rather than a load failure, mirroring the toolkit/agent
+ * consoles).
+ */
+export async function getEndpoint(endpointId: string): Promise<WebhookEndpointEntity> {
+	try {
+		const res = await WebhooksService.getEndpoint({ endpointId });
+		return endpointToEntity(res);
+	} catch (error) {
+		throw toWebhooksError(error, 'Failed to load the webhook endpoint.');
+	}
+}
+
 export interface CreateEndpointParams {
 	name: string;
 	targetUrl?: string | null;
 	eventTypes?: string[];
+	/** Per-endpoint IP/CIDR allowlist. Empty/omitted = operator egress policy only. */
+	allowedCidrs?: string[];
 }
 
 /**
@@ -91,6 +115,7 @@ export async function createEndpoint(params: CreateEndpointParams): Promise<Crea
 				name: params.name,
 				target_url: params.targetUrl?.trim() ? params.targetUrl.trim() : null,
 				event_types: params.eventTypes ?? [],
+				allowed_cidrs: params.allowedCidrs ?? [],
 			},
 		});
 		return { endpoint: endpointToEntity(res.endpoint), secret: res.secret };
@@ -108,14 +133,16 @@ export interface UpdateEndpointParams {
 	name?: string;
 	targetUrl?: string | null;
 	eventTypes?: string[];
+	allowedCidrs?: string[];
 	active?: boolean;
 }
 
 /**
  * Update an endpoint's configuration. Returns the endpoint in its post-edit
  * shape (never a secret). Only the fields present on `params` are sent, so an
- * omitted field is left as-is — and an empty `eventTypes` array is a real value
- * (subscribe to every relayable type), distinct from omitting it.
+ * omitted field is left as-is — and an empty `eventTypes`/`allowedCidrs` array
+ * is a real value (subscribe to every relayable type / clear the allowlist),
+ * distinct from omitting it.
  */
 export async function updateEndpoint(
 	endpointId: string,
@@ -125,6 +152,7 @@ export async function updateEndpoint(
 		name?: string;
 		target_url?: string | null;
 		event_types?: string[];
+		allowed_cidrs?: string[];
 		active?: boolean;
 	} = {};
 	if (params.name !== undefined) requestBody.name = params.name;
@@ -132,6 +160,7 @@ export async function updateEndpoint(
 		requestBody.target_url = params.targetUrl?.trim() ? params.targetUrl.trim() : null;
 	}
 	if (params.eventTypes !== undefined) requestBody.event_types = params.eventTypes;
+	if (params.allowedCidrs !== undefined) requestBody.allowed_cidrs = params.allowedCidrs;
 	if (params.active !== undefined) requestBody.active = params.active;
 
 	try {
@@ -156,6 +185,42 @@ export async function listDeliveries(endpointId: string): Promise<WebhookDeliver
 		return res.data.map(deliveryToEntity);
 	} catch (error) {
 		throw toWebhooksError(error, 'Failed to load the delivery log.');
+	}
+}
+
+/** Aggregate delivery health for an endpoint's Overview (counts, last-24h, timings). */
+export async function getEndpointStats(endpointId: string): Promise<WebhookEndpointStats> {
+	try {
+		const res = await WebhooksService.getEndpointStats({ endpointId });
+		return statsToEntity(res);
+	} catch (error) {
+		throw toWebhooksError(error, 'Failed to load endpoint statistics.');
+	}
+}
+
+/** The per-attempt history for one delivery (newest first). */
+export async function listDeliveryAttempts(
+	deliveryId: string,
+): Promise<WebhookDeliveryAttemptEntity[]> {
+	try {
+		const res = await WebhooksService.listDeliveryAttempts({ deliveryId });
+		return res.data.map(attemptToEntity);
+	} catch (error) {
+		throw toWebhooksError(error, 'Failed to load the attempt history.');
+	}
+}
+
+/**
+ * The subscribable event catalog, served by the backend so the picker cannot
+ * drift from `EventType.ALL` minus the never-relayed set. Returns the raw event
+ * type strings; the module's curated catalog supplies the human copy.
+ */
+export async function getEventCatalog(): Promise<string[]> {
+	try {
+		const res = await WebhooksService.getEventCatalog();
+		return res.data.map((e) => e.event_type);
+	} catch (error) {
+		throw toWebhooksError(error, 'Failed to load the event catalog.');
 	}
 }
 

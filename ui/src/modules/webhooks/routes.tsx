@@ -10,5 +10,9 @@
  */
 import type { RouteObject } from 'react-router';
 import WebhooksPage from '@/modules/webhooks/pages/WebhooksPage';
+import WebhookEndpointDetailPage from '@/modules/webhooks/pages/WebhookEndpointDetailPage';
 
-export const webhooksRoutes: RouteObject[] = [{ path: 'webhooks', element: <WebhooksPage /> }];
+export const webhooksRoutes: RouteObject[] = [
+	{ path: 'webhooks', element: <WebhooksPage /> },
+	{ path: 'webhooks/:endpointId', element: <WebhookEndpointDetailPage /> },
+];

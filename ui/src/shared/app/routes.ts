@@ -59,6 +59,7 @@ export const ROUTE_PATHS = {
 	workspaceApi: (apiPath: string) => `${ROUTES.workspace}/${apiPath}`,
 	toolkit: (toolkitId: string) => `${ROUTES.toolkits}/${encodeURIComponent(toolkitId)}`,
 	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
+	webhookEndpoint: (endpointId: string) => `${ROUTES.webhooks}/${encodeURIComponent(endpointId)}`,
 	serviceAccount: (serviceAccountId: string) =>
 		`${ROUTES.agents}/service-accounts/${encodeURIComponent(serviceAccountId)}`,
 	/**

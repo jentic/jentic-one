@@ -1,12 +1,10 @@
 /**
  * RelayGuideDialog — the in-product guide to building a relay for an endpoint.
  *
- * Approach 1 sends a **fixed, signed** payload to a URL you own; it does not
- * speak Slack/Discord/PagerDuty. So in almost every real setup you run a small
- * relay that (1) receives Jentic's POST, (2) verifies the HMAC signature, and
- * (3) reshapes and forwards it to the real destination. This dialog documents
- * exactly what a relay must verify and hands over a correct, copy-pasteable
- * starting point.
+ * Approach 1 sends a fixed, signed payload to a URL you own. A relay is a small
+ * service you run that (1) receives Jentic's POST, (2) verifies the HMAC
+ * signature, and (3) reshapes and forwards it to the real destination. This
+ * dialog documents what a relay must verify and hands over copy-pasteable code.
  *
  * Everything quoted here is transcribed from this branch's backend so the sample
  * verifier actually matches what we send:
@@ -143,57 +141,40 @@ export function RelayGuideDialog({ open, onClose }: RelayGuideDialogProps) {
 				<section className="space-y-2">
 					<div className="text-muted-foreground flex items-center gap-2">
 						<Waypoints className="h-4 w-4 shrink-0" />
-						<h3 className="text-foreground font-semibold">
-							What a relay is (in one line)
-						</h3>
+						<h3 className="text-foreground font-semibold">What a relay is</h3>
 					</div>
 					<p className="text-muted-foreground leading-relaxed">
-						A <strong>relay</strong> is a tiny web service <em>you</em> run that sits
-						between Jentic and your final destination (Slack, Discord, PagerDuty…).
-						Think of it as a translator with a lock on the door: it checks the message
-						really came from Jentic, then rewrites it into the shape your destination
-						expects and passes it on.
+						A <strong>relay</strong> is a small web service you run between Jentic and
+						your destination (Slack, Discord, PagerDuty…). It verifies the request came
+						from Jentic, reshapes it for that destination, and forwards it — so your
+						destination URL and tokens stay on your side.
 					</p>
-					<p className="text-muted-foreground leading-relaxed">
-						You need one because Jentic always sends the <em>same</em> generic message
-						and doesn&apos;t know how to talk to Slack or anyone else. The relay does
-						that last step — and it keeps your Slack URL and tokens on your side, never
-						inside Jentic.
-					</p>
-					<p className="text-foreground font-medium">How one event travels:</p>
 					<ol className="text-muted-foreground ml-4 list-decimal space-y-1 leading-relaxed">
 						<li>
-							<strong>Jentic sends.</strong> Something happens (a credential expires)
-							and Jentic POSTs a signed message to your relay&apos;s URL.
+							<strong>Jentic sends</strong> a signed event to your relay&apos;s URL.
 						</li>
 						<li>
-							<strong>Your relay checks.</strong> It confirms the signature is valid —
-							proof it&apos;s really Jentic and nothing was changed — and rejects
-							anything that fails.
+							<strong>Your relay verifies</strong> the signature and rejects anything
+							that fails.
 						</li>
 						<li>
-							<strong>Your relay forwards.</strong> It reshapes the message into your
-							destination&apos;s format and sends it on (e.g. posts it to Slack).
+							<strong>Your relay forwards</strong> it in your destination&apos;s
+							format.
 						</li>
 					</ol>
-					<p className="text-muted-foreground leading-relaxed">
-						The rest of this guide explains exactly what to check in step 2 and the
-						shape of the message in step 3 — and gives you working code you can copy.
-					</p>
 				</section>
 
 				<section className="space-y-2">
 					<div className="text-muted-foreground flex items-center gap-2">
 						<ShieldCheck className="h-4 w-4 shrink-0" />
 						<h3 className="text-foreground font-semibold">
-							Step 2 — how your relay checks the message is real
+							Step 1 — verify the signature
 						</h3>
 					</div>
 					<p className="text-muted-foreground leading-relaxed">
-						Every request Jentic sends carries a <strong>signature</strong> — a
-						fingerprint made from the message plus a secret only you and Jentic know.
-						Your relay recreates that fingerprint and compares. If they match, it&apos;s
-						genuine; if not, reject it. This is the standard{' '}
+						Every request carries a signature derived from the body plus a secret only
+						you and Jentic share. Recreate it and compare — if it matches, it&apos;s
+						genuine. This is the{' '}
 						<a
 							href="https://www.standardwebhooks.com/"
 							target="_blank"
@@ -202,36 +183,30 @@ export function RelayGuideDialog({ open, onClose }: RelayGuideDialogProps) {
 						>
 							Standard Webhooks
 						</a>{' '}
-						scheme, so many off-the-shelf libraries can verify it for you.
-					</p>
-					<p className="text-muted-foreground leading-relaxed">
-						Jentic puts three headers on every request:
+						scheme, so most libraries can verify it for you.
 					</p>
 					<div className="border-border divide-border/60 divide-y rounded-lg border px-3 py-1">
 						<HeaderRow
 							name="webhook-id"
-							meaning="A unique id for this event (also used in the fingerprint)."
+							meaning="Unique id for this event (also part of the signature)."
 						/>
 						<HeaderRow
 							name="webhook-timestamp"
-							meaning="When it was sent. If it's more than 5 minutes old, reject it — that stops someone replaying an old captured message."
+							meaning="Send time. Reject if older than 5 minutes to block replays."
 						/>
 						<HeaderRow
 							name="webhook-signature"
-							meaning="The fingerprint itself, written as v1,<hex>. Your relay recreates this and checks it matches."
+							meaning="The signature, as v1,<hex>. Recreate it and check it matches."
 						/>
 					</div>
 					<p className="text-muted-foreground leading-relaxed">
-						To recreate the fingerprint, join the id, the timestamp, and the exact
-						request body with dots —{' '}
+						Join the id, timestamp, and body with dots —{' '}
 						<code className="text-foreground font-mono text-xs">
 							{'{webhook-id}.{webhook-timestamp}.{raw body}'}
 						</code>{' '}
-						— and run HMAC-SHA256 over it with your signing secret. Two rules that trip
-						people up: use the <strong>raw bytes exactly as received</strong>{' '}
-						(don&apos;t re-format the JSON first, or the fingerprint won&apos;t match),
-						and compare with a <strong>constant-time</strong> check so a wrong guess
-						can&apos;t leak how close it was. The sample code below does both correctly.
+						— and run HMAC-SHA256 with your secret. Use the{' '}
+						<strong>raw bytes as received</strong> (don&apos;t re-format the JSON) and a{' '}
+						<strong>constant-time</strong> compare. The sample below does both.
 					</p>
 				</section>
 
@@ -239,22 +214,18 @@ export function RelayGuideDialog({ open, onClose }: RelayGuideDialogProps) {
 					<div className="text-muted-foreground flex items-center gap-2">
 						<Webhook className="h-4 w-4 shrink-0" />
 						<h3 className="text-foreground font-semibold">
-							Step 3 — what the message looks like
+							Step 2 — read and reshape the message
 						</h3>
 					</div>
 					<p className="text-muted-foreground leading-relaxed">
-						Once verified, you read the message and reshape it for your destination. It
-						always has the same shape: an outer envelope with{' '}
+						The body is always an envelope with{' '}
 						<code className="text-foreground font-mono text-xs">id</code>,{' '}
 						<code className="text-foreground font-mono text-xs">type</code>, and{' '}
-						<code className="text-foreground font-mono text-xs">data</code>, where the
-						inner <code className="text-foreground font-mono text-xs">data</code> holds
-						the event details (like the summary you&apos;d show a human).
-					</p>
-					<p className="text-muted-foreground leading-relaxed">
-						One thing to handle: Jentic may occasionally send the same event twice, so
-						use the <code className="text-foreground font-mono text-xs">id</code> to
-						skip duplicates.
+						<code className="text-foreground font-mono text-xs">data</code> (the event
+						details, including a human-readable{' '}
+						<code className="text-foreground font-mono text-xs">summary</code>). Jentic
+						may resend an event, so dedupe on{' '}
+						<code className="text-foreground font-mono text-xs">id</code>.
 					</p>
 					<CodeBlock code={SAMPLE_PAYLOAD} ariaLabel="Copy sample payload" />
 				</section>
@@ -265,15 +236,13 @@ export function RelayGuideDialog({ open, onClose }: RelayGuideDialogProps) {
 						<h3 className="text-foreground font-semibold">Ready-to-run example</h3>
 					</div>
 					<p className="text-muted-foreground leading-relaxed">
-						A complete, tiny relay in Python (standard library only — nothing to
-						install). It checks the signature exactly as described above, then forwards
-						the summary to your destination. Set{' '}
+						A complete relay in Python (standard library only). Set{' '}
 						<code className="text-foreground font-mono text-xs">
 							JENTIC_WEBHOOK_SECRET
 						</code>{' '}
-						to your signing secret and{' '}
-						<code className="text-foreground font-mono text-xs">DESTINATION_URL</code>{' '}
-						to where the message should go (e.g. your Slack URL), then run it.
+						and{' '}
+						<code className="text-foreground font-mono text-xs">DESTINATION_URL</code>,
+						then run it.
 					</p>
 					<Disclosure summary="Show the relay code (Python, standard library)">
 						<CodeBlock code={SAMPLE_RELAY} ariaLabel="Copy relay example" />

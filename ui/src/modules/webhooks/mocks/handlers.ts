@@ -30,8 +30,10 @@ interface EndpointRow {
 	name: string;
 	target_url: string | null;
 	event_types: string[];
+	allowed_cidrs: string[];
 	active: boolean;
 	created_at: string;
+	previous_secret_expires_at: string | null;
 }
 
 interface DeliveryRow {
@@ -44,6 +46,17 @@ interface DeliveryRow {
 	last_attempt_at: string | null;
 	last_status_code: number | null;
 	last_error: string | null;
+	duration_ms: number | null;
+	created_at: string;
+}
+
+interface AttemptRow {
+	attempt_id: string;
+	delivery_id: string;
+	attempt_number: number;
+	status_code: number | null;
+	error: string | null;
+	duration_ms: number | null;
 	created_at: string;
 }
 
@@ -56,8 +69,23 @@ function seedEndpoints(): EndpointRow[] {
 			name: 'slack-ops-alerts',
 			target_url: 'https://hooks.example.com/services/T000/B000/XXXX',
 			event_types: ['credential.expired', 'execution.failed'],
+			allowed_cidrs: [],
 			active: true,
 			created_at: now(-4320),
+			previous_secret_expires_at: null,
+		},
+		{
+			// A second, paused endpoint with no delivery history — exercises the
+			// list's active/paused split in the overview strip and the "No
+			// deliveries yet" (idle) health pill on a row.
+			endpoint_id: 'whe_000000000000000000000002',
+			name: 'pagerduty-escalations',
+			target_url: 'https://events.example.com/integration/abc/enqueue',
+			event_types: [],
+			allowed_cidrs: [],
+			active: false,
+			created_at: now(-1440),
+			previous_secret_expires_at: null,
 		},
 	];
 }
@@ -74,6 +102,7 @@ function seedDeliveries(): DeliveryRow[] {
 			last_attempt_at: now(-120),
 			last_status_code: 200,
 			last_error: null,
+			duration_ms: 142,
 			created_at: now(-121),
 		},
 		{
@@ -85,14 +114,60 @@ function seedDeliveries(): DeliveryRow[] {
 			next_attempt_at: null,
 			last_attempt_at: now(-30),
 			last_status_code: 500,
-			last_error: 'HTTP 500 from receiver',
+			// A real, categorised reason (the backend never stores free text here):
+			// the status-carrying `http_error_<code>` category the UI renders as
+			// "HTTP 500".
+			last_error: 'http_error_500',
+			duration_ms: 2310,
 			created_at: now(-95),
+		},
+		{
+			// A third row exercising the expressive-error rendering for the
+			// motivating case — the endpoint's own IP allowlist rejecting the
+			// resolved destination. Aged >24h so it does not shift the last-24h
+			// KPIs (only the all-time total), and left `failed` (retrying) so it
+			// is distinct from the dead-lettered row above.
+			delivery_id: 'whd_000000000000000000000003',
+			event_id: 'whv_000000000000000000000003',
+			endpoint_id: 'whe_000000000000000000000001',
+			status: 'failed',
+			attempt_count: 2,
+			next_attempt_at: now(5),
+			last_attempt_at: now(-1560),
+			last_status_code: null,
+			last_error: 'blocked_by_allowlist',
+			duration_ms: null,
+			created_at: now(-1565),
+		},
+	];
+}
+
+function seedAttempts(): AttemptRow[] {
+	return [
+		{
+			attempt_id: 'whda_00000000000000000000001',
+			delivery_id: 'whd_000000000000000000000002',
+			attempt_number: 1,
+			status_code: 500,
+			error: 'http_error_500',
+			duration_ms: 2100,
+			created_at: now(-94),
+		},
+		{
+			attempt_id: 'whda_00000000000000000000002',
+			delivery_id: 'whd_000000000000000000000002',
+			attempt_number: 6,
+			status_code: 500,
+			error: 'http_error_500',
+			duration_ms: 2310,
+			created_at: now(-30),
 		},
 	];
 }
 
 let endpoints: EndpointRow[] = seedEndpoints();
 let deliveries: DeliveryRow[] = seedDeliveries();
+let attempts: AttemptRow[] = seedAttempts();
 /**
  * Secrets live here, NOT on the endpoint rows, so it is structurally impossible
  * for a GET handler to leak one — the same property the real backend has by
@@ -104,6 +179,7 @@ let idCounter = 100;
 export function resetWebhooksStore(): void {
 	endpoints = seedEndpoints();
 	deliveries = seedDeliveries();
+	attempts = seedAttempts();
 	secrets = {};
 	idCounter = 100;
 }
@@ -136,11 +212,13 @@ export const webhooksHandlers = [
 			name: body.name ?? 'unnamed',
 			target_url: body.target_url ?? null,
 			event_types: body.event_types ?? [],
+			allowed_cidrs: body.allowed_cidrs ?? [],
 			active: true,
 			created_at: now(),
+			previous_secret_expires_at: null,
 		};
 		endpoints = [row, ...endpoints];
-		const secret = `whsec_${row.endpoint_id}_initial`;
+		const secret = `whsec_${row.endpoint_id}_initial`; // pragma: allowlist secret
 		secrets[row.endpoint_id] = secret;
 		return HttpResponse.json({ endpoint: row, secret }, { status: 201 });
 	}),
@@ -161,6 +239,7 @@ export const webhooksHandlers = [
 			name: string;
 			target_url: string | null;
 			event_types: string[];
+			allowed_cidrs: string[];
 			active: boolean;
 		}>;
 		if ('target_url' in body) {
@@ -169,11 +248,20 @@ export const webhooksHandlers = [
 			if (!url.startsWith('http://') && !url.startsWith('https://')) {
 				return badRequest('target_url must be an http(s) URL.');
 			}
+			// Simulate the egress guard refusing a structurally-valid but
+			// disallowed destination (e.g. a private/internal address). The
+			// message is prefixed `target_url` so the UI pins it to the field.
+			if (/blocked\.internal/i.test(url)) {
+				return badRequest('target_url is not allowed: resolves to a private address.');
+			}
 			row.target_url = url;
 		}
 		if ('name' in body && body.name !== undefined) row.name = body.name;
 		if ('event_types' in body && body.event_types !== undefined) {
 			row.event_types = body.event_types;
+		}
+		if ('allowed_cidrs' in body && body.allowed_cidrs !== undefined) {
+			row.allowed_cidrs = body.allowed_cidrs;
 		}
 		if ('active' in body && body.active !== undefined) row.active = body.active;
 		return HttpResponse.json(row);
@@ -194,6 +282,89 @@ export const webhooksHandlers = [
 		return HttpResponse.json({ data: rows });
 	}),
 
+	http.get('/webhooks/endpoints/:id/stats', ({ params }) => {
+		const rows = deliveries.filter((d) => d.endpoint_id === params.id);
+		const countsByStatus: Record<string, number> = {};
+		for (const r of rows) countsByStatus[r.status] = (countsByStatus[r.status] ?? 0) + 1;
+		const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+		const recent = rows.filter((r) => Date.parse(r.created_at) >= dayAgo);
+		const durations = rows.map((r) => r.duration_ms).filter((d): d is number => d != null);
+		const withAttempt = rows
+			.filter((r) => r.last_attempt_at)
+			.sort((a, b) => Date.parse(b.last_attempt_at!) - Date.parse(a.last_attempt_at!));
+		const last = withAttempt[0];
+		const next = rows
+			.filter((r) => r.next_attempt_at && (r.status === 'pending' || r.status === 'failed'))
+			.sort((a, b) => Date.parse(a.next_attempt_at!) - Date.parse(b.next_attempt_at!))[0];
+		return HttpResponse.json({
+			total: rows.length,
+			counts_by_status: countsByStatus,
+			recent_total: recent.length,
+			recent_failed: recent.filter((r) => r.status === 'dead' || r.status === 'failed')
+				.length,
+			last_status_code: last?.last_status_code ?? null,
+			last_attempt_at: last?.last_attempt_at ?? null,
+			last_duration_ms: last?.duration_ms ?? null,
+			next_attempt_at: next?.next_attempt_at ?? null,
+			avg_duration_ms:
+				durations.length > 0
+					? durations.reduce((a, b) => a + b, 0) / durations.length
+					: null,
+		});
+	}),
+
+	http.get('/webhooks/deliveries/:id/attempts', ({ params }) => {
+		const rows = attempts
+			.filter((a) => a.delivery_id === params.id)
+			.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+		return HttpResponse.json({ data: rows });
+	}),
+
+	http.get('/webhooks/event-catalog', () =>
+		HttpResponse.json({
+			// A representative slice of the real catalog — enough for the picker's
+			// drift check and grouping to exercise, mirroring the curated list.
+			data: [
+				'access_request.approved',
+				'access_request.denied',
+				'access_request.filed',
+				'access_request.withdrawn',
+				'agent.created',
+				'agent.registration_approved',
+				'agent.registration_denied',
+				'agent.self_registered',
+				'broker.pbac_denied',
+				'broker.toolkit_binding_unserved',
+				'catalog.update_available',
+				'catalog.update_conflicts_overlay',
+				'credential.bound_to_toolkit',
+				'credential.connected',
+				'credential.connection_failed',
+				'credential.expired',
+				'credential.expiring_soon',
+				'credential.not_provisioned',
+				'credential.refresh_failed',
+				'credential.stored',
+				'credential.unbound_from_toolkit',
+				'credential.undecryptable',
+				'execution.completed',
+				'execution.failed',
+				'execution.repeated_failure',
+				'import.completed',
+				'import.failed',
+				'job.failed_permanently',
+				'overlay.deprecated',
+				'security.unauthorized_access_attempt',
+				'toolkit.bound_to_agent',
+				'toolkit.created',
+				'toolkit.key_created',
+				'toolkit.permission_rule_set',
+				'toolkit.unbound_from_agent',
+				'upstream.circuit_open',
+			].map((event_type) => ({ event_type })),
+		}),
+	),
+
 	// `:rotate-secret` and `:test` are colon-suffixed actions on the endpoint
 	// path. MSW's matcher treats `:id` as a param up to the `/`, so the colon
 	// action has to be part of the literal segment.
@@ -202,16 +373,16 @@ export const webhooksHandlers = [
 		if (!row) return HttpResponse.json({ detail: 'Not found' }, { status: 404 });
 		const body = (await request.json().catch(() => null)) as { grace_seconds?: number } | null;
 		const graceSeconds = body?.grace_seconds ?? 86400;
-		const secret = `whsec_${row.endpoint_id}_rotated_${idCounter}`;
+		const secret = `whsec_${row.endpoint_id}_rotated_${idCounter}`; // pragma: allowlist secret
 		secrets[row.endpoint_id] = secret;
+		const previousExpiry =
+			graceSeconds === 0 ? null : new Date(Date.now() + graceSeconds * 1000).toISOString();
+		row.previous_secret_expires_at = previousExpiry;
 		return HttpResponse.json({
 			endpoint_id: row.endpoint_id,
 			secret,
 			// A zero grace period revokes at once, so there is no expiry to report.
-			previous_secret_expires_at:
-				graceSeconds === 0
-					? null
-					: new Date(Date.now() + graceSeconds * 1000).toISOString(),
+			previous_secret_expires_at: previousExpiry,
 		});
 	}),
 
@@ -228,6 +399,7 @@ export const webhooksHandlers = [
 			last_attempt_at: null,
 			last_status_code: null,
 			last_error: null,
+			duration_ms: null,
 			created_at: now(),
 		};
 		deliveries = [delivery, ...deliveries];

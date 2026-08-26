@@ -315,3 +315,36 @@ export const WEBHOOK_EVENT_CATALOG: readonly WebhookEventTypeInfo[] = [
 export const WEBHOOK_EVENT_BY_TYPE: ReadonlyMap<string, WebhookEventTypeInfo> = new Map(
 	WEBHOOK_EVENT_CATALOG.map((info) => [info.type, info]),
 );
+
+/** The `noun` prefix of an event type — everything before the first dot. */
+export function eventNoun(type: string): string {
+	const dot = type.indexOf('.');
+	return dot === -1 ? type : type.slice(0, dot);
+}
+
+/** One noun group in the tree picker: the shared prefix and its events. */
+export interface WebhookEventNounGroup {
+	/** The `noun` prefix these events share (e.g. `credential`). */
+	noun: string;
+	events: WebhookEventTypeInfo[];
+}
+
+/**
+ * Group the catalog by `noun` prefix (the GitHub-style tree the picker renders),
+ * preserving the catalog's reading order within each group and ordering the
+ * groups by first appearance. Grouping by the *type* prefix (not the visual
+ * `category`) keeps the tree aligned 1:1 with what the backend actually emits,
+ * so the tri-state parent maps cleanly onto "all of this noun".
+ */
+export function groupEventsByNoun(
+	events: readonly WebhookEventTypeInfo[] = WEBHOOK_EVENT_CATALOG,
+): WebhookEventNounGroup[] {
+	const groups = new Map<string, WebhookEventTypeInfo[]>();
+	for (const event of events) {
+		const noun = eventNoun(event.type);
+		const bucket = groups.get(noun) ?? [];
+		bucket.push(event);
+		groups.set(noun, bucket);
+	}
+	return [...groups.entries()].map(([noun, groupEvents]) => ({ noun, events: groupEvents }));
+}

@@ -1,24 +1,30 @@
 /**
- * WebhooksPage specs.
+ * WebhooksPage specs — the endpoint **list** console.
  *
  * Rendered under `AuthProvider` so the `webhooks:write` permission gate resolves
  * against the mocked `/users/me` admin user (same pattern as the Dashboard and
  * Monitor tests). The seeded token must match the root mock's `MOCK_TOKEN` or the
  * profile query never fires and every gated affordance stays hidden.
  *
- * The specs concentrate on the properties that would be genuinely dangerous to
- * get wrong, rather than on rendering trivia:
+ * The interaction model is now a **routed detail page** (not a drawer): the list
+ * shows compact rows and clicking one NAVIGATES to `/webhooks/:endpointId`,
+ * where Overview / Deliveries / Settings live (see WebhookEndpointDetailPage's
+ * specs). These specs concentrate on the list-level properties that would be
+ * genuinely dangerous to get wrong:
  *
+ *  - clicking a row routes to that endpoint's detail page (a real link);
  *  - a signing secret is shown exactly once, and never appears in a list read;
  *  - the create form cannot express a combination the backend rejects;
- *  - a read-only viewer sees no mutating affordance.
+ *  - a read-only viewer sees no mutating affordance on the list.
  *
  * This build ships outbound notifications only.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { page } from '@vitest/browser/context';
-import { renderWithProviders, screen, waitFor, within, userEvent } from '@/__tests__/test-utils';
+import { MemoryRouter, Routes, Route, useParams } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor, within, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { AuthProvider } from '@/shared/auth';
@@ -26,23 +32,37 @@ import { Toaster } from '@/shared/ui';
 import { resetWebhooksStore, webhooksStoreEndpoints } from '@/modules/webhooks/mocks/handlers';
 import WebhooksPage from '@/modules/webhooks/pages/WebhooksPage';
 
-function renderPage() {
-	return renderWithProviders(
-		<AuthProvider>
-			<WebhooksPage />
-			<Toaster />
-		</AuthProvider>,
-	);
+/** A sentinel detail route so a row click's navigation is observable. */
+function DetailProbe() {
+	const { endpointId } = useParams<{ endpointId: string }>();
+	return <div data-testid="detail-probe">detail:{endpointId}</div>;
 }
 
-/** The card for a named endpoint (each endpoint renders as its own block). */
-async function cardFor(name: string): Promise<HTMLElement> {
-	const heading = await screen.findByRole('button', {
-		name: new RegExp(`delivery log for ${name}`, 'i'),
+/**
+ * Render the list page inside a real router with a sentinel detail route, so a
+ * row's link navigates within the test rather than to a dead end. A fresh
+ * QueryClient (retries off) mirrors `renderWithProviders`.
+ */
+function renderPage() {
+	const queryClient = new QueryClient({
+		defaultOptions: {
+			queries: { retry: false, gcTime: 0 },
+			mutations: { retry: false },
+		},
 	});
-	const card = heading.closest('div.rounded-xl');
-	if (!card) throw new Error(`No endpoint card found for "${name}"`);
-	return card as HTMLElement;
+	return render(
+		<QueryClientProvider client={queryClient}>
+			<MemoryRouter initialEntries={['/webhooks']}>
+				<AuthProvider>
+					<Routes>
+						<Route path="/webhooks" element={<WebhooksPage />} />
+						<Route path="/webhooks/:endpointId" element={<DetailProbe />} />
+					</Routes>
+					<Toaster />
+				</AuthProvider>
+			</MemoryRouter>
+		</QueryClientProvider>,
+	);
 }
 
 /**
@@ -85,17 +105,105 @@ describe('WebhooksPage', () => {
 		resetWebhooksStore();
 	});
 
-	it('lists notification endpoints and labels them as outbound', async () => {
+	it('lists notification endpoints without a redundant type pill', async () => {
 		renderPage();
 		await screen.findByText('slack-ops-alerts');
-		expect(screen.getByText('outbound notification')).toBeInTheDocument();
+		// There is only one webhook type, so no "outbound" pill clutters the row.
+		expect(screen.queryByText('outbound')).toBeNull();
+		// The row still shows where events are POSTed.
+		expect(
+			screen.getByText('https://hooks.example.com/services/T000/B000/XXXX'),
+		).toBeInTheDocument();
 	});
 
-	it('offers “Send test” for a notification endpoint', async () => {
+	it('navigates to the endpoint detail route when a row is clicked', async () => {
+		const user = userEvent.setup();
 		renderPage();
-		await waitForWriteAffordances();
-		const notification = await cardFor('slack-ops-alerts');
-		expect(within(notification).getByRole('button', { name: 'Send test' })).toBeInTheDocument();
+
+		// The row is a real link to the detail route (one keyboard/AT target).
+		const link = await screen.findByRole('link', { name: /Open slack-ops-alerts/i });
+		expect(link).toHaveAttribute('href', '/webhooks/whe_000000000000000000000001');
+
+		await user.click(link);
+
+		// The click routes to `/webhooks/:endpointId` — the detail probe renders
+		// with the clicked endpoint's id.
+		const probe = await screen.findByTestId('detail-probe');
+		expect(probe).toHaveTextContent('detail:whe_000000000000000000000001');
+	});
+
+	it('shows a health overview strip aggregated from per-endpoint stats', async () => {
+		renderPage();
+		const strip = await screen.findByRole('region', { name: /Webhooks health overview/i });
+
+		// The endpoint tile is exact from the list itself (never stats-gated):
+		// two seeded endpoints, one active and one paused.
+		expect(within(strip).getByText('Endpoints')).toBeInTheDocument();
+		expect(within(strip).getByText('1 active · 1 paused')).toBeInTheDocument();
+
+		// Delivery tiles roll up the per-endpoint /stats. In the last 24h endpoint 1
+		// sent 2 (one succeeded, one dead-lettered); endpoint 2 sent none. So the
+		// success rate is 50% and 2 deliveries need attention (1 dead + 1 retrying).
+		await waitFor(() =>
+			expect(within(strip).getByText('Success rate · 24h')).toBeInTheDocument(),
+		);
+		await waitFor(() => expect(within(strip).getByText('50%')).toBeInTheDocument());
+		// The attention tile breaks its count down (1 dead-lettered + 1 retrying),
+		// which is unambiguous where a bare "2" would collide with the endpoint tile.
+		await waitFor(() =>
+			expect(within(strip).getByText('1 dead · 1 retrying')).toBeInTheDocument(),
+		);
+	});
+
+	it('surfaces status, delivery health, last-delivery time and event count on a card', async () => {
+		renderPage();
+
+		// The active endpoint's card: identity badge, active badge, a health pill
+		// reflecting the dead-lettered delivery, a last-delivery relative time, and
+		// its event count.
+		const card = await screen.findByRole('link', { name: /Open slack-ops-alerts/i });
+		// The card is led by the shared identity tile (monogram + accessible label).
+		expect(
+			within(card).getByRole('img', { name: /Webhook slack-ops-alerts/i }),
+		).toBeInTheDocument();
+		expect(within(card).getByText('active')).toBeInTheDocument();
+		expect(within(card).getByText('2 event types')).toBeInTheDocument();
+		// A relative last-delivery time appears once stats load (the seed's most
+		// recent attempt is ~30m old); before that the card reads "never".
+		await waitFor(() => expect(within(card).getByText(/\bago$/)).toBeInTheDocument());
+
+		// Health is per-endpoint and text-carrying (never colour alone): the seed
+		// has a dead-lettered delivery, so once stats load the pill says so and is
+		// aria-labelled with the endpoint for out-of-context screen-reader use.
+		await waitFor(() =>
+			expect(
+				within(card).getByLabelText(/Delivery health for slack-ops-alerts/i),
+			).toHaveTextContent(/dead-lettered/i),
+		);
+
+		// The paused endpoint with no deliveries reads paused + idle, and "All
+		// events" when it subscribes to none.
+		const pausedCard = screen.getByRole('link', { name: /Open pagerduty-escalations/i });
+		expect(within(pausedCard).getByText('paused')).toBeInTheDocument();
+		expect(within(pausedCard).getByText('All events')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(
+				within(pausedCard).getByLabelText(/Delivery health for pagerduty-escalations/i),
+			).toHaveTextContent(/No deliveries yet/i),
+		);
+	});
+
+	it('renders endpoints as identity-led cards in a two-up grid', async () => {
+		renderPage();
+
+		// Both seeded endpoints render as their own card (a single link each), each
+		// led by the shared AgentBadge identity tile — the Toolkits-style grid.
+		await screen.findByRole('link', { name: /Open slack-ops-alerts/i });
+		expect(
+			screen.getByRole('link', { name: /Open pagerduty-escalations/i }),
+		).toBeInTheDocument();
+		const badges = screen.getAllByRole('img', { name: /^Webhook / });
+		expect(badges.length).toBe(2);
 	});
 
 	it('reveals a new secret once, gated behind an explicit acknowledgement', async () => {
@@ -108,7 +216,7 @@ describe('WebhooksPage', () => {
 		await user.type(screen.getByLabelText('Target URL'), 'https://example.com/hooks/jentic');
 		await user.click(screen.getByRole('button', { name: 'Create endpoint' }));
 
-		const dialog = await screen.findByRole('dialog');
+		const dialog = await screen.findByRole('dialog', { name: /secret/i });
 		expect(within(dialog).getByText(/only time this secret is shown/i)).toBeInTheDocument();
 
 		// Done stays disabled until the operator confirms they stored it — the
@@ -119,7 +227,7 @@ describe('WebhooksPage', () => {
 		expect(done).toBeEnabled();
 		await user.click(done);
 
-		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: /secret/i })).toBeNull());
 		expect(await screen.findByText('billing-relay')).toBeInTheDocument();
 	});
 
@@ -136,33 +244,34 @@ describe('WebhooksPage', () => {
 		await waitForWriteAffordances();
 		await user.click(screen.getByRole('button', { name: /New endpoint/i }));
 
-		// Notification: a target URL and the event-types picker (a labelled group,
-		// no longer a free-text field).
+		// Notification: a target URL and the event-types picker (the two-way mode
+		// switch, no longer a free-text field).
 		expect(screen.getByLabelText('Target URL')).toBeInTheDocument();
-		expect(screen.getByRole('group', { name: 'Event types' })).toBeInTheDocument();
-		// The picker offers real, described platform types — not a blank text box.
-		expect(screen.getByRole('checkbox', { name: 'Credential expired' })).toBeInTheDocument();
-		expect(screen.getByText(/A stored credential passed its expiry/i)).toBeInTheDocument();
+		expect(screen.getByRole('radio', { name: /Everything/i })).toBeInTheDocument();
+		expect(screen.getByRole('radio', { name: /Only specific types/i })).toBeInTheDocument();
 	});
 
-	it('treats an empty event-type selection as “all relayable events”', async () => {
+	it('treats an empty event-type selection as “everything” and lets you narrow it', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await waitForWriteAffordances();
 		await user.click(screen.getByRole('button', { name: /New endpoint/i }));
 
-		// With nothing selected, the picker states the subscribe-to-all default.
-		expect(screen.getByText(/Subscribed to every relayable event/i)).toBeInTheDocument();
+		// Empty selection = "Everything" mode is the active choice by default.
+		expect(screen.getByRole('radio', { name: /Everything/i })).toHaveAttribute(
+			'aria-checked',
+			'true',
+		);
 
-		// Selecting one flips the messaging and the created endpoint carries only it.
-		await user.click(screen.getByRole('checkbox', { name: 'Execution failed' }));
-		expect(screen.getByText(/1 event type selected/i)).toBeInTheDocument();
+		// Switch to specific types, then tick one — the created endpoint carries it.
+		await user.click(screen.getByRole('radio', { name: /Only specific types/i }));
+		await user.click(await screen.findByRole('checkbox', { name: 'Execution failed' }));
 
 		await user.type(screen.getByLabelText('Name'), 'exec-alerts');
 		await user.type(screen.getByLabelText('Target URL'), 'https://example.com/hooks/jentic');
 		await user.click(screen.getByRole('button', { name: 'Create endpoint' }));
 
-		const dialog = await screen.findByRole('dialog');
+		const dialog = await screen.findByRole('dialog', { name: /secret/i });
 		await user.click(within(dialog).getByText(/stored this secret somewhere safe/i));
 		await user.click(within(dialog).getByRole('button', { name: 'Done' }));
 
@@ -179,153 +288,80 @@ describe('WebhooksPage', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Relay guide' }));
 		const dialog = await screen.findByRole('dialog');
-		// The guide must quote the real Standard-Webhooks headers and envelope.
 		expect(within(dialog).getByText('webhook-signature')).toBeInTheDocument();
-		// The relay code is collapsed behind a disclosure — open it, then assert the
-		// verifier uses a constant-time comparison.
 		await user.click(within(dialog).getByText(/Show the relay code/i));
 		expect(within(dialog).getByText(/hmac\.compare_digest/i)).toBeInTheDocument();
 	});
 
-	it('edits an endpoint: opens prefilled, changes event types, and saves', async () => {
+	it('surfaces the server’s target-URL rejection reason on the field, not in a toast', async () => {
+		// The backend refuses a disallowed URL at create with a `target_url …`
+		// message; the form must pin that to the field. Client validation is
+		// structural only, so a well-formed but disallowed URL reaches the server.
+		worker.use(
+			http.post('/webhooks/endpoints', () =>
+				HttpResponse.json(
+					{ detail: 'target_url is not allowed: resolves to a private address' },
+					{ status: 400 },
+				),
+			),
+		);
 		const user = userEvent.setup();
 		renderPage();
 		await waitForWriteAffordances();
 
-		const card = await cardFor('slack-ops-alerts');
-		await user.click(within(card).getByRole('button', { name: 'Edit' }));
-
-		// The edit sheet opens pre-filled from the endpoint, not blank.
-		const nameField = screen.getByLabelText('Name') as HTMLInputElement;
-		await waitFor(() => expect(nameField.value).toBe('slack-ops-alerts'));
-		expect((screen.getByLabelText('Target URL') as HTMLInputElement).value).toBe(
-			'https://hooks.example.com/services/T000/B000/XXXX',
-		);
-		// Its current subscription is reflected in the picker.
-		expect(screen.getByRole('checkbox', { name: 'Credential expired' })).toHaveAttribute(
-			'aria-checked',
-			'true',
-		);
-		expect(screen.getByRole('checkbox', { name: 'Execution failed' })).toHaveAttribute(
-			'aria-checked',
-			'true',
-		);
-
-		// Drop one event type and rename, then save.
-		await user.click(screen.getByRole('checkbox', { name: 'Credential expired' }));
-		await user.clear(nameField);
-		await user.type(nameField, 'slack-ops-renamed');
-		await user.click(screen.getByRole('button', { name: 'Save changes' }));
-
-		// No secret is ever revealed on an edit.
-		await waitFor(() => {
-			const row = webhooksStoreEndpoints().find((e) => e.name === 'slack-ops-renamed');
-			expect(row).toBeDefined();
-			expect(row?.event_types).toEqual(['execution.failed']);
-		});
-		expect(screen.queryByText(/only time this secret is shown/i)).toBeNull();
-		expect(await screen.findByText('slack-ops-renamed')).toBeInTheDocument();
-	});
-
-	it('can pause an endpoint by toggling active off in the edit sheet', async () => {
-		const user = userEvent.setup();
-		renderPage();
-		await waitForWriteAffordances();
-
-		const card = await cardFor('slack-ops-alerts');
-		await user.click(within(card).getByRole('button', { name: 'Edit' }));
-
-		await user.click(screen.getByRole('checkbox', { name: 'Endpoint active' }));
-		await user.click(screen.getByRole('button', { name: 'Save changes' }));
-
-		await waitFor(() => {
-			const row = webhooksStoreEndpoints().find((e) => e.name === 'slack-ops-alerts');
-			expect(row?.active).toBe(false);
-		});
-	});
-
-	it('opens a blank form for New endpoint even after editing an existing one', async () => {
-		// Regression: the shared create/edit sheet used to keep the edited
-		// endpoint's values when reopened via New endpoint, because create mode
-		// never cleared the draft the edit had seeded.
-		const user = userEvent.setup();
-		renderPage();
-		await waitForWriteAffordances();
-
-		// Edit an existing endpoint (seeds the form), then dismiss without saving.
-		const card = await cardFor('slack-ops-alerts');
-		await user.click(within(card).getByRole('button', { name: 'Edit' }));
-		const nameField = screen.getByLabelText('Name') as HTMLInputElement;
-		await waitFor(() => expect(nameField.value).toBe('slack-ops-alerts'));
-		await user.click(screen.getByRole('button', { name: 'Cancel' }));
-
-		// Now open the create sheet — it must be blank, not carrying the edit.
 		await user.click(screen.getByRole('button', { name: /New endpoint/i }));
-		expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('');
-		expect((screen.getByLabelText('Target URL') as HTMLInputElement).value).toBe('');
-		expect(screen.getByRole('checkbox', { name: 'Credential expired' })).toHaveAttribute(
-			'aria-checked',
-			'false',
+		await user.type(screen.getByLabelText('Name'), 'blocked');
+		await user.type(screen.getByLabelText('Target URL'), 'https://10.0.0.1/hook');
+		await user.click(screen.getByRole('button', { name: 'Create endpoint' }));
+
+		// The reason is rendered as a field-level alert tied to the URL input.
+		const alert = await screen.findByText(/target_url is not allowed/i);
+		expect(alert).toBeInTheDocument();
+		expect(screen.getByLabelText('Target URL') as HTMLInputElement).toHaveAttribute(
+			'aria-invalid',
+			'true',
 		);
 	});
 
-	it('expands an endpoint to show its delivery log, including a dead-lettered row', async () => {
-		const user = userEvent.setup();
-		renderPage();
-		await user.click(
-			await screen.findByRole('button', { name: /Show delivery log for slack-ops-alerts/i }),
-		);
-
-		await screen.findByText('Delivery log');
-		// The log is a separate query, so the rows arrive after the panel itself.
-		expect(await screen.findByText('succeeded')).toBeInTheDocument();
-		// Dead rows are kept rather than deleted so a failure can be diagnosed.
-		expect(await screen.findByText('dead-lettered')).toBeInTheDocument();
-		expect(screen.getByText('HTTP 500 from receiver')).toBeInTheDocument();
-	});
-
-	it('can resend a dead-lettered delivery', async () => {
+	it('rejects a structurally-invalid URL client-side before any request', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await waitForWriteAffordances();
-		await user.click(
-			await screen.findByRole('button', { name: /Show delivery log for slack-ops-alerts/i }),
-		);
-		await screen.findByText('dead-lettered');
 
-		const deadRow = (await screen.findByText('HTTP 500 from receiver')).closest(
-			'tr',
-		) as HTMLElement;
-		await user.click(within(deadRow).getByRole('button', { name: 'Resend' }));
+		await user.click(screen.getByRole('button', { name: /New endpoint/i }));
+		await user.type(screen.getByLabelText('Name'), 'typo');
+		const urlField = screen.getByLabelText('Target URL');
+		await user.click(urlField);
+		await user.type(urlField, 'not-a-url');
+		await user.click(screen.getByRole('button', { name: 'Create endpoint' }));
 
-		// Requeued: the row goes back to pending and stops being dead.
-		await waitFor(() => expect(screen.queryByText('dead-lettered')).toBeNull());
+		expect(await screen.findByText(/Enter a full URL/i)).toBeInTheDocument();
+		// Nothing was created — the client caught it.
+		expect(webhooksStoreEndpoints().find((e) => e.name === 'typo')).toBeUndefined();
 	});
 
-	it('defaults rotation to a grace period and only warns when revoking now', async () => {
-		const user = userEvent.setup();
-		renderPage();
-		await waitForWriteAffordances();
-		const card = await cardFor('slack-ops-alerts');
-		await user.click(within(card).getByRole('button', { name: 'Rotate secret' }));
-
-		const dialog = await screen.findByRole('dialog');
-		// The graceful path is the default; the destructive one is opt-in.
-		expect(within(dialog).queryByText(/starts failing at once/i)).toBeNull();
-		await user.click(within(dialog).getByText(/Revoke the previous secret immediately/i));
-		expect(within(dialog).getByText(/starts failing at once/i)).toBeInTheDocument();
-	});
-
-	it('hides every mutating affordance from a read-only viewer', async () => {
+	it('hides every mutating affordance from a read-only viewer on the list', async () => {
 		asReadOnlyUser();
 		renderPage();
 		await screen.findByText('slack-ops-alerts');
 
 		expect(screen.queryByRole('button', { name: /New endpoint/i })).toBeNull();
-		expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-		expect(screen.queryByRole('button', { name: 'Rotate secret' })).toBeNull();
-		expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
-		expect(screen.queryByRole('button', { name: 'Send test' })).toBeNull();
+		// The row is still a link (read-only viewers can look at the detail).
+		expect(screen.getByRole('link', { name: /Open slack-ops-alerts/i })).toBeInTheDocument();
 		expect(screen.getByText(/read-only access/i)).toBeInTheDocument();
+	});
+
+	it('shows a create-first empty state (and no overview strip) when there are no endpoints', async () => {
+		worker.use(http.get('/webhooks/endpoints', () => HttpResponse.json({ data: [] })));
+		renderPage();
+		await waitForWriteAffordances();
+
+		// The strip is only meaningful with endpoints — a fresh workspace sees the
+		// call-to-action instead of a row of zeroes.
+		expect(await screen.findByText(/No webhook endpoints yet/i)).toBeInTheDocument();
+		expect(screen.queryByRole('region', { name: /Webhooks health overview/i })).toBeNull();
+		expect(
+			screen.getByRole('button', { name: /Create your first endpoint/i }),
+		).toBeInTheDocument();
 	});
 });
