@@ -36,7 +36,20 @@ class WebhookEndpoint(AuditableMixin, AdminBase):
     """A configured outbound notification endpoint."""
 
     __tablename__ = "webhook_endpoints"
-    __table_args__ = (Index("ix_webhook_endpoints_name", "name", unique=True),)
+    __table_args__ = (
+        Index("ix_webhook_endpoints_name", "name", unique=True),
+        # A GIN index on the JSONB ``event_types`` column so the subscriber
+        # lookup (``event_types @> '["x"]'``) is an index scan rather than a
+        # full-table scan on every relayed event. GIN is Postgres-only; on
+        # SQLite this ``Index`` is a no-op-ish btree and the subscriber query
+        # takes its portable Python-filter branch anyway (see
+        # ``WebhookEndpointRepository.list_subscribers``).
+        Index(
+            "ix_webhook_endpoints_event_types_gin",
+            "event_types",
+            postgresql_using="gin",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(
         String(30),

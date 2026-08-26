@@ -24,7 +24,7 @@ Same-schema foreign keys only (all three live in ``admin``), so the CASCADEs
 here are safe — deleting an endpoint reaps its events and deliveries.
 
 Revision ID: a1b2c3d4e5f7
-Revises: d0e1f2a3b4c5
+Revises: e1f2a3b4c5d6
 Create Date: 2026-08-13
 
 """

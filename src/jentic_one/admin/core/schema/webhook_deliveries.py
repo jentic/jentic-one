@@ -37,6 +37,11 @@ class WebhookDelivery(AuditableMixin, AdminBase):
         Index("ix_webhook_deliveries_claim", "status", "next_attempt_at"),
         Index("ix_webhook_deliveries_event_id", "event_id"),
         Index("ix_webhook_deliveries_endpoint_created", "endpoint_id", "created_at"),
+        # Supports the per-endpoint concurrency cap (item 11): ``claim_due`` does
+        # a ``DISTINCT ON (endpoint_id) … ORDER BY endpoint_id, next_attempt_at``
+        # to pick the earliest-due row per endpoint, which this index serves
+        # directly.
+        Index("ix_webhook_deliveries_endpoint_next_attempt", "endpoint_id", "next_attempt_at"),
     )
 
     id: Mapped[str] = mapped_column(
