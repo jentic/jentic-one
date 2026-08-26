@@ -9,7 +9,7 @@ are database guarantees, not Python ones.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete
@@ -249,7 +249,7 @@ async def test_relay_turns_a_real_event_into_a_delivery(
 ) -> None:
     """The headline behaviour: platform emits, subscriber gets queued a delivery."""
     endpoint_id = await _endpoint(admin_db, name="ops", event_types=[EventType.CREDENTIAL_EXPIRED])
-    relay = InternalEventRelay(integration_context)
+    relay = InternalEventRelay(integration_context, relay_lag=0.0)
     # Establish the cursor before emitting, as a long-running process would.
     await relay.relay_once()
 
@@ -275,7 +275,7 @@ async def test_relay_starts_from_now_on_a_fresh_install(
     await _emit(admin_db, EventType.CREDENTIAL_EXPIRED, note="ancient history")
     endpoint_id = await _endpoint(admin_db, name="new-endpoint", event_types=[])
 
-    relay = InternalEventRelay(integration_context)
+    relay = InternalEventRelay(integration_context, relay_lag=0.0)
     await relay.relay_once()
 
     assert await _deliveries(admin_db, endpoint_id) == []
@@ -285,7 +285,7 @@ async def test_relay_does_not_replay_already_relayed_events(
     integration_context: Context, admin_db: DatabaseSession, clean_all: None
 ) -> None:
     endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
-    relay = InternalEventRelay(integration_context)
+    relay = InternalEventRelay(integration_context, relay_lag=0.0)
     await relay.relay_once()
 
     await _emit(admin_db, EventType.CREDENTIAL_EXPIRED)
@@ -298,7 +298,7 @@ async def test_relay_advances_through_a_batch(
     integration_context: Context, admin_db: DatabaseSession, clean_all: None
 ) -> None:
     endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
-    relay = InternalEventRelay(integration_context, batch_limit=2)
+    relay = InternalEventRelay(integration_context, batch_limit=2, relay_lag=0.0)
     await relay.relay_once()
 
     for _ in range(5):
@@ -321,7 +321,7 @@ async def test_relay_resumes_after_a_restart(
     """
     endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
 
-    first_relay = InternalEventRelay(integration_context)
+    first_relay = InternalEventRelay(integration_context, relay_lag=0.0)
     await first_relay.relay_once()
     await _emit(admin_db, EventType.CREDENTIAL_EXPIRED, seq=1)
     await first_relay.relay_once()
@@ -329,7 +329,7 @@ async def test_relay_resumes_after_a_restart(
 
     # Process restarts: brand-new instance, no in-memory cursor.
     await _emit(admin_db, EventType.CREDENTIAL_EXPIRED, seq=2)
-    second_relay = InternalEventRelay(integration_context)
+    second_relay = InternalEventRelay(integration_context, relay_lag=0.0)
     handled = await second_relay.relay_once()
 
     assert handled == 1, "must pick up the event emitted while 'down'"
@@ -340,7 +340,7 @@ async def test_relay_with_no_subscribers_still_advances(
     integration_context: Context, admin_db: DatabaseSession, clean_all: None
 ) -> None:
     """Events must not pile up as perpetually-unread when nobody subscribes."""
-    relay = InternalEventRelay(integration_context)
+    relay = InternalEventRelay(integration_context, relay_lag=0.0)
     await relay.relay_once()
 
     await _emit(admin_db, EventType.CREDENTIAL_EXPIRED)
@@ -356,7 +356,7 @@ async def test_relay_cursor_survives_events_in_the_same_moment(
     A timestamp-only cursor would skip one of them.
     """
     endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
-    relay = InternalEventRelay(integration_context)
+    relay = InternalEventRelay(integration_context, relay_lag=0.0)
     await relay.relay_once()
 
     same_moment = datetime.now(UTC)
@@ -377,3 +377,124 @@ async def test_relay_cursor_survives_events_in_the_same_moment(
 
     assert total == 3
     assert len(await _deliveries(admin_db, endpoint_id)) == 3
+
+
+# --- relay lag / commit-order safety (item 2) --------------------------------
+
+
+async def test_relay_lag_skips_events_inside_the_window(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """With a positive lag, an event newer than ``now - lag`` is not yet relayed.
+
+    This is the commit-order safety margin: a very fresh event might belong to a
+    transaction that has not finished committing, so the relay holds off until it
+    ages past the lag window.
+    """
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
+    relay = InternalEventRelay(integration_context, relay_lag=3600.0)
+    await relay.relay_once()
+
+    # A brand-new event is well inside a 1-hour lag window.
+    await _emit(admin_db, EventType.CREDENTIAL_EXPIRED)
+    assert await relay.relay_once() == 0, "an event inside the lag window must be withheld"
+    assert await _deliveries(admin_db, endpoint_id) == []
+
+
+async def test_relay_lag_relays_events_older_than_the_window(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """An event older than ``now - lag`` is past the safety margin and relays."""
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
+
+    # An event that sits after the cursor but comfortably behind the 5s window.
+    async with admin_db.transaction() as session:
+        event = await EventRepository.create(
+            session,
+            type=EventType.CREDENTIAL_EXPIRED,
+            severity=EventSeverity.WARNING,
+            summary="aged event",
+            created_by=None,
+        )
+        event.created_at = datetime.now(UTC) - timedelta(seconds=60)
+
+    relay = InternalEventRelay(integration_context, relay_lag=5.0)
+    # Pin the resume point before the event (a real relay derives this from the
+    # last relayed event; here we set it explicitly so the aged event is in
+    # range rather than being treated as pre-install history).
+    relay._cursor = (datetime.now(UTC) - timedelta(seconds=300), "")
+
+    assert await relay.relay_once() == 1
+    assert len(await _deliveries(admin_db, endpoint_id)) == 1
+
+
+# --- subscriber lookup (item 8) ----------------------------------------------
+
+
+async def test_list_subscribers_matches_type_and_catch_all(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """The subscriber query returns type-matched + catch-all, skips others/inactive.
+
+    On Postgres this exercises the JSONB-containment branch; on SQLite the
+    portable Python-filter branch. Both must agree on the result set.
+    """
+    wants = await _endpoint(admin_db, name="wants", event_types=[EventType.CREDENTIAL_EXPIRED])
+    catch_all = await _endpoint(admin_db, name="all", event_types=[])
+    other = await _endpoint(admin_db, name="other", event_types=[EventType.IMPORT_FAILED])
+    off = await _endpoint(
+        admin_db, name="off", event_types=[EventType.CREDENTIAL_EXPIRED], active=False
+    )
+
+    async with admin_db.session() as session:
+        subs = await WebhookEndpointRepository.list_subscribers(
+            session, EventType.CREDENTIAL_EXPIRED
+        )
+    ids = {s.id for s in subs}
+    assert wants in ids
+    assert catch_all in ids
+    assert other not in ids, "a type-mismatched endpoint must not match"
+    assert off not in ids, "an inactive endpoint must not match"
+
+
+# --- resend resets the attempt budget (item 12) ------------------------------
+
+
+async def test_resend_resets_attempt_count(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """A manual resend must restore the full retry budget, not leave it exhausted."""
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
+    async with admin_db.transaction() as session:
+        event = await WebhookEventRepository.record_event(
+            session,
+            endpoint_id=endpoint_id,
+            source_event_id="resend-src",
+            event_type=EventType.CREDENTIAL_EXPIRED,
+            payload={},
+        )
+        assert event is not None
+        delivery = await WebhookDeliveryRepository.enqueue(
+            session, event_id=event.id, endpoint_id=endpoint_id
+        )
+        delivery_id = delivery.id
+        # Simulate an exhausted dead-letter: several recorded failures.
+        await WebhookDeliveryRepository.mark_failed(
+            session, delivery_id, status_code=500, error="http_error_500", retry_in=None
+        )
+        await WebhookDeliveryRepository.mark_failed(
+            session, delivery_id, status_code=500, error="http_error_500", retry_in=None
+        )
+
+    async with admin_db.session() as session:
+        rows = await WebhookDeliveryRepository.list_for_endpoint(session, endpoint_id)
+        assert rows[0].attempt_count == 2
+
+    async with admin_db.transaction() as session:
+        assert await WebhookDeliveryRepository.reset_for_resend(session, delivery_id) is True
+
+    async with admin_db.session() as session:
+        rows = await WebhookDeliveryRepository.list_for_endpoint(session, endpoint_id)
+    assert rows[0].attempt_count == 0, "resend must reset the attempt budget"
+    assert rows[0].status == "pending"
+    assert rows[0].last_error is None

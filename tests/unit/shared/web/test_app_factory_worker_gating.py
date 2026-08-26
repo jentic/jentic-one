@@ -160,3 +160,65 @@ def test_combined_app_still_runs_all_background_jobs() -> None:
         ctx = _ctx(dbs={"admin", "registry", "control"})
         assert app_factory._start_catalog_update_scanner(ctx, combined) is not None
         assert app_factory._start_expiry_scanner(ctx, combined) is not None
+
+
+def test_webhook_dispatcher_gated_on_admin_app() -> None:
+    """The dispatcher runs only for the admin surface, never for a co-tenant.
+
+    The admin DB is granted to auth/broker/control/registry too
+    (``SURFACE_DB_DEPS``); gating on ``has_db("admin")`` alone would spin up a
+    dispatcher on ~4 processes all racing the same queue. The gate is the owning
+    surface (``"admin" in enabled_apps``).
+    """
+    with (
+        patch(f"{_AF}.WebhookDeliveryDispatcher") as dispatcher,
+        patch(f"{_AF}.asyncio.create_task"),
+        patch(f"{_AF}._build_secret_resolver"),
+    ):
+        broker_ctx = _ctx(dbs={"admin", "control", "registry"})
+        assert app_factory._start_webhook_dispatcher(broker_ctx, {"broker"}) is None
+        dispatcher.assert_not_called()
+
+    with (
+        patch(f"{_AF}.WebhookDeliveryDispatcher") as dispatcher,
+        patch(f"{_AF}.asyncio.create_task"),
+        patch(f"{_AF}._build_secret_resolver"),
+    ):
+        admin_ctx = _ctx(dbs={"admin"})
+        assert app_factory._start_webhook_dispatcher(admin_ctx, {"admin"}) is not None
+        dispatcher.assert_called_once()
+
+
+def test_webhook_relay_gated_on_admin_app() -> None:
+    """The relay likewise runs only for the admin surface.
+
+    Running one relay per surface that happens to hold the admin DB would fan the
+    same event out several times.
+    """
+    with (
+        patch(f"{_AF}.InternalEventRelay") as relay,
+        patch(f"{_AF}.asyncio.create_task"),
+    ):
+        broker_ctx = _ctx(dbs={"admin", "control", "registry"})
+        assert app_factory._start_webhook_relay(broker_ctx, {"broker"}) is None
+        relay.assert_not_called()
+
+    with (
+        patch(f"{_AF}.InternalEventRelay") as relay,
+        patch(f"{_AF}.asyncio.create_task"),
+    ):
+        admin_ctx = _ctx(dbs={"admin"})
+        assert app_factory._start_webhook_relay(admin_ctx, {"admin"}) is not None
+        relay.assert_called_once()
+
+
+def test_webhook_dispatcher_needs_admin_db_even_when_owning_surface() -> None:
+    """Owning the surface is necessary but not sufficient — the DB must exist too."""
+    with (
+        patch(f"{_AF}.WebhookDeliveryDispatcher") as dispatcher,
+        patch(f"{_AF}.asyncio.create_task"),
+        patch(f"{_AF}._build_secret_resolver"),
+    ):
+        no_db_ctx = _ctx(dbs=set())
+        assert app_factory._start_webhook_dispatcher(no_db_ctx, {"admin"}) is None
+        dispatcher.assert_not_called()
