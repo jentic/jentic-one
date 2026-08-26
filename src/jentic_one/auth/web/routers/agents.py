@@ -289,7 +289,6 @@ async def generate_agent_api_key(
 async def update_agent_jwks(
     agent_id: str,
     body: JwksUpdateRequest,
-    request: Request,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentResponse:
@@ -299,8 +298,6 @@ async def update_agent_jwks(
     any private key material. This enables the agent to authenticate via
     JWT-bearer assertions signed with the corresponding private key.
     """
-    existing = await agent_svc.get_agent(agent_id, identity=identity)
-    _check_owner_or_admin(identity, existing, request)
     view = await agent_svc.update_jwks(agent_id, jwks=body.jwks, identity=identity)
     return _agent_response(view)
 
@@ -366,19 +363,6 @@ def _check_read_access(identity: Identity, view: AgentView, request: Request) ->
         return
     raise Forbidden(
         detail="You do not have access to this agent",
-        instance=request.url.path,
-        type="forbidden",
-    )
-
-
-def _check_owner_or_admin(identity: Identity, view: AgentView, request: Request) -> None:
-    """Allow only the agent's owner or an org:admin."""
-    if "org:admin" in identity.permissions:
-        return
-    if identity.sub == view.owner_id:
-        return
-    raise Forbidden(
-        detail="Only the agent owner or an org admin may perform this action",
         instance=request.url.path,
         type="forbidden",
     )
