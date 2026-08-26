@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-import secrets
-
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
-
-
-def _generate_client_id() -> str:
-    """Generate a unique client_id with prefix."""
-    return f"oc_{secrets.token_urlsafe(24)}"
+from jentic_one.admin.services._support.tokens import generate_client_id
 
 
 class OAuthClientRepository:
@@ -32,7 +26,7 @@ class OAuthClientRepository:
     ) -> OAuthClient:
         """Create a new OAuth client with a generated client_id."""
         client = OAuthClient(
-            client_id=_generate_client_id(),
+            client_id=generate_client_id(),
             client_secret_hash=client_secret_hash,
             name=name,
             description=description,

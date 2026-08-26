@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import secrets
 from urllib.parse import urlparse
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services._support.passwords import hash_password
+from jentic_one.admin.services._support.tokens import generate_client_secret
 from jentic_one.admin.services.errors import InvalidInputError, NotFoundError
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientCreateResult, OAuthClientView
 from jentic_one.shared.audit import record_audit
@@ -86,7 +86,7 @@ class OAuthClientService:
         """Register a new OAuth client. Returns the one-time plaintext secret."""
         _validate_redirect_uris(redirect_uris)
 
-        client_secret = secrets.token_urlsafe(32)
+        client_secret = generate_client_secret()
         secret_hash = hash_password(client_secret)
 
         async with self._ctx.admin_db.transaction() as session:
@@ -216,7 +216,7 @@ class OAuthClientService:
 
     async def rotate_secret(self, id: str, *, identity: Identity) -> str:
         """Generate a new client secret. Returns the one-time plaintext."""
-        client_secret = secrets.token_urlsafe(32)
+        client_secret = generate_client_secret()
         secret_hash = hash_password(client_secret)
 
         async with self._ctx.admin_db.transaction() as session:
