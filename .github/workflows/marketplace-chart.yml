@@ -106,30 +106,42 @@ jobs:
       - name: Build chart dependencies
         run: helm dependency build deploy/helm/jentic-one
 
-      # Publish gate, mirroring tests/smoke/test_helm_render.py: the chart must
-      # render with the Marketplace overlay and reference ONLY ECR images —
-      # the Marketplace disallows docker.io/ghcr.io pulls at install time.
-      - name: Render gate — Marketplace overlay renders, all images from ECR
+      # AWS Marketplace requires image references to live in the chart's own
+      # values.yaml (their replication pipeline rewrites them per region and
+      # their validator extracts them from chart defaults, not from override
+      # parameters). Bake the Marketplace overlay + release tag into the
+      # packaged chart so it is self-contained: bare `helm install` pulls
+      # only from the listing's ECR.
+      - name: Bake Marketplace defaults into values.yaml
         env:
           VERSION: ${{ steps.chart.outputs.version }}
         run: |
           set -euo pipefail
-          # Dummy values for the chart's `required` password guards — render-only.
-          PW_SETS=(--set "postgresql.auth.password=x") # pragma: allowlist secret
-          for db in registry control admin; do
-            PW_SETS+=(--set "global.databases.${db}.password=x") # pragma: allowlist secret
-          done
-          helm template jentic deploy/helm/jentic-one \
-            -f deploy/helm/values/aws-marketplace.yaml \
-            --set "global.image.tag=v${VERSION}" \
-            "${PW_SETS[@]}" \
-            > /tmp/rendered.yaml
+          yq eval-all '. as $item ireduce ({}; . * $item)' \
+            deploy/helm/jentic-one/values.yaml \
+            deploy/helm/values/aws-marketplace.yaml > /tmp/values-baked.yaml
+          yq -i ".global.image.tag = \"v${VERSION}\"" /tmp/values-baked.yaml
+          mv /tmp/values-baked.yaml deploy/helm/jentic-one/values.yaml
+
+      # Publish gate = exactly what AWS runs on submission: bare `helm lint`
+      # and bare `helm template` (no overrides, no cluster) must succeed
+      # (INVALID_HELM_LINT / INVALID_HELM_TEMPLATE), and every image the
+      # baked chart renders must come from the listing's ECR — the
+      # Marketplace disallows docker.io/ghcr.io pulls at install time.
+      - name: Validation gate — helm lint + bare template, all images from ECR
+        run: |
+          set -euo pipefail
+          helm lint deploy/helm/jentic-one
+          helm template jentic deploy/helm/jentic-one > /tmp/rendered.yaml
           BAD="$(awk -F'image:' '/^[[:space:]]*image:/{gsub(/^[[:space:]"]+|["[:space:]]+$/, "", $2); print $2}' /tmp/rendered.yaml \
             | grep -v '^709825985650\.dkr\.ecr\.' || true)"
           if [ -n "${BAD}" ]; then
             echo "::error::non-ECR image(s) rendered:"; echo "${BAD}"; exit 1
           fi
           grep -c 'image:' /tmp/rendered.yaml >/dev/null
+          # The install-time password guards must have rendered inert
+          # placeholders (a live-cluster install still refuses to proceed).
+          grep -q 'REQUIRED-AT-INSTALL' /tmp/rendered.yaml
 
       - name: Package the chart
         env:

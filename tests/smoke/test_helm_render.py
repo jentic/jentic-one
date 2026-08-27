@@ -40,11 +40,28 @@ def _helm_template(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.smoke
-def test_render_requires_db_passwords() -> None:
-    """The chart ships no password defaults; a bare render must fail loudly."""
+def test_render_bare_passes_lint_with_placeholders() -> None:
+    """Bare `helm lint` + `helm template` succeed — AWS Marketplace runs both.
+
+    The chart ships no password defaults, but the guards are install-time
+    only (common.require-install): offline renders emit an unmistakable
+    REQUIRED-AT-INSTALL placeholder instead of failing, because AWS's chart
+    validation rejects charts that fail bare lint/template
+    (INVALID_HELM_LINT / INVALID_HELM_TEMPLATE). A real install against a
+    live cluster still refuses to proceed without passwords.
+    """
+    lint = subprocess.run(
+        ["helm", "lint", str(CHART_DIR)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert lint.returncode == 0, lint.stdout + lint.stderr
     result = _helm_template()
-    assert result.returncode != 0
-    assert "password is required" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "REQUIRED-AT-INSTALL" in result.stdout
+    # No real password defaults sneaked in anywhere.
+    assert "postgres_pass" not in result.stdout
 
 
 @pytest.mark.smoke
