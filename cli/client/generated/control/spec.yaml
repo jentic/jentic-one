@@ -3298,6 +3298,7 @@ components:
           description: The client secret. Shown only once at creation — store it securely.
           title: Client Secret
           type: string
+          x-sensitive: true
         created_at:
           format: date-time
           title: Created At
@@ -3447,6 +3448,7 @@ components:
           description: The new client secret. Store it securely; the previous secret is now invalid.
           title: Client Secret
           type: string
+          x-sensitive: true
       required:
       - client_secret
       title: OAuthClientRotateSecretResponse

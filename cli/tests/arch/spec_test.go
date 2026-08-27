@@ -187,6 +187,7 @@ var sensitiveSweepAllowlist = map[string]bool{
 	"has_api_key":          true, // presence flag, not the key
 	"must_change_password": true, // policy boolean
 	"clear_session_token":  true, // "clear the token?" boolean directive
+	"consent_token":        true, // HMAC-signed state token for OAuth consent flow, not a credential
 }
 
 // Test1H_SensitiveAnnotationSweep walks every schema property in the vendored

@@ -7,6 +7,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jentic_one.shared.web.sensitive import SENSITIVE
+
 
 class OAuthClientCreateRequest(BaseModel):
     """Request body for creating an OAuth client."""
@@ -103,7 +105,8 @@ class OAuthClientCreateResponse(OAuthClientResponse):
     """Returned on creation — includes the one-time plaintext client secret."""
 
     client_secret: str = Field(
-        description="The client secret. Shown only once at creation — store it securely."
+        description="The client secret. Shown only once at creation — store it securely.",
+        json_schema_extra=SENSITIVE,
     )
 
 
@@ -111,7 +114,8 @@ class OAuthClientRotateSecretResponse(BaseModel):
     """Returned on secret rotation — the new one-time plaintext secret."""
 
     client_secret: str = Field(
-        description="The new client secret. Store it securely; the previous secret is now invalid."
+        description="The new client secret. Store it securely; the previous secret is now invalid.",
+        json_schema_extra=SENSITIVE,
     )
 
 
