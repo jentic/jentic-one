@@ -1,11 +1,16 @@
-"""Unit tests for OAuth client service — redirect URI validation."""
+"""Unit tests for OAuth client service."""
 
 from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from jentic_one.admin.services.errors import InvalidInputError
-from jentic_one.admin.services.oauth_client_service import _validate_redirect_uris
+from jentic_one.admin.services.oauth_client_service import (
+    OAuthClientService,
+    _validate_redirect_uris,
+)
 
 
 def test_accepts_valid_https_uris() -> None:
@@ -62,3 +67,54 @@ def test_rejects_ftp_scheme() -> None:
 def test_rejects_javascript_scheme() -> None:
     with pytest.raises(InvalidInputError, match="invalid redirect_uri"):
         _validate_redirect_uris(["javascript:alert(1)"])
+
+
+# ---------- verify_client_secret ----------
+
+
+def _make_ctx() -> MagicMock:
+    ctx = MagicMock()
+    mock_session = AsyncMock()
+    ctx.admin_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    ctx.admin_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
+    return ctx
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_verify_client_secret_rejects_inactive_client(
+    mock_repo: MagicMock,
+    mock_verify: MagicMock,
+) -> None:
+    """An inactive client is rejected even if the secret is correct."""
+    ctx = _make_ctx()
+    client_row = MagicMock()
+    client_row.active = False
+    client_row.client_secret_hash = "hash"
+    mock_repo.get_by_client_id = AsyncMock(return_value=client_row)
+
+    svc = OAuthClientService(ctx)
+    result = await svc.verify_client_secret("oc_test", "secret")
+
+    assert result is False
+    mock_verify.assert_not_awaited()
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_verify_client_secret_accepts_active_client(
+    mock_repo: MagicMock,
+    mock_verify: MagicMock,
+) -> None:
+    """An active client with correct secret is accepted."""
+    ctx = _make_ctx()
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.client_secret_hash = "hash"
+    mock_repo.get_by_client_id = AsyncMock(return_value=client_row)
+    mock_verify.return_value = True
+
+    svc = OAuthClientService(ctx)
+    result = await svc.verify_client_secret("oc_test", "secret")
+
+    assert result is True
