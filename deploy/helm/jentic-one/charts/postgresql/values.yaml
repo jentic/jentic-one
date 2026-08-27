@@ -14,7 +14,7 @@ image:
 
 auth:
   username: postgres
-  # No default password — the chart refuses to render without one (same
+  # No default password — the chart refuses to install without one (same
   # posture as global.databases passwords; dev files: deploy/helm/values/
   # local-*.yaml).
   database: jentic

@@ -17,6 +17,20 @@ one level below the mount so a provisioner's lost+found can't break initdb.
 {{- $registry := .Values.image.registry -}}
 {{- $image := ternary (printf "%s/%s:%s" $registry .Values.image.repository .Values.image.tag) (printf "%s:%s" .Values.image.repository .Values.image.tag) (ne $registry "") -}}
 {{- $initConfigMap := .Values.primary.initdb.scriptsConfigMap | default (printf "%s-pg-init" .Release.Name) -}}
+{{- /*
+Install-time-only password guard (mirrors common.require-install, inlined to
+keep the subchart self-contained): AWS Marketplace validates charts with bare
+`helm lint`/`helm template`, so the guard must not fire in offline renders —
+`lookup` only returns data against a live cluster (install/upgrade).
+*/ -}}
+{{- $password := .Values.auth.password -}}
+{{- if not $password -}}
+{{- if or (lookup "v1" "ServiceAccount" .Release.Namespace "default") (lookup "v1" "Namespace" "" "") -}}
+{{- fail "postgresql.auth.password is required when postgresql.enabled=true — set it in your values file (dev files: deploy/helm/values/local-*.yaml)" -}}
+{{- else -}}
+{{- $password = "REQUIRED-AT-INSTALL" -}}
+{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -54,7 +68,7 @@ spec:
             - name: POSTGRES_USER
               value: {{ .Values.auth.username | quote }}
             - name: POSTGRES_PASSWORD
-              value: {{ required "postgresql.auth.password is required when postgresql.enabled=true — set it in your values file (dev files: deploy/helm/values/local-*.yaml)" .Values.auth.password | quote }}
+              value: {{ $password | quote }}
             - name: POSTGRES_DB
               value: {{ .Values.auth.database | quote }}
             - name: PGDATA

@@ -132,8 +132,10 @@ global:
   awsmp:
     licenseSecret: ""
   # Database credentials. `password` has NO default — the chart refuses to
-  # render without one (see common.db-env), so every deployment states its
-  # credentials explicitly. Dev/kind values live in
+  # install without one (see common.require-install; offline `helm template`
+  # and `helm lint` render an inert REQUIRED-AT-INSTALL placeholder instead,
+  # which AWS Marketplace's chart validation requires), so every deployment
+  # states its credentials explicitly. Dev/kind values live in
   # deploy/helm/values/local-*.yaml. In production, do NOT put real passwords
   # in a values file: replace `common.db-env` in your subchart deployments
   # with a Secret-backed `valueFrom: secretKeyRef:` block, or pass an

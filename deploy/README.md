@@ -1085,29 +1085,40 @@ Once set:
   kept fresh by Dependabot) through the same Trivy gate;
 - [`marketplace-chart.yml`](../.github/workflows/marketplace-chart.yml)
   publishes the umbrella Helm chart as an OCI artifact after every successful
-  release run (chart version = tag minus the `v`), gated on a render check
-  that the Marketplace overlay resolves every image to the listing's ECR.
-  Backfill an already-released tag with
+  release run (chart version = tag minus the `v`). The packaged chart is NOT
+  byte-identical to the repo chart: the workflow **bakes
+  [`aws-marketplace.yaml`](helm/values/aws-marketplace.yaml) + the release
+  tag into its `values.yaml`** first — AWS requires image references to live
+  in the chart's own defaults (their validator extracts them there, and
+  their replication pipeline rewrites them per region). The publish gate
+  then runs exactly what AWS runs on submission: bare `helm lint` + bare
+  `helm template` (must succeed — the password guards are install-time only,
+  see `common.require-install`) with every rendered image from the listing's
+  ECR. Backfill an already-released tag with
   `gh workflow run marketplace-chart.yml -f tag=vX.Y.Z`.
 
 Publishing a new **listing version** stays a portal step (product → Request
 changes → *Add version*, pinning the pushed tag/digest); automate via the
 Marketplace Catalog API only after the manual loop has worked once.
 
-The version's **Helm delivery option** must carry two AWS-substituted
-override parameters (portal validation rejects paid products without them):
+Because the Marketplace chart is self-contained, the version's **Helm
+delivery option** needs only six override parameters — the two
+AWS-substituted ones (portal validation rejects paid products without them)
+and the four buyer-chosen passwords:
 
 | Override parameter key | DefaultValue |
 | ---------------------- | ------------ |
 | `global.serviceAccount.name` | `${AWSMP_SERVICE_ACCOUNT}` — the buyer's (IRSA) service account; the app/broker pods run under it (chart support: `global.serviceAccount`) |
 | `global.awsmp.licenseSecret` | `${AWSMP_LICENSE_SECRET}` — an AWS-created Secret, mounted read-only at `/var/run/secrets/aws-marketplace/license` (chart support: `global.awsmp.licenseSecret`) |
+| `postgresql.auth.password` | *(buyer-supplied — bundled DB admin password)* |
+| `global.databases.registry.password` | *(buyer-supplied)* |
+| `global.databases.control.password` | *(buyer-supplied)* |
+| `global.databases.admin.password` | *(buyer-supplied)* |
 
-plus the deployment values from
-[`aws-marketplace.yaml`](helm/values/aws-marketplace.yaml) (ECR image
-repositories, `broker.enabled=true`, the bundled Postgres, the tag pin, and
-buyer-supplied `postgresql.auth.password` + `global.databases.*.password`
-parameters — buyers preferring RDS instead disable the bundled DB and set
-the `global.databases.*.host` values).
+Everything else (ECR image repositories, `broker.enabled=true`, the bundled
+Postgres, the tag pin) is baked into the published chart's defaults. Buyers
+preferring RDS install manually instead, disabling the bundled DB and
+setting the `global.databases.*.host` values.
 
 The IAM role lives in the **seller account** and trusts GitHub's OIDC
 provider — no long-lived AWS keys anywhere. Trust policy (create the

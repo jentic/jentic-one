@@ -27,3 +27,9 @@ dependencies:
   - name: postgresql
     version: 0.33.0 # x-release-please-version
     condition: postgresql.enabled
+  # Template-only library used by the service subcharts (each also declares
+  # it via file://../common). Declared here too because `helm lint` (and AWS
+  # Marketplace's chart validation, which runs it) rejects charts/ content
+  # that is missing from the dependency metadata.
+  - name: common
+    version: 0.33.0 # x-release-please-version
