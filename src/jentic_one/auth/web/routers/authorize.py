@@ -16,7 +16,7 @@ import json
 import secrets
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 
 import httpx
 import structlog
@@ -60,33 +60,6 @@ async def _check_rate_limit(request: Request) -> None:
     outcome = await _ip_rate_limiter.acquire(ip)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
-
-
-_ALLOWED_CANONICAL_PATHS: frozenset[str] = frozenset(
-    {
-        "/oauth/callback",
-        "/auth/callback",
-        "/app/oauth/callback",
-        "/app/auth/callback",
-    }
-)
-
-
-def _matches_canonical_origin(redirect_uri: str, canonical_base_url: str) -> bool:
-    """Check if redirect_uri matches the platform's canonical origin and an allowed path."""
-    if not canonical_base_url:
-        return False
-    parsed_redirect = urlparse(redirect_uri)
-    parsed_canonical = urlparse(canonical_base_url)
-    if not parsed_redirect.scheme or not parsed_redirect.netloc:
-        return False
-    if (
-        parsed_redirect.scheme != parsed_canonical.scheme
-        or parsed_redirect.netloc != parsed_canonical.netloc
-    ):
-        return False
-    normalised_path = parsed_redirect.path.rstrip("/")
-    return normalised_path in _ALLOWED_CANONICAL_PATHS
 
 
 def _is_platform_client(client_id: str, ctx: Context) -> bool:
