@@ -5,6 +5,7 @@ Docs index. What Jentic One is and how it works: [repository README](../README.m
 ## Install
 
 - [Installation overview](installation/quickstart.md) — artifacts, verification, air-gapped transfer
+- [Agent runbooks](agent/README.md) — install/operate/use/harden guides written for an AI agent to execute
 - [CLI binaries](installation/cli.md) — `jentic` / `jenticctl` download matrix and verification
 - [Docker](installation/docker.md)
 - [systemd](installation/systemd.md)

@@ -14,13 +14,9 @@ What it does not do. Jentic One bounds what a mistaken or compromised agent can 
 
 A self-hosted deployment exposes no MCP endpoint. Agents integrate through the `jentic` CLI and the skill it generates, or over plain HTTP against the deployment's own API. Both paths are documented below.
 
-Jentic One runs on one machine and the agent runs on another. Install on both with the same bootstrap:
+If you are an agent asked to **install or operate** Jentic One, start with the agent runbooks — they are written for you to execute directly, with the human-approval gates marked: [install](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/install.md) (stand up the app, broker and database with Docker), [operate](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/operate.md) (start/stop/upgrade/uninstall), [use](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/use.md) (the discover → access → execute loop), [troubleshoot](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/troubleshoot.md) (symptom-keyed recoveries when a step fails), [harden](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/harden.md) (read before storing a real credential).
 
-```
-curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install.sh | sh
-```
-
-On the host machine that is the whole command. The installer builds the two CLI binaries, `jenticctl` and `jentic`, then hands off into `jenticctl install`, which stands the deployment up through an interactive wizard. On the agent machine, set `JENTIC_NO_INSTALL=1` (it needs only the binaries, not a second deployment), then run `jentic setup --url <deployment URL>` to create the agent identity against that deployment and install the agent skill (`jentic register` is the registration-only path — identity only, no skills; when `--url` is omitted both fall back to the configured base URL or `http://127.0.0.1:8000`).
+Jentic One typically runs on one machine and the agent on another. On the host machine, follow the install runbook above (or the human-facing [installation guides](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/quickstart.md)). On each agent machine, install only the `jentic` binary from [GitHub Releases](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/cli.md) and run `jentic setup --url <deployment URL>` to create the agent identity against that deployment and install the agent skill (`jentic register` is the registration-only path — identity only, no skills; when `--url` is omitted both fall back to the configured base URL or `http://127.0.0.1:8000`). Both commands block on a human approving the agent in the deployment's console.
 
 Keep the agent off the machine that runs Jentic One. An agent running as the same OS user can read the credential database and the encryption key directly off disk whatever the API-level controls say, so keep them on separate machines. The hardening guide below sets out the tiers; read it before pointing an instance at a real credential.
 
@@ -28,8 +24,9 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 
 ## Install
 
-- [tools/install.sh](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install.sh): the installer. Detects OS and architecture, provides a Go toolchain if you have none, builds only the `cli/` subtree, and installs to `~/.jentic/bin`.
-- [Installer reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install-README.md): every environment variable, including `JENTIC_REF` to build a specific release and `JENTIC_NO_INSTALL=1` to stop after the binaries.
+- [Agent install runbook](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/install.md): the install an agent executes directly — preflight, config and compose generation, migrations, first admin (human gate), agent registration (human gate), verification. Companions: [operate](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/operate.md), [troubleshoot](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/troubleshoot.md), [harden](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/harden.md).
+- [CLI binaries](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/cli.md): downloading and cosign-verifying the released `jentic` and `jenticctl` binaries for every platform.
+- [Installation overview](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/quickstart.md): the human-facing guides — Docker with external Postgres, systemd, Helm, AWS — plus artifact verification and air-gapped transfer.
 - [CLI reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/cli/README.md): what `jenticctl` and `jentic` each own, the full command groups, and the agent loop of `search`, `inspect`, `execute`.
 - [Deployment guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/deploy/README.md): Docker, Helm, Kubernetes and Terraform layouts for running it somewhere other than a laptop.
 - [Local development setup](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/local-setup.md): running from source with `make install`, `make dev` and `make check`.

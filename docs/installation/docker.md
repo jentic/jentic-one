@@ -69,8 +69,9 @@ python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
 ## 3. Prepare the database
 
 Once, on your Postgres (the database itself must already exist). The migration
-runner creates tables *into* these schemas but creates neither the schemas nor
-the roles:
+runner never creates roles, and it only creates a missing schema when its
+database user holds `CREATE` on the database — with the least-privilege roles
+below it does not, so pre-create the schemas and grants:
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS registry;
