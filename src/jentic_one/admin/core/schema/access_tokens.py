@@ -48,4 +48,4 @@ class AccessToken(AuditableMixin, AdminBase):
     # authorization code flow through a registered OAuth client. NULL for platform
     # client logins (the SPA), agent JWKS assertions, and service account auth.
     # Used to invalidate tokens when an admin deactivates the issuing client.
-    oauth_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    oauth_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

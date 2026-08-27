@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from sqlalchemy import ARRAY, Boolean, Index, String, Text
+from sqlalchemy import Boolean, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from jentic_one.shared.db.base import AdminBase, AuditableMixin
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.types import string_array_variant
 
 
 class OAuthClient(AuditableMixin, AdminBase):
@@ -34,7 +35,7 @@ class OAuthClient(AuditableMixin, AdminBase):
     client_secret_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text(), nullable=True)
-    redirect_uris: Mapped[list[str]] = mapped_column(ARRAY(String(2048)), nullable=False)
+    redirect_uris: Mapped[list[str]] = mapped_column(string_array_variant(), nullable=False)
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
@@ -42,5 +43,5 @@ class OAuthClient(AuditableMixin, AdminBase):
         Boolean, nullable=False, default=True, server_default="true"
     )
     allowed_scopes: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String(128)), nullable=True, default=None
+        string_array_variant(), nullable=True, default=None
     )

@@ -1,8 +1,9 @@
 """add oauth_clients
 
-OAuth client registry for third-party applications. Stores client_id and
-allowed redirect_uris per client. No client_secret — PKCE (S256) provides
-sufficient security for public clients.
+OAuth client registry for third-party (confidential) applications. Stores
+client_id, argon2id-hashed client_secret, allowed redirect_uris, and
+optional scope allowlists per client. Also adds oauth_client_id to the
+access_tokens and refresh_tokens tables for token provenance tracking.
 
 Revision ID: aa6b7c8d9e0f
 Revises: e1f2a3b4c5d6
