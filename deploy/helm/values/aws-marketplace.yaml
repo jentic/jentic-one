@@ -33,22 +33,18 @@ global:
   # pulled from docker.io, which the Marketplace disallows. Mirror it into
   # the listing's ECR first if observability is needed.
 
-  # No database password defaults ship with the chart; set the per-surface
-  # passwords (used both by the app and by the bundled DB's init scripts) at
-  # install:
-  #   --set global.databases.registry.password=… \
-  #   --set global.databases.control.password=…  \
-  #   --set global.databases.admin.password=…
-  # RDS variant: also set the three global.databases.*.host values and
-  # disable the bundled DB (see the postgresql blocks).
-
   # Generated application secrets: the credential-encryption keyset, admin
-  # JWT secret, invite pepper, and connect state secret — minted into a
-  # release-scoped Secret on first install and reused verbatim on upgrades,
-  # so the install is secure and functional out of the box (none of these
-  # have safe defaults; JENTIC_ENV=production below refuses the shipped
-  # placeholders). Buyers managing secrets themselves: set
-  # global.appSecrets.existingSecret instead. See deploy/README.md.
+  # JWT secret, invite pepper, connect state secret, AND the bundled DB's
+  # role/superuser passwords — minted into a release-scoped Secret on first
+  # install and reused verbatim on upgrades, so the install is secure and
+  # functional with ZERO buyer-supplied values (none of these have safe
+  # defaults; JENTIC_ENV=production below refuses the shipped placeholders;
+  # the DB passwords are pure pod-to-pod wiring on a ClusterIP service).
+  # RDS variant: set the three global.databases.*.host values + explicit
+  # *.password values (explicit passwords always win over generated ones)
+  # and disable the bundled DB (see the postgresql blocks). Buyers managing
+  # secrets themselves: set global.appSecrets.existingSecret instead. See
+  # deploy/README.md.
   appSecrets:
     generate: true
 
@@ -115,7 +111,9 @@ gateway:
 # `<registry>/<repository>:<tag>` from these exact keys, and an empty
 # registry with the full path in repository breaks its parser (leading-`/`,
 # missing tag → INVALID_HELM_UNDECLARED_IMAGES / MISSING_VALUES_IMAGE_REFERENCE).
-# The first-party subchart requires postgresql.auth.password at install.
+# The first-party subchart's passwords come from the generated app-secrets
+# Secret (global.appSecrets above); set postgresql.auth.password explicitly
+# only to override.
 postgresql:
   enabled: true
   image:

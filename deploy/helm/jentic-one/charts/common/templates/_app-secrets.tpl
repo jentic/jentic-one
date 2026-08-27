@@ -43,6 +43,11 @@ true
 - name: jentic-app-secrets
   secret:
     secretName: {{ include "common.app-secrets.secret-name" . }}
+    # Only the config file lands on disk; the db-password-* keys in the same
+    # Secret reach pods as env (secretKeyRef in common.db-env) instead.
+    items:
+      - key: config.yaml
+        path: config.yaml
 {{- end }}
 {{- end -}}
 
