@@ -3,9 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An OAuth client in API responses.
+ * Returned on creation — includes the one-time plaintext client secret.
  */
-export type OAuthClientResponse = {
+export type OAuthClientCreateResponse = {
     active: boolean;
     /**
      * Scopes this client may request. Null means unrestricted.
@@ -15,6 +15,10 @@ export type OAuthClientResponse = {
      * Public client identifier used in OAuth flows.
      */
     client_id: string;
+    /**
+     * The client secret. Shown only once at creation — store it securely.
+     */
+    client_secret: string;
     created_at: string;
     created_by: (string | null);
     description: (string | null);

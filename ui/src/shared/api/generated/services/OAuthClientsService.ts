@@ -3,13 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OAuthClientCreateRequest } from '../models/OAuthClientCreateRequest';
+import type { OAuthClientCreateResponse } from '../models/OAuthClientCreateResponse';
 import type { OAuthClientListResponse } from '../models/OAuthClientListResponse';
 import type { OAuthClientResponse } from '../models/OAuthClientResponse';
+import type { OAuthClientRotateSecretResponse } from '../models/OAuthClientRotateSecretResponse';
 import type { OAuthClientUpdateRequest } from '../models/OAuthClientUpdateRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
-export class DefaultService {
+export class OAuthClientsService {
     /**
      * List OAuth clients
      * List all registered OAuth clients.
@@ -41,17 +43,16 @@ export class DefaultService {
      * Register OAuth client
      * Register a new OAuth client for third-party application integration.
      *
-     * The generated ``client_id`` is returned in the response and should be
-     * configured in the third-party application. No client_secret is issued —
-     * clients must use PKCE (S256) for authorization.
-     * @returns OAuthClientResponse Successful Response
+     * The generated ``client_id`` and ``client_secret`` are returned in the
+     * response. The secret is shown only once — store it securely.
+     * @returns OAuthClientCreateResponse Successful Response
      * @throws ApiError
      */
     public static createOauthClient({
         requestBody,
     }: {
         requestBody: OAuthClientCreateRequest,
-    }): CancelablePromise<OAuthClientResponse> {
+    }): CancelablePromise<OAuthClientCreateResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/admin/oauth-clients',
@@ -146,6 +147,36 @@ export class DefaultService {
             },
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Rotate client secret
+     * Generate a new client secret. The previous secret is immediately invalidated.
+     *
+     * The new secret is shown only once — store it securely.
+     * @returns OAuthClientRotateSecretResponse Successful Response
+     * @throws ApiError
+     */
+    public static rotateOauthClientSecret({
+        id,
+    }: {
+        id: string,
+    }): CancelablePromise<OAuthClientRotateSecretResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/oauth-clients/{id}/rotate-secret',
+            path: {
+                'id': id,
+            },
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

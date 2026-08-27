@@ -7,6 +7,10 @@
  */
 export type OAuthClientCreateRequest = {
     /**
+     * If set, restricts which scopes this client may request. Null means all scopes are permitted.
+     */
+    allowed_scopes?: (Array<string> | null);
+    /**
      * Optional description of the client.
      */
     description?: (string | null);

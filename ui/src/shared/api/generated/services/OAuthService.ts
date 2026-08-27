@@ -143,7 +143,7 @@ export class OAuthService {
     }
     /**
      * Consent Submit
-     * Process the consent form submission.
+     * Process the consent form submission. Mints the auth code only on approval.
      * @returns any Successful Response
      * @throws ApiError
      */

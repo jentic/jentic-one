@@ -26840,7 +26840,7 @@
         ]
       },
       "post": {
-        "description": "Process the consent form submission.",
+        "description": "Process the consent form submission. Mints the auth code only on approval.",
         "operationId": "consentSubmit",
         "requestBody": {
           "content": {
