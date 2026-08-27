@@ -17,7 +17,6 @@ from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import oauth
 from jentic_one.shared.config import AuthConfig, PlatformClientConfig
 
-
 _PLATFORM_CLIENT_ID = "jentic-one-spa"
 _THIRD_PARTY_CLIENT_ID = "oc_external_app_123"
 
