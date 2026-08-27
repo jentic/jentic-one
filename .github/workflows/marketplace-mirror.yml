@@ -1,8 +1,9 @@
 # Mirrors the bundled Postgres image into the AWS Marketplace ECR repo.
 #
 # The Marketplace disallows docker.io pulls at install time, so the postgresql
-# subchart's image (deploy/docker/postgres-mirror.Dockerfile — a one-FROM
-# retag whose digest Dependabot keeps fresh) must exist in the listing's ECR.
+# subchart's image (deploy/docker/postgres-mirror.Dockerfile — a lightly
+# hardened build of the official image, digest kept fresh by Dependabot) must
+# exist in the listing's ECR.
 # Weekly cron + manual dispatch: cheap to re-run, and a re-push of the same
 # digest is a no-op registry-side.
 #
@@ -57,9 +58,10 @@ jobs:
           echo "from=${FROM_LINE}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      # A single-FROM build is a retag: layers are preserved byte-for-byte
-      # from the pinned digest.
-      - name: Build the mirror image (retag of the pinned digest)
+      # Not a pure retag: the Dockerfile strips dead-code binaries that only
+      # accumulate CVE findings (gosu, snakeoil key) and applies Debian
+      # security updates on top of the pinned digest — see its header.
+      - name: Build the mirror image (hardened build of the pinned digest)
         run: docker build -f deploy/docker/postgres-mirror.Dockerfile -t postgres-mirror:local deploy/docker
 
       # Same CVE bar as everything else this repo publishes: fixable
