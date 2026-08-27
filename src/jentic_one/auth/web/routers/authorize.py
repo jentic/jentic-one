@@ -516,7 +516,7 @@ async def oauth_callback(
     oauth_client = await OAuthClientService(ctx).get_by_client_id(client_id or "")
     needs_consent = oauth_client is not None and oauth_client.require_consent
 
-    if needs_consent:
+    if needs_consent and oauth_client is not None:
         try:
             user_id, user_email = await authorize_svc.resolve_idp_user(
                 code=code,

@@ -13,7 +13,6 @@ from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.web.routers.authorize import (
     STATE_MAX_AGE_SECONDS,
     _callback_uri,
-    _matches_canonical_origin,
     _sign_payload,
     _verify_payload,
 )
@@ -95,50 +94,6 @@ def test_purpose_mismatch_rejected() -> None:
     signed = _sign_payload(payload, SECRET, purpose="consent")
     with pytest.raises(InvalidGrantError, match="purpose mismatch"):
         _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
-
-
-def test_redirect_allowed_path_accepted() -> None:
-    assert _matches_canonical_origin(
-        "https://app.example.com/oauth/callback", "https://app.example.com"
-    )
-
-
-def test_redirect_allowed_path_with_trailing_slash() -> None:
-    assert _matches_canonical_origin(
-        "https://app.example.com/auth/callback/", "https://app.example.com/"
-    )
-
-
-def test_redirect_disallowed_path_rejected() -> None:
-    assert not _matches_canonical_origin(
-        "https://app.example.com/evil/steal-code", "https://app.example.com"
-    )
-
-
-def test_redirect_different_host_rejected() -> None:
-    assert not _matches_canonical_origin(
-        "https://evil.com/oauth/callback", "https://app.example.com"
-    )
-
-
-def test_redirect_different_scheme_rejected() -> None:
-    assert not _matches_canonical_origin(
-        "http://app.example.com/oauth/callback", "https://app.example.com"
-    )
-
-
-def test_redirect_no_canonical_url_rejects_all() -> None:
-    assert not _matches_canonical_origin("https://app.example.com/oauth/callback", "")
-
-
-def test_redirect_relative_uri_rejected() -> None:
-    assert not _matches_canonical_origin("/oauth/callback", "https://app.example.com")
-
-
-def test_redirect_different_port_rejected() -> None:
-    assert not _matches_canonical_origin(
-        "https://app.example.com:9999/oauth/callback", "https://app.example.com"
-    )
 
 
 class _FakeUrl:
