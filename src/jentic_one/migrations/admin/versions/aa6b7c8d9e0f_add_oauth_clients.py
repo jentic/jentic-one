@@ -75,16 +75,12 @@ def upgrade() -> None:
         "access_tokens",
         sa.Column("oauth_client_id", sa.String(64), nullable=True),
     )
-    op.create_index(
-        "ix_access_tokens_oauth_client_id", "access_tokens", ["oauth_client_id"]
-    )
+    op.create_index("ix_access_tokens_oauth_client_id", "access_tokens", ["oauth_client_id"])
     op.add_column(
         "refresh_tokens",
         sa.Column("oauth_client_id", sa.String(64), nullable=True),
     )
-    op.create_index(
-        "ix_refresh_tokens_oauth_client_id", "refresh_tokens", ["oauth_client_id"]
-    )
+    op.create_index("ix_refresh_tokens_oauth_client_id", "refresh_tokens", ["oauth_client_id"])
 
 
 def downgrade() -> None:

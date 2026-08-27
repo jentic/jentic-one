@@ -44,6 +44,7 @@ async def _check_token_rate_limit(request: Request) -> None:
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
+
 _JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 _CLIENT_CREDENTIALS_GRANT = "client_credentials"
 _AUTHORIZATION_CODE_GRANT = "authorization_code"
@@ -93,9 +94,7 @@ async def token_endpoint(
         if not is_platform:
             if not body.client_secret:
                 raise InvalidGrantError("invalid_client")
-            if not await oauth_client_svc.verify_client_secret(
-                body.client_id, body.client_secret
-            ):
+            if not await oauth_client_svc.verify_client_secret(body.client_id, body.client_secret):
                 raise InvalidGrantError("invalid_client")
             third_party_client_id = body.client_id
         access_token, refresh_token, id_token = await authorize_svc.exchange_code(
