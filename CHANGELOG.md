@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.34.0](https://github.com/jentic/jentic-one/compare/v0.33.0...v0.34.0) (2026-08-27)
+
+
+### Features
+
+* **helm:** pass AWS Marketplace chart validation ([#1155](https://github.com/jentic/jentic-one/issues/1155)) ([7bb2526](https://github.com/jentic/jentic-one/commit/7bb2526e0717b01998bfeb651e86e35fd3c878ba))
+
+
+### Bug Fixes
+
+* **docker:** harden the Marketplace postgres mirror to pass the Trivy gate ([#1153](https://github.com/jentic/jentic-one/issues/1153)) ([e8d0092](https://github.com/jentic/jentic-one/commit/e8d0092263d6b732bc502f8b61af3dfa24686bbd))
+
 ## [0.33.0](https://github.com/jentic/jentic-one/compare/v0.32.1...v0.33.0) (2026-08-27)
 
 
