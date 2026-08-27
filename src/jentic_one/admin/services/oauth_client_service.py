@@ -9,22 +9,13 @@ from urllib.parse import urlparse
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services._support.passwords import hash_password, verify_password
-from jentic_one.admin.services._support.tokens import generate_client_secret
-from jentic_one.admin.services.errors import InvalidInputError, NotFoundError
+from jentic_one.admin.services._support.tokens import generate_client_id, generate_client_secret
+from jentic_one.admin.services.errors import InvalidInputError, OAuthClientNotFoundError
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientCreateResult, OAuthClientView
 from jentic_one.shared.audit import record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
-
-
-class OAuthClientNotFoundError(NotFoundError):
-    """Raised when an OAuth client does not exist."""
-
-    def __init__(self, id: str) -> None:
-        super().__init__(f"OAuth client '{id}' not found")
-        self.id = id
-
 
 _MAX_REDIRECT_URIS = 20
 _MAX_REDIRECT_URI_LENGTH = 2048
@@ -51,6 +42,20 @@ def _validate_redirect_uris(uris: list[str]) -> None:
             raise InvalidInputError(f"redirect_uri must use https or http: {uri}")
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
             raise InvalidInputError(f"http redirect_uri only allowed for localhost: {uri}")
+
+
+def _snapshot(client: OAuthClient) -> dict[str, object]:
+    """Capture the mutable fields of an OAuth client for audit ``before`` snapshots."""
+    return {
+        "name": client.name,
+        "description": client.description,
+        "redirect_uris": list(client.redirect_uris),
+        "active": client.active,
+        "require_consent": client.require_consent,
+        "allowed_scopes": (
+            list(client.allowed_scopes) if client.allowed_scopes is not None else None
+        ),
+    }
 
 
 def _to_view(client: OAuthClient) -> OAuthClientView:
@@ -100,12 +105,14 @@ class OAuthClientService:
         """Register a new OAuth client. Returns the one-time plaintext secret."""
         _validate_redirect_uris(redirect_uris)
 
+        client_id = generate_client_id()
         client_secret = generate_client_secret()
         secret_hash = await _hash_password_async(client_secret)
 
         async with self._ctx.admin_db.transaction() as session:
             client = await OAuthClientRepository.create(
                 session,
+                client_id=client_id,
                 name=name,
                 redirect_uris=redirect_uris,
                 client_secret_hash=secret_hash,
@@ -124,8 +131,10 @@ class OAuthClientService:
                 after={
                     "name": name,
                     "client_id": client.client_id,
+                    "description": description,
                     "redirect_uris": redirect_uris,
                     "require_consent": require_consent,
+                    "allowed_scopes": allowed_scopes,
                 },
                 origin=identity.origin.value,
             )
@@ -173,6 +182,12 @@ class OAuthClientService:
             _validate_redirect_uris(redirect_uris)
 
         async with self._ctx.admin_db.transaction() as session:
+            existing = await OAuthClientRepository.get_by_id(session, id)
+            if existing is None:
+                raise OAuthClientNotFoundError(id)
+
+            before_snapshot = _snapshot(existing)
+
             client = await OAuthClientRepository.update(
                 session,
                 id,
@@ -197,6 +212,8 @@ class OAuthClientService:
                 changes["active"] = active
             if require_consent is not None:
                 changes["require_consent"] = require_consent
+            if allowed_scopes is not None:
+                changes["allowed_scopes"] = allowed_scopes
 
             await record_audit(
                 session,
@@ -205,6 +222,7 @@ class OAuthClientService:
                 target_id=id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
+                before=before_snapshot,
                 after=changes,
                 origin=identity.origin.value,
             )
@@ -213,6 +231,12 @@ class OAuthClientService:
     async def deactivate(self, id: str, *, identity: Identity) -> None:
         """Soft-delete an OAuth client by setting active=False."""
         async with self._ctx.admin_db.transaction() as session:
+            existing = await OAuthClientRepository.get_by_id(session, id)
+            if existing is None:
+                raise OAuthClientNotFoundError(id)
+
+            before_snapshot = _snapshot(existing)
+
             success = await OAuthClientRepository.deactivate(session, id)
             if not success:
                 raise OAuthClientNotFoundError(id)
@@ -224,6 +248,7 @@ class OAuthClientService:
                 target_id=id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
+                before=before_snapshot,
                 after={"active": False},
                 origin=identity.origin.value,
             )

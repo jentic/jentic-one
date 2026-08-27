@@ -6,7 +6,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
-from jentic_one.admin.services._support.tokens import generate_client_id
 
 
 class OAuthClientRepository:
@@ -16,6 +15,7 @@ class OAuthClientRepository:
     async def create(
         session: AsyncSession,
         *,
+        client_id: str,
         name: str,
         redirect_uris: list[str],
         client_secret_hash: str,
@@ -24,9 +24,9 @@ class OAuthClientRepository:
         allowed_scopes: list[str] | None = None,
         created_by: str | None,
     ) -> OAuthClient:
-        """Create a new OAuth client with a generated client_id."""
+        """Create a new OAuth client."""
         client = OAuthClient(
-            client_id=generate_client_id(),
+            client_id=client_id,
             client_secret_hash=client_secret_hash,
             name=name,
             description=description,
@@ -67,7 +67,7 @@ class OAuthClientRepository:
     ) -> list[OAuthClient]:
         stmt = select(OAuthClient).order_by(OAuthClient.created_at.desc())
         if not include_inactive:
-            stmt = stmt.where(OAuthClient.active == True)  # noqa: E712
+            stmt = stmt.where(OAuthClient.active.is_(True))
         result = await session.execute(stmt)
         return list(result.scalars().all())
 

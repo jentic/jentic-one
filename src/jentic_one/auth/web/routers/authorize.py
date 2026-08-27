@@ -368,6 +368,13 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+def _derive_key(master_secret: str, purpose: str) -> str:
+    """Derive a purpose-specific signing key from the master secret via HMAC."""
+    return hmac.HMAC(
+        master_secret.encode(), f"oauth-{purpose}".encode(), hashlib.sha256
+    ).hexdigest()
+
+
 def _sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:
     """Encode and HMAC-sign a payload with a purpose discriminator."""
     payload["_purpose"] = purpose
@@ -481,7 +488,7 @@ async def authorize_endpoint(
             "original_state": state,
             "iat": str(int(time.time())),
         },
-        ctx.config.admin.auth.jwt_secret.get_secret_value(),
+        _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "state"),
         purpose="state",
     )
 
@@ -565,7 +572,7 @@ async def oauth_callback(
                 "user_email": user_email,
                 "iat": str(int(time.time())),
             },
-            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "consent"),
             purpose="consent",
         )
         return RedirectResponse(
@@ -652,7 +659,7 @@ async def consent_page(
     try:
         params = _verify_payload(
             consent_token,
-            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "consent"),
             purpose="consent",
             max_age=CONSENT_STATE_MAX_AGE_SECONDS,
         )
@@ -702,7 +709,7 @@ async def consent_submit(
     try:
         params = _verify_payload(
             consent_token,
-            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "consent"),
             purpose="consent",
             max_age=CONSENT_STATE_MAX_AGE_SECONDS,
         )
