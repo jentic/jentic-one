@@ -496,7 +496,7 @@ async def oauth_callback(
     try:
         params = _verify_payload(
             state,
-            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "state"),
             purpose="state",
             max_age=STATE_MAX_AGE_SECONDS,
         )
