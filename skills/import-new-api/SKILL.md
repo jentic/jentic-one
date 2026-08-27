@@ -128,7 +128,7 @@ jentic apis promote <vendor/name/version> <revision_id>
 ```
 
 **Verify**: `jentic search "<something the API does>"` returns one of its operations, and a
-known-safe `jentic execute <operation_id>` succeeds (credentials permitting — see the `jentic`
+known-safe `jentic execute <METHOD:URL from the search hit>` succeeds (credentials permitting — see the `jentic`
 skill). The user is now unblocked; the remaining steps contribute the spec to the community.
 
 ### 4. Publish the spec to the reusable `import-openapi-specs` repo
