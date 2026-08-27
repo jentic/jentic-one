@@ -1138,7 +1138,8 @@ Once set:
   release run (chart version = tag minus the `v`). The packaged chart is NOT
   byte-identical to the repo chart: the workflow **bakes
   [`aws-marketplace.yaml`](helm/values/aws-marketplace.yaml) + the release
-  tag into its `values.yaml`** first — AWS requires image references to live
+  version (`X.Y.Z`, no `v` — the tag the images carry in ECR) into its
+  `values.yaml`** first — AWS requires image references to live
   in the chart's own defaults (their validator extracts them there, and
   their replication pipeline rewrites them per region). The publish gate
   then runs exactly what AWS runs on submission: bare `helm lint` + bare

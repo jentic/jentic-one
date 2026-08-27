@@ -124,11 +124,15 @@ jobs:
           # only needs global.image.tag (common.image falls back to it), but
           # AWS's validator reads image tags from values.yaml literally and
           # does not follow the global indirection — a tag-less service image
-          # block fails validation with MISSING_IMAGE_TAG ("must default to
-          # chart version", which our v-prefixed image tags never equal).
-          yq -i ".global.image.tag = \"v${VERSION}\"
-            | .app.image.tag = \"v${VERSION}\"
-            | .broker.image.tag = \"v${VERSION}\"" /tmp/values-baked.yaml
+          # block fails validation with MISSING_IMAGE_TAG.
+          #
+          # NO `v` prefix: release.yml pushes the app image to Marketplace ECR
+          # tagged `${GITHUB_REF_NAME#v}` (e.g. 0.37.0), so the image tag here
+          # must match exactly — a v-prefixed tag references an image that does
+          # not exist and fails both portal validation and buyer installs.
+          yq -i ".global.image.tag = \"${VERSION}\"
+            | .app.image.tag = \"${VERSION}\"
+            | .broker.image.tag = \"${VERSION}\"" /tmp/values-baked.yaml
           mv /tmp/values-baked.yaml deploy/helm/jentic-one/values.yaml
 
       # Publish gate = exactly what AWS runs on submission: bare `helm lint`
