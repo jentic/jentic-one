@@ -87,7 +87,7 @@ auth:
   # ES256 signing key for ID token issuance (local dev only - never use in prod)
   id_signing:
     - kid: "local-dev-key"
-      private_key_pem: | # trivy:ignore:private-key -- local-dev-only throwaway key, not a real secret
+      private_key_pem: |
         -----BEGIN EC PRIVATE KEY-----
         MHcCAQEEIBG7o+PPPIdPqMK4RwNWnj+UaW8fZFzxw7oZD5XFqW5CoAoGCCqGSM49
         AwEHoUQDQgAElriD/rpklmqTXbUOa9uLHAB2l+qr+DoeDmmykYLGblbxs+a1qvxB
