@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.37.1](https://github.com/jentic/jentic-one/compare/v0.37.0...v0.37.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **ci:** drop stale placeholder assertion from the Marketplace chart gate ([#1166](https://github.com/jentic/jentic-one/issues/1166)) ([a0c363f](https://github.com/jentic/jentic-one/commit/a0c363f9ea5695c765271f6de8e8e99a829dd87d))
+* **helm:** bake un-prefixed image tags into the Marketplace chart ([#1169](https://github.com/jentic/jentic-one/issues/1169)) ([67fb464](https://github.com/jentic/jentic-one/commit/67fb4647953430c5386f6435a5e2d9ec0c13fc8b))
+
 ## [0.37.0](https://github.com/jentic/jentic-one/compare/v0.36.0...v0.37.0) (2026-08-27)
 
 
