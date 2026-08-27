@@ -1,0 +1,99 @@
+{{- /*
+Single-instance PostgreSQL on the official library/postgres image.
+
+Contract preserved from the former Bitnami subchart (so common.db-env and
+the existing values files keep working unchanged):
+  - workload + service are named <release>-postgresql
+  - values keys: auth.{username,password,database},
+    primary.initdb.scriptsConfigMap, image.{registry,repository,tag}
+  - init scripts run once, on first boot with an empty data dir; if
+    roles/grants change, recreate the PVC (helm uninstall + delete pvc, or
+    a fresh kind cluster)
+
+Runs as the image's postgres user (uid/gid 999) — never root — which both
+our publish gate and the AWS Marketplace image scan require. PGDATA points
+one level below the mount so a provisioner's lost+found can't break initdb.
+*/ -}}
+{{- $registry := .Values.image.registry -}}
+{{- $image := ternary (printf "%s/%s:%s" $registry .Values.image.repository .Values.image.tag) (printf "%s:%s" .Values.image.repository .Values.image.tag) (ne $registry "") -}}
+{{- $initConfigMap := .Values.primary.initdb.scriptsConfigMap | default (printf "%s-pg-init" .Release.Name) -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  serviceName: {{ .Release.Name }}-postgresql
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgresql
+          image: {{ $image | quote }}
+          securityContext:
+            runAsUser: 999
+            runAsGroup: 999
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ required "postgresql.auth.password is required when postgresql.enabled=true — set it in your values file (dev files: deploy/helm/values/local-*.yaml)" .Values.auth.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.auth.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.auth.username | quote }}, "-d", {{ .Values.auth.database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.auth.username | quote }}, "-d", {{ .Values.auth.database | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: initdb
+          configMap:
+            name: {{ $initConfigMap }}
+{{- if not .Values.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+{{- else }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+{{- end }}

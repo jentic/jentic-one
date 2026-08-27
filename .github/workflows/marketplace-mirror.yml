@@ -64,10 +64,9 @@ jobs:
 
       # Same CVE bar as everything else this repo publishes: fixable
       # HIGH/CRITICAL fail; overrides go in .trivyignore with justification +
-      # expiry. NOTE: the source image is Bitnami *legacy* (frozen, unpatched
-      # upstream — see the Dockerfile header), so expect this gate to start
-      # failing eventually; that is the signal to switch the chart's bundled
-      # DB or make RDS the Marketplace default, not to allowlist blindly.
+      # expiry. The source is the official library/postgres image (actively
+      # maintained); a red gate here normally just means Dependabot's next
+      # digest bump is due.
       - name: Trivy image scan (publish gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:

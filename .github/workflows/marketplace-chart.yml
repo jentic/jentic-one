@@ -115,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           # Dummy values for the chart's `required` password guards — render-only.
-          PW_SETS=()
+          PW_SETS=(--set "postgresql.auth.password=x") # pragma: allowlist secret
           for db in registry control admin; do
             PW_SETS+=(--set "global.databases.${db}.password=x") # pragma: allowlist secret
           done

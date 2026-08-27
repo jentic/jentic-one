@@ -17,10 +17,10 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation
 data:
   # Mirrors docker/local-setup/init-schemas.sql: create per-surface schemas
-  # AND the login roles + grants each surface uses to connect. The Bitnami
-  # initdb scripts only run on first boot (empty data dir); if roles/grants
-  # change, recreate the PVC (helm uninstall + delete pvc, or a fresh kind
-  # cluster). DEV-ONLY static passwords — see global.databases in values.yaml.
+  # AND the login roles + grants each surface uses to connect. initdb scripts
+  # only run on first boot (empty data dir); if roles/grants change, recreate
+  # the PVC (helm uninstall + delete pvc, or a fresh kind cluster). DEV-ONLY
+  # static passwords — see global.databases in values.yaml.
   init-schemas.sql: |
     CREATE SCHEMA IF NOT EXISTS registry;
     CREATE SCHEMA IF NOT EXISTS control;

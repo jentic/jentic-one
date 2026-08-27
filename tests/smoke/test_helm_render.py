@@ -1,10 +1,9 @@
 """Render-only assertions for the Helm chart (no cluster required).
 
-These run inside the smoke matrix (tools.deploy ci-smoke builds the chart
-dependencies before invoking pytest), but they only shell out to
-``helm template`` — they skip cleanly when helm or the built dependencies
-are absent, so a bare local ``pytest tests/smoke`` stays green.
-"""
+These run inside the smoke matrix, but they only shell out to
+``helm template`` (the chart has no remote dependencies — every subchart
+lives in-tree) — they skip cleanly when helm is absent, so a bare local
+``pytest tests/smoke`` stays green."""
 
 from __future__ import annotations
 
@@ -32,8 +31,6 @@ DEV_PASSWORD_SETS = [
 def _helm_template(*args: str) -> subprocess.CompletedProcess[str]:
     if shutil.which("helm") is None:
         pytest.skip("helm not installed")
-    if not list((CHART_DIR / "charts").glob("postgresql-*.tgz")):
-        pytest.skip("chart dependencies not built (run: helm dependency build)")
     return subprocess.run(
         ["helm", "template", "jentic", str(CHART_DIR), *args],
         capture_output=True,
@@ -56,6 +53,26 @@ def test_render_dev_values(values: str) -> None:
     """The committed dev values files carry their own (dev-only) passwords."""
     result = _helm_template("-f", str(VALUES_DIR / f"{values}.yaml"))
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.smoke
+def test_render_bundled_postgres() -> None:
+    """The first-party postgresql subchart renders the pinned official image.
+
+    Contract checks for what common.db-env and the init flow depend on: the
+    service keeps the Bitnami-era name <release>-postgresql, the umbrella
+    chart's <release>-pg-init ConfigMap is mounted for first-boot init, and
+    the container runs as the image's postgres user (non-root — required by
+    both the publish gate and the AWS Marketplace image scan).
+    """
+    result = _helm_template("-f", str(VALUES_DIR / "local-combined.yaml"))
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "name: jentic-postgresql" in out
+    assert 'image: "docker.io/postgres:' in out
+    assert "mountPath: /docker-entrypoint-initdb.d" in out
+    assert "name: jentic-pg-init" in out
+    assert "runAsNonRoot: true" in out
 
 
 @pytest.mark.smoke
