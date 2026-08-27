@@ -99,7 +99,7 @@ class OAuthClientRepository:
         if require_consent is not None:
             client.require_consent = require_consent
         if allowed_scopes is not None:
-            client.allowed_scopes = allowed_scopes if allowed_scopes else None
+            client.allowed_scopes = allowed_scopes
 
         await session.flush()
         return client

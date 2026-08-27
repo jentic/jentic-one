@@ -388,12 +388,15 @@ class TokenService:
             if at is None:
                 return None
 
+            client_scope_ceiling: frozenset[str] | None = None
             if at.oauth_client_id is not None:
                 oauth_client = await OAuthClientRepository.get_by_client_id(
                     session, at.oauth_client_id
                 )
                 if oauth_client is None or not oauth_client.active:
                     return None
+                if oauth_client.allowed_scopes is not None:
+                    client_scope_ceiling = frozenset(oauth_client.allowed_scopes)
 
             scopes = list(at.scopes)
             parent_actor_id: str | None = None
@@ -413,6 +416,9 @@ class TokenService:
                     session, at.actor_id, actor_type=at.actor_type
                 )
                 scopes = [g.scope for g in grants]
+
+            if client_scope_ceiling is not None:
+                scopes = [s for s in scopes if s in client_scope_ceiling]
 
         active = at.revoked_at is None and at.expires_at > now and actor_active
         return Identity(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from functools import partial
 from urllib.parse import urlparse
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
@@ -67,6 +69,18 @@ def _to_view(client: OAuthClient) -> OAuthClientView:
     )
 
 
+async def _hash_password_async(plain: str) -> str:
+    """Run argon2id hashing off the event loop."""
+    return await asyncio.get_running_loop().run_in_executor(None, hash_password, plain)
+
+
+async def _verify_password_async(plain: str, hashed: str) -> bool:
+    """Run argon2id verification off the event loop."""
+    return await asyncio.get_running_loop().run_in_executor(
+        None, partial(verify_password, plain, hashed)
+    )
+
+
 class OAuthClientService:
     """Manages OAuth client registration for third-party applications."""
 
@@ -87,7 +101,7 @@ class OAuthClientService:
         _validate_redirect_uris(redirect_uris)
 
         client_secret = generate_client_secret()
-        secret_hash = hash_password(client_secret)
+        secret_hash = await _hash_password_async(client_secret)
 
         async with self._ctx.admin_db.transaction() as session:
             client = await OAuthClientRepository.create(
@@ -217,7 +231,7 @@ class OAuthClientService:
     async def rotate_secret(self, id: str, *, identity: Identity) -> str:
         """Generate a new client secret. Returns the one-time plaintext."""
         client_secret = generate_client_secret()
-        secret_hash = hash_password(client_secret)
+        secret_hash = await _hash_password_async(client_secret)
 
         async with self._ctx.admin_db.transaction() as session:
             client = await OAuthClientRepository.update_secret_hash(session, id, secret_hash)
@@ -245,20 +259,23 @@ class OAuthClientService:
         return redirect_uri in client.redirect_uris
 
     async def verify_client_secret(self, client_id: str, client_secret: str) -> bool:
-        """Verify a client's secret. Returns False if client not found or secret invalid."""
+        """Verify a client's secret. Returns False if not found, inactive, or wrong secret."""
         async with self._ctx.admin_db.session() as session:
             client = await OAuthClientRepository.get_by_client_id(session, client_id)
-        if client is None:
+        if client is None or not client.active:
             return False
-        return verify_password(client_secret, client.client_secret_hash)
+        return await _verify_password_async(client_secret, client.client_secret_hash)
 
     async def get_allowed_scopes(self, client_id: str) -> frozenset[str] | None:
-        """Return allowed scopes for a registered client, or None if unrestricted/not found."""
+        """Return allowed scopes for a registered client, or None if unrestricted.
+
+        An explicit empty list means "deny all non-OIDC scopes"; None means unrestricted.
+        """
         async with self._ctx.admin_db.session() as session:
             client = await OAuthClientRepository.get_by_client_id(session, client_id)
         if client is None:
             return None
-        if client.allowed_scopes:
+        if client.allowed_scopes is not None:
             return frozenset(client.allowed_scopes)
         return None
 
