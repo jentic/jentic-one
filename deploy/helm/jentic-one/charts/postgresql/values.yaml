@@ -4,9 +4,12 @@
 
 image:
   registry: docker.io
-  # Set `repository` to a full path (and `registry` to "") when the image
-  # lives in a registry that embeds a namespace, e.g. the AWS Marketplace
-  # mirror: 709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql
+  # For registries that embed a namespace (e.g. the AWS Marketplace mirror),
+  # keep the split form — registry "709825985650.dkr.ecr.us-east-1.amazonaws.com",
+  # repository "jentic/jentic-one-psql". (Do NOT blank the registry and stuff
+  # the full path into repository: Helm renders it fine, but AWS Marketplace's
+  # chart validator composes refs from these exact keys and chokes on an
+  # empty registry.)
   repository: postgres
   # The Marketplace mirror (deploy/docker/postgres-mirror.Dockerfile) pushes
   # this same tag; Dependabot keeps the Dockerfile's digest pin fresh.

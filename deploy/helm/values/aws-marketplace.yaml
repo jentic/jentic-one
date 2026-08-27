@@ -94,11 +94,15 @@ gateway:
   enabled: false
 
 # Bundled in-cluster Postgres from the ECR-mirrored official image (the
-# marketplace-mirror workflow pushes it — repo jentic/jentic-one-psql). The
-# first-party subchart requires postgresql.auth.password at install.
+# marketplace-mirror workflow pushes it). registry/repository/tag are split
+# in AWS's recommended values.yaml format — their chart validator composes
+# `<registry>/<repository>:<tag>` from these exact keys, and an empty
+# registry with the full path in repository breaks its parser (leading-`/`,
+# missing tag → INVALID_HELM_UNDECLARED_IMAGES / MISSING_VALUES_IMAGE_REFERENCE).
+# The first-party subchart requires postgresql.auth.password at install.
 postgresql:
   enabled: true
   image:
-    registry: ""
-    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql"
+    registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com"
+    repository: "jentic/jentic-one-psql"
     tag: "17.11"
