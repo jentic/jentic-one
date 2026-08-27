@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.35.0](https://github.com/jentic/jentic-one/compare/v0.34.0...v0.35.0) (2026-08-27)
+
+
+### Features
+
+* **helm:** chart-managed credential-encryption keyset (global.encryption) ([#1159](https://github.com/jentic/jentic-one/issues/1159)) ([90dfd00](https://github.com/jentic/jentic-one/commit/90dfd00de5a4cf4d697e53720b67480d1b93c0b1))
+
+
+### Bug Fixes
+
+* **helm:** AWS-parseable image format for the Marketplace psql reference ([#1156](https://github.com/jentic/jentic-one/issues/1156)) ([a493b2b](https://github.com/jentic/jentic-one/commit/a493b2b4337447fa4dee3b680e9330f9a3b64e03))
+
 ## [0.34.0](https://github.com/jentic/jentic-one/compare/v0.33.0...v0.34.0) (2026-08-27)
 
 
