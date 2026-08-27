@@ -131,6 +131,19 @@ global:
   # IRSA-based entitlement gate does not read it. Empty = nothing rendered.
   awsmp:
     licenseSecret: ""
+  # Credential-at-rest encryption keyset (config `credentials.encryption`) —
+  # an AES-256-GCM key list the flat JENTIC__* env convention cannot express,
+  # and without which every credential write fails. `generate: true` has the
+  # chart mint a random keyset into a release-scoped Secret on first install
+  # and reuse it verbatim on upgrades (rotating it would orphan everything
+  # already encrypted; the Secret is kept on uninstall for the same reason).
+  # `existingSecret` mounts your own Secret instead (must hold a `config.yaml`
+  # key shaped like the example in deploy/README.md). Both are mutually
+  # exclusive with per-service `configFile.contents`, which the dev overlays
+  # use to inline a throwaway keyset.
+  encryption:
+    generate: false
+    existingSecret: ""
   # Database credentials. `password` has NO default — the chart refuses to
   # install without one (see common.require-install; offline `helm template`
   # and `helm lint` render an inert REQUIRED-AT-INSTALL placeholder instead,

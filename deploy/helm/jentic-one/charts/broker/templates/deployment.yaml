@@ -32,14 +32,19 @@ spec:
               value: {{ $v | quote }}
 {{- end }}
 {{ include "common.config-file.env" . | indent 12 }}
+{{ include "common.encryption.env" . | indent 12 }}
 {{ include "common.logging-env" . | indent 12 }}
 {{ include "common.metrics-env" . | indent 12 }}
 {{ include "common.db-env" . | indent 12 }}
 {{- $cfgMount := (include "common.config-file.mount" . | trim) }}
+{{- $encMount := (include "common.encryption.mount" . | trim) }}
 {{- $licMount := (include "common.awsmp-license.mount" . | trim) }}
-{{- if or $cfgMount $licMount }}
+{{- if or $cfgMount $encMount $licMount }}
           volumeMounts:
 {{- with $cfgMount }}
+{{ . | indent 12 }}
+{{- end }}
+{{- with $encMount }}
 {{ . | indent 12 }}
 {{- end }}
 {{- with $licMount }}
@@ -65,13 +70,17 @@ spec:
         {{- end }}
       {{- $otel := .Values.global.observability.otel.enabled }}
       {{- $cfg := (include "common.config-file.volume" . | trim) }}
+      {{- $enc := (include "common.encryption.volume" . | trim) }}
       {{- $lic := (include "common.awsmp-license.volume" . | trim) }}
-      {{- if or $otel $cfg $lic }}
+      {{- if or $otel $cfg $enc $lic }}
       volumes:
       {{- if $otel }}
 {{ include "common.otel-config-volume" . | indent 8 }}
       {{- end }}
       {{- with $cfg }}
+{{ . | indent 8 }}
+      {{- end }}
+      {{- with $enc }}
 {{ . | indent 8 }}
       {{- end }}
       {{- with $lic }}

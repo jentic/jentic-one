@@ -42,6 +42,14 @@ global:
   # RDS variant: also set the three global.databases.*.host values and
   # disable the bundled DB (see the postgresql blocks).
 
+  # Credential-at-rest encryption keyset: auto-generated into a release-scoped
+  # Secret on first install and reused verbatim on upgrades, so credential
+  # writes work out of the box (the keyset is list-shaped config that env vars
+  # cannot carry). Buyers managing keys themselves: set
+  # global.encryption.existingSecret instead. See deploy/README.md.
+  encryption:
+    generate: true
+
   # AWS Marketplace launch wiring — the listing's delivery option carries
   # these two override parameters (values substituted by AWS at launch):
   #   global.serviceAccount.name = ${AWSMP_SERVICE_ACCOUNT}
