@@ -7,8 +7,8 @@ Production installs run from released artifacts only: the published container im
 | Artifact | Role | Distribution |
 | -------- | ---- | ------------ |
 | `ghcr.io/jentic/jentic-one-app` | The backend. One image runs both the **app** (control plane) and the **broker** (data plane) — the surface set is chosen at runtime via `JENTIC__APPS`. | GHCR. Cosign-signed with an SBOM attestation; pin by `@sha256:` digest. [Pull + verify](../../deploy/README.md#pull-the-image). |
-| `jenticctl` | Operator CLI, for the admin host. | GitHub Releases archive, checksummed and cosign-signed. [Download + verify](../../cli/README.md#3-manual-download--verify). |
-| `jentic` | Agent CLI, for every host inside the network that calls the instance. | Same release archives, same verification. |
+| `jenticctl` | Operator CLI, for the admin host. | GitHub Releases archive, checksummed and cosign-signed. [Download + verify](cli.md). |
+| `jentic` | Agent CLI, for every host inside the network that calls the instance. | Same release archives, same verification — see [Installing the CLIs](cli.md). |
 
 Verify signatures **before** the artifacts cross into a locked-down network —
 the verify commands linked above need nothing but the downloaded files and

@@ -51,7 +51,7 @@ Register the APIs an agent may use, store the credentials once, and the agent ma
 git clone https://github.com/jentic/jentic-one.git && cd jentic-one
 make install   # install dependencies and git hooks
 make dev       # idempotent local bring-up: fixtures + migrations + UI, then run the app
-open http://127.0.0.1:8000/app/setup
+open http://127.0.0.1:8000
 
 # Build the CLIs
 cd cli && make build
@@ -60,14 +60,6 @@ cd cli && make build
 ```
 
 [More on local development](docs/development/local-setup.md).
-
-### Self-hosted (guided install)
-
-One line, no clone: installs the CLIs, then an interactive wizard stands the stack up.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
-```
 
 ### Self-hosted (Docker)
 
@@ -111,7 +103,20 @@ docker run -d --name jentic-broker -v jentic-data:/data \
   -p 127.0.0.1:8100:8000 ghcr.io/jentic/jentic-one-app:latest
 
 # Open the web UI and create the admin account
-open http://127.0.0.1:8000/app/setup
+open http://127.0.0.1:8000
+```
+
+### Install the CLI
+
+```bash
+# Auto-detects OS/arch and resolves the latest release.
+# Full matrix + verification: docs/installation/cli.md — or: brew install jentic/tap/jentic
+VER=$(curl -fsSL https://api.github.com/repos/jentic/jentic-one/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+OS=$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -fsSL "https://github.com/jentic/jentic-one/releases/download/v${VER}/jentic_${VER}_${OS}_${ARCH}.tar.gz" | tar xz jentic
+sudo install jentic /usr/local/bin/
+
+jentic register   # connect this machine to the instance
 ```
 
 ### Managed install
@@ -178,4 +183,4 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 
 ## License
 
-Jentic One is licensed under [Apache 2.0](LICENSE).
+Jentic One is licensed under [Apache 2.0](LICENSE). See [License](./LICENSE)

@@ -5,6 +5,7 @@ Docs index. What Jentic One is and how it works: [repository README](../README.m
 ## Install
 
 - [Installation overview](installation/quickstart.md) — artifacts, verification, air-gapped transfer
+- [CLI binaries](installation/cli.md) — `jentic` / `jenticctl` download matrix and verification
 - [Docker](installation/docker.md)
 - [systemd](installation/systemd.md)
 - [Helm](installation/helm.md)
