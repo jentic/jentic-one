@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.37.0](https://github.com/jentic/jentic-one/compare/v0.36.0...v0.37.0) (2026-08-27)
+
+
+### Features
+
+* **helm:** generate the bundled-DB passwords too — zero-touch Marketplace install ([#1163](https://github.com/jentic/jentic-one/issues/1163)) ([bece9f0](https://github.com/jentic/jentic-one/commit/bece9f0e2649745a147211eac2ee27fdc1990cab))
+
+
+### Bug Fixes
+
+* **helm:** stamp explicit per-service image tags into the baked Marketplace chart ([#1164](https://github.com/jentic/jentic-one/issues/1164)) ([5e4ab87](https://github.com/jentic/jentic-one/commit/5e4ab87e7f63f9425848033f14874406a2ab8594))
+
 ## [0.36.0](https://github.com/jentic/jentic-one/compare/v0.35.0...v0.36.0) (2026-08-27)
 
 
