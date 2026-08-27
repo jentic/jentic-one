@@ -35,9 +35,7 @@ function SecretDialog({ open, onClose, secret, title }: SecretDialogProps) {
 			onClose={onClose}
 			title={title}
 			dismissOnBackdrop={false}
-			footer={
-				<Button onClick={onClose}>Done</Button>
-			}
+			footer={<Button onClick={onClose}>Done</Button>}
 		>
 			<div className="space-y-3">
 				<p className="text-muted-foreground text-xs">
@@ -184,7 +182,11 @@ function CreateEditDialog({ open, onClose, onSecretRevealed, client }: CreateEdi
 				</>
 			}
 		>
-			<form id="oauth-client-form" onSubmit={(e): void => void handleSubmit(e)} className="space-y-4">
+			<form
+				id="oauth-client-form"
+				onSubmit={(e): void => void handleSubmit(e)}
+				className="space-y-4"
+			>
 				<div>
 					<Label htmlFor="name">Name</Label>
 					<Input
@@ -255,9 +257,8 @@ function RotateConfirmDialog({
 			}
 		>
 			<p className="text-muted-foreground">
-				This will invalidate the current secret for{' '}
-				<strong>{clientName}</strong> immediately. Any application using the
-				old secret will lose access.
+				This will invalidate the current secret for <strong>{clientName}</strong>{' '}
+				immediately. Any application using the old secret will lose access.
 			</p>
 		</Dialog>
 	);
@@ -334,8 +335,7 @@ export function OAuthClientsSection() {
 						OAuth Clients
 					</h2>
 					<p className="text-muted-foreground mt-0.5 text-sm">
-						Manage third-party applications that can authenticate users via Jentic
-						One.
+						Manage third-party applications that can authenticate users via Jentic One.
 					</p>
 				</div>
 				<div className="flex shrink-0 items-center gap-2 self-center">
@@ -455,9 +455,7 @@ export function OAuthClientsSection() {
 										<Button
 											variant="ghost"
 											size="sm"
-											onClick={(): void =>
-												void handleReactivate(client)
-											}
+											onClick={(): void => void handleReactivate(client)}
 											disabled={reactivateMutation.isPending}
 										>
 											<RotateCcw className="h-4 w-4" />
@@ -471,7 +469,11 @@ export function OAuthClientsSection() {
 									<code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
 										{client.client_id}
 									</code>
-									<CopyButton value={client.client_id} variant="ghost" size="icon" />
+									<CopyButton
+										value={client.client_id}
+										variant="ghost"
+										size="icon"
+									/>
 								</div>
 								<div>
 									<span className="text-muted-foreground">Redirect URIs: </span>
@@ -537,8 +539,8 @@ export function OAuthClientsSection() {
 				>
 					<p className="text-muted-foreground">
 						This will prevent <strong>{deleteTarget.name}</strong> from initiating new
-						authorization flows. Existing sessions are not affected. You can
-						reactivate the client later if needed.
+						authorization flows. Existing sessions are not affected. You can reactivate
+						the client later if needed.
 					</p>
 					{deactivateMutation.error && (
 						<p className="text-destructive mt-2 text-sm">

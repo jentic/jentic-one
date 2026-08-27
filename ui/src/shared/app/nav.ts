@@ -1,13 +1,5 @@
 import type { ComponentType } from 'react';
-import {
-	Compass,
-	Boxes,
-	Bot,
-	LayoutDashboard,
-	LayoutGrid,
-	KeyRound,
-	Activity,
-} from 'lucide-react';
+import { Compass, Boxes, Bot, LayoutDashboard, LayoutGrid, KeyRound, Activity } from 'lucide-react';
 
 /**
  * A primary-navigation entry. `order` (not array position) controls placement,
