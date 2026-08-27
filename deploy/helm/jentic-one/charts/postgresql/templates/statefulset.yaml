@@ -18,13 +18,24 @@ one level below the mount so a provisioner's lost+found can't break initdb.
 {{- $image := ternary (printf "%s/%s:%s" $registry .Values.image.repository .Values.image.tag) (printf "%s:%s" .Values.image.repository .Values.image.tag) (ne $registry "") -}}
 {{- $initConfigMap := .Values.primary.initdb.scriptsConfigMap | default (printf "%s-pg-init" .Release.Name) -}}
 {{- /*
+Generated-secrets wiring (mirrors charts/common's _app-secrets.tpl, inlined
+to keep the subchart self-contained): when global.appSecrets is active, the
+superuser and per-surface role passwords come from the release's generated
+Secret via secretKeyRef. Explicit values (auth.password /
+global.databases.*.password) always win, so external-DB and dev overlays
+behave exactly as before.
+*/ -}}
+{{- $sec := (.Values.global).appSecrets | default dict -}}
+{{- $secretsOn := or $sec.generate $sec.existingSecret -}}
+{{- $secretName := $sec.existingSecret | default (printf "%s-app-secrets" .Release.Name) -}}
+{{- /*
 Install-time-only password guard (mirrors common.require-install, inlined to
 keep the subchart self-contained): AWS Marketplace validates charts with bare
 `helm lint`/`helm template`, so the guard must not fire in offline renders —
 `lookup` only returns data against a live cluster (install/upgrade).
 */ -}}
 {{- $password := .Values.auth.password -}}
-{{- if not $password -}}
+{{- if and (not $password) (not $secretsOn) -}}
 {{- if or (lookup "v1" "ServiceAccount" .Release.Namespace "default") (lookup "v1" "Namespace" "" "") -}}
 {{- fail "postgresql.auth.password is required when postgresql.enabled=true — set it in your values file (dev files: deploy/helm/values/local-*.yaml)" -}}
 {{- else -}}
@@ -68,11 +79,36 @@ spec:
             - name: POSTGRES_USER
               value: {{ .Values.auth.username | quote }}
             - name: POSTGRES_PASSWORD
+{{- if .Values.auth.password }}
+              value: {{ .Values.auth.password | quote }}
+{{- else if $secretsOn }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: db-password-postgres
+{{- else }}
               value: {{ $password | quote }}
+{{- end }}
             - name: POSTGRES_DB
               value: {{ .Values.auth.database | quote }}
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+{{- /* Per-surface role passwords for the first-boot init script (the
+umbrella chart's pg-init ConfigMap creates the roles from these, keeping
+the SQL itself secret-free). Same precedence as the service pods' env. */}}
+{{- range $surface, $db := .Values.global.databases }}
+            - name: PGINIT_PASSWORD_{{ upper $surface }}
+{{- if $db.password }}
+              value: {{ $db.password | quote }}
+{{- else if $secretsOn }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: db-password-{{ $surface }}
+{{- else }}
+              value: "REQUIRED-AT-INSTALL"
+{{- end }}
+{{- end }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

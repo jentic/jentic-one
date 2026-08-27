@@ -147,14 +147,18 @@ jobs:
           if [ "${EMPTY_REG}" != "0" ]; then
             echo "::error::baked values.yaml has image block(s) with an empty registry — use AWS's registry/repository/tag split"; exit 1
           fi
-          # The install-time password guards must have rendered inert
-          # placeholders (a live-cluster install still refuses to proceed).
-          grep -q 'REQUIRED-AT-INSTALL' /tmp/rendered.yaml
-          # The baked defaults must auto-generate the application secrets
+          # The baked defaults must be fully self-contained: the app-secrets
           # Secret (encryption keyset, admin JWT secret, invite pepper,
-          # connect state secret) — credential writes 500 and
-          # JENTIC_ENV=production refuses to boot without them.
+          # connect state secret, DB passwords) is generated and every
+          # password reaches its pod as a secretKeyRef — so NO install-time
+          # placeholder may remain anywhere in the render (a zero-touch
+          # launch is the listing's contract: only the two AWSMP override
+          # parameters are supplied, both auto-substituted).
           grep -q 'name: jentic-app-secrets' /tmp/rendered.yaml
+          grep -q 'key: db-password-postgres' /tmp/rendered.yaml
+          if grep -q 'REQUIRED-AT-INSTALL' /tmp/rendered.yaml; then
+            echo "::error::baked chart still renders REQUIRED-AT-INSTALL placeholder(s) — a password stopped resolving from the generated app-secrets Secret"; exit 1
+          fi
 
       - name: Package the chart
         env:

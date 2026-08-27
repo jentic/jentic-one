@@ -17,17 +17,6 @@ import pytest
 CHART_DIR = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "jentic-one"
 VALUES_DIR = CHART_DIR.parent / "values"
 
-DEV_PASSWORD_SETS = [
-    "--set",
-    "global.databases.registry.password=x",
-    "--set",
-    "global.databases.control.password=x",
-    "--set",
-    "global.databases.admin.password=x",
-    "--set",
-    "postgresql.auth.password=x",
-]
-
 
 def _helm_template(*args: str) -> subprocess.CompletedProcess[str]:
     if shutil.which("helm") is None:
@@ -104,7 +93,6 @@ def test_render_marketplace_images_all_ecr() -> None:
         str(VALUES_DIR / "aws-marketplace.yaml"),
         "--set",
         "global.image.tag=0.0.0-test",
-        *DEV_PASSWORD_SETS,
     )
     assert result.returncode == 0, result.stderr
     images = [
@@ -135,7 +123,6 @@ def test_render_awsmp_launch_parameters() -> None:
         "global.serviceAccount.name=buyer-sa",
         "--set",
         "global.awsmp.licenseSecret=buyer-license",
-        *DEV_PASSWORD_SETS,
     )
     assert result.returncode == 0, result.stderr
     # Both enabled deployments (app + broker) carry the account and mount.
@@ -152,7 +139,6 @@ def test_render_awsmp_defaults_are_inert() -> None:
         str(VALUES_DIR / "aws-marketplace.yaml"),
         "--set",
         "global.image.tag=0.0.0-test",
-        *DEV_PASSWORD_SETS,
     )
     assert result.returncode == 0, result.stderr
     assert "serviceAccountName" not in result.stdout
@@ -170,7 +156,6 @@ def test_render_service_account_create_requires_name() -> None:
         "global.image.tag=0.0.0-test",
         "--set",
         "global.serviceAccount.create=true",
-        *DEV_PASSWORD_SETS,
     )
     assert result.returncode != 0
     assert "global.serviceAccount.name is required" in result.stderr
@@ -178,34 +163,46 @@ def test_render_service_account_create_requires_name() -> None:
 
 @pytest.mark.smoke
 def test_render_marketplace_app_secrets() -> None:
-    """aws-marketplace.yaml auto-generates the application secrets Secret.
+    """aws-marketplace.yaml auto-generates every secret — zero-touch install.
 
-    Four config values have no safe default: the credential-encryption
-    keyset (list-shaped config env vars cannot carry — credential writes
-    500 without it), the admin JWT secret, the invite pepper, and the
-    connect state secret (public placeholders that JENTIC_ENV=production
-    refuses). The overlay sets global.appSecrets.generate=true: a
-    release-scoped Secret holding a config.yaml, mounted as
-    JENTIC_CONFIG_FILE into the app and broker (both consume all four).
-    The Secret must be resource-policy keep — losing it orphans everything
-    already encrypted and revokes live sessions.
+    The generated Secret carries the four scalar app secrets (encryption
+    keyset, admin JWT secret, invite pepper, connect state secret — no safe
+    defaults; JENTIC_ENV=production refuses the placeholders) plus the four
+    bundled-DB passwords (pure pod-to-pod wiring on a ClusterIP service).
+    Nothing here is buyer-supplied: this render passes NO passwords at all,
+    and no REQUIRED-AT-INSTALL placeholder may survive. The Secret must be
+    resource-policy keep — losing it orphans everything already encrypted
+    and revokes live sessions.
     """
     result = _helm_template(
         "-f",
         str(VALUES_DIR / "aws-marketplace.yaml"),
         "--set",
         "global.image.tag=0.0.0-test",
-        *DEV_PASSWORD_SETS,
     )
     assert result.returncode == 0, result.stderr
     out = result.stdout
     assert "name: jentic-app-secrets" in out
     assert '"helm.sh/resource-policy": keep' in out
-    # App and broker both mount the Secret, point the loader at it, and run
-    # in production mode so the placeholder guards are actually enforced.
+    # Zero-touch: no password placeholder anywhere in the render.
+    assert "REQUIRED-AT-INSTALL" not in out
+    # App and broker both mount the config file, point the loader at it, and
+    # run in production mode so the placeholder guards actually enforce.
     assert out.count("secretName: jentic-app-secrets") == 2
     assert out.count("value: /etc/jentic/app-secrets/config.yaml") == 2
     assert out.count("name: JENTIC_ENV") == 2
+    # Service-pod DB passwords ride secretKeyRef (3 surfaces x app+broker),
+    # never plain env values.
+    for surface in ("registry", "control", "admin"):
+        assert out.count(f"key: db-password-{surface}") >= 2
+    # The Postgres server + init script draw from the same Secret.
+    assert "key: db-password-postgres" in out
+    for surface in ("REGISTRY", "CONTROL", "ADMIN"):
+        assert f"name: PGINIT_PASSWORD_{surface}" in out
+    # The init ConfigMap is a shell script that reads env — no inlined
+    # passwords in a (non-secret) ConfigMap.
+    assert "init-schemas.sh" in out
+    assert "PASSWORD %L" in out  # psql format()-quoted, not Helm-interpolated
     # The generated config carries all four secrets, and the encryption
     # material decodes to exactly 32 bytes (AES-256).
     docs = out.split("---")
@@ -224,6 +221,32 @@ def test_render_marketplace_app_secrets() -> None:
         if line.strip().startswith("material:")
     )
     assert len(base64.b64decode(material)) == 32
+    # All four DB password keys present in the Secret itself.
+    for key in ("registry", "control", "admin", "postgres"):
+        assert f"db-password-{key}:" in secret_doc
+
+
+@pytest.mark.smoke
+def test_render_explicit_passwords_beat_generated() -> None:
+    """Explicit passwords always win over the generated Secret.
+
+    This is the external-DB (RDS) escape hatch on the Marketplace chart —
+    and the upgrade path for pre-zero-touch installs whose DB roles were
+    created with buyer-chosen passwords.
+    """
+    result = _helm_template(
+        "-f",
+        str(VALUES_DIR / "aws-marketplace.yaml"),
+        "--set",
+        "global.image.tag=0.0.0-test",
+        "--set",
+        "global.databases.registry.password=explicit-pw",
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'value: "explicit-pw"' in result.stdout
+    assert "key: db-password-registry" not in result.stdout
+    # The other surfaces still resolve from the generated Secret.
+    assert "key: db-password-control" in result.stdout
 
 
 @pytest.mark.smoke
@@ -236,7 +259,6 @@ def test_render_app_secrets_existing_secret() -> None:
         "global.image.tag=0.0.0-test",
         "--set",
         "global.appSecrets.existingSecret=buyer-secrets",
-        *DEV_PASSWORD_SETS,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.count("secretName: buyer-secrets") == 2

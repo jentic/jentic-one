@@ -132,21 +132,26 @@ global:
   awsmp:
     licenseSecret: ""
   # Generated application secrets — every scalar secret the app cannot safely
-  # default, minted once into a release-scoped Secret and mounted into the
-  # app/broker/control pods as JENTIC_CONFIG_FILE:
-  #   credentials.encryption          AES-256-GCM keyset (list-shaped config
-  #                                   env vars can't carry; credential writes
-  #                                   fail without it)
-  #   admin.auth.jwt_secret           admin/session JWT signer
-  #   admin.invite.pepper             invite-token hash pepper
-  #   credentials.connect.state_secret OAuth connect state signer
+  # default, minted once into a release-scoped Secret:
+  #   config.yaml (mounted as JENTIC_CONFIG_FILE into app/broker/control):
+  #     credentials.encryption          AES-256-GCM keyset (list-shaped config
+  #                                     env vars can't carry; credential writes
+  #                                     fail without it)
+  #     admin.auth.jwt_secret           admin/session JWT signer
+  #     admin.invite.pepper             invite-token hash pepper
+  #     credentials.connect.state_secret OAuth connect state signer
+  #   db-password-{registry,control,admin,postgres} (secretKeyRef env):
+  #     bundled-DB role + superuser passwords — pure pod-to-pod wiring on a
+  #     ClusterIP service, so generated values beat operator-invented ones.
+  #     Explicit global.databases.*.password / postgresql.auth.password
+  #     always win (external-DB deployments keep setting those).
   # `generate: true` creates the Secret with random values on first install
   # and reuses it verbatim on upgrades (rotating would orphan everything
   # already encrypted and revoke live sessions; the Secret is kept on
   # uninstall for the same reason). `existingSecret` mounts your own Secret
-  # instead (must hold a `config.yaml` key shaped like the example in
-  # deploy/README.md). Both are mutually exclusive with per-service
-  # `configFile.contents`, which the dev overlays use to inline dev secrets.
+  # instead (must hold the same keys — see deploy/README.md). Both are
+  # mutually exclusive with per-service `configFile.contents`, which the dev
+  # overlays use to inline dev secrets.
   appSecrets:
     generate: false
     existingSecret: ""
