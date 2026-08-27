@@ -19,23 +19,32 @@ data:
   # Mirrors docker/local-setup/init-schemas.sql: create per-surface schemas
   # AND the login roles + grants each surface uses to connect. initdb scripts
   # only run on first boot (empty data dir); if roles/grants change, recreate
-  # the PVC (helm uninstall + delete pvc, or a fresh kind cluster). DEV-ONLY
-  # static passwords — see global.databases in values.yaml.
-  init-schemas.sql: |
+  # the PVC (helm uninstall + delete pvc, or a fresh kind cluster).
+  #
+  # A shell script rather than a .sql file so the role passwords come from
+  # env (PGINIT_PASSWORD_*, injected by the postgresql StatefulSet from
+  # explicit values or the generated app-secrets Secret) — the ConfigMap
+  # itself holds no secrets. psql -v + :'var' quoting keeps any password
+  # byte-safe; format(%I/%L) + \gexec replaces the old DO-block guard
+  # (psql does not substitute variables inside dollar-quoted bodies).
+  init-schemas.sh: |
+    #!/bin/sh
+    set -eu
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<'SQL'
     CREATE SCHEMA IF NOT EXISTS registry;
     CREATE SCHEMA IF NOT EXISTS control;
     CREATE SCHEMA IF NOT EXISTS admin;
+    SQL
     {{- range $surface, $db := .Values.global.databases }}
-
-    -- {{ $surface }} surface role + grants
-    DO $$ BEGIN
-      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ $db.user }}') THEN
-        CREATE ROLE {{ $db.user }} LOGIN PASSWORD '{{ $db.password }}';
-      END IF;
-    END $$;
+    # {{ $surface }} surface role + grants
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      -v role='{{ $db.user }}' -v pw="$PGINIT_PASSWORD_{{ upper $surface }}" <<'SQL'
+    SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'role', :'pw')
+      WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'role')\gexec
     GRANT USAGE, CREATE ON SCHEMA {{ $db.schema_name | default $db.schema }} TO {{ $db.user }};
     ALTER DEFAULT PRIVILEGES IN SCHEMA {{ $db.schema_name | default $db.schema }} GRANT ALL ON TABLES TO {{ $db.user }};
     ALTER DEFAULT PRIVILEGES IN SCHEMA {{ $db.schema_name | default $db.schema }} GRANT ALL ON SEQUENCES TO {{ $db.user }};
     ALTER DEFAULT PRIVILEGES IN SCHEMA {{ $db.schema_name | default $db.schema }} GRANT ALL ON TYPES TO {{ $db.user }};
+    SQL
     {{- end }}
 {{- end }}

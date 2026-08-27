@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.36.0](https://github.com/jentic/jentic-one/compare/v0.35.0...v0.36.0) (2026-08-27)
+
+
+### Features
+
+* **helm:** generate all mandatory app secrets, not just the keyset ([#1160](https://github.com/jentic/jentic-one/issues/1160)) ([aaf72ec](https://github.com/jentic/jentic-one/commit/aaf72ec415f7568991fd1537007fad9eb1c5ef0c))
+
+
+### Bug Fixes
+
+* **ci:** create the cli/vX.Y.Z tag via the REST API, not git push ([#1162](https://github.com/jentic/jentic-one/issues/1162)) ([7fcedbd](https://github.com/jentic/jentic-one/commit/7fcedbd65f495146e05217d5a9fed17903bdd5e1))
+
 ## [0.35.0](https://github.com/jentic/jentic-one/compare/v0.34.0...v0.35.0) (2026-08-27)
 
 

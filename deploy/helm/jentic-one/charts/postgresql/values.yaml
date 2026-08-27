@@ -19,7 +19,8 @@ auth:
   username: postgres
   # No default password — the chart refuses to install without one (same
   # posture as global.databases passwords; dev files: deploy/helm/values/
-  # local-*.yaml).
+  # local-*.yaml) UNLESS global.appSecrets is active, in which case the
+  # superuser password comes from the generated Secret via secretKeyRef..
   database: jentic
 
 primary:

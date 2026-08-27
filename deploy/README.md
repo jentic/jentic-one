@@ -1001,30 +1001,44 @@ the credential-encryption keyset (`credentials.encryption` — a *list*, so it
 cannot ride the flat `JENTIC__*` env convention; credential writes 500
 without it), the admin JWT secret, the invite pepper, and the connect state
 secret (all three ship a public placeholder that `JENTIC_ENV=production`
-refuses to boot with). The chart offers three sources, in order of
-preference:
+refuses to boot with). The same Secret also carries the **bundled-DB
+passwords** (`db-password-{registry,control,admin,postgres}` keys): for the
+in-cluster Postgres these are pure pod-to-pod wiring on a ClusterIP service
+nothing outside the cluster can reach, so generated random values beat
+anything an operator would type in. The chart offers three sources, in
+order of preference:
 
 1. **`global.appSecrets.generate: true`** — the chart mints random values
-   into a release-scoped Secret (`<release>-app-secrets`) on first install,
-   mounts it into the app, broker, and control pods as `JENTIC_CONFIG_FILE`,
-   and **reuses it verbatim on every upgrade** (the template `lookup`s the
-   live Secret — regenerating would orphan everything already encrypted and
-   revoke every live session). The Secret carries
+   into a release-scoped Secret (`<release>-app-secrets`) on first install
+   and **reuses each key verbatim on every upgrade** (the template `lookup`s
+   the live Secret and generates only missing keys — regenerating would
+   orphan everything already encrypted, revoke every live session, and break
+   DB logins). The config.yaml key mounts into the app, broker, and control
+   pods as `JENTIC_CONFIG_FILE`; the DB passwords reach the service pods and
+   the Postgres server/init script as `secretKeyRef` env, so no password
+   ever lands in a ConfigMap or plain pod env. The Secret carries
    `helm.sh/resource-policy: keep` so `helm uninstall` leaves it (and your
    decryptability) behind; a same-name reinstall re-adopts it. This is the
-   AWS Marketplace overlay's default, paired with `JENTIC_ENV=production`.
+   AWS Marketplace overlay's default, paired with `JENTIC_ENV=production` —
+   a Marketplace launch needs zero buyer-supplied values.
    Caveat: piping `helm template` to `kubectl apply` bypasses the lookup and
    WILL rotate the secrets — use `helm install`/`upgrade`.
 2. **`global.appSecrets.existingSecret: <name>`** — mount your own Secret
    (created via SealedSecrets/ESO/etc.). It must hold a `config.yaml` key
    shaped like the keyset block in the worked production config above, plus
    `admin.auth.jwt_secret`, `admin.invite.pepper`, and
-   `credentials.connect.state_secret`.
+   `credentials.connect.state_secret` — and, if the bundled Postgres is
+   enabled, the four `db-password-*` keys.
 3. **Per-service `configFile.contents`** (dev overlays only) — inlines
    secrets into a plain ConfigMap; never for real data.
 
-The three are mutually exclusive per pod: `generate`/`existingSecret` and
-`configFile.contents` both claim `JENTIC_CONFIG_FILE`, and the chart fails
+Explicit password values always win over the generated keys:
+`global.databases.<surface>.password` / `postgresql.auth.password` render as
+plain env exactly as before (this is the external-DB path, and the upgrade
+path for installs whose DB roles predate the generated passwords).
+
+The generate/existingSecret modes are mutually exclusive per pod with
+`configFile.contents`: both claim `JENTIC_CONFIG_FILE`, and the chart fails
 the render rather than silently preferring one. Encryption-key **rotation**
 is a config-level operation either way: add a new entry, flip `active_id`,
 keep the old entry until all rows are re-encrypted.
@@ -1128,33 +1142,33 @@ Once set:
   in the chart's own defaults (their validator extracts them there, and
   their replication pipeline rewrites them per region). The publish gate
   then runs exactly what AWS runs on submission: bare `helm lint` + bare
-  `helm template` (must succeed — the password guards are install-time only,
-  see `common.require-install`) with every rendered image from the listing's
-  ECR. Backfill an already-released tag with
+  `helm template` (must succeed — the baked chart generates every secret, so
+  no install-time password guard remains in its render) with every rendered
+  image from the listing's ECR. Backfill an already-released tag with
   `gh workflow run marketplace-chart.yml -f tag=vX.Y.Z`.
 
 Publishing a new **listing version** stays a portal step (product → Request
 changes → *Add version*, pinning the pushed tag/digest); automate via the
 Marketplace Catalog API only after the manual loop has worked once.
 
-Because the Marketplace chart is self-contained, the version's **Helm
-delivery option** needs only six override parameters — the two
-AWS-substituted ones (portal validation rejects paid products without them)
-and the four buyer-chosen passwords:
+Because the Marketplace chart is self-contained — every password and secret
+is generated at install (see [Generated application secrets on
+Kubernetes](#generated-application-secrets-on-kubernetes)) — the version's
+**Helm delivery option** needs only two override parameters, both
+substituted by AWS at launch (portal validation rejects paid products
+without them). A buyer supplies nothing:
 
 | Override parameter key | DefaultValue |
 | ---------------------- | ------------ |
 | `global.serviceAccount.name` | `${AWSMP_SERVICE_ACCOUNT}` — the buyer's (IRSA) service account; the app/broker pods run under it (chart support: `global.serviceAccount`) |
 | `global.awsmp.licenseSecret` | `${AWSMP_LICENSE_SECRET}` — an AWS-created Secret, mounted read-only at `/var/run/secrets/aws-marketplace/license` (chart support: `global.awsmp.licenseSecret`) |
-| `postgresql.auth.password` | *(buyer-supplied — bundled DB admin password)* |
-| `global.databases.registry.password` | *(buyer-supplied)* |
-| `global.databases.control.password` | *(buyer-supplied)* |
-| `global.databases.admin.password` | *(buyer-supplied)* |
 
 Everything else (ECR image repositories, `broker.enabled=true`, the bundled
-Postgres, the tag pin) is baked into the published chart's defaults. Buyers
-preferring RDS install manually instead, disabling the bundled DB and
-setting the `global.databases.*.host` values.
+Postgres, the secret/password generation, the tag pin) is baked into the
+published chart's defaults. Buyers preferring RDS install manually instead,
+disabling the bundled DB and setting the `global.databases.*.host` values
+plus explicit `*.password` values (explicit passwords always win over the
+generated ones).
 
 The IAM role lives in the **seller account** and trusts GitHub's OIDC
 provider — no long-lived AWS keys anywhere. Trust policy (create the
