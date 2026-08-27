@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.assertion_service import AssertionService
 from jentic_one.auth.services.authorize_service import AuthorizeService
-from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.auth.services.errors import InvalidGrantError, RateLimitExceededError
 from jentic_one.auth.services.service_account_auth_service import ServiceAccountAuthService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.schemas.oauth import (
@@ -23,10 +23,26 @@ from jentic_one.auth.web.schemas.oauth import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.state.backend import MemoryStateBackend
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 
 router = APIRouter()
+
+_TOKEN_RATE_LIMIT_RPM = 60
+_token_rate_limit_store = MemoryStateBackend()
+_token_ip_rate_limiter = RateLimiter(
+    _token_rate_limit_store, default_rpm=_TOKEN_RATE_LIMIT_RPM, burst=60
+)
+
+
+async def _check_token_rate_limit(request: Request) -> None:
+    """Per-IP rate limiter for the token endpoint."""
+    ip = request.client.host if request.client else "unknown"
+    outcome = await _token_ip_rate_limiter.acquire(ip)
+    if not outcome.allowed:
+        raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
 _JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 _CLIENT_CREDENTIALS_GRANT = "client_credentials"
@@ -57,7 +73,7 @@ def get_oauth_client_service(ctx: Context = Depends(get_ctx)) -> OAuthClientServ
     return OAuthClientService(ctx)
 
 
-@router.post("/oauth/token")
+@router.post("/oauth/token", dependencies=[Depends(_check_token_rate_limit)])
 async def token_endpoint(
     body: TokenRequest,
     ctx: Context = Depends(get_ctx),
