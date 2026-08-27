@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.33.0](https://github.com/jentic/jentic-one/compare/v0.32.1...v0.33.0) (2026-08-27)
+
+
+### Features
+
+* **ci:** publish the Helm chart to Marketplace ECR as an OCI artifact ([#1145](https://github.com/jentic/jentic-one/issues/1145)) ([c15eab8](https://github.com/jentic/jentic-one/commit/c15eab8f494f58d7802e9a3e6c159d1212447642))
+* **helm:** first-party bundled Postgres on the official image ([#1150](https://github.com/jentic/jentic-one/issues/1150)) ([2005f18](https://github.com/jentic/jentic-one/commit/2005f184d7bed414f47049192c83c9e06001d32b))
+* **helm:** make the Marketplace listing RDS-only, park the postgres mirror ([#1143](https://github.com/jentic/jentic-one/issues/1143)) ([7e4b244](https://github.com/jentic/jentic-one/commit/7e4b244f1441b37eed58543e07030b4b6f3b0f72))
+* **helm:** Marketplace launch wiring — service account + license secret ([#1149](https://github.com/jentic/jentic-one/issues/1149)) ([e55318e](https://github.com/jentic/jentic-one/commit/e55318e457811817b87dec9ec3c18ba70e77b6b7))
+
+
+### Bug Fixes
+
+* **ci:** docker login before cosign signs the Marketplace chart ([#1148](https://github.com/jentic/jentic-one/issues/1148)) ([ef56ec6](https://github.com/jentic/jentic-one/commit/ef56ec6e38507a72cb9988c7769edac0550706c6))
+
 ## [0.32.1](https://github.com/jentic/jentic-one/compare/v0.32.0...v0.32.1) (2026-08-26)
 
 
