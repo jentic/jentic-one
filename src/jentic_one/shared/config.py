@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
+from urllib.parse import urlparse
 
 import structlog
 import yaml
@@ -270,6 +271,22 @@ class PlatformClientConfig(BaseModel):
 
     client_id: str
     redirect_uris: list[str] = Field(min_length=1)
+
+    @field_validator("redirect_uris", mode="after")
+    @classmethod
+    def _validate_redirect_uris(cls, uris: list[str]) -> list[str]:
+        for uri in uris:
+            parsed = urlparse(uri)
+            if not parsed.scheme or not parsed.netloc:
+                msg = f"invalid platform redirect_uri (must be an absolute URL): {uri}"
+                raise ValueError(msg)
+            if parsed.scheme not in ("https", "http"):
+                msg = f"platform redirect_uri must use https or http: {uri}"
+                raise ValueError(msg)
+            if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
+                msg = f"http redirect_uri only allowed for localhost: {uri}"
+                raise ValueError(msg)
+        return uris
 
 
 _SPA_CLIENT_ID = "jentic-one-spa"
