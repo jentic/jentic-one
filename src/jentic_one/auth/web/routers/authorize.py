@@ -532,8 +532,48 @@ async def oauth_callback(
     original_state = params.get("original_state")
 
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
+
+    oauth_client = await OAuthClientService(ctx).get_by_client_id(client_id or "")
+    needs_consent = oauth_client is not None and oauth_client.require_consent
+
+    if needs_consent:
+        try:
+            user_id, user_email = await authorize_svc.resolve_idp_user(
+                code=code,
+                redirect_uri=callback_uri,
+            )
+        except UserNotAdmittedError:
+            logger.warning("oauth_user_not_admitted", client_id=client_id)
+            return RedirectResponse(url="/error?error=access_denied", status_code=302)
+        except (InvalidGrantError, httpx.HTTPStatusError):
+            logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
+            return RedirectResponse(url="/error?error=server_error", status_code=302)
+
+        consent_nonce = secrets.token_urlsafe(32)
+        consent_token = _sign_payload(
+            {
+                "consent_nonce": consent_nonce,
+                "user_id": user_id,
+                "redirect_uri": original_redirect_uri,
+                "original_state": original_state,
+                "client_id": client_id,
+                "code_challenge": code_challenge,
+                "scope": scope,
+                "nonce": nonce,
+                "client_name": oauth_client.name,
+                "client_description": oauth_client.description,
+                "user_email": user_email,
+                "iat": str(int(time.time())),
+            },
+            ctx.config.admin.auth.jwt_secret.get_secret_value(),
+            purpose="consent",
+        )
+        return RedirectResponse(
+            url=f"/oauth/consent?consent_token={consent_token}", status_code=302
+        )
+
     try:
-        platform_code, user_email = await authorize_svc.handle_idp_callback_with_email(
+        platform_code, _email = await authorize_svc.handle_idp_callback_with_email(
             code=code,
             redirect_uri=callback_uri,
             client_id=client_id or "",
@@ -548,30 +588,6 @@ async def oauth_callback(
     except (InvalidGrantError, httpx.HTTPStatusError):
         logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
         return RedirectResponse(url="/error?error=server_error", status_code=302)
-
-    oauth_client = await OAuthClientService(ctx).get_by_client_id(client_id or "")
-
-    if oauth_client is not None and oauth_client.require_consent:
-        consent_nonce = secrets.token_urlsafe(32)
-        consent_token = _sign_payload(
-            {
-                "consent_nonce": consent_nonce,
-                "code": platform_code,
-                "redirect_uri": original_redirect_uri,
-                "original_state": original_state,
-                "client_id": client_id,
-                "client_name": oauth_client.name,
-                "client_description": oauth_client.description,
-                "scope": scope,
-                "user_email": user_email,
-                "iat": str(int(time.time())),
-            },
-            ctx.config.admin.auth.jwt_secret.get_secret_value(),
-            purpose="consent",
-        )
-        return RedirectResponse(
-            url=f"/oauth/consent?consent_token={consent_token}", status_code=302
-        )
 
     redirect_params: dict[str, str] = {"code": platform_code}
     if original_state:
@@ -680,8 +696,9 @@ async def consent_submit(
     consent_token: str = Form(...),
     action: str = Form(...),
     ctx: Context = Depends(get_ctx),
+    authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> RedirectResponse:
-    """Process the consent form submission."""
+    """Process the consent form submission. Mints the auth code only on approval."""
     try:
         params = _verify_payload(
             consent_token,
@@ -700,12 +717,25 @@ async def consent_submit(
 
     redirect_uri = params.get("redirect_uri") or ""
     original_state = params.get("original_state")
-    platform_code = params.get("code") or ""
     client_id = params.get("client_id") or ""
 
     if action == "deny":
         logger.info("oauth_consent_denied", client_id=client_id)
         return _error_redirect(redirect_uri, "access_denied", original_state)
+
+    user_id = params.get("user_id") or ""
+    code_challenge = params.get("code_challenge") or ""
+    scope = params.get("scope") or "openid"
+    nonce = params.get("nonce")
+
+    platform_code = await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        code_challenge=code_challenge,
+        scopes=scope,
+        nonce=nonce,
+    )
 
     logger.info("oauth_consent_approved", client_id=client_id)
     redirect_params: dict[str, str] = {"code": platform_code}

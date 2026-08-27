@@ -149,6 +149,26 @@ class AuthorizeService:
         )
         return platform_code, claims.email
 
+    async def resolve_idp_user(
+        self,
+        *,
+        code: str,
+        redirect_uri: str,
+    ) -> tuple[str, str]:
+        """Exchange an upstream IdP code and resolve the local user.
+
+        Returns (user_id, user_email) without minting an authorization code.
+        Used by the consent flow to defer code minting until after approval.
+        """
+        adapter = self._get_idp_adapter()
+        if adapter is None:
+            raise InvalidGrantError("No external IdP configured")
+
+        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        claims = adapter.map_claims(userinfo)
+        user_id = await self._resolve_or_create_user(claims)
+        return user_id, claims.email
+
     async def issue_authorization_code(
         self,
         *,
