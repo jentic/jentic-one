@@ -72,6 +72,11 @@ app:
   enabled: true
   image:
     repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
+    # Stamped to the release tag (vX.Y.Z) by marketplace-chart.yml's bake
+    # step. Empty here (falls back to global.image.tag), but the baked chart
+    # needs it explicit: AWS's validator reads tags from values.yaml
+    # literally and fails tag-less image blocks (MISSING_IMAGE_TAG).
+    tag: ""
   # Production mode: the config loader refuses to boot with placeholder or
   # empty values for the admin JWT secret / invite pepper / connect state
   # secret. Safe here because global.appSecrets generates real values.
@@ -92,6 +97,7 @@ broker:
   enabled: true
   image:
     repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
+    tag: ""  # stamped by the bake step — same reasoning as app.image.tag
   extraEnv:
     JENTIC_ENV: "production"  # same reasoning as app.extraEnv above
   # Entitlement wiring — same caveat as app above:
