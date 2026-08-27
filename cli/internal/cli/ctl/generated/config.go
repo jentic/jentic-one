@@ -157,6 +157,9 @@ type AuthConfig struct {
 	// Idp corresponds to the JSON schema field "idp".
 	Idp *IdpConfig `json:"idp,omitempty,omitzero" yaml:"idp,omitempty" mapstructure:"idp,omitempty"`
 
+	// PlatformClients corresponds to the JSON schema field "platform_clients".
+	PlatformClients []PlatformClientConfig `json:"platform_clients,omitempty,omitzero" yaml:"platform_clients,omitempty" mapstructure:"platform_clients,omitempty"`
+
 	// RatTtlSeconds corresponds to the JSON schema field "rat_ttl_seconds".
 	RatTtlSeconds int `json:"rat_ttl_seconds,omitempty,omitzero" yaml:"rat_ttl_seconds,omitempty" mapstructure:"rat_ttl_seconds,omitempty"`
 
@@ -1481,6 +1484,43 @@ func (j *PipedreamProviderConfig) UnmarshalJSON(value []byte) error {
 		return fmt.Errorf("field %s: must be equal to %s", "kind", "pipedream")
 	}
 	*j = PipedreamProviderConfig(plain)
+	return nil
+}
+
+// A static first-party OAuth client (e.g. the operator SPA).
+//
+// Platform clients authenticate via PKCE only — no client secret. They are
+// defined in config (not the oauth_clients DB table) because they are
+// deployment-time constants, not admin-managed dynamic registrations.
+type PlatformClientConfig struct {
+	// ClientId corresponds to the JSON schema field "client_id".
+	ClientId string `json:"client_id" yaml:"client_id" mapstructure:"client_id"`
+
+	// RedirectUris corresponds to the JSON schema field "redirect_uris".
+	RedirectUris []string `json:"redirect_uris" yaml:"redirect_uris" mapstructure:"redirect_uris"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *PlatformClientConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["client_id"]; raw != nil && !ok {
+		return fmt.Errorf("field client_id in PlatformClientConfig: required")
+	}
+	if _, ok := raw["redirect_uris"]; raw != nil && !ok {
+		return fmt.Errorf("field redirect_uris in PlatformClientConfig: required")
+	}
+	type Plain PlatformClientConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if plain.RedirectUris != nil && len(plain.RedirectUris) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "redirect_uris", 1)
+	}
+	*j = PlatformClientConfig(plain)
 	return nil
 }
 
