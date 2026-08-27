@@ -150,9 +150,11 @@ jobs:
           # The install-time password guards must have rendered inert
           # placeholders (a live-cluster install still refuses to proceed).
           grep -q 'REQUIRED-AT-INSTALL' /tmp/rendered.yaml
-          # The baked defaults must auto-generate the credential-encryption
-          # keyset Secret — credential writes 500 without it.
-          grep -q 'name: jentic-encryption' /tmp/rendered.yaml
+          # The baked defaults must auto-generate the application secrets
+          # Secret (encryption keyset, admin JWT secret, invite pepper,
+          # connect state secret) — credential writes 500 and
+          # JENTIC_ENV=production refuses to boot without them.
+          grep -q 'name: jentic-app-secrets' /tmp/rendered.yaml
 
       - name: Package the chart
         env:

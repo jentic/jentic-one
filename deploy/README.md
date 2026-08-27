@@ -226,7 +226,7 @@ shipped placeholder values for these — they must be set explicitly:
 
 | Secret                          | Where                                               | Why |
 | ------------------------------- | --------------------------------------------------- | --- |
-| Credential encryption keyset    | `credentials.encryption` (`active_id` + `entries`)  | AES-256-GCM envelope key for credential-at-rest. Credential **writes** fail without a non-empty keyset. Set via YAML (a list of `{id, material}`), not a single env var. On Kubernetes the chart can manage it — see [Credential encryption keyset on Kubernetes](#credential-encryption-keyset-on-kubernetes). |
+| Credential encryption keyset    | `credentials.encryption` (`active_id` + `entries`)  | AES-256-GCM envelope key for credential-at-rest. Credential **writes** fail without a non-empty keyset. Set via YAML (a list of `{id, material}`), not a single env var. On Kubernetes the chart can manage it — see [Generated application secrets on Kubernetes](#generated-application-secrets-on-kubernetes). |
 | Database passwords              | `JENTIC__DATABASES__<DB>__PASSWORD`                 | Needed to connect to a real Postgres. |
 
 Generate a fresh secret / encryption key material with:
@@ -993,35 +993,41 @@ The umbrella [`values.yaml`](helm/jentic-one/values.yaml) and
 carry inline warnings about this so the dev pattern can't silently leak
 into a prod values file.
 
-### Credential encryption keyset on Kubernetes
+### Generated application secrets on Kubernetes
 
-The keyset (`credentials.encryption` — see
-[Mandatory vs optional secrets](#mandatory-vs-optional-secrets)) is a *list*,
-so it cannot ride the flat `JENTIC__*` env convention; without it every
-credential write 500s. The chart offers three sources, in order of
+Four config values have no safe default and every deployment must supply
+them (see [Mandatory vs optional secrets](#mandatory-vs-optional-secrets)):
+the credential-encryption keyset (`credentials.encryption` — a *list*, so it
+cannot ride the flat `JENTIC__*` env convention; credential writes 500
+without it), the admin JWT secret, the invite pepper, and the connect state
+secret (all three ship a public placeholder that `JENTIC_ENV=production`
+refuses to boot with). The chart offers three sources, in order of
 preference:
 
-1. **`global.encryption.generate: true`** — the chart mints a random 32-byte
-   key into a release-scoped Secret (`<release>-encryption`) on first
-   install, mounts it into the app, broker, and control pods as
-   `JENTIC_CONFIG_FILE`, and **reuses it verbatim on every upgrade** (the
-   template `lookup`s the live Secret — regenerating would orphan everything
-   already encrypted). The Secret carries `helm.sh/resource-policy: keep` so
-   `helm uninstall` leaves it (and your decryptability) behind; a same-name
-   reinstall re-adopts it. This is the AWS Marketplace overlay's default.
+1. **`global.appSecrets.generate: true`** — the chart mints random values
+   into a release-scoped Secret (`<release>-app-secrets`) on first install,
+   mounts it into the app, broker, and control pods as `JENTIC_CONFIG_FILE`,
+   and **reuses it verbatim on every upgrade** (the template `lookup`s the
+   live Secret — regenerating would orphan everything already encrypted and
+   revoke every live session). The Secret carries
+   `helm.sh/resource-policy: keep` so `helm uninstall` leaves it (and your
+   decryptability) behind; a same-name reinstall re-adopts it. This is the
+   AWS Marketplace overlay's default, paired with `JENTIC_ENV=production`.
    Caveat: piping `helm template` to `kubectl apply` bypasses the lookup and
-   WILL rotate the key — use `helm install`/`upgrade`.
-2. **`global.encryption.existingSecret: <name>`** — mount your own Secret
+   WILL rotate the secrets — use `helm install`/`upgrade`.
+2. **`global.appSecrets.existingSecret: <name>`** — mount your own Secret
    (created via SealedSecrets/ESO/etc.). It must hold a `config.yaml` key
-   shaped like the keyset block in the worked production config above.
-3. **Per-service `configFile.contents`** (dev overlays only) — inlines the
-   keyset into a plain ConfigMap; never for real data.
+   shaped like the keyset block in the worked production config above, plus
+   `admin.auth.jwt_secret`, `admin.invite.pepper`, and
+   `credentials.connect.state_secret`.
+3. **Per-service `configFile.contents`** (dev overlays only) — inlines
+   secrets into a plain ConfigMap; never for real data.
 
 The three are mutually exclusive per pod: `generate`/`existingSecret` and
 `configFile.contents` both claim `JENTIC_CONFIG_FILE`, and the chart fails
-the render rather than silently preferring one. Key **rotation** is a
-config-level operation either way: add a new entry, flip `active_id`, keep
-the old entry until all rows are re-encrypted.
+the render rather than silently preferring one. Encryption-key **rotation**
+is a config-level operation either way: add a new entry, flip `active_id`,
+keep the old entry until all rows are re-encrypted.
 
 ## AWS Marketplace
 

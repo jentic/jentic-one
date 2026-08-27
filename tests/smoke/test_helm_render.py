@@ -177,15 +177,18 @@ def test_render_service_account_create_requires_name() -> None:
 
 
 @pytest.mark.smoke
-def test_render_marketplace_encryption_secret() -> None:
-    """aws-marketplace.yaml auto-generates the credential-encryption keyset.
+def test_render_marketplace_app_secrets() -> None:
+    """aws-marketplace.yaml auto-generates the application secrets Secret.
 
-    Credential writes 500 without credentials.encryption (a list-shaped
-    config env vars cannot carry), so the Marketplace overlay sets
-    global.encryption.generate=true: a release-scoped Secret holding a
-    config.yaml keyset, mounted as JENTIC_CONFIG_FILE into the app and
-    broker (both encrypt/decrypt tokens). The Secret must be resource-policy
-    keep — losing it orphans everything already encrypted.
+    Four config values have no safe default: the credential-encryption
+    keyset (list-shaped config env vars cannot carry — credential writes
+    500 without it), the admin JWT secret, the invite pepper, and the
+    connect state secret (public placeholders that JENTIC_ENV=production
+    refuses). The overlay sets global.appSecrets.generate=true: a
+    release-scoped Secret holding a config.yaml, mounted as
+    JENTIC_CONFIG_FILE into the app and broker (both consume all four).
+    The Secret must be resource-policy keep — losing it orphans everything
+    already encrypted and revokes live sessions.
     """
     result = _helm_template(
         "-f",
@@ -196,31 +199,35 @@ def test_render_marketplace_encryption_secret() -> None:
     )
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    assert "name: jentic-encryption" in out
+    assert "name: jentic-app-secrets" in out
     assert '"helm.sh/resource-policy": keep' in out
-    # App and broker both mount the keyset and point the loader at it.
-    assert out.count("secretName: jentic-encryption") == 2
-    assert out.count("value: /etc/jentic/encryption/config.yaml") == 2
-    # The generated material decodes to exactly 32 bytes (AES-256).
+    # App and broker both mount the Secret, point the loader at it, and run
+    # in production mode so the placeholder guards are actually enforced.
+    assert out.count("secretName: jentic-app-secrets") == 2
+    assert out.count("value: /etc/jentic/app-secrets/config.yaml") == 2
+    assert out.count("name: JENTIC_ENV") == 2
+    # The generated config carries all four secrets, and the encryption
+    # material decodes to exactly 32 bytes (AES-256).
     docs = out.split("---")
-    secret_doc = next(d for d in docs if "name: jentic-encryption" in d)
+    secret_doc = next(d for d in docs if "name: jentic-app-secrets" in d)
     b64 = next(
         line.split(":", 1)[1].strip()
         for line in secret_doc.splitlines()
         if line.strip().startswith("config.yaml:")
     )
-    keyset = base64.b64decode(b64).decode()
-    assert "active_id: v1" in keyset
+    config = base64.b64decode(b64).decode()
+    for key in ("active_id: v1", "jwt_secret:", "pepper:", "state_secret:"):
+        assert key in config, f"generated config.yaml missing {key}"
     material = next(
         line.split(":", 1)[1].strip()
-        for line in keyset.splitlines()
+        for line in config.splitlines()
         if line.strip().startswith("material:")
     )
     assert len(base64.b64decode(material)) == 32
 
 
 @pytest.mark.smoke
-def test_render_encryption_existing_secret() -> None:
+def test_render_app_secrets_existing_secret() -> None:
     """existingSecret mounts the buyer's Secret and renders none of ours."""
     result = _helm_template(
         "-f",
@@ -228,36 +235,36 @@ def test_render_encryption_existing_secret() -> None:
         "--set",
         "global.image.tag=0.0.0-test",
         "--set",
-        "global.encryption.existingSecret=buyer-keyset",
+        "global.appSecrets.existingSecret=buyer-secrets",
         *DEV_PASSWORD_SETS,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.count("secretName: buyer-keyset") == 2
+    assert result.stdout.count("secretName: buyer-secrets") == 2
     # No chart-generated Secret rendered (the pod volume name still matches
-    # "jentic-encryption", so key on the Secret's keep-annotation instead).
+    # "jentic-app-secrets", so key on the Secret's keep-annotation instead).
     assert '"helm.sh/resource-policy": keep' not in result.stdout
 
 
 @pytest.mark.smoke
-def test_render_encryption_off_by_default() -> None:
-    """Bare renders carry no encryption Secret, mount, or JENTIC_CONFIG_FILE."""
+def test_render_app_secrets_off_by_default() -> None:
+    """Bare renders carry no app-secrets Secret, mount, or JENTIC_CONFIG_FILE."""
     result = _helm_template()
     assert result.returncode == 0, result.stderr
-    assert "jentic-encryption" not in result.stdout
+    assert "jentic-app-secrets" not in result.stdout
 
 
 @pytest.mark.smoke
-def test_render_encryption_conflicts_with_config_file() -> None:
-    """generate=true + a dev configFile keyset must fail loudly.
+def test_render_app_secrets_conflict_with_config_file() -> None:
+    """generate=true + a dev configFile must fail loudly.
 
     Both claim JENTIC_CONFIG_FILE (the loader reads a single file); silently
-    preferring one would ship a keyset the operator didn't choose.
+    preferring one would ship secrets the operator didn't choose.
     """
     result = _helm_template(
         "-f",
         str(VALUES_DIR / "local-combined.yaml"),
         "--set",
-        "global.encryption.generate=true",
+        "global.appSecrets.generate=true",
     )
     assert result.returncode != 0
     assert "mutually exclusive" in result.stderr

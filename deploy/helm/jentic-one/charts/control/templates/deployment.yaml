@@ -29,12 +29,12 @@ spec:
               value: {{ $v | quote }}
 {{- end }}
 {{ include "common.config-file.env" . | indent 12 }}
-{{ include "common.encryption.env" . | indent 12 }}
+{{ include "common.app-secrets.env" . | indent 12 }}
 {{ include "common.logging-env" . | indent 12 }}
 {{ include "common.metrics-env" . | indent 12 }}
 {{ include "common.db-env" . | indent 12 }}
 {{- $cfgMount := (include "common.config-file.mount" . | trim) }}
-{{- $encMount := (include "common.encryption.mount" . | trim) }}
+{{- $encMount := (include "common.app-secrets.mount" . | trim) }}
 {{- if or $cfgMount $encMount }}
           volumeMounts:
 {{- with $cfgMount }}
@@ -63,7 +63,7 @@ spec:
         {{- end }}
       {{- $otel := .Values.global.observability.otel.enabled }}
       {{- $cfg := (include "common.config-file.volume" . | trim) }}
-      {{- $enc := (include "common.encryption.volume" . | trim) }}
+      {{- $enc := (include "common.app-secrets.volume" . | trim) }}
       {{- if or $otel $cfg $enc }}
       volumes:
       {{- if $otel }}

@@ -42,12 +42,14 @@ global:
   # RDS variant: also set the three global.databases.*.host values and
   # disable the bundled DB (see the postgresql blocks).
 
-  # Credential-at-rest encryption keyset: auto-generated into a release-scoped
-  # Secret on first install and reused verbatim on upgrades, so credential
-  # writes work out of the box (the keyset is list-shaped config that env vars
-  # cannot carry). Buyers managing keys themselves: set
-  # global.encryption.existingSecret instead. See deploy/README.md.
-  encryption:
+  # Generated application secrets: the credential-encryption keyset, admin
+  # JWT secret, invite pepper, and connect state secret — minted into a
+  # release-scoped Secret on first install and reused verbatim on upgrades,
+  # so the install is secure and functional out of the box (none of these
+  # have safe defaults; JENTIC_ENV=production below refuses the shipped
+  # placeholders). Buyers managing secrets themselves: set
+  # global.appSecrets.existingSecret instead. See deploy/README.md.
+  appSecrets:
     generate: true
 
   # AWS Marketplace launch wiring — the listing's delivery option carries
@@ -70,13 +72,17 @@ app:
   enabled: true
   image:
     repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
+  # Production mode: the config loader refuses to boot with placeholder or
+  # empty values for the admin JWT secret / invite pepper / connect state
+  # secret. Safe here because global.appSecrets generates real values.
+  extraEnv:
+    JENTIC_ENV: "production"
   # Entitlement gate wiring (plan PR 4). The listing is contract-priced with
   # dimensions `users` + `executions` (decided 2026-08-20); `contract` is the
   # config default so only the IDs need filling in. DO NOT uncomment until the
   # deployed image ships the entitlement config: AppConfig rejects unknown
   # config sections (extra="forbid"), so these env vars crash older images at
   # boot.
-  # extraEnv:
   #   JENTIC__ENTITLEMENT__ENABLED: "true"
   #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
   #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
@@ -86,7 +92,9 @@ broker:
   enabled: true
   image:
     repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
-  # extraEnv:  # same caveat as app.extraEnv above
+  extraEnv:
+    JENTIC_ENV: "production"  # same reasoning as app.extraEnv above
+  # Entitlement wiring — same caveat as app above:
   #   JENTIC__ENTITLEMENT__ENABLED: "true"
   #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
   #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
