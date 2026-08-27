@@ -164,10 +164,7 @@ jobs:
           if [ "${UNTAGGED}" != "0" ]; then
             echo "::error::baked values.yaml has ECR image block(s) without an explicit tag — stamp them in the bake step"; exit 1
           fi
-          # The install-time password guards must have rendered inert
-          # placeholders (a live-cluster install still refuses to proceed).
-          grep -q 'REQUIRED-AT-INSTALL' /tmp/rendered.yaml
-          # The baked defaults must auto-generate the application secrets
+          # The baked defaults must be fully self-contained: the app-secrets
           # Secret (encryption keyset, admin JWT secret, invite pepper,
           # connect state secret, DB passwords) is generated and every
           # password reaches its pod as a secretKeyRef — so NO install-time
