@@ -68,7 +68,8 @@ app:
   enabled: true
   image:
     repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
-    # Stamped to the release tag (vX.Y.Z) by marketplace-chart.yml's bake
+    # Stamped to the release version (X.Y.Z, no v — that's the tag the image
+    # is pushed to Marketplace ECR under) by marketplace-chart.yml's bake
     # step. Empty here (falls back to global.image.tag), but the baked chart
     # needs it explicit: AWS's validator reads tags from values.yaml
     # literally and fails tag-less image blocks (MISSING_IMAGE_TAG).
