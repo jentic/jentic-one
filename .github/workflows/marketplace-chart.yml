@@ -139,6 +139,14 @@ jobs:
             echo "::error::non-ECR image(s) rendered:"; echo "${BAD}"; exit 1
           fi
           grep -c 'image:' /tmp/rendered.yaml >/dev/null
+          # AWS's validator composes image refs from the values keys
+          # themselves: an image block with an empty registry (full path
+          # stuffed into repository) renders fine in Helm but breaks their
+          # parser (leading-/, missing tag) — reject it here first.
+          EMPTY_REG="$(yq '[.. | select(type == "!!map" and has("registry") and has("repository")) | select(.registry == "")] | length' deploy/helm/jentic-one/values.yaml)"
+          if [ "${EMPTY_REG}" != "0" ]; then
+            echo "::error::baked values.yaml has image block(s) with an empty registry — use AWS's registry/repository/tag split"; exit 1
+          fi
           # The install-time password guards must have rendered inert
           # placeholders (a live-cluster install still refuses to proceed).
           grep -q 'REQUIRED-AT-INSTALL' /tmp/rendered.yaml
