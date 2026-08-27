@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Plus, Copy, Check, Trash2, Pencil, KeyRound, RotateCcw, ShieldAlert } from 'lucide-react';
+import { Plus, Trash2, Pencil, KeyRound, RotateCcw, ShieldAlert } from 'lucide-react';
 import {
 	Button,
+	CopyButton,
 	Dialog,
 	EmptyState,
 	Input,
@@ -19,27 +20,6 @@ import {
 	useRotateOAuthClientSecret,
 	type OAuthClient,
 } from '@/modules/settings/api/hooks';
-
-function CopyButton({ value }: { value: string }) {
-	const [copied, setCopied] = useState(false);
-
-	const handleCopy = async (): Promise<void> => {
-		await navigator.clipboard.writeText(value);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
-	};
-
-	return (
-		<button
-			type="button"
-			onClick={(): void => void handleCopy()}
-			className="text-muted-foreground hover:text-foreground ml-2 inline-flex"
-			title="Copy to clipboard"
-		>
-			{copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-		</button>
-	);
-}
 
 interface SecretDialogProps {
 	open: boolean;
@@ -67,7 +47,7 @@ function SecretDialog({ open, onClose, secret, title }: SecretDialogProps) {
 					<code className="text-foreground min-w-0 flex-1 overflow-x-auto font-mono text-xs">
 						{secret}
 					</code>
-					<CopyButton value={secret} />
+					<CopyButton value={secret} variant="ghost" size="icon" toastMessage={false} />
 				</div>
 			</div>
 		</Dialog>
@@ -97,7 +77,7 @@ function RedirectUriList({ uris, onChange }: RedirectUriListProps) {
 	return (
 		<div className="space-y-2">
 			{uris.map((uri, index) => (
-				<div key={index} className="flex items-center gap-2">
+				<div key={`uri-${index}`} className="flex items-center gap-2">
 					<Input
 						value={uri}
 						onChange={(e): void => handleChange(index, e.target.value)}
@@ -198,18 +178,13 @@ function CreateEditDialog({ open, onClose, onSecretRevealed, client }: CreateEdi
 					<Button variant="outline" onClick={onClose}>
 						Cancel
 					</Button>
-					<Button
-						onClick={(): void =>
-							void handleSubmit({ preventDefault: () => {} } as React.FormEvent)
-						}
-						disabled={isPending}
-					>
+					<Button type="submit" form="oauth-client-form" disabled={isPending}>
 						{isPending ? 'Saving...' : isEdit ? 'Update' : 'Create'}
 					</Button>
 				</>
 			}
 		>
-			<form onSubmit={(e): void => void handleSubmit(e)} className="space-y-4">
+			<form id="oauth-client-form" onSubmit={(e): void => void handleSubmit(e)} className="space-y-4">
 				<div>
 					<Label htmlFor="name">Name</Label>
 					<Input
@@ -496,7 +471,7 @@ export function OAuthClientsSection() {
 									<code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
 										{client.client_id}
 									</code>
-									<CopyButton value={client.client_id} />
+									<CopyButton value={client.client_id} variant="ghost" size="icon" />
 								</div>
 								<div>
 									<span className="text-muted-foreground">Redirect URIs: </span>

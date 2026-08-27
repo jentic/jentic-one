@@ -5,6 +5,7 @@ import { Button } from '@/shared/ui/Button';
 import { MenuPanel, MenuSeparator, menuItemClass, useDismissable } from '@/shared/ui/Menu';
 import { cn } from '@/shared/lib/utils';
 import { useAuth } from '@/shared/auth/AuthContext';
+import { usePermission, ORG_ADMIN } from '@/shared/auth/usePermission';
 import { useVersionInfo } from '@/shared/hooks';
 import { ROUTES } from '@/shared/app/routes';
 
@@ -26,6 +27,7 @@ function displayName(
 
 export function UserMenu() {
 	const { user, logout } = useAuth();
+	const isAdmin = usePermission(ORG_ADMIN);
 	const { current } = useVersionInfo();
 	const [open, setOpen] = useState(false);
 	const close = useCallback(() => setOpen(false), []);
@@ -76,15 +78,17 @@ export function UserMenu() {
 						Change password
 					</AppLink>
 
-					<AppLink
-						href="/settings"
-						role="menuitem"
-						onClick={close}
-						className={menuItemClass()}
-					>
-						<Settings className="h-4 w-4 shrink-0" aria-hidden="true" />
-						Settings
-					</AppLink>
+					{isAdmin && (
+						<AppLink
+							href="/settings"
+							role="menuitem"
+							onClick={close}
+							className={menuItemClass()}
+						>
+							<Settings className="h-4 w-4 shrink-0" aria-hidden="true" />
+							Settings
+						</AppLink>
+					)}
 
 					<MenuSeparator />
 

@@ -1,4 +1,5 @@
 import type { RouteObject } from 'react-router';
+import { RequirePermission } from '@/shared/auth';
 import { SettingsPage } from './pages/SettingsPage';
 
 /**
@@ -6,6 +7,20 @@ import { SettingsPage } from './pages/SettingsPage';
  * Registered in `shared/app/routes.ts` (append-only registry).
  */
 export const settingsRoutes: RouteObject[] = [
-	{ path: 'settings', element: <SettingsPage /> },
-	{ path: 'settings/developer', element: <SettingsPage /> },
+	{
+		path: 'settings',
+		element: (
+			<RequirePermission permission="org:admin">
+				<SettingsPage />
+			</RequirePermission>
+		),
+	},
+	{
+		path: 'settings/developer',
+		element: (
+			<RequirePermission permission="org:admin">
+				<SettingsPage />
+			</RequirePermission>
+		),
+	},
 ];
