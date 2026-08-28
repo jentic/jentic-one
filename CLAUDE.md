@@ -6,8 +6,8 @@
 ## Quick Start
 
 ```bash
-make install   # Full dev setup: sync deps + install lefthook hooks
-make check     # Run lint + typecheck + score + tests
+make install   # Full dev setup: sync deps + install UI deps + install lefthook hooks
+make check     # Run lint + score + secrets audit + arch tests
 ```
 
 ## Rules & Guides
@@ -23,38 +23,60 @@ in [`tests/arch/`](tests/arch/) and the scoped rules under
 
 ## Commands
 
-| Target              | Description                                       |
-| ------------------- | ------------------------------------------------- |
-| `help`              | Show available targets                            |
-| `install`           | Full dev setup: sync deps + install lefthook hooks|
-| `sync`              | Install/sync project + dev dependencies           |
-| `lock`              | Refresh the lockfile                              |
-| `upgrade`           | Upgrade locked dependencies                       |
-| `fmt`               | Format code with ruff                             |
-| `fix`               | Auto-fix lint issues and reformat code            |
-| `lint`              | Lint (ruff check + format check + mypy)           |
-| `typecheck`         | Run mypy                                          |
-| `test`              | Run unit tests                                    |
-| `test-unit`         | Run unit tests                                    |
-| `test-fast`         | Run unit + arch tests (no external services)      |
-| `test-integration`  | Run integration tests (requires running fixtures) |
-| `test-arch`         | Run architecture enforcement tests                |
-| `test-smoke`        | Run smoke tests (requires running services)       |
-| `cov`               | Run tests with coverage report                    |
-| `score`             | Validate OpenAPI specs with scorecard (80+ req)   |
-| `check`             | Run lint, score, secrets audit, unit + arch tests |
-| `hooks`             | Install lefthook git hooks (pre-commit + commit-msg) |
-| `clean`             | Remove caches and build artifacts                 |
-| `start-fixtures`    | Start Docker database fixtures                    |
-| `stop-fixtures`     | Stop Docker database fixtures                     |
-| `destroy-fixtures`  | Remove Docker database fixtures and volumes       |
-| `start-app`         | Start combined app (all surfaces)                 |
-| `start-registry`    | Start registry surface standalone                 |
-| `start-admin`       | Start admin surface standalone                    |
-| `start-control`     | Start control surface standalone                  |
-| `build-all`         | Build every service Docker image (see deploy/README.md) |
-| `save-all`          | Write image tarballs to `build/jentic-<svc>-<ver>.tar` |
-| `images`            | List locally-built `jentic-one/*` images          |
+Run `make help` for the authoritative list; the highlights:
+
+| Target                     | Description                                                     |
+| -------------------------- | --------------------------------------------------------------- |
+| `help`                     | Show available targets                                          |
+| `install`                  | Full dev setup: sync deps + install UI deps + install lefthook hooks |
+| `sync`                     | Install/sync project + dev dependencies (includes all extras)  |
+| `lock`                     | Refresh the lockfile                                           |
+| `upgrade`                  | Upgrade locked dependencies                                    |
+| `fmt` / `format`           | Format code with ruff                                          |
+| `fix`                      | Auto-fix lint issues and reformat code                         |
+| `lint`                     | Lint (ruff check + format check + mypy)                        |
+| `typecheck`                | Run mypy                                                       |
+| `test`                     | Run tests (unit only by default)                               |
+| `test-unit`                | Run unit tests                                                 |
+| `test-fast`                | Run unit + arch tests (no external services)                   |
+| `test-integration`         | Run all integration tests against PostgreSQL (requires fixtures) |
+| `test-integration-sqlite`  | Run backend-agnostic integration tests against SQLite (no services) |
+| `test-integration-all`     | Run integration tests on both backends                         |
+| `test-arch`                | Run architecture enforcement tests                             |
+| `test-smoke`               | Run smoke tests (requires running services)                    |
+| `smoke-packaging`          | Build UI+wheel in a clean venv and verify the SPA is packaged & served |
+| `cov`                      | Run unit + arch tests with coverage report                     |
+| `cov-all`                  | Run all tests with coverage (requires fixtures/services)       |
+| `openapi`                  | Regenerate the control-plane OpenAPI spec (+ UI client schema) from code |
+| `openapi-parity`           | Print the reference-vs-generated OpenAPI coverage report       |
+| `endpoints`                | Regenerate the endpoint + scope reference (`docs/reference/endpoints.{md,json}`) |
+| `cli-reference`            | Regenerate the CLI command reference (`ui/public/cli-reference.json`) |
+| `broker-reference`         | Regenerate the Broker OpenAPI artifact (`ui/public/broker-openapi.json`) |
+| `score`                    | Validate OpenAPI specs with the Jentic API Scorecard CLI (80+ required) |
+| `detect-secrets`           | Check for new secrets not in the baseline                      |
+| `check`                    | Run lint, score, secrets audit, and arch tests                 |
+| `hooks`                    | Install lefthook git hooks (pre-commit + commit-msg)           |
+| `clean`                    | Remove caches and build artifacts                              |
+| `dev`                      | One-command local bring-up (idempotent): fixtures + migrations + UI, then start the app |
+| `start-fixtures`           | Start Docker database fixtures and apply migrations            |
+| `stop-fixtures`            | Stop Docker database fixtures                                  |
+| `destroy-fixtures`         | Remove Docker database fixtures and volumes                    |
+| `start-app`                | Start combined app (all surfaces)                              |
+| `start-registry`           | Start registry surface standalone                              |
+| `start-admin`              | Start admin surface standalone                                 |
+| `start-control`            | Start control surface standalone                               |
+| `start-broker`             | Start broker surface standalone                                |
+| `migrate-sqlite`           | Apply all migrations to the local SQLite databases             |
+| `start-app-sqlite`         | Start combined app on local SQLite (ingest only; search disabled) |
+| `build-wheel`              | Build the Python wheel                                         |
+| `ui-setup` / `ui-install`  | Install UI dependencies                                        |
+| `ui-build`                 | Build the UI bundle into `ui/dist`                             |
+| `ui-lint`                  | Lint the UI                                                    |
+| `ui-test`                  | Run UI unit/component tests                                    |
+| `build-base`               | Build the Python base Docker image (builder + runtime stages)  |
+| `build-all`                | Build every service Docker image (see deploy/README.md)        |
+| `save-all`                 | Write image tarballs to `build/jentic-<svc>-<ver>.tar`         |
+| `images`                   | List locally-built `jentic-one/*` images                       |
 
 The local k8s workflow (cluster, deploy, obs, smoke) is managed by the deploy CLI:
 
@@ -88,6 +110,7 @@ src/jentic_one/
 │   ├── registry/     # Registry DB migrations
 │   ├── control/      # Control DB migrations
 │   └── admin/        # Admin DB migrations
+├── testing/          # Reusable test bases (signature-checking compliance seams)
 └── shared/           # Shared utilities (imported by every module)
     ├── __init__.py   # Re-exports Context, AppConfig, DatabaseSession, etc.
     ├── config.py     # Configuration schema (pydantic) and YAML+env loader
@@ -98,6 +121,9 @@ src/jentic_one/
     ├── redaction.py  # Secret/PII redaction helpers
     ├── pagination.py # Shared pagination primitives
     ├── scopes.py     # Scope/permission constants
+    ├── access_guidance.py    # Access-restriction guidance helpers
+    ├── lookups.py            # Shared lookup/reference helpers
+    ├── provider_config_store.py  # Provider configuration store
     ├── url.py        # URL utilities (server-variable substitution)
     ├── url_validation.py # Upstream URL validation (SSRF guard)
     ├── audit/        # Audit-log helpers
@@ -108,9 +134,11 @@ src/jentic_one/
     ├── executions/   # Execution tracking
     ├── jobs/         # Background job primitives
     ├── models/       # Shared ORM/pydantic models
+    ├── permissions/  # Shared permission primitives
     ├── resilience/   # Rate limiting, retries
     ├── schemas/      # Shared API schemas
     ├── state/        # State backend (in-memory / redis)
+    ├── telemetry/    # Anonymous product telemetry
     ├── web/          # Shared web layer (app factory, deps, errors, OpenAPI meta)
     └── db/           # Database package (SQLAlchemy async)
         ├── __init__.py   # Re-exports DatabaseSession, get_database_url

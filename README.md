@@ -247,9 +247,9 @@ Common `make` targets (run `make help` for the full list):
 
 | Target | Description |
 | ------ | ----------- |
-| `make install` | Full dev setup: sync deps + install git hooks |
+| `make install` | Full dev setup: sync deps + install UI deps + install git hooks |
 | `make dev` | One-command local bring-up (idempotent): fixtures + migrations + UI, then start the app |
-| `make check` | Lint, score, secrets audit, unit + arch tests |
+| `make check` | Lint, score, secrets audit, and arch tests |
 | `make fix` | Auto-fix lint issues and reformat code |
 | `make test` | Run unit tests |
 | `make start-app` | Start the combined app (all surfaces) |
