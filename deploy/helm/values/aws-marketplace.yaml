@@ -60,10 +60,13 @@ global:
   # have the chart create the account, then attach IAM out of band.
 
 # app and broker run the same jentic-one-app image, differentiated by the
-# JENTIC__APPS env each subchart sets. If the Marketplace portal provisions a
-# single ECR repository for the product, keep the explicit repository values
-# below identical; if it provisions one repo per name, drop the overrides and
-# let <global.image.registry>/<chart-name> resolve them instead.
+# JENTIC__APPS env. The image bakes the app roles
+# (registry,admin,control,auth), so the broker block below MUST override it —
+# the subcharts themselves don't (deploy/README.md "Helm consumption" note).
+# If the Marketplace portal provisions a single ECR repository for the
+# product, keep the explicit repository values below identical; if it
+# provisions one repo per name, drop the overrides and let
+# <global.image.registry>/<chart-name> resolve them instead.
 app:
   enabled: true
   image:
@@ -79,6 +82,16 @@ app:
   # secret. Safe here because global.appSecrets generates real values.
   extraEnv:
     JENTIC_ENV: "production"
+  # Agent registration (`jentic register`) needs the app's canonical base URL:
+  # the OAuth token exchange compares the CLI-signed audience byte-for-byte
+  # against `<canonical_base_url>/oauth/token`, and with it unset every
+  # exchange fails invalid_grant AFTER the agent is approved. The value is the
+  # URL agents actually use, so it can't be defaulted here — buyers set it
+  # post-install for their ingress/port-forward (found in the 0.37.3 buyer
+  # test, 2026-08-28):
+  #   helm upgrade jentic-one <chart> --reuse-values \
+  #     --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=https://jentic.example.com
+  # (port-forward testing: http://127.0.0.1:8000)
   # Entitlement gate wiring (plan PR 4). The listing is contract-priced with
   # dimensions `users` + `executions` (decided 2026-08-20); `contract` is the
   # config default so only the IDs need filling in. DO NOT uncomment until the
@@ -97,6 +110,11 @@ broker:
     tag: ""  # stamped by the bake step — same reasoning as app.image.tag
   extraEnv:
     JENTIC_ENV: "production"  # same reasoning as app.extraEnv above
+    # The app image bakes JENTIC__APPS=registry,admin,control,auth; without
+    # this override the "broker" pod boots a second app instance with NO
+    # forward-proxy surface, and every `jentic execute` 404s (found in the
+    # 0.37.3 buyer test, 2026-08-28).
+    JENTIC__APPS: "broker"
   # Entitlement wiring — same caveat as app above:
   #   JENTIC__ENTITLEMENT__ENABLED: "true"
   #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
