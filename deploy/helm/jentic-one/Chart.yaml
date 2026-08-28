@@ -2,34 +2,34 @@ apiVersion: v2
 name: jentic-one
 description: Umbrella Helm chart for jentic-one services
 type: application
-version: 0.37.3 # x-release-please-version
-appVersion: "0.37.3" # x-release-please-version
+version: 0.37.4 # x-release-please-version
+appVersion: "0.37.4" # x-release-please-version
 
 dependencies:
   - name: broker
-    version: 0.37.3 # x-release-please-version
+    version: 0.37.4 # x-release-please-version
     condition: broker.enabled
   - name: app
-    version: 0.37.3 # x-release-please-version
+    version: 0.37.4 # x-release-please-version
     condition: app.enabled
   - name: registry
-    version: 0.37.3 # x-release-please-version
+    version: 0.37.4 # x-release-please-version
     condition: registry.enabled
   - name: admin
-    version: 0.37.3 # x-release-please-version
+    version: 0.37.4 # x-release-please-version
     condition: admin.enabled
   - name: control
-    version: 0.37.3 # x-release-please-version
+    version: 0.37.4 # x-release-please-version
     condition: control.enabled
   - name: gateway
-    version: 0.37.3 # x-release-please-version
+    version: 0.37.4 # x-release-please-version
     condition: gateway.enabled
   - name: postgresql
-    version: 0.37.3 # x-release-please-version
+    version: 0.37.4 # x-release-please-version
     condition: postgresql.enabled
   # Template-only library used by the service subcharts (each also declares
   # it via file://../common). Declared here too because `helm lint` (and AWS
   # Marketplace's chart validation, which runs it) rejects charts/ content
   # that is missing from the dependency metadata.
   - name: common
-    version: 0.37.3 # x-release-please-version
+    version: 0.37.4 # x-release-please-version
