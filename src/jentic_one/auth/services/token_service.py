@@ -428,4 +428,5 @@ class TokenService:
             expires_at=at.expires_at,
             active=active,
             parent_actor_id=parent_actor_id,
+            oauth_client_id=at.oauth_client_id,
         )

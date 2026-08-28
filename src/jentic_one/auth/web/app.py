@@ -119,6 +119,11 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 # broker's InProcessTokenResolver, which already reads row.scopes.
                 # parent_permissions (owner inheritance) is still resolved above.
                 permissions = list(resolved.permissions)
+            elif resolved.oauth_client_id is not None:
+                # Third-party OAuth client token: honour the consented scopes
+                # (already ceiling-intersected by resolve_access_token) instead
+                # of the user's full grant set.
+                permissions = list(resolved.permissions)
 
             return Identity(
                 sub=resolved.sub,
