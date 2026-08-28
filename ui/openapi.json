@@ -2355,7 +2355,8 @@
           },
           "consent_token": {
             "title": "Consent Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -26643,7 +26644,8 @@
             "required": true,
             "schema": {
               "title": "Consent Token",
-              "type": "string"
+              "type": "string",
+              "x-sensitive": true
             }
           }
         ],

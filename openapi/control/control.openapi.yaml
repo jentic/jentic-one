@@ -1452,6 +1452,7 @@ components:
         consent_token:
           title: Consent Token
           type: string
+          x-sensitive: true
       required:
       - consent_token
       - action
@@ -14355,6 +14356,7 @@ paths:
         schema:
           title: Consent Token
           type: string
+          x-sensitive: true
       responses:
         '200':
           content:

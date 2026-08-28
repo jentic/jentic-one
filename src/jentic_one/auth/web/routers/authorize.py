@@ -45,6 +45,7 @@ from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 logger = structlog.get_logger(__name__)
 
@@ -649,7 +650,7 @@ def _scope_to_permission_description(scope: str) -> str | None:
     "/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(_check_rate_limit)]
 )
 async def consent_page(
-    consent_token: str = Query(...),
+    consent_token: str = Query(..., json_schema_extra=SENSITIVE),
     ctx: Context = Depends(get_ctx),
 ) -> HTMLResponse:
     """Display the OAuth consent screen."""
@@ -698,7 +699,7 @@ async def consent_page(
 @router.post("/oauth/consent", dependencies=[Depends(_check_rate_limit)])
 async def consent_submit(
     request: Request,
-    consent_token: str = Form(...),
+    consent_token: str = Form(..., json_schema_extra=SENSITIVE),
     action: str = Form(...),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
