@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Trash2, Pencil, KeyRound, RotateCcw, ShieldAlert, X } from 'lucide-react';
 import {
 	Button,
@@ -57,8 +57,11 @@ interface RedirectUriListProps {
 	onChange: (uris: string[]) => void;
 }
 
+const nextUriKey = { current: 0 };
+
 function RedirectUriList({ uris, onChange }: RedirectUriListProps) {
-	const baseId = useId();
+	const [keys, setKeys] = useState(() => uris.map(() => nextUriKey.current++));
+
 	const handleChange = (index: number, value: string): void => {
 		const updated = [...uris];
 		updated[index] = value;
@@ -66,17 +69,19 @@ function RedirectUriList({ uris, onChange }: RedirectUriListProps) {
 	};
 
 	const handleRemove = (index: number): void => {
+		setKeys((prev) => prev.filter((_, i) => i !== index));
 		onChange(uris.filter((_, i) => i !== index));
 	};
 
 	const handleAdd = (): void => {
+		setKeys((prev) => [...prev, nextUriKey.current++]);
 		onChange([...uris, '']);
 	};
 
 	return (
 		<div className="space-y-2">
 			{uris.map((uri, index) => (
-				<div key={`${baseId}-${index}`} className="flex items-center gap-2">
+				<div key={keys[index]} className="flex items-center gap-2">
 					<Input
 						value={uri}
 						onChange={(e): void => handleChange(index, e.target.value)}
@@ -221,9 +226,7 @@ function CreateEditDialog({ open, onClose, onSecretRevealed, client }: CreateEdi
 		client?.redirect_uris.length ? client.redirect_uris : [''],
 	);
 	const [requireConsent, setRequireConsent] = useState(client?.require_consent ?? true);
-	const [restrictScopes, setRestrictScopes] = useState(
-		client?.allowed_scopes != null && client.allowed_scopes.length > 0,
-	);
+	const [restrictScopes, setRestrictScopes] = useState(client?.allowed_scopes != null);
 	const [allowedScopes, setAllowedScopes] = useState<string[]>(client?.allowed_scopes ?? []);
 
 	const createMutation = useCreateOAuthClient();
