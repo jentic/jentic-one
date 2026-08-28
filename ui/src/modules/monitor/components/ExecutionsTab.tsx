@@ -94,6 +94,7 @@ export function ExecutionsTab() {
 		from: filters.from,
 		actorId: filters.actorId,
 		toolkitId: filters.toolkitId,
+		origin: filters.origin,
 	});
 	const pager = useCursorStack(filterKey);
 	const query = useExecutions({
@@ -101,6 +102,7 @@ export function ExecutionsTab() {
 		from: filters.from,
 		actorId: filters.actorId,
 		toolkitId: filters.toolkitId,
+		origin: filters.origin,
 		cursor: pager.cursor,
 	});
 	const rows = query.data?.data ?? [];

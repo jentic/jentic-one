@@ -42,6 +42,10 @@ export {
 	useActorExecutions,
 	useActorAudit,
 	useUpdateAgent,
+	useMcpSessions,
+	useMcpLastSeen,
+	useLatestMcpActivity,
+	useInstanceIdentity,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
 } from '@/modules/agents/api/hooks';
@@ -75,11 +79,16 @@ export type {
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
+	InstanceIdentityEntity,
 	LinkableToolkit,
+	McpLastSeen,
+	McpSessionEntity,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
 	Attribution,
 } from '@/modules/agents/api/types';
+
+export { mcpClientLabel } from '@/modules/agents/api/types';
 
 export type { AccessRequest } from '@/shared/lib';
