@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import ipaddress
 import os
 import re
@@ -292,6 +294,17 @@ class PlatformClientConfig(BaseModel):
 _SPA_CLIENT_ID = "jentic-one-spa"
 _SPA_CALLBACK_PATH = "/app/auth/callback"
 
+_LOCAL_DEV_KEY_FINGERPRINT = (
+    "cdf9bf0510b631d8222d7b3be8766165b917e5c0a607151dc11272d7e68e2a11"
+)
+
+
+def _signing_key_fingerprint(pem: str) -> str:
+    """SHA-256 fingerprint of the DER-encoded key material inside a PEM."""
+    lines = [line for line in pem.strip().splitlines() if not line.startswith("-----")]
+    raw = base64.b64decode("".join(lines))
+    return hashlib.sha256(raw).hexdigest()
+
 
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
@@ -319,10 +332,11 @@ class AuthConfig(BaseModel):
         """
         if os.environ.get("JENTIC_ENV", "development") == "production":
             for sk in self.id_signing:
-                if sk.kid == "local-dev-key":
+                fp = _signing_key_fingerprint(sk.private_key_pem.get_secret_value())
+                if fp == _LOCAL_DEV_KEY_FINGERPRINT:
                     raise ConfigError(
-                        "auth.id_signing contains the local-dev signing key "
-                        "(kid='local-dev-key') which must not be used in production"
+                        f"auth.id_signing[kid={sk.kid!r}] contains the local-dev "
+                        "signing key material which must not be used in production"
                     )
         spa_present = any(pc.client_id == _SPA_CLIENT_ID for pc in self.platform_clients)
         if not spa_present and self.canonical_base_url:
