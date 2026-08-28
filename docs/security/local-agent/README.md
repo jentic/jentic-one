@@ -4,12 +4,13 @@
 > `jentic run` with per-session confinement, directory grants, and `jentic
 > reset`). Two follow-ups remain deferred and are called out as such below.
 
-Jentic One keeps third-party credentials off the *network* path (the Broker
-injects them; the agent only sees responses). But the one-line install lands most
-users with the agent and Jentic One running as the **same OS user on the same
-machine**, where that guarantee doesn't hold — a compromised or prompt-injected
-agent can read the keys straight off disk. These docs work through isolating the
-agent as its own unprivileged Unix user so the isolated posture is the default.
+Jentic One keeps stored credentials out of credential read APIs and injects them
+inside the Broker. Upstream responses pass through, so upstream trust remains
+part of the boundary. The one-line install can place the agent and Jentic One
+under the **same OS user on the same machine**, where a compromised or
+prompt-injected agent can read the keys straight off disk. These docs work
+through isolating the agent as its own unprivileged Unix user so the isolated
+posture is the default.
 
 > **Just want to use it?** The operator-facing guide — flow, examples, and
 > troubleshooting for `jentic setup` / `jentic run` / `jentic reset` — is

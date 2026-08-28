@@ -41,7 +41,8 @@ building, onboarding, and operating; it does not duplicate per-flag docs.
 # 1. Install the CLI + stand up the local stack. The one-liner installs the
 #    binaries and flows straight into the `jenticctl install` wizard, which
 #    brings the server up on http://127.0.0.1:8000:
-curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh \
+  | env JENTIC_INSTALL_BINARIES=both sh
 
 # 2. Connect this machine — that's it. `register` defaults to the local install
 #    (http://127.0.0.1:8000) and seeds the local broker for you, so just confirm:
@@ -49,8 +50,8 @@ jentic register
 ```
 
 (Setting up a local **coding agent**? Run `jentic setup` instead of `jentic
-register` — it does the registration above *plus* an isolated account and the
-agent skills.)
+register` — it does the registration above, installs the agent skills, and
+offers to configure an isolated account.)
 
 **Remote server** (connect to a Jentic server someone else is running): you
 don't need `jenticctl` or a local install at all — the `jentic` binary is
@@ -82,12 +83,12 @@ The cask installs both `jentic` and `jenticctl`.
 
 ```bash
 # jentic only (default) — for talking to a remote jentic server:
-JENTIC_INSTALL_METHOD=binary \
-  curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh \
+  | env JENTIC_INSTALL_METHOD=binary sh
 
 # both binaries (also install jenticctl to run the stack locally):
-JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=both \
-  curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh \
+  | env JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=both sh
 ```
 
 This downloads the released archive for your OS/arch from the GitHub Releases

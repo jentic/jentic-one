@@ -221,9 +221,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "header configuration the Broker injects on the way out to an upstream API. "
             "Credentials reference registry content via the loose `(vendor, name, version)` "
             "identity tuple (see `APIReference`) — there is no foreign key between Core and "
-            "Registry, by design. Cleartext secret material is returned **exactly once** at "
-            "creation (and on rotation via `PATCH`). Read paths return a redacted projection "
-            "— last-N characters, hints, never the secret itself."
+            "Registry, by design. Cleartext secret material is returned **exactly once**, in "
+            "the creation response. Read and rotation paths return a redacted projection — "
+            "last-N characters, hints, never the secret itself."
         ),
     },
     {

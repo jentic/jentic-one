@@ -7,10 +7,11 @@
 
 ## The problem in one sentence
 
-Jentic One's promise — *the agent never sees the credential* — is a
-**network-path** guarantee, but the one-line install lands most users with the
-agent and Jentic One running as the **same OS user on the same machine**, where
-that guarantee does not hold.
+Jentic One's API boundary keeps stored credentials out of credential read
+responses and injects them inside the Broker. The one-line install can place the
+agent and Jentic One under the **same OS user on the same machine**, where that
+boundary does not protect the key or database. Upstream responses also pass
+through the Broker, so upstream trust is a separate part of the boundary.
 
 In that posture the boundary is defeated not by breaking the Broker but by going
 around it. Everything the boundary depends on — the AES-256 encryption key, the

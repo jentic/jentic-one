@@ -2,7 +2,7 @@
 
 This is the full walkthrough behind the six steps in the
 [README](../README.md#first-brokered-call): from a running Jentic One instance
-to a response from a real API, with the agent never seeing your credentials.
+to a governed response from a registered API.
 
 If you do not have an instance yet, install one first — see
 [Quickstart → install options](../README.md#quickstart) (signed release binary,
@@ -18,7 +18,7 @@ the Broker are running and reachable (the local default is
 
 ## 1. Create your admin account
 
-Open `/setup` in the operator UI and create the first administrator. This is a
+Open `/app/setup` in the operator UI and create the first administrator. This is a
 one-time step: once the account exists, this page redirects to login. The account
 you create here is the operator: it configures the instance, imports APIs, stores
 credentials, and approves agents.
@@ -48,9 +48,9 @@ imported description needs correcting without editing the original, see
 ## 3. Store a credential
 
 Store the credential the API needs (an API key, bearer token, basic auth, or an
-OAuth2 flow). It is encrypted at rest and is **never** returned to a caller,
-logged in cleartext, or exposed to the agent — it is decrypted only inside the
-Broker, at execution time. See
+OAuth2 flow). It is encrypted at rest. Cleartext secret material is returned
+once in the create response; later credential reads and rotation responses
+return redacted data. See
 [Credentials and toolkits](credentials-and-toolkits.md) for how a credential is
 stored and how one credential is shared across an API's operations.
 
@@ -74,6 +74,10 @@ agent in the UI at `/app`, and the command completes automatically once the
 agent is active. Re-running `register` is idempotent. (Registering with a
 **remote** deployment instead? Pass `--url` and `--broker-url` — see the
 [CLI README](../cli/README.md#usage).)
+
+For a local coding agent, use `jentic setup` instead. It runs the same
+registration flow, installs the Jentic skill, and offers to configure agent
+isolation.
 
 ## 5. Grant access
 
@@ -102,8 +106,10 @@ and `inspect` report) or its operation_id — the Broker is a forward proxy, not
 path router.
 
 The Broker checks the agent's permissions, attaches the stored credential after
-the permission check, forwards the request, and writes an audit record. The
-credential is added inside the Broker and is never returned to the caller.
+the permission check, forwards the request, and writes an audit record. It
+relays the upstream status, headers, and body, so use trusted upstreams: an
+upstream can reflect request data, including an injected credential, in its
+response.
 
 ## Where to go next
 
@@ -116,5 +122,5 @@ credential is added inside the Broker and is never returned to the caller.
   Swagger and `/redoc` the rendered reference — both generated from code.
 - **Endpoint & scope reference.** Every HTTP route and the scope it requires:
   [endpoint reference](reference/endpoints.md).
-- **Run it somewhere real.** [Build & deploy](../deploy/README.md) and the
+- **Deploy and harden it.** [Build & deploy](../deploy/README.md) and the
   [security hardening guide](security/hardening.md).

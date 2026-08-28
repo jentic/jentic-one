@@ -9,7 +9,7 @@ especially for an AI agent (or its operator) that has used both:
 | How agents connect | Remote **MCP server** (`https://api.jentic.com/mcp`) configured in the agent runtime with a workspace API key | **`jentic` CLI + generated skill** (or the raw HTTP flow) — see below |
 | Agent identity | Workspace API key | Per-agent Ed25519 keypair via dynamic client registration (`jentic register` / `jentic setup`) |
 | Dashboard | `app.jentic.com` | The bundled UI on your deployment (`/app`) |
-| Data | Jentic-hosted workspace | Stays on your infrastructure; stored secrets are decrypted only inside your Broker at execution time |
+| Data | Jentic-hosted workspace | Stored in your infrastructure; the Broker decrypts credentials for execution, while Control handles creation, rotation, and managed OAuth flows |
 
 They do not share state: an API imported or a credential stored in one is
 invisible to the other.
@@ -41,8 +41,8 @@ If you used the cloud platform first and later installed Jentic One, you end
 up with a **dual setup**: the agent runtime's MCP tools (`search_apis`,
 `list_credentials`, `execute`, …) still point at the cloud workspace, while
 the `jentic` CLI points at the local install. Nothing in any tool response
-says which backend replied, so the failure mode is *silent wrong answers*,
-not errors:
+says which backend replied, so a request can succeed against the wrong
+backend:
 
 - an API you just imported locally "doesn't exist" (the MCP search answered
   from the cloud workspace),
@@ -70,11 +70,13 @@ answer from the wrong backend.
 
 ## Migrating from the cloud MCP to a self-hosted install
 
-1. Install the stack: `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh`, then `jenticctl install`.
+1. Install the stack:
+   `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh |
+   env JENTIC_INSTALL_BINARIES=both sh`.
 2. Re-import the APIs you need (`jentic catalog import`, or the dashboard) —
    catalog state does not transfer from the cloud workspace.
-3. Re-enter credentials in your deployment's dashboard — secrets cannot be
-   exported from the cloud platform (nor from Jentic One; that's the point).
+3. Re-enter credentials in your deployment's dashboard. Jentic One credential
+   read APIs return redacted data and do not provide a secret-export operation.
 4. Register your agents against the local install (`jentic setup`).
 5. Remove the cloud MCP server entry from your agent runtime's config to
    avoid the split-brain scenario above.

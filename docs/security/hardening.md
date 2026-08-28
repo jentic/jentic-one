@@ -5,29 +5,33 @@ model and gives a tiered set of deployment postures — from "fine for trying it
 out" to "handling real production credentials" — so you can pick the right level
 of isolation for your use case.
 
-> **TL;DR:** Jentic One keeps your credentials off the
-> *network* path (the Broker injects them; the agent only ever sees responses).
-> To also keep them off the *host* path, **don't run Jentic One as the same OS
-> user as your agent** — sandbox the agent, or run Jentic One on a separate
-> host/network. The agent and CLI reach Jentic One over its HTTP API, so a
-> remote or private-network deployment is reached the same way you'd reach any
-> private service (VPN / private DNS / authenticated proxy) — see below.
+> **TL;DR:** Jentic One stores credentials in the operator's deployment and
+> injects them into governed upstream requests. Credential read APIs are
+> redacted, but upstream responses pass through the Broker; use trusted
+> upstreams. To protect the encryption key and database from a local agent,
+> **don't run Jentic One as the same OS user as your agent** — sandbox the
+> agent, or run Jentic One on a separate host/network. The agent and CLI reach
+> Jentic One over HTTP, so a remote or private-network deployment is reached
+> through the usual private-service controls (VPN / private DNS / authenticated
+> proxy).
 >
 > The strongly recommended pattern is to run Jentic One on a separate
 > host or network.
 
 ## Threat model
 
-The Broker's core guarantee is that a secret is injected into the outbound
-request inside the data plane and is **never returned to the caller and never
-seen by the agent**. That guarantee holds on the network.
+The Broker injects a secret into the outbound request only after its access
+check. Credential read APIs do not expose the stored value. The upstream
+response is relayed to the caller, however, so a reflective or malicious
+upstream can return request data, including the injected credential. Trust in
+the registered upstream is part of the credential boundary.
 
-It does **not** hold on the host when the agent runs on the **same machine and
-as the same OS user** as Jentic One — the default when you run a local install
-next to a coding agent (e.g. Claude Code, Cursor). A same-user process can read
-the credential database and the encryption key directly off disk or out of
-memory, regardless of the API-level controls. This is the single most important
-thing to understand before you point Jentic One at real credentials.
+API-level controls also do **not** protect the host when the agent runs on the
+**same machine and as the same OS user** as Jentic One — the default when you
+run a local install next to a coding agent (e.g. Claude Code, Cursor). A
+same-user process can read the credential database and encryption key directly
+off disk or out of memory. This is the single most important thing to
+understand before you point Jentic One at real credentials.
 
 ## Two independent decisions
 
@@ -51,9 +55,9 @@ secured*. (See "How the agent and CLI connect" below.)
 
 Everything that uses Jentic One — a coding agent, a running service, and the
 `jentic` CLI (`register`, `catalog`, `execute`) — reaches Jentic One over HTTPS
-at a configurable base URL (e.g. the CLI's `--broker-scheme` / `--broker-host`,
-or the equivalent config/profile) plus a scoped bearer token. There is **no
-requirement that any of them run on the same machine as Jentic One.**
+at configurable control-plane and Broker URLs (the CLI's `--url` and
+`--broker-url`) plus a scoped bearer token. There is **no requirement that any
+of them run on the same machine as Jentic One.**
 
 So when Jentic One is remote or inside a private network/VPC, clients reach it
 the normal way you'd reach any private service:
