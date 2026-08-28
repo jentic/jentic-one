@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json as json_mod
 
 import structlog
@@ -124,6 +126,26 @@ def get_oauth_client_service(ctx: Context = Depends(get_ctx)) -> OAuthClientServ
     return OAuthClientService(ctx)
 
 
+def _basic_auth_credentials(request: Request) -> tuple[str, str] | None:
+    """Decode HTTP Basic client credentials per RFC 6749 §2.3.1.
+
+    Returns (client_id, client_secret) if the header is a well-formed Basic
+    auth challenge, else None. Malformed headers are treated as "not provided"
+    so the body-encoded fallback still runs — the caller decides how to react.
+    """
+    header = request.headers.get("authorization")
+    if not header or not header.lower().startswith("basic "):
+        return None
+    try:
+        decoded = base64.b64decode(header[6:].strip(), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return None
+    if ":" not in decoded:
+        return None
+    client_id, _, client_secret = decoded.partition(":")
+    return client_id, client_secret
+
+
 async def _parse_token_request(request: Request) -> TokenRequest:
     """Parse the token request from JSON or form-encoded body (RFC 6749 §4.1.3)."""
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
@@ -161,6 +183,8 @@ _TOKEN_REQUEST_BODY: dict[str, object] = {
     openapi_extra=_TOKEN_REQUEST_BODY,
 )
 async def token_endpoint(
+    request: Request,
+    response: Response,
     body: TokenRequest = Depends(_parse_token_request),
     ctx: Context = Depends(get_ctx),
     token_svc: TokenService = Depends(get_token_service),
@@ -170,6 +194,20 @@ async def token_endpoint(
     oauth_client_svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> TokenResponse:
     """Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens."""
+    # RFC 6749 §5.1: token responses MUST NOT be cached by any intermediary.
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+    # RFC 6749 §2.3.1 requires HTTP Basic support; fall back to it when the
+    # client didn't post client_id/client_secret in the body.
+    basic = _basic_auth_credentials(request)
+    if basic is not None:
+        basic_id, basic_secret = basic
+        if not body.client_id:
+            body.client_id = basic_id
+        if not body.client_secret:
+            body.client_secret = basic_secret
+
     if body.grant_type == _AUTHORIZATION_CODE_GRANT:
         if not body.code or not body.code_verifier or not body.redirect_uri or not body.client_id:
             raise InvalidGrantError("code, code_verifier, redirect_uri, and client_id are required")

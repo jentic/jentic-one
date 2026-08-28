@@ -160,6 +160,8 @@ _CONSENT_SECURITY_HEADERS: dict[str, str] = {
     "Content-Security-Policy": "frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
 }
 
 _FONTS_URL = (
