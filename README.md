@@ -69,9 +69,10 @@ Most tools in this category are hosted: the credentials live in the vendor's inf
 Jentic One runs on infrastructure you control. Credentials are encrypted at rest in your own
 database and are decrypted only inside the Broker, at execution time.
 
-Jentic One exposes no MCP endpoint. An MCP server running beside an agent gives that agent a
-credential-bearing surface to call, which is what the Broker exists to avoid. Agents integrate
-through the `jentic` CLI, a generated skill, or plain HTTP.
+Agents integrate through the `jentic` CLI, a generated skill, the local `jentic mcp` server
+(available in the `jentic` CLI from the next release — check `jentic mcp --help`), or plain
+HTTP. Every path terminates at the credential-injecting Broker: the MCP server runs beside the
+agent as a thin client and holds no upstream credentials — those never leave your Broker.
 
 ## Quickstart
 
@@ -204,7 +205,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | [Security hardening](docs/security/hardening.md) | Deployment-tier ladder and production checklist. Read before using real credentials. |
 | [Build & deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, kind, observability |
 | [Self-hosted containers + external Postgres](deploy/README.md#self-hosted-containers--external-postgres) | Production-shaped deployment without Kubernetes |
-| [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, why there is no MCP endpoint, and how to run both (or migrate) without silent cross-talk |
+| [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, how MCP works against each, and how to run both (or migrate) without silent cross-talk |
 
 **Reference**
 

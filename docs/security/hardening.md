@@ -155,6 +155,11 @@ the key/DB by construction, so agent sandboxing becomes about limiting what a
 compromised agent can *do* (egress control, least-privilege tokens) rather than
 protecting the key at rest.
 
+If an agent runtime spawns the local `jentic mcp` server on the same host as
+the instance, see [Hardening same-host MCP setups](mcp-same-host-hardening.md)
+for MCP-entry-shaped recipes (isolated instance, sudo-shim with a per-agent
+service user, container entry).
+
 ## Agent access credentials
 
 How the agent authenticates to Jentic One depends on where Jentic One is

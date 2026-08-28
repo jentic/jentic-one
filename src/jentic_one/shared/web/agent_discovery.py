@@ -196,12 +196,18 @@ Agents: read the onboarding skill at {base}{SKILL_PATH} first. It is the
 canonical guide to the identity → discover → request access → execute loop —
 the same canonical guide the `jentic` CLI renders into agent runtimes.
 
-This deployment exposes **no MCP endpoint** — that transport belongs to the
-separately hosted Jentic cloud platform. Probing `/mcp` returns 404 on the
-control plane; a 401 from the broker is its auth-gated forward proxy, not a
-hidden MCP server. Integrate via the `jentic` CLI + skill or the raw HTTP
-sequence below; if your session also carries Jentic MCP tools, they answer
-from a different backend than this deployment.
+This deployment is reachable over **MCP** via the local `jentic mcp` stdio
+server — available in the `jentic` CLI from the next release; check
+`jentic mcp --help`. It exposes the same discover → execute loop as the CLI
+tools against this deployment. MCP access runs through that local server, not
+an HTTP endpoint here: probing `/mcp` still returns 404 on the control plane,
+and a 401 from the broker is its auth-gated forward proxy, not a hidden MCP
+server.
+
+If your session has `jentic` MCP tools, prefer them; use the `jentic` CLI for
+`setup`/`access` recovery and anything not exposed over MCP. Both surfaces
+talk to the same instance — check `backend`/`host` in the identity stamp on
+MCP tool results (or `GET {base}/instance`) if in doubt.
 
 ## Quickstart (agent onboarding)
 
