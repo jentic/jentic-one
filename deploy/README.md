@@ -1273,8 +1273,10 @@ and will be filled when the answers exist:
   every subchart sets an explicit `image.repository: jentic-one/<svc>` (so
   `--set global.image.registry=…` is a no-op), the common helper composes
   `<registry>/<chart-name>` which doesn't match the `jentic-one-app` package
-  name, and the broker subchart has no way to set `JENTIC__APPS=broker` on
-  the app image. Only the app subchart can be pointed at it manually
+  name, and the broker subchart doesn't set `JENTIC__APPS=broker` itself —
+  running it on the app image needs `broker.extraEnv.JENTIC__APPS=broker`
+  (the AWS Marketplace overlay does exactly that). Only the app subchart can
+  be pointed at it manually
   (`--set app.image.repository=ghcr.io/jentic/jentic-one-app --set
   app.image.tag=X.Y.Z`). Publishing per-service images (or teaching the
   chart the app-image + `JENTIC__APPS` model) is the follow-up.
