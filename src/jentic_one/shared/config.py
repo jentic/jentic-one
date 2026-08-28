@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import ipaddress
 import os
 import re
@@ -294,14 +292,8 @@ class PlatformClientConfig(BaseModel):
 _SPA_CLIENT_ID = "jentic-one-spa"
 _SPA_CALLBACK_PATH = "/app/auth/callback"
 
-_LOCAL_DEV_KEY_FINGERPRINT = "cdf9bf0510b631d8222d7b3be8766165b917e5c0a607151dc11272d7e68e2a11"
-
-
-def _signing_key_fingerprint(pem: str) -> str:
-    """SHA-256 fingerprint of the DER-encoded key material inside a PEM."""
-    lines = [line for line in pem.strip().splitlines() if not line.startswith("-----")]
-    raw = base64.b64decode("".join(lines))
-    return hashlib.sha256(raw).hexdigest()
+_LOCAL_DEV_KEY_FINGERPRINT = "d35355bfb727b96b885e0ff817efd947bc5d8a88f169cabfa764932b57b3f3db"
+_LOCAL_DEV_KEY_KID = "local-dev-key"
 
 
 class OAuthRateLimitConfig(BaseModel):
@@ -340,8 +332,15 @@ class AuthConfig(BaseModel):
         deployments continue to work without a config change on upgrade.
         """
         if os.environ.get("JENTIC_ENV", "development") == "production":
+            from jentic_one.shared.crypto.signing import signing_key_spki_fingerprint
+
             for sk in self.id_signing:
-                fp = _signing_key_fingerprint(sk.private_key_pem.get_secret_value())
+                if sk.kid == _LOCAL_DEV_KEY_KID:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] uses the local-dev key id "
+                        "which must not be used in production"
+                    )
+                fp = signing_key_spki_fingerprint(sk.private_key_pem.get_secret_value())
                 if fp == _LOCAL_DEV_KEY_FINGERPRINT:
                     raise ConfigError(
                         f"auth.id_signing[kid={sk.kid!r}] contains the local-dev "
