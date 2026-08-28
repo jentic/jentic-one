@@ -36,6 +36,31 @@ def _generate_token(prefix: str) -> str:
     return f"{prefix}{secrets.token_urlsafe(32)}"
 
 
+async def _resolve_client_gate(
+    session: AsyncSession, oauth_client_id: str | None
+) -> tuple[bool, frozenset[str] | None]:
+    """Look up an issuing OAuth client and return (active, scope_ceiling).
+
+    ``active`` is True when the token has no issuing client OR the client is
+    active. ``scope_ceiling`` is the client's ``allowed_scopes`` if set (used
+    to filter the token's scopes at introspection time), else None. Kept as a
+    module-level helper so the introspect + resolve paths share one shape.
+    """
+    if oauth_client_id is None:
+        return True, None
+    client = await OAuthClientRepository.get_by_client_id(session, oauth_client_id)
+    if client is None or not client.active:
+        return False, None
+    ceiling = frozenset(client.allowed_scopes) if client.allowed_scopes is not None else None
+    return True, ceiling
+
+
+def _apply_scope_ceiling(scopes: list[str], ceiling: frozenset[str] | None) -> list[str]:
+    if ceiling is None:
+        return scopes
+    return [s for s in scopes if s in ceiling]
+
+
 async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str) -> bool:
     """Whether the token's actor is currently allowed to authenticate.
 
@@ -331,8 +356,10 @@ class TokenService:
         """Introspect a token per RFC 7662.
 
         ``active`` reflects the same verdict the resolvers enforce — including
-        the actor-status check — so an operator inspecting a token after a
-        disable sees the truth, not just the token row's own state.
+        the actor-status check, the issuing-client active check, and the
+        client's scope ceiling — so an operator inspecting a token after a
+        client is deactivated or its scopes are tightened sees the truth, not
+        just the token row's own state.
         """
         token_hash = _hash_token(token)
         now = datetime.now(UTC)
@@ -342,15 +369,18 @@ class TokenService:
                 at = await AccessTokenRepository.get_by_hash(session, token_hash)
                 if at is None:
                     return {"active": False}
+                client_active, ceiling = await _resolve_client_gate(session, at.oauth_client_id)
                 active = (
                     at.revoked_at is None
                     and at.expires_at > now
                     and await _actor_is_active(session, at.actor_id, at.actor_type)
+                    and client_active
                 )
+                scopes = _apply_scope_ceiling(list(at.scopes), ceiling)
                 return {
                     "active": active,
                     "sub": at.actor_id,
-                    "scope": " ".join(at.scopes),
+                    "scope": " ".join(scopes),
                     "exp": int(at.expires_at.timestamp()),
                     "token_type": "access_token",
                 }
@@ -358,16 +388,19 @@ class TokenService:
                 rt = await RefreshTokenRepository.get_by_hash(session, token_hash)
                 if rt is None:
                     return {"active": False}
+                client_active, ceiling = await _resolve_client_gate(session, rt.oauth_client_id)
                 active = (
                     rt.revoked_at is None
                     and rt.consumed_at is None
                     and rt.expires_at > now
                     and await _actor_is_active(session, rt.actor_id, rt.actor_type)
+                    and client_active
                 )
+                scopes = _apply_scope_ceiling(list(rt.scopes), ceiling)
                 return {
                     "active": active,
                     "sub": rt.actor_id,
-                    "scope": " ".join(rt.scopes),
+                    "scope": " ".join(scopes),
                     "exp": int(rt.expires_at.timestamp()),
                     "token_type": "refresh_token",
                 }
