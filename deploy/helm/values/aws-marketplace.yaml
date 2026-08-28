@@ -125,4 +125,7 @@ postgresql:
   image:
     registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com"
     repository: "jentic/jentic-one-psql"
-    tag: "17.11"
+    # The Alpine mirror (deploy/docker/postgres-mirror.Dockerfile) — Alpine
+    # because AWS's scanner blocks on Debian's won't-fix glibc CVEs; the
+    # mirror workflow pushes the tag it reads from that Dockerfile's FROM pin.
+    tag: "17.11-alpine"

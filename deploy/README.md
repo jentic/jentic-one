@@ -548,23 +548,29 @@ To bump the release:
 
 ## Reproducibility: the digest pin
 
-`deploy/docker/python-base.Dockerfile` pins `python:3.12-slim` **and**
-`node:22-slim` to specific sha256 digests, not just the floating tags, so a
-build today and a build in six months produce the same base layers:
+`deploy/docker/python-base.Dockerfile` pins `python:3.12-slim`,
+`node:22-slim` **and** `ubuntu:24.04` to specific sha256 digests, not just the
+floating tags, so a build today and a build in six months produce the same
+base layers. The runtime stage is Ubuntu rather than Debian-based
+`python:3.12-slim`: AWS Marketplace's scanner blocks on NVD-critical CVEs
+that Debian stable marks won't-fix (no-dsa) and therefore never patches,
+while Ubuntu backports the fixes — see the Dockerfile header. The
+builder/UI stages never ship, so they stay on the official images:
 
 ```dockerfile
-ARG PYTHON_IMAGE=python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203
-ARG NODE_IMAGE=node:22-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:...   # builder only
+ARG NODE_IMAGE=node:22-slim@sha256:...         # UI build only
+ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:...       # the runtime base that ships
 FROM ${PYTHON_IMAGE} AS builder
 ...
-FROM ${PYTHON_IMAGE} AS runtime
+FROM ${UBUNTU_IMAGE} AS runtime
 ```
 
-To bump either base image (e.g. for a CVE patch):
+To bump any base image (e.g. for a CVE patch):
 
 ```bash
-docker pull python:3.12-slim          # or node:22-slim
-docker buildx imagetools inspect python:3.12-slim
+docker pull ubuntu:24.04              # or python:3.12-slim / node:22-slim
+docker buildx imagetools inspect ubuntu:24.04
 # copy the resulting sha256:... into the matching ARG in python-base.Dockerfile
 ```
 

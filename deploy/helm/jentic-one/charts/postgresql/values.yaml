@@ -11,8 +11,10 @@ image:
   # chart validator composes refs from these exact keys and chokes on an
   # empty registry.)
   repository: postgres
-  # The Marketplace mirror (deploy/docker/postgres-mirror.Dockerfile) pushes
-  # this same tag; Dependabot keeps the Dockerfile's digest pin fresh.
+  # Self-hosters get the official Debian-based image. The AWS Marketplace
+  # overlay pins the hardened Alpine mirror instead
+  # (deploy/docker/postgres-mirror.Dockerfile; Dependabot keeps its digest
+  # pin fresh).
   tag: "17.11"
 
 auth:

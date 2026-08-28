@@ -58,8 +58,9 @@ jobs:
           echo "from=${FROM_LINE}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      # Not a pure retag: the Dockerfile strips dead-code binaries that only
-      # accumulate CVE findings (gosu, snakeoil key) and applies Debian
+      # Not a pure retag: the Dockerfile drops the entrypoint's root-stepdown
+      # helper (dead code under the chart's securityContext), remaps the
+      # postgres uid/gid to the chart's pinned 999, and applies Alpine
       # security updates on top of the pinned digest — see its header.
       - name: Build the mirror image (hardened build of the pinned digest)
         run: docker build -f deploy/docker/postgres-mirror.Dockerfile -t postgres-mirror:local deploy/docker
