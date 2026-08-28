@@ -2,12 +2,14 @@
  * OAuth clients React Query hooks — backed by the generated OAuthClientsService.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { OAuthClientCreateRequest } from '@/shared/api/generated/models/OAuthClientCreateRequest';
-import type { OAuthClientCreateResponse } from '@/shared/api/generated/models/OAuthClientCreateResponse';
-import type { OAuthClientResponse } from '@/shared/api/generated/models/OAuthClientResponse';
-import type { OAuthClientRotateSecretResponse } from '@/shared/api/generated/models/OAuthClientRotateSecretResponse';
-import type { OAuthClientUpdateRequest } from '@/shared/api/generated/models/OAuthClientUpdateRequest';
-import { OAuthClientsService } from '@/shared/api/generated/services/OAuthClientsService';
+import {
+	OAuthClientsService,
+	type OAuthClientCreateRequest,
+	type OAuthClientCreateResponse,
+	type OAuthClientResponse,
+	type OAuthClientRotateSecretResponse,
+	type OAuthClientUpdateRequest,
+} from '@/shared/api';
 
 export type OAuthClient = OAuthClientResponse;
 
