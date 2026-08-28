@@ -171,6 +171,33 @@ make help    # list all targets (test, lint, check, cov, ...)
 `make build-ctl` / `make build-api` build a single binary; `make check` runs
 lint + vet + race tests.
 
+### Debugging the MCP server (Inspector loop)
+
+`jentic mcp` serves the agent tool surface over **stdio MCP** — stdin/stdout
+are the JSON-RPC wire, so you can't poke it from a shell. The fast debug loop
+is the official Inspector, a local web UI that spawns the server exactly like
+a real client would:
+
+```bash
+make build-api
+npx @modelcontextprotocol/inspector ./jentic mcp
+```
+
+It opens a browser page where you can run `tools/list`, call tools with
+hand-written arguments, read the `skill://` resources, and watch the raw
+JSON-RPC frames. Handy checks while developing:
+
+- `tools/list` works with **no config at all** (the "always boots"
+  invariant), and `get_started` diagnoses the machine's setup state.
+- `resources/read` on `skill://jentic` reports `one.jentic/source: hosted`
+  when the configured backend answers, `bundled` offline / pre-auth.
+- Flag behavior: `--read-only` withholds exactly `execute`;
+  `--exclude-tools` drops what you name.
+
+Server logs never touch stdout (it's the wire) — tail them with
+`tail -f ~/.local/state/jentic/logs/mcp.log`, or point `--log-file`
+somewhere else (pass flags after `jentic mcp` in the Inspector command line).
+
 The examples below assume both binaries are on your `PATH`:
 
 ```bash

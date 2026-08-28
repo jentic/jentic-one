@@ -2,9 +2,9 @@ package api
 
 // mcp_session_test.go proves the §3.3 "always boots" contract in-process: an
 // SDK client connects to the assembled server over an in-memory transport on
-// a machine with NO configuration, lists the tools, and gets a usable
-// get_started diagnosis with a degraded instance stamp — no network, no XDG
-// state, no prompts.
+// a machine with NO configuration, lists the tools AND the skill resources,
+// and gets a usable get_started diagnosis with a degraded instance stamp — no
+// network, no XDG state, no prompts.
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
+	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
 
 // connectTestClient wires an SDK client to s over in-memory pipes and returns
@@ -162,9 +163,10 @@ func TestMCPSession_ReadOnlyWithholdsExactlyExecute(t *testing.T) {
 }
 
 // TestMCPSession_FullRoundTrip drives the complete §3.2 flow — whoami →
-// search_apis → inspect_operation → execute — through a real client session
-// against httptest control and broker planes: state, alias tolerance, the
-// broker leg, and the stamped envelopes must survive the full JSON-RPC round
+// search_apis → inspect_operation → execute, plus a resources/read of the
+// hosted skill — through a real client session against httptest control and
+// broker planes: state, alias tolerance, the broker leg, the stamped
+// envelopes, and the resource provenance must survive the full JSON-RPC round
 // trip, not just direct handler calls.
 func TestMCPSession_FullRoundTrip(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -198,6 +200,9 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 			_, _ = w.Write([]byte(`{"method":"GET","url":"https://acme.com/pets","parameters":[]}`))
 		case "/instance":
 			_, _ = w.Write([]byte(`{"backend":"local","host":"127.0.0.1:8000","instance_id":"digest-1"}`))
+		case "/skills/jentic.md":
+			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+			_, _ = w.Write([]byte(hostedJentic))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -285,6 +290,26 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 	if stamp, ok := payload["instance"].(map[string]any); !ok || stamp["backend"] != "local" {
 		t.Errorf("execute result stamp = %v, want the live identity", payload["instance"])
 	}
+
+	// 5. resources/read alongside the tool round trip: connected to a live
+	// backend, skill://jentic serves the HOSTED copy (session source of
+	// truth) with its provenance riding the wire _meta.
+	rr, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://jentic"})
+	if err != nil {
+		t.Fatalf("resources/read: %v", err)
+	}
+	if len(rr.Contents) != 1 {
+		t.Fatalf("contents = %d, want 1", len(rr.Contents))
+	}
+	if rr.Contents[0].Text != hostedJentic {
+		t.Errorf("resource text = %q, want the backend's bytes verbatim", rr.Contents[0].Text)
+	}
+	if rr.Contents[0].Meta[skillMetaSource] != string(skillgen.SourceHosted) {
+		t.Errorf("meta source = %v, want hosted (the backend answered)", rr.Contents[0].Meta[skillMetaSource])
+	}
+	if rr.Contents[0].Meta[skillMetaVersion] != "7" {
+		t.Errorf("meta version = %v, want the hosted document's version", rr.Contents[0].Meta[skillMetaVersion])
+	}
 }
 
 // TestMCPSession_MissingQueryIsProtocolError proves the invalid-params
@@ -364,6 +389,74 @@ func TestMCPSession_ExcludeToolsFilters(t *testing.T) {
 	}
 	if len(tools.Tools) != 6 {
 		t.Errorf("tools = %d, want 6 after exclusion", len(tools.Tools))
+	}
+}
+
+// TestMCPSession_ResourcesWorkPreAuth extends the §3.3 always-boots contract
+// to the PR 1-D resource surface over the real wire: with NO configuration,
+// resources/list serves the full bundled set (+ the index) and resources/read
+// answers with the embedded copy stamped source=bundled — never an error.
+func TestMCPSession_ResourcesWorkPreAuth(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	s := newTestMCPServer(t, nil)
+	cs := connectTestClient(t, s)
+	ctx := context.Background()
+
+	list, err := cs.ListResources(ctx, nil)
+	if err != nil {
+		t.Fatalf("resources/list must work with no config: %v", err)
+	}
+	uris := make(map[string]*mcp.Resource, len(list.Resources))
+	for _, r := range list.Resources {
+		uris[r.URI] = r
+	}
+	names := skillgen.BundledNames()
+	wantURIs := make([]string, 0, len(names)+1)
+	wantURIs = append(wantURIs, skillIndexURI)
+	for _, name := range names {
+		wantURIs = append(wantURIs, skillURIScheme+name)
+	}
+	for _, want := range wantURIs {
+		r, ok := uris[want]
+		if !ok {
+			t.Fatalf("resources/list is missing %q (got %d resources)", want, len(list.Resources))
+		}
+		if r.Description == "" || r.MIMEType == "" {
+			t.Errorf("resource %q must carry a description and MIME type", want)
+		}
+	}
+	if len(uris) != len(wantURIs) {
+		t.Errorf("resources = %d, want exactly the bundled set + index (%d)", len(uris), len(wantURIs))
+	}
+
+	res, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://jentic"})
+	if err != nil {
+		t.Fatalf("resources/read must work pre-auth: %v", err)
+	}
+	if len(res.Contents) != 1 {
+		t.Fatalf("contents = %d, want 1", len(res.Contents))
+	}
+	c := res.Contents[0]
+	want, err := skillgen.RawBundled("jentic")
+	if err != nil {
+		t.Fatalf("RawBundled: %v", err)
+	}
+	if c.Text != string(want) {
+		t.Errorf("pre-auth read must serve the bundled bytes verbatim (len %d vs %d)", len(c.Text), len(want))
+	}
+	if c.Meta[skillMetaSource] != string(skillgen.SourceBundled) {
+		t.Errorf("meta source = %v, want bundled (survives the wire round trip)", c.Meta[skillMetaSource])
+	}
+	if c.Meta[skillMetaVersion] == nil {
+		t.Errorf("meta must carry the content version")
+	}
+
+	// An unregistered URI is a protocol-level resource-not-found, never a
+	// handler panic or a silent empty read.
+	if _, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://no-such-skill"}); err == nil {
+		t.Errorf("reading an unregistered skill URI must fail")
 	}
 }
 

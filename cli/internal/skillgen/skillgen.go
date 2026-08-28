@@ -1,8 +1,9 @@
 // Package skillgen renders one canonical "how to use Jentic via the CLI" skill
 // into each supported agent runtime's ("operator") native skill/instruction
 // layout. It is the engine behind `jentic skill init/list/remove`: the
-// canonical content (bundled now, hosted via #277 later) is shared, and a small
-// per-operator Adapter owns where the file lives and how it is formatted.
+// canonical content is shared (the bundled embed here; the backend serves the
+// same bytes at `GET /skills/<name>.md`, #651), and a small per-operator
+// Adapter owns where the file lives and how it is formatted.
 //
 // Writes are idempotent and edit-preserving: generated content lives inside a
 // clearly-marked managed block so re-runs replace only our block and never
@@ -40,8 +41,10 @@ const (
 )
 
 // Canonical is the source-agnostic skill content every adapter renders from.
-// It is populated from the bundled fallback today and from #277's hosted
-// `GET /skills/*` once that endpoint exists. Despite the name it now models two
+// It is populated from the bundled embed today; the hosted counterpart —
+// `GET /skills/*`, anticipated by #277 — shipped as #651
+// (shared/web/agent_discovery.py serves the same bytes), and Origin records
+// which source a given Canonical came from. Despite the name it now models two
 // kinds (see Kind): the structured "canonical" jentic skill (sections/steps)
 // and a "freeform" runbook whose Body is emitted verbatim.
 type Canonical struct {
