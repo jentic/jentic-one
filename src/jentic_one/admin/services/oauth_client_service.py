@@ -183,9 +183,17 @@ class OAuthClientService:
         allowed_scopes: list[str] | None = None,
         identity: Identity,
     ) -> OAuthClientView:
-        """Update an OAuth client."""
+        """Update an OAuth client.
+
+        ``allowed_scopes=["*"]`` is the reset sentinel — it clears the column
+        to NULL (unrestricted). ``allowed_scopes=None`` means no change;
+        ``allowed_scopes=[]`` denies all non-OIDC scopes.
+        """
         if redirect_uris is not None:
             _validate_redirect_uris(redirect_uris)
+
+        reset_allowed_scopes = allowed_scopes == ["*"]
+        applied_allowed_scopes = None if reset_allowed_scopes else allowed_scopes
 
         async with self._ctx.admin_db.transaction() as session:
             existing = await OAuthClientRepository.get_by_id(session, id)
@@ -202,7 +210,8 @@ class OAuthClientService:
                 redirect_uris=redirect_uris,
                 active=active,
                 require_consent=require_consent,
-                allowed_scopes=allowed_scopes,
+                allowed_scopes=applied_allowed_scopes,
+                reset_allowed_scopes=reset_allowed_scopes,
             )
             if client is None:
                 raise OAuthClientNotFoundError(id)
@@ -218,7 +227,9 @@ class OAuthClientService:
                 changes["active"] = active
             if require_consent is not None:
                 changes["require_consent"] = require_consent
-            if allowed_scopes is not None:
+            if reset_allowed_scopes:
+                changes["allowed_scopes"] = None
+            elif allowed_scopes is not None:
                 changes["allowed_scopes"] = allowed_scopes
 
             await record_audit(

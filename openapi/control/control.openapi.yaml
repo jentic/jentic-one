@@ -3234,7 +3234,7 @@ components:
               type: string
             type: array
           - type: 'null'
-          description: If set, restricts which scopes this client may request. Null means all scopes are permitted.
+          description: If set, restricts which scopes this client may request. An empty list denies all non-OIDC scopes. Null means unrestricted (all scopes permitted).
           title: Allowed Scopes
         description:
           anyOf:
@@ -3468,7 +3468,7 @@ components:
               type: string
             type: array
           - type: 'null'
-          description: Scope restriction list. Null means no change; an empty list clears the restriction (all scopes permitted).
+          description: Scope restriction list. Null means no change; an empty list denies all non-OIDC scopes; the wildcard ``["*"]`` resets to unrestricted.
           title: Allowed Scopes
         description:
           anyOf:

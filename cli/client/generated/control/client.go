@@ -1976,7 +1976,7 @@ type OAuth2UpdateRequestType string
 //
 // Examples: {"description":"My application production deployment","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
 type OAuthClientCreateRequest struct {
-	// AllowedScopes If set, restricts which scopes this client may request. Null means all scopes are permitted.
+	// AllowedScopes If set, restricts which scopes this client may request. An empty list denies all non-OIDC scopes. Null means unrestricted (all scopes permitted).
 	AllowedScopes *[]string `json:"allowed_scopes,omitempty"`
 
 	// Description Optional description of the client.
@@ -2060,7 +2060,7 @@ type OAuthClientRotateSecretResponse struct {
 type OAuthClientUpdateRequest struct {
 	Active *bool `json:"active,omitempty"`
 
-	// AllowedScopes Scope restriction list. Null means no change; an empty list clears the restriction (all scopes permitted).
+	// AllowedScopes Scope restriction list. Null means no change; an empty list denies all non-OIDC scopes; the wildcard ``["*"]`` resets to unrestricted.
 	AllowedScopes  *[]string `json:"allowed_scopes,omitempty"`
 	Description    *string   `json:"description,omitempty"`
 	Name           *string   `json:"name,omitempty"`

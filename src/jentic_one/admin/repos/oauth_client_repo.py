@@ -82,8 +82,13 @@ class OAuthClientRepository:
         active: bool | None = None,
         require_consent: bool | None = None,
         allowed_scopes: list[str] | None = None,
+        reset_allowed_scopes: bool = False,
     ) -> OAuthClient | None:
-        """Update an OAuth client. Returns None if not found."""
+        """Update an OAuth client. Returns None if not found.
+
+        ``reset_allowed_scopes=True`` sets the column to NULL (unrestricted) and
+        takes precedence over ``allowed_scopes``.
+        """
         client = await session.get(OAuthClient, id)
         if client is None:
             return None
@@ -98,7 +103,9 @@ class OAuthClientRepository:
             client.active = active
         if require_consent is not None:
             client.require_consent = require_consent
-        if allowed_scopes is not None:
+        if reset_allowed_scopes:
+            client.allowed_scopes = None
+        elif allowed_scopes is not None:
             client.allowed_scopes = allowed_scopes
 
         await session.flush()

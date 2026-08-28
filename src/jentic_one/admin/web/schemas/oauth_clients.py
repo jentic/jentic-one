@@ -41,7 +41,8 @@ class OAuthClientCreateRequest(BaseModel):
     allowed_scopes: list[str] | None = Field(
         default=None,
         description="If set, restricts which scopes this client may request. "
-        "Null means all scopes are permitted.",
+        "An empty list denies all non-OIDC scopes. Null means unrestricted "
+        "(all scopes permitted).",
     )
 
 
@@ -58,7 +59,8 @@ class OAuthClientUpdateRequest(BaseModel):
     allowed_scopes: list[str] | None = Field(
         default=None,
         description="Scope restriction list. Null means no change; "
-        "an empty list clears the restriction (all scopes permitted).",
+        "an empty list denies all non-OIDC scopes; "
+        'the wildcard ``["*"]`` resets to unrestricted.',
     )
 
 
