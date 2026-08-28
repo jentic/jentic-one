@@ -4307,6 +4307,57 @@
         "title": "LoginResponse",
         "type": "object"
       },
+      "McpConfigRegistrationRequest": {
+        "description": "Report that an MCP config entry was written for one agent runtime.",
+        "examples": [
+          {
+            "runtime": "cursor"
+          }
+        ],
+        "properties": {
+          "runtime": {
+            "$ref": "#/components/schemas/McpConfigRuntime",
+            "description": "The agent runtime whose MCP config entry was written — a closed set; clients map anything unrecognised to `other`."
+          }
+        },
+        "required": [
+          "runtime"
+        ],
+        "title": "McpConfigRegistrationRequest",
+        "type": "object"
+      },
+      "McpConfigRegistrationResponse": {
+        "description": "Acknowledgement of a config-registration report.",
+        "properties": {
+          "recorded": {
+            "description": "Whether the report was accepted for recording.",
+            "title": "Recorded",
+            "type": "boolean"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/McpConfigRuntime",
+            "description": "The runtime the report was recorded for."
+          }
+        },
+        "required": [
+          "runtime",
+          "recorded"
+        ],
+        "title": "McpConfigRegistrationResponse",
+        "type": "object"
+      },
+      "McpConfigRuntime": {
+        "description": "Closed-enum tag naming the agent runtime an MCP config entry targets.\n\nAttached only to ``mcp_config_registered`` — one event per runtime whose\nconfig file/entry ``jentic setup``/``jentic skill init`` writes. A closed\nset (never the raw runtime string) so the config-written → first-session →\nfirst-execute funnel stays property-free on the wire.",
+        "enum": [
+          "claude_desktop",
+          "claude_code",
+          "cursor",
+          "codex",
+          "other"
+        ],
+        "title": "McpConfigRuntime",
+        "type": "string"
+      },
       "MeAgent": {
         "description": "Identity response for an agent actor.",
         "properties": {
@@ -25089,6 +25140,151 @@
         ]
       }
     },
+    "/mcp/config-registrations": {
+      "post": {
+        "description": "Record that an MCP server entry was written for an agent runtime.\n\nCalled by `jentic setup` / `jentic skill init` once per runtime whose MCP\nconfig entry it wrote (best-effort on the CLI side — a failed report never\nblocks setup). Emits the `mcp.config_registered` internal event; when the\noperator opted into telemetry, the event is forwarded carrying at most the\nclosed runtime tag. Any authenticated actor may report.",
+        "operationId": "reportMcpConfigRegistration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpConfigRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpConfigRegistrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Report MCP config registration",
+        "tags": [
+          "MCP"
+        ]
+      }
+    },
     "/me": {
       "get": {
         "description": "Return the caller's identity and context, discriminated by actor type.",
@@ -35087,6 +35283,10 @@
     {
       "description": "Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). Registered clients integrate with Jentic One via the standard Authorization Code + PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. Deactivating a client immediately invalidates all tokens issued through it.",
       "name": "OAuth Clients"
+    },
+    {
+      "description": "MCP (Model Context Protocol) transport reporting. The `jentic mcp` stdio server terminates all MCP protocol traffic locally; the control plane only sees plain HTTP. This tag covers the small reporting surface behind it — today, the config-registration report `jentic setup`/`jentic skill init` send after writing an MCP server entry for a detected agent runtime, which feeds the config-written → first-session → first-execute adoption funnel.",
+      "name": "MCP"
     }
   ],
   "x-tagGroups": [
@@ -35144,7 +35344,8 @@
     {
       "name": "Operations",
       "tags": [
-        "System"
+        "System",
+        "MCP"
       ]
     }
   ]

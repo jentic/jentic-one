@@ -664,6 +664,17 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "Deactivating a client immediately invalidates all tokens issued through it."
         ),
     },
+    {
+        "name": "MCP",
+        "description": (
+            "MCP (Model Context Protocol) transport reporting. The `jentic mcp` stdio "
+            "server terminates all MCP protocol traffic locally; the control plane only "
+            "sees plain HTTP. This tag covers the small reporting surface behind it — "
+            "today, the config-registration report `jentic setup`/`jentic skill init` "
+            "send after writing an MCP server entry for a detected agent runtime, which "
+            "feeds the config-written → first-session → first-execute adoption funnel."
+        ),
+    },
 ]
 
 # Redoc tag groups (vendor extension). Tags not listed here still render; this
@@ -722,7 +733,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
     },
     {
         "name": "Operations",
-        "tags": ["System"],
+        "tags": ["System", "MCP"],
     },
 ]
 
@@ -845,6 +856,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/executions"), "Executions"),
     (re.compile(r"^/jobs"), "Jobs"),
     (re.compile(r"^/events"), "Events"),
+    (re.compile(r"^/mcp"), "MCP"),
     (re.compile(r"^/permissions"), "Permissions"),
     (re.compile(r"^/actors"), "Actors"),
     (re.compile(r"^/users"), "Users"),
