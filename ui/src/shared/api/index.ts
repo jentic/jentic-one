@@ -257,6 +257,13 @@ export { OverlaysService } from '@/shared/api/generated/services/OverlaysService
 // response model is added here. Append-only.
 export type { VersionResponse } from '@/shared/api/generated/models/VersionResponse';
 
+// Instance identity (local-MCP 2-E2, #1188). `GET /instance` self-describes
+// the backend (canonical base URL / host / locality) so the per-agent MCP
+// config card can show which instance a pasted snippet will talk to.
+// `SystemService` is already exported above; only the response model is added
+// here. Append-only.
+export type { InstanceIdentityResponse } from '@/shared/api/generated/models/InstanceIdentityResponse';
+
 // External-IdP (SSO) login. The public capability descriptor (`GET /auth/idp`)
 // tells the login page whether to show a "Continue with <provider>" button, and
 // the authorization-code + PKCE exchange (`POST /oauth/token`) yields the same

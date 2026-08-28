@@ -114,6 +114,49 @@ describe('MonitorPage', () => {
 		expect(screen.getByText('POST /v1/charges')).toBeInTheDocument();
 	});
 
+	// --- local-MCP 2-E2 (#1188): origin filter on the executions lens -------
+
+	it('filters Executions by origin from the filter bar', async () => {
+		const user = userEvent.setup();
+		renderMonitor();
+		await screen.findByText('POST /v1/charges');
+
+		// The picker offers the closed origin set; selecting MCP narrows the
+		// log to the MCP-origin refund row and writes the deep-linkable param.
+		const originSelect = screen.getByRole('combobox', { name: 'Filter by origin' });
+		await user.selectOptions(originSelect, screen.getByRole('option', { name: 'MCP' }));
+
+		expect(await screen.findByText('POST /v1/refunds')).toBeInTheDocument();
+		await waitFor(() => {
+			expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
+		});
+		expect(screen.getByTestId('location-search').textContent).toContain('origin=mcp');
+
+		// Back to "All origins": the full log returns, the param leaves the URL.
+		await user.selectOptions(originSelect, screen.getByRole('option', { name: 'All origins' }));
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
+		expect(screen.getByTestId('location-search').textContent).not.toContain('origin');
+	});
+
+	it('honours an ?origin deep-link and drops it on a lens switch (executions-only scope)', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?tab=executions&origin=mcp');
+
+		// Pre-filtered on arrival — the deep-link contract.
+		expect(await screen.findByText('POST /v1/refunds')).toBeInTheDocument();
+		expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
+
+		// No other lens supports origin, so a lens switch clears it (same rule
+		// as toolkit_id) — and the picker only renders on Executions.
+		await user.click(screen.getByRole('tab', { name: 'Events' }));
+		await waitFor(() => {
+			expect(screen.getByTestId('location-search').textContent).not.toContain('origin');
+		});
+		expect(
+			screen.queryByRole('combobox', { name: 'Filter by origin' }),
+		).not.toBeInTheDocument();
+	});
+
 	it('goes live on the Events tab without crashing on heartbeat frames', async () => {
 		const user = userEvent.setup();
 		renderMonitor();

@@ -57,6 +57,10 @@ import {
 	fetchActorsUsage,
 	fetchActorUsageDetail,
 	fetchActorExecutions,
+	fetchInstanceIdentity,
+	fetchLatestMcpActivity,
+	fetchMcpLastSeenByActor,
+	fetchMcpSessions,
 	listActorAudit,
 	type ActorAuditEntry,
 	type ActorUsage,
@@ -69,7 +73,10 @@ import type {
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
+	InstanceIdentityEntity,
 	LinkableToolkit,
+	McpLastSeen,
+	McpSessionEntity,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
@@ -761,5 +768,73 @@ export function useActorAudit(actorKind: 'agent' | 'service-account', actorId: s
 		queryFn: () => listActorAudit(actorKind, actorId as string),
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
+	});
+}
+
+// ---------------------------------------------------------------------------
+// MCP transport visibility (local-MCP 2-E2, #1188).
+//
+// Keyed under their OWN `agents-mcp` root (like `linkableToolkitsKey` /
+// `agents-usage`) so agent lifecycle mutations — which sweep the broad
+// `sharedQueryKeys.agentsRoot` on approve/deny/create — don't pointlessly
+// refetch the events table. All are enrichment reads with the same
+// `null`-on-403 / `retry: false` degrade contract as `useActorsUsage`.
+// ---------------------------------------------------------------------------
+
+/**
+ * One agent's MCP session history (`mcp.session_started` internal events) —
+ * the detail page's MCP sessions card. `null` for viewers without
+ * `events:read` (the card renders a quiet permission note).
+ */
+export function useMcpSessions(actorId: string | null) {
+	return useQuery<McpSessionEntity[] | null>({
+		queryKey: ['agents-mcp', 'sessions', actorId],
+		queryFn: () => fetchMcpSessions(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * Latest MCP session per agent for the roster's "last seen via MCP" cell.
+ * One events-page read for the whole fleet (never per-row). `null` on 403 —
+ * the table hides the column entirely, mirroring the usage columns.
+ */
+export function useMcpLastSeen() {
+	return useQuery<Map<string, McpLastSeen> | null>({
+		queryKey: ['agents-mcp', 'last-seen'],
+		queryFn: () => fetchMcpLastSeenByActor(),
+		staleTime: 60 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * When this agent last executed over MCP — the "last active" line on the
+ * sessions card. `null` means no MCP execution known (or gated); the card
+ * shows a dash, never an error.
+ */
+export function useLatestMcpActivity(actorId: string | null) {
+	return useQuery<string | null>({
+		queryKey: ['agents-mcp', 'last-activity', actorId],
+		queryFn: () => fetchLatestMcpActivity(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * The instance's self-described identity (`GET /instance`) for the MCP config
+ * card. Slow-changing (it's deploy config), so cached generously; a failure
+ * resolves `undefined` and the card falls back to the browser origin.
+ */
+export function useInstanceIdentity() {
+	return useQuery<InstanceIdentityEntity>({
+		queryKey: ['instance-identity'],
+		queryFn: () => fetchInstanceIdentity(),
+		staleTime: 5 * 60 * 1000,
+		retry: false,
 	});
 }

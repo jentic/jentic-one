@@ -6,13 +6,15 @@
  * agent's badge as icon, its name as title, its own description as subtitle,
  * with the kill switch for the reversible active/disabled flip plus the
  * constructive Approve / Deny actions in the header action slot), a back row,
- * a denial banner when rejected, the KPI strip, then five tab panels:
+ * a denial banner when rejected, the KPI strip, then six tab panels:
  *   - Overview  → attribution meta + bound toolkits + audit slice
  *   - Activity  → this agent's execution volume + recent executions
  *                 (GET /monitoring/usage?agent_id=…, GET /executions?actor_id=…)
  *                 with a pre-filtered "Open Monitor" deep-link
  *   - Access    → platform scopes (#615) + filed access requests (#619)
  *   - Keys      → API-key metadata, generate/regenerate/revoke, rotation history
+ *   - MCP       → per-agent MCP config card + session history (local-MCP 2-E2:
+ *                 MCP is a transport of this agent, so the surface lives here)
  *   - Settings  → the copyable agent id + editable metadata (PATCH
  *                 /agents/{id}) + danger zone hosting the terminal Archive
  *
@@ -27,6 +29,7 @@ import {
 	Fingerprint,
 	Key,
 	LayoutDashboard,
+	Plug,
 	Settings,
 	ShieldCheck,
 	ShieldX,
@@ -77,9 +80,10 @@ import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPa
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
 import { BoundToolkitsCard } from '@/modules/agents/components/detail/BoundToolkitsCard';
+import { McpPanel } from '@/modules/agents/components/detail/McpPanel';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
-const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
+const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'mcp', 'settings'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
 /** Tab options for the console shell — same icon grammar as the toolkit console. */
@@ -88,6 +92,9 @@ const TAB_OPTIONS: TabNavOption<DetailTab>[] = [
 	{ value: 'activity', label: 'Activity', icon: <ActivityIcon className="h-4 w-4" /> },
 	{ value: 'access', label: 'Access', icon: <ShieldCheck className="h-4 w-4" /> },
 	{ value: 'keys', label: 'Keys', icon: <Key className="h-4 w-4" /> },
+	// MCP is a transport of this agent (local-MCP §3.10), so its config card
+	// and session history live here in the console — no top-level nav.
+	{ value: 'mcp', label: 'MCP', icon: <Plug className="h-4 w-4" /> },
 	{ value: 'settings', label: 'Settings', icon: <Settings className="h-4 w-4" /> },
 ];
 
@@ -403,6 +410,8 @@ export default function AgentDetailPage() {
 				)}
 
 				{activeTab === 'keys' && <AgentKeysPanel agent={agent} />}
+
+				{activeTab === 'mcp' && <McpPanel agentName={agent.name} agentId={agent.id} />}
 
 				{activeTab === 'settings' && (
 					<AgentSettingsPanel
