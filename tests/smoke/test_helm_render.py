@@ -162,6 +162,29 @@ def test_render_service_account_create_requires_name() -> None:
 
 
 @pytest.mark.smoke
+def test_render_marketplace_entitlement_env() -> None:
+    """The enforcing env lands on BOTH pods with the live listing's IDs.
+
+    Enforcement went live alongside the checkout-shape/check-in client fix —
+    a chart carrying this env against an older image (no entitlement config;
+    extra="forbid") crashes at boot, which is exactly why the env and the
+    client fix ride the same release.
+    """
+    result = _helm_template(
+        "-f",
+        str(VALUES_DIR / "aws-marketplace.yaml"),
+        "--set",
+        "global.image.tag=0.0.0-test",
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert out.count("name: JENTIC__ENTITLEMENT__ENABLED") == 2  # app + broker
+    assert out.count('value: "dwhxz1v53k58ew6pr7qzieumd"') == 2  # product code
+    assert out.count('value: "prod-dd2p2s65dysv6"') == 2  # product ID (SKU)
+    assert out.count('value: "users,executions"') == 2
+
+
+@pytest.mark.smoke
 def test_render_marketplace_app_secrets() -> None:
     """aws-marketplace.yaml auto-generates every secret — zero-touch install.
 
