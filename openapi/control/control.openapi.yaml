@@ -14350,13 +14350,14 @@ paths:
       description: Display the OAuth consent screen.
       operationId: consentPage
       parameters:
-      - in: query
-        name: consent_token
+      - description: Opaque consent-flow handle
+        in: query
+        name: ch
         required: true
         schema:
-          title: Consent Token
+          description: Opaque consent-flow handle
+          title: Ch
           type: string
-          x-sensitive: true
       responses:
         '200':
           content:
@@ -14401,7 +14402,13 @@ paths:
       tags:
       - OAuth
     post:
-      description: Process the consent form submission. Mints the auth code only on approval.
+      description: |-
+        Process the consent form submission. Mints the auth code only on approval.
+
+        ``consent_token`` is the opaque handle emitted by the callback. It never
+        leaves the state backend as anything more than an ID — the actual consent
+        parameters (user_id, email, scopes, redirect_uri) live server-side and
+        can't be tampered with or captured from browser history/proxy logs.
       operationId: consentSubmit
       requestBody:
         content:

@@ -451,14 +451,6 @@ def _get_consent_backend(request: Request) -> SharedStateBackend:
     return _get_auth_backend(request)
 
 
-async def _consume_consent_nonce(nonce: str, request: Request) -> bool:
-    """Attempt to consume a consent nonce. Returns False if already consumed."""
-    backend = _get_consent_backend(request)
-    return await backend.set_if_absent(
-        f"consent-nonce:{nonce}", b"1", ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS)
-    )
-
-
 @router.get("/authorize", dependencies=[Depends(_check_rate_limit)])
 async def authorize_endpoint(
     request: Request,
@@ -592,10 +584,9 @@ async def oauth_callback(
             logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
             return RedirectResponse(url="/error?error=server_error", status_code=302)
 
-        consent_nonce = secrets.token_urlsafe(32)
-        consent_token = _sign_payload(
+        consent_handle = secrets.token_urlsafe(32)
+        payload_json = json.dumps(
             {
-                "consent_nonce": consent_nonce,
                 "user_id": user_id,
                 "redirect_uri": original_redirect_uri,
                 "original_state": original_state,
@@ -606,14 +597,16 @@ async def oauth_callback(
                 "client_name": oauth_client.name,
                 "client_description": oauth_client.description,
                 "user_email": user_email,
-                "iat": str(int(time.time())),
-            },
-            _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "consent"),
-            purpose="consent",
+                "iat": int(time.time()),
+            }
+        ).encode()
+        backend = _get_consent_backend(request)
+        await backend.set(
+            f"consent-handle:{consent_handle}",
+            payload_json,
+            ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS),
         )
-        return RedirectResponse(
-            url=f"/oauth/consent?consent_token={consent_token}", status_code=302
-        )
+        return RedirectResponse(url=f"/oauth/consent?ch={consent_handle}", status_code=302)
 
     try:
         platform_code, _email = await authorize_svc.handle_idp_callback_with_email(
@@ -684,32 +677,48 @@ def _scope_to_permission_description(scope: str) -> str | None:
     return f"Access: {scope}"
 
 
+async def _load_consent_handle(ch: str, request: Request) -> dict[str, object] | None:
+    """Load consent params for a handle from the shared state backend."""
+    backend = _get_consent_backend(request)
+    raw = await backend.get(f"consent-handle:{ch}")
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def _consume_consent_handle(ch: str, request: Request) -> bool:
+    """Atomically mark a consent handle as used; returns False on replay."""
+    backend = _get_consent_backend(request)
+    return await backend.set_if_absent(
+        f"consent-handle-used:{ch}", b"1", ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS)
+    )
+
+
 @router.get(
     "/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(_check_rate_limit)]
 )
 async def consent_page(
-    consent_token: str = Query(..., json_schema_extra=SENSITIVE),
+    request: Request,
+    ch: str = Query(..., description="Opaque consent-flow handle"),
     ctx: Context = Depends(get_ctx),
 ) -> HTMLResponse:
     """Display the OAuth consent screen."""
-    try:
-        params = _verify_payload(
-            consent_token,
-            _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "consent"),
-            purpose="consent",
-            max_age=CONSENT_STATE_MAX_AGE_SECONDS,
-        )
-    except InvalidGrantError:
+    params = await _load_consent_handle(ch, request)
+    if params is None:
         return HTMLResponse(
             content="<html><body><h1>Invalid or expired consent request</h1></body></html>",
             status_code=400,
             headers=_CONSENT_SECURITY_HEADERS,
         )
 
-    app_name = params.get("client_name") or "Unknown Application"
-    app_description = params.get("client_description") or "This application"
-    user_email = params.get("user_email") or "unknown"
-    scope = params.get("scope") or "openid"
+    app_name = str(params.get("client_name") or "Unknown Application")
+    app_description = str(params.get("client_description") or "This application")
+    user_email = str(params.get("user_email") or "unknown")
+    scope = str(params.get("scope") or "openid")
 
     scopes = [s.strip() for s in scope.split() if s.strip()]
     implied_by_others: set[str] = set()
@@ -727,7 +736,7 @@ async def consent_page(
         app_description=html_mod.escape(app_description),
         user_email=html_mod.escape(user_email),
         permission_items=permission_items,
-        consent_token=html_mod.escape(consent_token),
+        consent_token=html_mod.escape(ch),
         fonts_url=_FONTS_URL,
         check_svg=_CHECK_SVG,
     )
@@ -742,28 +751,28 @@ async def consent_submit(
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> RedirectResponse:
-    """Process the consent form submission. Mints the auth code only on approval."""
-    try:
-        params = _verify_payload(
-            consent_token,
-            _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "consent"),
-            purpose="consent",
-            max_age=CONSENT_STATE_MAX_AGE_SECONDS,
-        )
-    except InvalidGrantError:
-        logger.warning("oauth_consent_invalid_token")
+    """Process the consent form submission. Mints the auth code only on approval.
+
+    ``consent_token`` is the opaque handle emitted by the callback. It never
+    leaves the state backend as anything more than an ID — the actual consent
+    parameters (user_id, email, scopes, redirect_uri) live server-side and
+    can't be tampered with or captured from browser history/proxy logs.
+    """
+    params = await _load_consent_handle(consent_token, request)
+    if params is None:
+        logger.warning("oauth_consent_invalid_handle")
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
 
-    consent_nonce = params.get("consent_nonce") or ""
-    if not await _consume_consent_nonce(consent_nonce, request):
-        logger.warning("oauth_consent_nonce_replay", nonce=consent_nonce[:8])
+    if not await _consume_consent_handle(consent_token, request):
+        logger.warning("oauth_consent_handle_replay", handle=consent_token[:8])
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
 
-    redirect_uri = params.get("redirect_uri") or ""
-    original_state = params.get("original_state")
-    client_id = params.get("client_id") or ""
-    user_id = params.get("user_id") or ""
-    scope = params.get("scope") or "openid"
+    redirect_uri = str(params.get("redirect_uri") or "")
+    raw_state = params.get("original_state")
+    original_state = str(raw_state) if raw_state else None
+    client_id = str(params.get("client_id") or "")
+    user_id = str(params.get("user_id") or "")
+    scope = str(params.get("scope") or "openid")
 
     is_platform = _is_platform_client(client_id, ctx)
     if not is_platform and user_id:
@@ -778,8 +787,9 @@ async def consent_submit(
         logger.info("oauth_consent_denied", client_id=client_id)
         return _error_redirect(redirect_uri, "access_denied", original_state)
 
-    code_challenge = params.get("code_challenge") or ""
-    nonce = params.get("nonce")
+    code_challenge = str(params.get("code_challenge") or "")
+    raw_nonce = params.get("nonce")
+    nonce = str(raw_nonce) if raw_nonce else None
 
     platform_code = await authorize_svc.issue_authorization_code(
         user_id=user_id,

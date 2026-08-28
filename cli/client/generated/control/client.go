@@ -3268,7 +3268,8 @@ type AuthorizeOauthCallbackParams struct {
 
 // ConsentPageParams defines parameters for ConsentPage.
 type ConsentPageParams struct {
-	ConsentToken string `form:"consent_token" json:"consent_token"`
+	// Ch Opaque consent-flow handle
+	Ch string `form:"ch" json:"ch"`
 }
 
 // TokenEndpointJSONBody defines parameters for TokenEndpoint.
@@ -5482,6 +5483,11 @@ type ClientInterface interface {
 	//
 	// Process the consent form submission. Mints the auth code only on approval.
 	//
+	// ``consent_token`` is the opaque handle emitted by the callback. It never
+	// leaves the state backend as anything more than an ID — the actual consent
+	// parameters (user_id, email, scopes, redirect_uri) live server-side and
+	// can't be tampered with or captured from browser history/proxy logs.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
@@ -5490,6 +5496,11 @@ type ClientInterface interface {
 	// ConsentSubmitWithFormdataBody Consent Submit
 	//
 	// Process the consent form submission. Mints the auth code only on approval.
+	//
+	// ``consent_token`` is the opaque handle emitted by the callback. It never
+	// leaves the state backend as anything more than an ID — the actual consent
+	// parameters (user_id, email, scopes, redirect_uri) live server-side and
+	// can't be tampered with or captured from browser history/proxy logs.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
@@ -8755,6 +8766,11 @@ func (c *Client) ConsentPage(ctx context.Context, params *ConsentPageParams, req
 //
 // Process the consent form submission. Mints the auth code only on approval.
 //
+// “consent_token“ is the opaque handle emitted by the callback. It never
+// leaves the state backend as anything more than an ID — the actual consent
+// parameters (user_id, email, scopes, redirect_uri) live server-side and
+// can't be tampered with or captured from browser history/proxy logs.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
@@ -8773,6 +8789,11 @@ func (c *Client) ConsentSubmitWithBody(ctx context.Context, contentType string, 
 // ConsentSubmitWithFormdataBody Consent Submit
 //
 // Process the consent form submission. Mints the auth code only on approval.
+//
+// “consent_token“ is the opaque handle emitted by the callback. It never
+// leaves the state backend as anything more than an ID — the actual consent
+// parameters (user_id, email, scopes, redirect_uri) live server-side and
+// can't be tampered with or captured from browser history/proxy logs.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
@@ -16152,7 +16173,7 @@ func NewConsentPageRequest(server string, params *ConsentPageParams) (*http.Requ
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "consent_token", params.ConsentToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ch", params.Ch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
 		} else {
 			for _, qp := range strings.Split(queryFrag, "&") {
@@ -19935,6 +19956,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Process the consent form submission. Mints the auth code only on approval.
 	//
+	// ``consent_token`` is the opaque handle emitted by the callback. It never
+	// leaves the state backend as anything more than an ID — the actual consent
+	// parameters (user_id, email, scopes, redirect_uri) live server-side and
+	// can't be tampered with or captured from browser history/proxy logs.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
@@ -19943,6 +19969,11 @@ type ClientWithResponsesInterface interface {
 	// ConsentSubmitWithFormdataBodyWithResponse Consent Submit
 	//
 	// Process the consent form submission. Mints the auth code only on approval.
+	//
+	// ``consent_token`` is the opaque handle emitted by the callback. It never
+	// leaves the state backend as anything more than an ID — the actual consent
+	// parameters (user_id, email, scopes, redirect_uri) live server-side and
+	// can't be tampered with or captured from browser history/proxy logs.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -35999,6 +36030,11 @@ func (c *ClientWithResponses) ConsentPageWithResponse(ctx context.Context, param
 //
 // Process the consent form submission. Mints the auth code only on approval.
 //
+// “consent_token“ is the opaque handle emitted by the callback. It never
+// leaves the state backend as anything more than an ID — the actual consent
+// parameters (user_id, email, scopes, redirect_uri) live server-side and
+// can't be tampered with or captured from browser history/proxy logs.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
@@ -36013,6 +36049,11 @@ func (c *ClientWithResponses) ConsentSubmitWithBodyWithResponse(ctx context.Cont
 // ConsentSubmitWithFormdataBodyWithResponse Consent Submit
 //
 // Process the consent form submission. Mints the auth code only on approval.
+//
+// “consent_token“ is the opaque handle emitted by the callback. It never
+// leaves the state backend as anything more than an ID — the actual consent
+// parameters (user_id, email, scopes, redirect_uri) live server-side and
+// can't be tampered with or captured from browser history/proxy logs.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //

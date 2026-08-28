@@ -26639,13 +26639,14 @@
         "operationId": "consentPage",
         "parameters": [
           {
+            "description": "Opaque consent-flow handle",
             "in": "query",
-            "name": "consent_token",
+            "name": "ch",
             "required": true,
             "schema": {
-              "title": "Consent Token",
-              "type": "string",
-              "x-sensitive": true
+              "description": "Opaque consent-flow handle",
+              "title": "Ch",
+              "type": "string"
             }
           }
         ],
@@ -26750,7 +26751,7 @@
         ]
       },
       "post": {
-        "description": "Process the consent form submission. Mints the auth code only on approval.",
+        "description": "Process the consent form submission. Mints the auth code only on approval.\n\n``consent_token`` is the opaque handle emitted by the callback. It never\nleaves the state backend as anything more than an ID — the actual consent\nparameters (user_id, email, scopes, redirect_uri) live server-side and\ncan't be tampered with or captured from browser history/proxy logs.",
         "operationId": "consentSubmit",
         "requestBody": {
           "content": {
