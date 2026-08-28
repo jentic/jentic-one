@@ -229,6 +229,33 @@ class AuthorizeService:
 
         return code_plain
 
+    async def record_consent_decision(
+        self,
+        *,
+        user_id: str,
+        oauth_client_id: str,
+        approved: bool,
+        scopes: str,
+    ) -> None:
+        """Audit a user's approve/deny decision on the OAuth consent screen.
+
+        Third-party consent decisions were previously only logged, so the audit
+        trail contained no record of *which* user consented to *which* client
+        with *which* scopes — impossible to reconstruct after the fact.
+        """
+        async with self._ctx.admin_db.transaction() as session:
+            await record_audit(
+                session,
+                action=AuditAction.APPROVE if approved else AuditAction.DENY,
+                target_type=AuditTargetType.OAUTH_CLIENT,
+                target_id=oauth_client_id,
+                actor_type=ActorType.USER,
+                actor_id=user_id,
+                after={"scopes": scopes, "oauth_client_id": oauth_client_id},
+                reason="oauth consent approved" if approved else "oauth consent denied",
+                origin=None,
+            )
+
     async def precheck_auth_code(self, code: str) -> None:
         """Cheap read-only validity check on an auth code before spending argon2.
 

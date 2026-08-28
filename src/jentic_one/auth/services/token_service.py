@@ -182,6 +182,9 @@ class TokenService:
                 created_by=actor_id,
                 oauth_client_id=oauth_client_id,
             )
+            audit_after: dict[str, object] = {"token_type": "pair", "scopes": scopes}
+            if oauth_client_id is not None:
+                audit_after["oauth_client_id"] = oauth_client_id
             await record_audit(
                 session,
                 action=AuditAction.CREATE,
@@ -189,7 +192,7 @@ class TokenService:
                 target_id=family_id,
                 actor_type=actor_type,
                 actor_id=actor_id,
-                after={"token_type": "pair", "scopes": scopes},
+                after=audit_after,
                 origin=None,
             )
 

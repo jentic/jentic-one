@@ -724,14 +724,23 @@ async def consent_submit(
     redirect_uri = params.get("redirect_uri") or ""
     original_state = params.get("original_state")
     client_id = params.get("client_id") or ""
+    user_id = params.get("user_id") or ""
+    scope = params.get("scope") or "openid"
+
+    is_platform = _is_platform_client(client_id, ctx)
+    if not is_platform and user_id:
+        await authorize_svc.record_consent_decision(
+            user_id=user_id,
+            oauth_client_id=client_id,
+            approved=action != "deny",
+            scopes=scope,
+        )
 
     if action == "deny":
         logger.info("oauth_consent_denied", client_id=client_id)
         return _error_redirect(redirect_uri, "access_denied", original_state)
 
-    user_id = params.get("user_id") or ""
     code_challenge = params.get("code_challenge") or ""
-    scope = params.get("scope") or "openid"
     nonce = params.get("nonce")
 
     platform_code = await authorize_svc.issue_authorization_code(
