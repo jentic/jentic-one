@@ -60,10 +60,13 @@ global:
   # have the chart create the account, then attach IAM out of band.
 
 # app and broker run the same jentic-one-app image, differentiated by the
-# JENTIC__APPS env each subchart sets. If the Marketplace portal provisions a
-# single ECR repository for the product, keep the explicit repository values
-# below identical; if it provisions one repo per name, drop the overrides and
-# let <global.image.registry>/<chart-name> resolve them instead.
+# JENTIC__APPS env. The image bakes the app roles
+# (registry,admin,control,auth), so the broker block below MUST override it —
+# the subcharts themselves don't (deploy/README.md "Helm consumption" note).
+# If the Marketplace portal provisions a single ECR repository for the
+# product, keep the explicit repository values below identical; if it
+# provisions one repo per name, drop the overrides and let
+# <global.image.registry>/<chart-name> resolve them instead.
 app:
   enabled: true
   image:
@@ -102,6 +105,12 @@ broker:
     JENTIC__ENTITLEMENT__PRODUCT_CODE: "dwhxz1v53k58ew6pr7qzieumd"
     JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-dd2p2s65dysv6"
     JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
+    JENTIC__APPS: "broker"
+  # Entitlement wiring — same caveat as app above:
+  #   JENTIC__ENTITLEMENT__ENABLED: "true"
+  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
+  #   JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
 
 registry:
   enabled: false

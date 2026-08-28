@@ -106,6 +106,32 @@ def test_render_marketplace_images_all_ecr() -> None:
 
 
 @pytest.mark.smoke
+def test_render_marketplace_broker_role() -> None:
+    """The Marketplace broker pod must override the app image's baked role.
+
+    Both Marketplace deployments run the jentic-one-app image, which bakes
+    JENTIC__APPS=registry,admin,control,auth. The subcharts don't set the role
+    themselves, so aws-marketplace.yaml must: without the override the
+    "broker" pod boots a second app instance with no forward-proxy surface
+    and every brokered execute 404s (0.37.3 buyer test, 2026-08-28).
+    """
+    result = _helm_template(
+        "-f",
+        str(VALUES_DIR / "aws-marketplace.yaml"),
+        "--set",
+        "global.image.tag=0.0.0-test",
+    )
+    assert result.returncode == 0, result.stderr
+    docs = result.stdout.split("---")
+    broker = next(d for d in docs if "kind: Deployment" in d and "name: jentic-broker" in d)
+    app = next(d for d in docs if "kind: Deployment" in d and "name: jentic-app" in d)
+    assert "name: JENTIC__APPS" in broker
+    assert 'value: "broker"' in broker
+    # The app pod keeps the image's baked default role set.
+    assert "name: JENTIC__APPS" not in app
+
+
+@pytest.mark.smoke
 def test_render_awsmp_launch_parameters() -> None:
     """The Marketplace launch substitutions render into the pod specs.
 
