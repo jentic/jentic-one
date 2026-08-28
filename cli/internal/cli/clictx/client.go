@@ -97,6 +97,38 @@ func stateForClient(state *ActiveState) (*ActiveState, error) {
 	return state, nil
 }
 
+// BrokerHTTPClient builds the base *http.Client for the broker leg of an
+// execute from the active context: the SEC-20 CA-pinned transport when the
+// environment declares ca_cert_path (fail closed on a broken bundle, exactly
+// like the control-plane clients), the default transport otherwise, with the
+// context's TransportHook composed over it (wrap, never displace — the pinning
+// decision stays the inner RoundTripper). Local-MCP §3.7.2: `execute`'s broker
+// leg historically built its own un-pinned client; the MCP path routes through
+// this constructor so broker calls honor the same trust decision as every
+// other backend call. Callers pass the result to client.BrokerTransport, which
+// decorates the retry/backoff policy on the outside.
+func BrokerHTTPClient(ctx context.Context) (*http.Client, error) {
+	state, err := stateForClient(FromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	hc, err := caCertHTTPClient(state.CACertPath)
+	if err != nil {
+		return nil, err
+	}
+	if hc == nil {
+		hc = &http.Client{}
+	}
+	if hook := transportHookFrom(ctx); hook != nil {
+		base := hc.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		hc.Transport = hook(base)
+	}
+	return hc, nil
+}
+
 // GetControlClient is the single constructor every Control Plane command uses. It
 // pulls the ActiveState the root interceptor injected and delegates to the SDK, so
 // token state, API-key credentials, and the file-less override are all handled

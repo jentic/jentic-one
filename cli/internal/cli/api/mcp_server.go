@@ -40,6 +40,9 @@ type mcpServer struct {
 	logger   *slog.Logger
 	readOnly bool
 	excluded map[string]bool
+	// maxResultBytes is the §3.7 context-protection cap applied to relayed
+	// upstream bodies (the execute family) — see mcp_execute.go.
+	maxResultBytes int64
 
 	// sessionID is the per-process UUID fallback for X-Jentic-Session-Id. The
 	// RoundTripper stamps it ONLY when the header is absent, so an env-set
@@ -68,13 +71,17 @@ func newMCPServer(a *app, version string, opts *mcpOptions, logger *slog.Logger)
 		}
 	}
 	s := &mcpServer{
-		app:       a,
-		version:   version,
-		logger:    logger,
-		readOnly:  opts.readOnly,
-		excluded:  excluded,
-		sessionID: uuid.NewString(),
-		instances: newInstanceCache(),
+		app:            a,
+		version:        version,
+		logger:         logger,
+		readOnly:       opts.readOnly,
+		excluded:       excluded,
+		maxResultBytes: opts.maxResultBytes,
+		sessionID:      uuid.NewString(),
+		instances:      newInstanceCache(),
+	}
+	if s.maxResultBytes <= 0 {
+		s.maxResultBytes = defaultMaxResultBytes
 	}
 	s.server = mcp.NewServer(
 		&mcp.Implementation{Name: "jentic-mcp", Title: "Jentic One", Version: version},
@@ -172,13 +179,16 @@ var inspectOperationSchema = map[string]any{
 }
 
 // toolSpecs declares the served tool surface: the 1-A pre-auth pair
-// (get_started, whoami) plus the 1-B discovery pair (search_apis,
-// inspect_operation); the execute tools land in 1-C. Docstrings encode the
-// flow (get_started first, whoami before discovery, search → inspect →
-// execute) per §3.2, with concrete argument examples a model can copy.
+// (get_started, whoami), the 1-B discovery pair (search_apis,
+// inspect_operation), and the 1-C execute surface (execute, execute_read,
+// get_execution_result — mcp_execute.go). Docstrings encode the flow
+// (get_started first, whoami before discovery, search → inspect → execute)
+// per §3.2, with concrete argument examples a model can copy.
 func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	return []mcpToolSpec{
+	execSpecs := s.executeToolSpecs()
+	specs := make([]mcpToolSpec, 0, 4+len(execSpecs))
+	specs = append(specs, []mcpToolSpec{
 		{
 			tool: &mcp.Tool{
 				Name:  "get_started",
@@ -252,13 +262,13 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 			handler:  s.handleInspectOperation,
 			readOnly: true,
 		},
-	}
+	}...)
+	return append(specs, execSpecs...)
 }
 
 // registerTools applies the serving filters. --exclude-tools drops by name;
-// --read-only drops everything not annotated read-only. Both PR 1-A tools are
-// read-only, so the flag only bites from 1-C on — but the filter is wired now
-// so the flag's contract holds from the first release that has it.
+// --read-only drops everything not annotated read-only — from 1-C on that is
+// exactly the `execute` tool (execute_read and get_execution_result stay).
 func (s *mcpServer) registerTools() {
 	for _, spec := range s.toolSpecs() {
 		if s.excluded[spec.tool.Name] {
@@ -344,6 +354,14 @@ func (s *mcpServer) softError(ctx context.Context, err error) *mcp.CallToolResul
 // get_started (the identity already resolved). An empty nextTool keeps the
 // default mapping.
 func (s *mcpServer) softErrorNext(ctx context.Context, err error, nextTool string) *mcp.CallToolResult {
+	return s.softErrorExtra(ctx, err, nextTool, nil)
+}
+
+// softErrorExtra is softErrorNext plus caller-supplied payload keys — the
+// §3.7 error-mapping table's per-class enrichments (a broker denial's verbatim
+// agent_directive passthrough, the retryable hint on transport failures).
+// Extra keys never displace the coded contract keys.
+func (s *mcpServer) softErrorExtra(ctx context.Context, err error, nextTool string, extra map[string]any) *mcp.CallToolResult {
 	coded := mcpCoded(err)
 	payload := map[string]any{
 		"schema_version": mcpSchemaVersion,
@@ -373,6 +391,11 @@ func (s *mcpServer) softErrorNext(ctx context.Context, err error, nextTool strin
 		// stamp joining THIS result to re-validate instead of serving the
 		// cached "fresh" identity next to an auth error.
 		s.instances.invalidate()
+	}
+	for k, v := range extra {
+		if _, taken := payload[k]; !taken {
+			payload[k] = v
+		}
 	}
 	res := s.result(ctx, payload)
 	res.IsError = true

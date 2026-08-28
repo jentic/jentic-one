@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // Credentials is the minimal, UX-free input the auth middleware needs. The
@@ -87,16 +89,40 @@ func BearerToken(creds Credentials) (string, error) {
 	tokens, err := ReadTokens(creds.IdentityRef())
 	needsExchange := err != nil || tokens == nil || time.Now().After(tokens.ExpiresAt)
 	if needsExchange {
-		newTokens, xerr := performOAuthExchange(creds)
+		// Singleflight (local-MCP §3.7.1): N concurrent callers hitting one
+		// expiry instant share ONE mint instead of racing N parallel
+		// exchanges. Mint-fresh is already concurrency-safe (V2 has no
+		// refresh tokens; SaveTokens is documented last-writer-wins), so this
+		// is purely an efficiency guard for long-lived concurrent embedders
+		// (the `jentic mcp` server) — every waiter gets the winner's
+		// independently valid token.
+		v, xerr, _ := mintGroup.Do(mintKey(creds), func() (any, error) {
+			newTokens, xerr := performOAuthExchange(creds)
+			if xerr != nil {
+				return nil, fmt.Errorf("failed to authenticate: %w", xerr)
+			}
+			if serr := SaveTokens(creds.IdentityRef(), newTokens); serr != nil {
+				return nil, serr
+			}
+			return newTokens, nil
+		})
 		if xerr != nil {
-			return "", fmt.Errorf("failed to authenticate: %w", xerr)
+			return "", xerr
 		}
-		if serr := SaveTokens(creds.IdentityRef(), newTokens); serr != nil {
-			return "", serr
-		}
-		tokens = newTokens
+		tokens = v.(*TokenSet)
 	}
 	return tokens.AccessToken, nil
+}
+
+// mintGroup dedupes concurrent token exchanges per (base URL, identity,
+// environment). Package-level: BearerToken is stateless per call, so the
+// dedup scope must be the process.
+var mintGroup singleflight.Group
+
+// mintKey scopes the singleflight to one logical credential: the same
+// identity pair against a different base URL must never share a mint.
+func mintKey(creds Credentials) string {
+	return creds.BaseURL + "\x00" + creds.IdentityName + "\x00" + creds.EnvironmentName
 }
 
 // RefreshBearerToken drops any cached token and forces a fresh assertion

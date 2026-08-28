@@ -2792,6 +2792,12 @@
               "usage": "server log file (default: \u003cXDG state dir\u003e/jentic/logs/mcp.log)"
             },
             {
+              "name": "max-result-bytes",
+              "type": "int64",
+              "default": "131072",
+              "usage": "hard cap on a relayed response body in a tool result; larger bodies are truncated with {truncated, total_bytes, execution_id}"
+            },
+            {
               "name": "mode",
               "type": "string",
               "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"

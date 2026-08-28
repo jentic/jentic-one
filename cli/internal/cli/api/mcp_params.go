@@ -26,6 +26,11 @@ const (
 	paramStringList
 	paramInt
 	paramObject
+	// paramJSON passes any JSON value through as raw bytes (json.RawMessage) —
+	// the execute tool's request body, which may legitimately be an object,
+	// array, string, number, or bool. A string that itself parses as JSON is
+	// kept verbatim as the body text (models routinely stringify bodies).
+	paramJSON
 )
 
 // paramSpec declares one tool parameter: its canonical name (the key handlers
@@ -122,6 +127,8 @@ func coerceParam(v any, kind paramKind) (any, error) {
 			return nil, err
 		}
 		return m, nil
+	case paramJSON:
+		return coerceJSON(v)
 	default:
 		return nil, fmt.Errorf("unknown parameter kind %d", kind)
 	}
@@ -208,6 +215,21 @@ func coerceObject(v any) (map[string]any, error) {
 	default:
 		return nil, fmt.Errorf("expected a JSON object, got %T", v)
 	}
+}
+
+// coerceJSON re-encodes any decoded JSON value as raw bytes. A string whose
+// content parses as JSON is treated as the stringified form and its content
+// kept verbatim; any other string is encoded as a JSON string (the value the
+// model sent IS the value).
+func coerceJSON(v any) (json.RawMessage, error) {
+	if s, ok := v.(string); ok && json.Valid([]byte(s)) {
+		return json.RawMessage(s), nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("value does not encode as JSON: %w", err)
+	}
+	return raw, nil
 }
 
 // equalParam compares two coerced values for the conflicting-alias check.

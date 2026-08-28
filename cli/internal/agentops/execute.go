@@ -207,9 +207,27 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 // policy decorates. The response body is read bounded (MaxBodyBytes) into the
 // returned ExecuteResult.
 func Do(req *http.Request) (*ExecuteResult, error) {
-	httpClient := sdkclient.BrokerTransport(sdkclient.Config{
-		HTTPClient: &http.Client{Timeout: 60 * time.Second},
-	})
+	return DoWith(nil, req)
+}
+
+// DoWith is Do with a caller-supplied base *http.Client for the broker leg —
+// the §3.7.2 CA-pinning seam: a long-lived embedder (the MCP server) resolves
+// the SEC-20 CA-pinned client (plus its attribution TransportHook) through
+// clictx and passes it here, so the broker leg honors the environment's
+// ca_cert_path exactly like every control-plane call. The SDK broker response
+// policy still decorates the OUTSIDE (client.BrokerTransport wraps hc's
+// transport), so hooked headers ride every retry attempt. A nil hc keeps the
+// historical default client. A missing timeout gets the 60s execute ceiling.
+func DoWith(hc *http.Client, req *http.Request) (*ExecuteResult, error) {
+	if hc == nil {
+		hc = &http.Client{}
+	}
+	// Copy before adjusting: the caller may reuse its client elsewhere.
+	base := *hc
+	if base.Timeout == 0 {
+		base.Timeout = 60 * time.Second
+	}
+	httpClient := sdkclient.BrokerTransport(sdkclient.Config{HTTPClient: &base})
 	// G704 (SSRF) is intentional, not a finding: dialing a caller-chosen broker
 	// target IS this function's contract. The URL is guarded upstream —
 	// BuildRequest enforces SEC-1 (no bearer over plaintext to a non-loopback
