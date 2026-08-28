@@ -174,15 +174,20 @@ class TokenService:
 
         return access_plain, refresh_plain
 
-    async def refresh(self, refresh_token: str) -> tuple[str, str]:
+    async def refresh(self, refresh_token: str, *, client_id: str | None = None) -> tuple[str, str]:
         """Rotate a refresh token. Returns a new (access_token, refresh_token) pair.
 
         Implements reuse detection: if the refresh token has already been consumed,
         the entire token family is revoked. Uses SELECT FOR UPDATE to prevent TOCTOU
         races on concurrent refresh attempts.
+
+        For confidential-client tokens (``oauth_client_id`` set), ``client_id``
+        must match the issuing client (RFC 6749 §6). A mismatch revokes the
+        family (potential token theft).
         """
         token_hash = _hash_token(refresh_token)
         reuse_detected = False
+        client_mismatch = False
 
         async with self._ctx.admin_db.transaction() as session:
             rt = await RefreshTokenRepository.get_by_hash(session, token_hash, for_update=True)
@@ -199,71 +204,86 @@ class TokenService:
                 )
                 if oauth_client is None or not oauth_client.active:
                     raise InvalidGrantError("issuing OAuth client has been deactivated")
+                if client_id is None:
+                    raise InvalidGrantError("client authentication required")
+                if client_id != rt.oauth_client_id:
+                    await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
+                    await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                    client_mismatch = True
+                    await record_audit(
+                        session,
+                        action=AuditAction.REVOKE,
+                        target_type=AuditTargetType.TOKEN,
+                        target_id=rt.token_family_id,
+                        actor_type=rt.actor_type,
+                        actor_id=rt.actor_id,
+                        reason="refresh with wrong client_id",
+                        origin=None,
+                    )
 
-            if rt.consumed_at is not None:
-                await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-                await AccessTokenRepository.revoke_family(session, rt.token_family_id)
-                reuse_detected = True
-                await record_audit(
-                    session,
-                    action=AuditAction.REVOKE,
-                    target_type=AuditTargetType.TOKEN,
-                    target_id=rt.token_family_id,
-                    actor_type=rt.actor_type,
-                    actor_id=rt.actor_id,
-                    reason="refresh token reuse detected",
-                    origin=None,
-                )
-            else:
-                # A non-active actor must not rotate its way to fresh access
-                # tokens — refresh is a mint path, so it gets a status gate
-                # too (#1136). Unlike the jwt-bearer exchange, PENDING gets no
-                # distinct detail here: a refresh token only exists after a
-                # successful exchange, so pending-approval polling never
-                # reaches this path.
-                if not await _actor_is_active(session, rt.actor_id, rt.actor_type):
-                    raise InvalidGrantError("actor is not active")
+            if not client_mismatch:
+                if rt.consumed_at is not None:
+                    await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
+                    await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                    reuse_detected = True
+                    await record_audit(
+                        session,
+                        action=AuditAction.REVOKE,
+                        target_type=AuditTargetType.TOKEN,
+                        target_id=rt.token_family_id,
+                        actor_type=rt.actor_type,
+                        actor_id=rt.actor_id,
+                        reason="refresh token reuse detected",
+                        origin=None,
+                    )
+                else:
+                    if not await _actor_is_active(session, rt.actor_id, rt.actor_type):
+                        raise InvalidGrantError("actor is not active")
 
-                access_plain = _generate_token(ACCESS_TOKEN_PREFIX)
-                refresh_plain = _generate_token(REFRESH_TOKEN_PREFIX)
-                now = datetime.now(UTC)
+                    access_plain = _generate_token(ACCESS_TOKEN_PREFIX)
+                    refresh_plain = _generate_token(REFRESH_TOKEN_PREFIX)
+                    now = datetime.now(UTC)
 
-                await AccessTokenRepository.create(
-                    session,
-                    token_hash=_hash_token(access_plain),
-                    actor_id=rt.actor_id,
-                    actor_type=rt.actor_type,
-                    scopes=list(rt.scopes),
-                    token_family_id=rt.token_family_id,
-                    expires_at=now + timedelta(seconds=self.access_ttl_seconds),
-                    created_by=rt.actor_id,
-                    oauth_client_id=rt.oauth_client_id,
-                )
-                new_refresh = await RefreshTokenRepository.create(
-                    session,
-                    token_hash=_hash_token(refresh_plain),
-                    actor_id=rt.actor_id,
-                    actor_type=rt.actor_type,
-                    scopes=list(rt.scopes),
-                    token_family_id=rt.token_family_id,
-                    expires_at=now + timedelta(seconds=self._refresh_ttl),
-                    created_by=rt.actor_id,
-                    oauth_client_id=rt.oauth_client_id,
-                )
+                    await AccessTokenRepository.create(
+                        session,
+                        token_hash=_hash_token(access_plain),
+                        actor_id=rt.actor_id,
+                        actor_type=rt.actor_type,
+                        scopes=list(rt.scopes),
+                        token_family_id=rt.token_family_id,
+                        expires_at=now + timedelta(seconds=self.access_ttl_seconds),
+                        created_by=rt.actor_id,
+                        oauth_client_id=rt.oauth_client_id,
+                    )
+                    new_refresh = await RefreshTokenRepository.create(
+                        session,
+                        token_hash=_hash_token(refresh_plain),
+                        actor_id=rt.actor_id,
+                        actor_type=rt.actor_type,
+                        scopes=list(rt.scopes),
+                        token_family_id=rt.token_family_id,
+                        expires_at=now + timedelta(seconds=self._refresh_ttl),
+                        created_by=rt.actor_id,
+                        oauth_client_id=rt.oauth_client_id,
+                    )
 
-                await RefreshTokenRepository.consume(session, rt.id, replaced_by_id=new_refresh.id)
-                await record_audit(
-                    session,
-                    action=AuditAction.REFRESH,
-                    target_type=AuditTargetType.TOKEN,
-                    target_id=rt.token_family_id,
-                    actor_type=rt.actor_type,
-                    actor_id=rt.actor_id,
-                    origin=None,
-                )
+                    await RefreshTokenRepository.consume(
+                        session, rt.id, replaced_by_id=new_refresh.id
+                    )
+                    await record_audit(
+                        session,
+                        action=AuditAction.REFRESH,
+                        target_type=AuditTargetType.TOKEN,
+                        target_id=rt.token_family_id,
+                        actor_type=rt.actor_type,
+                        actor_id=rt.actor_id,
+                        origin=None,
+                    )
 
         if reuse_detected:
             raise InvalidGrantError("refresh token reuse detected")
+        if client_mismatch:
+            raise InvalidGrantError("client_id mismatch")
 
         return access_plain, refresh_plain
 

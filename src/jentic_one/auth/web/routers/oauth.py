@@ -226,7 +226,15 @@ async def token_endpoint(
     if not body.refresh_token:
         raise InvalidGrantError("refresh_token is required for grant_type=refresh_token")
 
-    access_token, refresh_token = await token_svc.refresh(body.refresh_token)
+    verified_client_id: str | None = None
+    if body.client_id and body.client_secret:
+        if not await oauth_client_svc.verify_client_secret(body.client_id, body.client_secret):
+            raise InvalidGrantError("invalid_client")
+        verified_client_id = body.client_id
+
+    access_token, refresh_token = await token_svc.refresh(
+        body.refresh_token, client_id=verified_client_id
+    )
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
