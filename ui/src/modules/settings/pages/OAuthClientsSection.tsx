@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, Trash2, Pencil, KeyRound, RotateCcw, ShieldAlert } from 'lucide-react';
+import { useId, useState } from 'react';
+import { Plus, Trash2, Pencil, KeyRound, RotateCcw, ShieldAlert, X } from 'lucide-react';
 import {
 	Button,
 	CopyButton,
@@ -58,6 +58,7 @@ interface RedirectUriListProps {
 }
 
 function RedirectUriList({ uris, onChange }: RedirectUriListProps) {
+	const baseId = useId();
 	const handleChange = (index: number, value: string): void => {
 		const updated = [...uris];
 		updated[index] = value;
@@ -75,7 +76,7 @@ function RedirectUriList({ uris, onChange }: RedirectUriListProps) {
 	return (
 		<div className="space-y-2">
 			{uris.map((uri, index) => (
-				<div key={`uri-${index}`} className="flex items-center gap-2">
+				<div key={`${baseId}-${index}`} className="flex items-center gap-2">
 					<Input
 						value={uri}
 						onChange={(e): void => handleChange(index, e.target.value)}
@@ -102,6 +103,110 @@ function RedirectUriList({ uris, onChange }: RedirectUriListProps) {
 	);
 }
 
+const COMMON_SCOPES = [
+	'capabilities:read',
+	'capabilities:execute',
+	'toolkits:read',
+	'toolkits:write',
+	'credentials:read',
+	'credentials:write',
+	'agents:read',
+	'agents:write',
+	'apis:read',
+	'apis:write',
+	'users:read',
+	'jobs:read',
+	'executions:read',
+	'audit:read',
+];
+
+interface ScopeSelectorProps {
+	scopes: string[];
+	onChange: (scopes: string[]) => void;
+}
+
+function ScopeSelector({ scopes, onChange }: ScopeSelectorProps) {
+	const [customInput, setCustomInput] = useState('');
+
+	const toggle = (scope: string): void => {
+		if (scopes.includes(scope)) {
+			onChange(scopes.filter((s) => s !== scope));
+		} else {
+			onChange([...scopes, scope]);
+		}
+	};
+
+	const addCustom = (): void => {
+		const trimmed = customInput.trim();
+		if (trimmed && !scopes.includes(trimmed)) {
+			onChange([...scopes, trimmed]);
+			setCustomInput('');
+		}
+	};
+
+	return (
+		<div className="space-y-2">
+			<div className="flex flex-wrap gap-1.5">
+				{COMMON_SCOPES.map((scope) => {
+					const selected = scopes.includes(scope);
+					return (
+						<button
+							key={scope}
+							type="button"
+							onClick={(): void => toggle(scope)}
+							className={`rounded-full border px-2 py-0.5 text-xs transition ${
+								selected
+									? 'border-primary bg-primary/10 text-primary'
+									: 'border-border text-muted-foreground hover:border-primary/50'
+							}`}
+						>
+							{scope}
+						</button>
+					);
+				})}
+			</div>
+			{scopes.filter((s) => !COMMON_SCOPES.includes(s)).length > 0 && (
+				<div className="flex flex-wrap gap-1">
+					{scopes
+						.filter((s) => !COMMON_SCOPES.includes(s))
+						.map((s) => (
+							<span
+								key={s}
+								className="border-primary bg-primary/10 text-primary inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+							>
+								{s}
+								<button
+									type="button"
+									onClick={(): void => onChange(scopes.filter((x) => x !== s))}
+									className="hover:text-destructive"
+								>
+									<X className="h-3 w-3" />
+								</button>
+							</span>
+						))}
+				</div>
+			)}
+			<div className="flex items-center gap-2">
+				<Input
+					value={customInput}
+					onChange={(e): void => setCustomInput(e.target.value)}
+					placeholder="custom:scope"
+					className="flex-1"
+					onKeyDown={(e): void => {
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							addCustom();
+						}
+					}}
+				/>
+				<Button type="button" variant="outline" size="sm" onClick={addCustom}>
+					Add
+				</Button>
+			</div>
+		</div>
+	);
+}
+
 interface CreateEditDialogProps {
 	open: boolean;
 	onClose: () => void;
@@ -116,6 +221,10 @@ function CreateEditDialog({ open, onClose, onSecretRevealed, client }: CreateEdi
 		client?.redirect_uris.length ? client.redirect_uris : [''],
 	);
 	const [requireConsent, setRequireConsent] = useState(client?.require_consent ?? true);
+	const [restrictScopes, setRestrictScopes] = useState(
+		client?.allowed_scopes != null && client.allowed_scopes.length > 0,
+	);
+	const [allowedScopes, setAllowedScopes] = useState<string[]>(client?.allowed_scopes ?? []);
 
 	const createMutation = useCreateOAuthClient();
 	const updateMutation = useUpdateOAuthClient();
@@ -133,14 +242,16 @@ function CreateEditDialog({ open, onClose, onSecretRevealed, client }: CreateEdi
 		}
 
 		try {
+			const scopePayload = restrictScopes ? allowedScopes : null;
 			if (isEdit) {
 				await updateMutation.mutateAsync({
 					id: client.id,
 					input: {
 						name: name.trim(),
-						description: description.trim() || undefined,
+						description: description.trim() || null,
 						redirect_uris: uris,
 						require_consent: requireConsent,
+						allowed_scopes: scopePayload,
 					},
 				});
 				toast({ title: 'OAuth client updated', variant: 'success' });
@@ -151,6 +262,7 @@ function CreateEditDialog({ open, onClose, onSecretRevealed, client }: CreateEdi
 					description: description.trim() || undefined,
 					redirect_uris: uris,
 					require_consent: requireConsent,
+					allowed_scopes: scopePayload,
 				});
 				onClose();
 				if (result.client_secret) {
@@ -219,6 +331,27 @@ function CreateEditDialog({ open, onClose, onSecretRevealed, client }: CreateEdi
 						className="h-4 w-4"
 					/>
 					<Label htmlFor="require_consent">Require consent screen</Label>
+				</div>
+				<div className="space-y-2">
+					<div className="flex items-center gap-2">
+						<input
+							type="checkbox"
+							id="restrict_scopes"
+							checked={restrictScopes}
+							onChange={(e): void => setRestrictScopes(e.target.checked)}
+							className="h-4 w-4"
+						/>
+						<Label htmlFor="restrict_scopes">Restrict allowed scopes</Label>
+					</div>
+					{restrictScopes && (
+						<ScopeSelector scopes={allowedScopes} onChange={setAllowedScopes} />
+					)}
+					{restrictScopes && allowedScopes.length === 0 && (
+						<p className="text-muted-foreground text-xs">
+							No scopes selected — this client will only be able to request OIDC
+							scopes (openid, email, profile).
+						</p>
+					)}
 				</div>
 			</form>
 		</Dialog>
@@ -493,6 +626,18 @@ export function OAuthClientsSection() {
 										{client.require_consent ? 'Yes' : 'No'}
 									</span>
 								</div>
+								{client.allowed_scopes != null && (
+									<div>
+										<span className="text-muted-foreground">
+											Allowed scopes:{' '}
+										</span>
+										<span className="text-foreground">
+											{client.allowed_scopes.length > 0
+												? client.allowed_scopes.join(', ')
+												: 'OIDC only'}
+										</span>
+									</div>
+								)}
 							</div>
 						</div>
 					))}
@@ -565,7 +710,10 @@ export function OAuthClientsSection() {
 			{revealedSecret != null && (
 				<SecretDialog
 					open
-					onClose={(): void => setRevealedSecret(null)}
+					onClose={(): void => {
+						setRevealedSecret(null);
+						rotateMutation.reset();
+					}}
 					secret={revealedSecret}
 					title={secretDialogTitle}
 				/>
