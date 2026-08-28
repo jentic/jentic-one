@@ -378,27 +378,14 @@ def _verify_payload(
     return payload
 
 
-# Consumed consent nonce tracking (in-memory; acceptable for single-instance or
-# sticky-session deploys; a shared cache backend would be needed for multi-instance).
-_consumed_consent_nonces: set[str] = set()
-_consumed_nonce_expiry: list[tuple[float, str]] = []
-_NONCE_GC_THRESHOLD = 1000
+_consent_nonce_store = MemoryStateBackend()
 
 
-def _consume_consent_nonce(nonce: str) -> bool:
+async def _consume_consent_nonce(nonce: str) -> bool:
     """Attempt to consume a consent nonce. Returns False if already consumed."""
-    now = time.time()
-    if len(_consumed_nonce_expiry) > _NONCE_GC_THRESHOLD:
-        cutoff = now - CONSENT_STATE_MAX_AGE_SECONDS
-        expired = [n for t, n in _consumed_nonce_expiry if t < cutoff]
-        for n in expired:
-            _consumed_consent_nonces.discard(n)
-        _consumed_nonce_expiry[:] = [(t, n) for t, n in _consumed_nonce_expiry if t >= cutoff]
-    if nonce in _consumed_consent_nonces:
-        return False
-    _consumed_consent_nonces.add(nonce)
-    _consumed_nonce_expiry.append((now, nonce))
-    return True
+    return await _consent_nonce_store.set_if_absent(
+        f"consent-nonce:{nonce}", b"1", ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS)
+    )
 
 
 @router.get("/authorize", dependencies=[Depends(_check_rate_limit)])
@@ -691,7 +678,7 @@ async def consent_submit(
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
 
     consent_nonce = params.get("consent_nonce") or ""
-    if not _consume_consent_nonce(consent_nonce):
+    if not await _consume_consent_nonce(consent_nonce):
         logger.warning("oauth_consent_nonce_replay", nonce=consent_nonce[:8])
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
 
