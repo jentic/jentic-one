@@ -4,16 +4,27 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
 	OAuthClientsService,
+	PermissionsService,
 	type OAuthClientCreateRequest,
 	type OAuthClientCreateResponse,
 	type OAuthClientResponse,
 	type OAuthClientRotateSecretResponse,
 	type OAuthClientUpdateRequest,
+	type PermissionResponse,
 } from '@/shared/api';
 
 export type OAuthClient = OAuthClientResponse;
 
 const QUERY_KEY = ['oauth-clients'] as const;
+const PERMISSIONS_KEY = ['oauth-clients', 'permissions'] as const;
+
+export function usePermissionCatalogue() {
+	return useQuery<PermissionResponse[]>({
+		queryKey: PERMISSIONS_KEY,
+		queryFn: () => PermissionsService.listPermissions().then((r) => r.data),
+		staleTime: 5 * 60 * 1000,
+	});
+}
 
 export function useOAuthClients(includeInactive = false) {
 	return useQuery({

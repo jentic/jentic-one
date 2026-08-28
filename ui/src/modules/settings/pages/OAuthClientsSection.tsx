@@ -18,6 +18,7 @@ import {
 	useDeactivateOAuthClient,
 	useReactivateOAuthClient,
 	useRotateOAuthClientSecret,
+	usePermissionCatalogue,
 	type OAuthClient,
 } from '@/modules/settings/api/hooks';
 
@@ -108,23 +109,6 @@ function RedirectUriList({ uris, onChange }: RedirectUriListProps) {
 	);
 }
 
-const COMMON_SCOPES = [
-	'capabilities:read',
-	'capabilities:execute',
-	'toolkits:read',
-	'toolkits:write',
-	'credentials:read',
-	'credentials:write',
-	'agents:read',
-	'agents:write',
-	'apis:read',
-	'apis:write',
-	'users:read',
-	'jobs:read',
-	'executions:read',
-	'audit:read',
-];
-
 interface ScopeSelectorProps {
 	scopes: string[];
 	onChange: (scopes: string[]) => void;
@@ -132,6 +116,8 @@ interface ScopeSelectorProps {
 
 function ScopeSelector({ scopes, onChange }: ScopeSelectorProps) {
 	const [customInput, setCustomInput] = useState('');
+	const { data: catalogue = [] } = usePermissionCatalogue();
+	const catalogueNames = catalogue.map((p) => p.name);
 
 	const toggle = (scope: string): void => {
 		if (scopes.includes(scope)) {
@@ -152,28 +138,29 @@ function ScopeSelector({ scopes, onChange }: ScopeSelectorProps) {
 	return (
 		<div className="space-y-2">
 			<div className="flex flex-wrap gap-1.5">
-				{COMMON_SCOPES.map((scope) => {
-					const selected = scopes.includes(scope);
+				{catalogue.map((perm) => {
+					const selected = scopes.includes(perm.name);
 					return (
 						<button
-							key={scope}
+							key={perm.name}
 							type="button"
-							onClick={(): void => toggle(scope)}
+							onClick={(): void => toggle(perm.name)}
+							title={perm.description}
 							className={`rounded-full border px-2 py-0.5 text-xs transition ${
 								selected
 									? 'border-primary bg-primary/10 text-primary'
 									: 'border-border text-muted-foreground hover:border-primary/50'
 							}`}
 						>
-							{scope}
+							{perm.name}
 						</button>
 					);
 				})}
 			</div>
-			{scopes.filter((s) => !COMMON_SCOPES.includes(s)).length > 0 && (
+			{scopes.filter((s) => !catalogueNames.includes(s)).length > 0 && (
 				<div className="flex flex-wrap gap-1">
 					{scopes
-						.filter((s) => !COMMON_SCOPES.includes(s))
+						.filter((s) => !catalogueNames.includes(s))
 						.map((s) => (
 							<span
 								key={s}
