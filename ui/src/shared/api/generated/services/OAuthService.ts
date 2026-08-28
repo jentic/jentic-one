@@ -122,15 +122,18 @@ export class OAuthService {
      * @throws ApiError
      */
     public static consentPage({
-        consentToken,
+        ch,
     }: {
-        consentToken: string,
+        /**
+         * Opaque consent-flow handle
+         */
+        ch: string,
     }): CancelablePromise<string> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/oauth/consent',
             query: {
-                'consent_token': consentToken,
+                'ch': ch,
             },
             errors: {
                 400: `Bad Request`,
@@ -143,6 +146,11 @@ export class OAuthService {
     /**
      * Consent Submit
      * Process the consent form submission. Mints the auth code only on approval.
+     *
+     * ``consent_token`` is the opaque handle emitted by the callback. It never
+     * leaves the state backend as anything more than an ID — the actual consent
+     * parameters (user_id, email, scopes, redirect_uri) live server-side and
+     * can't be tampered with or captured from browser history/proxy logs.
      * @returns any Successful Response
      * @throws ApiError
      */

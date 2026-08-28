@@ -7,7 +7,7 @@
  */
 export type OAuthClientCreateRequest = {
     /**
-     * If set, restricts which scopes this client may request. Null means all scopes are permitted.
+     * If set, restricts which scopes this client may request. An empty list denies all non-OIDC scopes. Null means unrestricted (all scopes permitted).
      */
     allowed_scopes?: (Array<string> | null);
     /**

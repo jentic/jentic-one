@@ -8,7 +8,7 @@
 export type OAuthClientUpdateRequest = {
     active?: (boolean | null);
     /**
-     * Scope restriction list. Null means no change; an empty list clears the restriction (all scopes permitted).
+     * Scope restriction list. Null means no change; an empty list denies all non-OIDC scopes; the wildcard ``["*"]`` resets to unrestricted.
      */
     allowed_scopes?: (Array<string> | null);
     description?: (string | null);
