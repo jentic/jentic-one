@@ -109,7 +109,7 @@ _Total endpoints: **168**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (56)
+## Operator-facing (typically a human operator / admin) (50)
 
 
 ### `access-requests`
@@ -123,17 +123,6 @@ _Total endpoints: **168**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/actors` | `users:read` | operator | List Actors |
-
-### `admin`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/admin/oauth-clients` | `org:admin` | operator | List OAuth clients |
-| POST | `/admin/oauth-clients` | `org:admin` | operator | Register OAuth client |
-| DELETE | `/admin/oauth-clients/{id}` | `org:admin` | operator | Deactivate OAuth client |
-| GET | `/admin/oauth-clients/{id}` | `org:admin` | operator | Get OAuth client |
-| PATCH | `/admin/oauth-clients/{id}` | `org:admin` | operator | Update OAuth client |
-| POST | `/admin/oauth-clients/{id}/rotate-secret` | `org:admin` | operator | Rotate client secret |
 
 ### `agents`
 
@@ -233,7 +222,7 @@ _Total endpoints: **168**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (60)
+## Any authenticated actor (66)
 
 
 ### `access-requests`
@@ -253,6 +242,12 @@ _Total endpoints: **168**._
 | GET | `/admin/config/providers` | `config:read` | any | List credential provider configs |
 | GET | `/admin/config/providers/{name}` | `config:read` | any | Get a credential provider config |
 | PUT | `/admin/config/providers/{name}` | `config:write` | any | Set a credential provider config |
+| GET | `/admin/oauth-clients` | `oauth-clients:read` | any | List OAuth clients |
+| POST | `/admin/oauth-clients` | `oauth-clients:write` | any | Register OAuth client |
+| DELETE | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Deactivate OAuth client |
+| GET | `/admin/oauth-clients/{id}` | `oauth-clients:read` | any | Get OAuth client |
+| PATCH | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Update OAuth client |
+| POST | `/admin/oauth-clients/{id}/rotate-secret` | `oauth-clients:write` | any | Rotate client secret |
 
 ### `agents`
 

@@ -279,45 +279,20 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
+      "group": "Any authenticated actor",
       "implied_scopes": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "config:read",
-          "config:write",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
-          "users:read",
-          "users:write"
-        ]
+        "oauth-clients:read": []
       },
       "method": "GET",
       "operation_id": "listOauthClients",
       "path": "/admin/oauth-clients",
       "public": false,
       "required_scopes": [
-        "org:admin"
+        "oauth-clients:read"
       ],
       "summary": "List OAuth clients",
       "surface": "admin",
-      "typical_caller": "operator"
+      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -328,33 +303,10 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
+      "group": "Any authenticated actor",
       "implied_scopes": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "config:read",
-          "config:write",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
-          "users:read",
-          "users:write"
+        "oauth-clients:write": [
+          "oauth-clients:read"
         ]
       },
       "method": "POST",
@@ -362,11 +314,11 @@
       "path": "/admin/oauth-clients",
       "public": false,
       "required_scopes": [
-        "org:admin"
+        "oauth-clients:write"
       ],
       "summary": "Register OAuth client",
       "surface": "admin",
-      "typical_caller": "operator"
+      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -377,33 +329,10 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
+      "group": "Any authenticated actor",
       "implied_scopes": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "config:read",
-          "config:write",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
-          "users:read",
-          "users:write"
+        "oauth-clients:write": [
+          "oauth-clients:read"
         ]
       },
       "method": "DELETE",
@@ -411,11 +340,11 @@
       "path": "/admin/oauth-clients/{id}",
       "public": false,
       "required_scopes": [
-        "org:admin"
+        "oauth-clients:write"
       ],
       "summary": "Deactivate OAuth client",
       "surface": "admin",
-      "typical_caller": "operator"
+      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -426,45 +355,20 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
+      "group": "Any authenticated actor",
       "implied_scopes": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "config:read",
-          "config:write",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
-          "users:read",
-          "users:write"
-        ]
+        "oauth-clients:read": []
       },
       "method": "GET",
       "operation_id": "getOauthClient",
       "path": "/admin/oauth-clients/{id}",
       "public": false,
       "required_scopes": [
-        "org:admin"
+        "oauth-clients:read"
       ],
       "summary": "Get OAuth client",
       "surface": "admin",
-      "typical_caller": "operator"
+      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -475,33 +379,10 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
+      "group": "Any authenticated actor",
       "implied_scopes": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "config:read",
-          "config:write",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
-          "users:read",
-          "users:write"
+        "oauth-clients:write": [
+          "oauth-clients:read"
         ]
       },
       "method": "PATCH",
@@ -509,11 +390,11 @@
       "path": "/admin/oauth-clients/{id}",
       "public": false,
       "required_scopes": [
-        "org:admin"
+        "oauth-clients:write"
       ],
       "summary": "Update OAuth client",
       "surface": "admin",
-      "typical_caller": "operator"
+      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -524,33 +405,10 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
+      "group": "Any authenticated actor",
       "implied_scopes": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "config:read",
-          "config:write",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
-          "users:read",
-          "users:write"
+        "oauth-clients:write": [
+          "oauth-clients:read"
         ]
       },
       "method": "POST",
@@ -558,11 +416,11 @@
       "path": "/admin/oauth-clients/{id}/rotate-secret",
       "public": false,
       "required_scopes": [
-        "org:admin"
+        "oauth-clients:write"
       ],
       "summary": "Rotate client secret",
       "surface": "admin",
-      "typical_caller": "operator"
+      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -1918,6 +1776,8 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
@@ -2512,6 +2372,8 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
@@ -2561,6 +2423,8 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
@@ -4157,6 +4021,8 @@
               "executions:read",
               "jobs:read",
               "jobs:write",
+              "oauth-clients:read",
+              "oauth-clients:write",
               "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
@@ -4183,6 +4049,8 @@
               "executions:read",
               "jobs:read",
               "jobs:write",
+              "oauth-clients:read",
+              "oauth-clients:write",
               "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
@@ -4632,6 +4500,35 @@
             "name": "config:write"
           }
         ]
+      },
+      {
+        "blurb": "",
+        "label": "Oauth Clients",
+        "name": "oauth-clients",
+        "scopes": [
+          {
+            "action": "read",
+            "description": "Read OAuth client registrations",
+            "family": "oauth-clients",
+            "implies": [],
+            "implies_transitive": [],
+            "is_superuser": false,
+            "name": "oauth-clients:read"
+          },
+          {
+            "action": "write",
+            "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+            "family": "oauth-clients",
+            "implies": [
+              "oauth-clients:read"
+            ],
+            "implies_transitive": [
+              "oauth-clients:read"
+            ],
+            "is_superuser": false,
+            "name": "oauth-clients:write"
+          }
+        ]
       }
     ],
     "schema": "jentic.scope-catalog/v1",
@@ -4828,6 +4725,28 @@
         "name": "jobs:write"
       },
       {
+        "action": "read",
+        "description": "Read OAuth client registrations",
+        "family": "oauth-clients",
+        "implies": [],
+        "implies_transitive": [],
+        "is_superuser": false,
+        "name": "oauth-clients:read"
+      },
+      {
+        "action": "write",
+        "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+        "family": "oauth-clients",
+        "implies": [
+          "oauth-clients:read"
+        ],
+        "implies_transitive": [
+          "oauth-clients:read"
+        ],
+        "is_superuser": false,
+        "name": "oauth-clients:write"
+      },
+      {
         "action": "admin",
         "description": "Full organisation administrator access",
         "family": "org",
@@ -4849,6 +4768,8 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
@@ -4875,6 +4796,8 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
@@ -5028,7 +4951,7 @@
         "name": "users:write"
       }
     ],
-    "total": 31
+    "total": 33
   },
   "total": 168
 }

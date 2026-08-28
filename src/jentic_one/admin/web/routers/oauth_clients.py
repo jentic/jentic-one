@@ -41,7 +41,7 @@ def _to_response(view: OAuthClientView) -> OAuthClientResponse:
 @router.post("/admin/oauth-clients", status_code=201, summary="Register OAuth client")
 async def create_oauth_client(
     body: OAuthClientCreateRequest,
-    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> OAuthClientCreateResponse:
     """Register a new OAuth client for third-party application integration.
@@ -63,7 +63,7 @@ async def create_oauth_client(
 
 @router.get("/admin/oauth-clients", summary="List OAuth clients")
 async def list_oauth_clients(
-    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    identity: Identity = get_current_identity(required_permissions=["oauth-clients:read"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
     include_inactive: bool = False,
 ) -> OAuthClientListResponse:
@@ -79,7 +79,7 @@ async def list_oauth_clients(
 )
 async def get_oauth_client(
     id: str,
-    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    identity: Identity = get_current_identity(required_permissions=["oauth-clients:read"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> OAuthClientResponse:
     """Get an OAuth client by its internal ID."""
@@ -95,7 +95,7 @@ async def get_oauth_client(
 async def update_oauth_client(
     id: str,
     body: OAuthClientUpdateRequest,
-    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> OAuthClientResponse:
     """Update an OAuth client's name, description, redirect_uris, or active status."""
@@ -119,7 +119,7 @@ async def update_oauth_client(
 )
 async def rotate_oauth_client_secret(
     id: str,
-    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> OAuthClientRotateSecretResponse:
     """Generate a new client secret. The previous secret is immediately invalidated.
@@ -138,7 +138,7 @@ async def rotate_oauth_client_secret(
 )
 async def deactivate_oauth_client(
     id: str,
-    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> Response:
     """Soft-delete an OAuth client by setting active=False.
