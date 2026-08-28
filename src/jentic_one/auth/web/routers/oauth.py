@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json as json_mod
+
+import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import ValidationError
 
@@ -28,41 +31,70 @@ from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBacke
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 
+logger = structlog.get_logger(__name__)
+
 router = APIRouter()
 
-_TOKEN_RATE_LIMIT_RPM = 60
-_TOKEN_RATE_LIMIT_BURST = 60
 
-_cached_token_limiter: RateLimiter | None = None
-
-
-def _resolve_auth_backend(request: Request) -> SharedStateBackend:
+def _get_auth_backend(request: Request) -> SharedStateBackend:
     backend: object = getattr(request.app.state, "auth_state_backend", None)
     if isinstance(backend, SharedStateBackend):
         return backend
+    logger.warning("auth_state_backend missing from app.state, using in-memory fallback")
     return MemoryStateBackend()
 
 
-def _get_token_limiter(request: Request) -> RateLimiter:
-    global _cached_token_limiter
-    if _cached_token_limiter is not None:
-        return _cached_token_limiter
-    backend = _resolve_auth_backend(request)
-    _cached_token_limiter = RateLimiter(
-        backend, default_rpm=_TOKEN_RATE_LIMIT_RPM, burst=_TOKEN_RATE_LIMIT_BURST
-    )
-    return _cached_token_limiter
-
-
-async def _check_token_rate_limit(request: Request) -> None:
-    """Per-client+IP rate limiter for the token endpoint."""
+def _client_ip(request: Request, trusted_proxies: frozenset[str]) -> str:
+    """Extract the real client IP, honoring XFF only from trusted reverse proxies."""
+    socket_ip = request.client.host if request.client else "unknown"
+    if not trusted_proxies or socket_ip not in trusted_proxies:
+        return socket_ip
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        ip = forwarded.split(",")[0].strip()
-    else:
-        ip = request.client.host if request.client else "unknown"
-    limiter = _get_token_limiter(request)
-    outcome = await limiter.acquire(ip)
+    if not forwarded:
+        return socket_ip
+    hops = [h.strip() for h in forwarded.split(",")]
+    for hop in reversed(hops):
+        if hop not in trusted_proxies:
+            return hop
+    return socket_ip
+
+
+def _get_token_limiter(request: Request, ctx: Context) -> RateLimiter:
+    limiter: RateLimiter | None = getattr(request.app.state, "_token_limiter", None)
+    if limiter is not None:
+        return limiter
+    cfg = ctx.config.auth.oauth_rate_limit
+    backend = _get_auth_backend(request)
+    limiter = RateLimiter(backend, default_rpm=cfg.exchange_rpm, burst=cfg.exchange_burst)
+    request.app.state._token_limiter = limiter
+    return limiter
+
+
+async def _extract_client_id(request: Request) -> str | None:
+    """Best-effort client_id extraction from the token request body."""
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type == "application/x-www-form-urlencoded":
+        form = await request.form()
+        value = form.get("client_id")
+        return str(value) if value else None
+    body_bytes = await request.body()
+    if not body_bytes:
+        return None
+    try:
+        data = json_mod.loads(body_bytes)
+        return data.get("client_id") if isinstance(data, dict) else None
+    except (ValueError, TypeError):
+        return None
+
+
+async def _check_token_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
+    """Per-client+IP rate limiter for the token endpoint."""
+    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    ip = _client_ip(request, trusted)
+    client_id = await _extract_client_id(request)
+    key = f"{client_id}:{ip}" if client_id else ip
+    limiter = _get_token_limiter(request, ctx)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 

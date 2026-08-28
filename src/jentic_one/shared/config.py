@@ -304,6 +304,16 @@ def _signing_key_fingerprint(pem: str) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+class OAuthRateLimitConfig(BaseModel):
+    """Pre-auth rate limit tunables for OAuth endpoints."""
+
+    authorize_rpm: int = 30
+    authorize_burst: int = 30
+    exchange_rpm: int = 60
+    exchange_burst: int = 60
+    trusted_proxies: list[str] = Field(default_factory=list)
+
+
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
@@ -320,6 +330,7 @@ class AuthConfig(BaseModel):
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
     platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
+    oauth_rate_limit: OAuthRateLimitConfig = Field(default_factory=OAuthRateLimitConfig)
 
     def model_post_init(self, __context: object) -> None:
         """Ensure the SPA platform client is always registered.

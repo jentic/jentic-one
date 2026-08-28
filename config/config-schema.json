@@ -123,6 +123,9 @@
         "idp": {
           "$ref": "#/$defs/IdpConfig"
         },
+        "oauth_rate_limit": {
+          "$ref": "#/$defs/OAuthRateLimitConfig"
+        },
         "platform_clients": {
           "items": {
             "$ref": "#/$defs/PlatformClientConfig"
@@ -927,6 +930,40 @@
         }
       },
       "title": "MetricsConfig",
+      "type": "object"
+    },
+    "OAuthRateLimitConfig": {
+      "description": "Pre-auth rate limit tunables for OAuth endpoints.",
+      "properties": {
+        "authorize_burst": {
+          "default": 30,
+          "title": "Authorize Burst",
+          "type": "integer"
+        },
+        "authorize_rpm": {
+          "default": 30,
+          "title": "Authorize Rpm",
+          "type": "integer"
+        },
+        "exchange_burst": {
+          "default": 60,
+          "title": "Exchange Burst",
+          "type": "integer"
+        },
+        "exchange_rpm": {
+          "default": 60,
+          "title": "Exchange Rpm",
+          "type": "integer"
+        },
+        "trusted_proxies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Trusted Proxies",
+          "type": "array"
+        }
+      },
+      "title": "OAuthRateLimitConfig",
       "type": "object"
     },
     "ObservabilityConfig": {

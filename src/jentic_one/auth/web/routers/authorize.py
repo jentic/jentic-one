@@ -49,46 +49,48 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
-_AUTHORIZE_RATE_LIMIT_RPM = 30
-_AUTHORIZE_RATE_LIMIT_BURST = 30
 
-_cached_authorize_limiter: RateLimiter | None = None
-
-
-def _resolve_auth_backend(request: Request) -> SharedStateBackend:
+def _get_auth_backend(request: Request) -> SharedStateBackend:
     backend: object = getattr(request.app.state, "auth_state_backend", None)
     if isinstance(backend, SharedStateBackend):
         return backend
+    logger.warning("auth_state_backend missing from app.state, using in-memory fallback")
     return MemoryStateBackend()
 
 
-def _get_authorize_limiter(request: Request) -> RateLimiter:
-    global _cached_authorize_limiter
-    if _cached_authorize_limiter is not None:
-        return _cached_authorize_limiter
-    backend = _resolve_auth_backend(request)
-    _cached_authorize_limiter = RateLimiter(
-        backend, default_rpm=_AUTHORIZE_RATE_LIMIT_RPM, burst=_AUTHORIZE_RATE_LIMIT_BURST
-    )
-    return _cached_authorize_limiter
-
-
-def _client_rate_key(request: Request, client_id: str | None = None) -> str:
+def _client_ip(request: Request, trusted_proxies: frozenset[str]) -> str:
+    """Extract the real client IP, honoring XFF only from trusted reverse proxies."""
+    socket_ip = request.client.host if request.client else "unknown"
+    if not trusted_proxies or socket_ip not in trusted_proxies:
+        return socket_ip
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        ip = forwarded.split(",")[0].strip()
-    else:
-        ip = request.client.host if request.client else "unknown"
-    if client_id:
-        return f"{client_id}:{ip}"
-    return ip
+    if not forwarded:
+        return socket_ip
+    hops = [h.strip() for h in forwarded.split(",")]
+    for hop in reversed(hops):
+        if hop not in trusted_proxies:
+            return hop
+    return socket_ip
 
 
-async def _check_rate_limit(request: Request) -> None:
+def _get_authorize_limiter(request: Request, ctx: Context) -> RateLimiter:
+    limiter: RateLimiter | None = getattr(request.app.state, "_authorize_limiter", None)
+    if limiter is not None:
+        return limiter
+    cfg = ctx.config.auth.oauth_rate_limit
+    backend = _get_auth_backend(request)
+    limiter = RateLimiter(backend, default_rpm=cfg.authorize_rpm, burst=cfg.authorize_burst)
+    request.app.state._authorize_limiter = limiter
+    return limiter
+
+
+async def _check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
     """Per-client+IP rate limiter for unauthenticated authorization endpoints."""
+    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
     client_id = request.query_params.get("client_id")
-    key = _client_rate_key(request, client_id)
-    limiter = _get_authorize_limiter(request)
+    ip = _client_ip(request, trusted)
+    key = f"{client_id}:{ip}" if client_id else ip
+    limiter = _get_authorize_limiter(request, ctx)
     outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
@@ -410,15 +412,8 @@ def _verify_payload(
     return payload
 
 
-_consent_nonce_backend: SharedStateBackend | None = None
-
-
 def _get_consent_backend(request: Request) -> SharedStateBackend:
-    global _consent_nonce_backend
-    if _consent_nonce_backend is not None:
-        return _consent_nonce_backend
-    _consent_nonce_backend = _resolve_auth_backend(request)
-    return _consent_nonce_backend
+    return _get_auth_backend(request)
 
 
 async def _consume_consent_nonce(nonce: str, request: Request) -> bool:

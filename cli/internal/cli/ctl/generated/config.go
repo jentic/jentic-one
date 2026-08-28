@@ -157,6 +157,9 @@ type AuthConfig struct {
 	// Idp corresponds to the JSON schema field "idp".
 	Idp *IdpConfig `json:"idp,omitempty,omitzero" yaml:"idp,omitempty" mapstructure:"idp,omitempty"`
 
+	// OauthRateLimit corresponds to the JSON schema field "oauth_rate_limit".
+	OauthRateLimit *OAuthRateLimitConfig `json:"oauth_rate_limit,omitempty,omitzero" yaml:"oauth_rate_limit,omitempty" mapstructure:"oauth_rate_limit,omitempty"`
+
 	// PlatformClients corresponds to the JSON schema field "platform_clients".
 	PlatformClients []PlatformClientConfig `json:"platform_clients,omitempty,omitzero" yaml:"platform_clients,omitempty" mapstructure:"platform_clients,omitempty"`
 
@@ -1382,6 +1385,51 @@ func (j *MetricsConfig) UnmarshalJSON(value []byte) error {
 		plain.Exporter = "otlp"
 	}
 	*j = MetricsConfig(plain)
+	return nil
+}
+
+// Pre-auth rate limit tunables for OAuth endpoints.
+type OAuthRateLimitConfig struct {
+	// AuthorizeBurst corresponds to the JSON schema field "authorize_burst".
+	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
+
+	// AuthorizeRpm corresponds to the JSON schema field "authorize_rpm".
+	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
+
+	// ExchangeBurst corresponds to the JSON schema field "exchange_burst".
+	ExchangeBurst int `json:"exchange_burst,omitempty,omitzero" yaml:"exchange_burst,omitempty" mapstructure:"exchange_burst,omitempty"`
+
+	// ExchangeRpm corresponds to the JSON schema field "exchange_rpm".
+	ExchangeRpm int `json:"exchange_rpm,omitempty,omitzero" yaml:"exchange_rpm,omitempty" mapstructure:"exchange_rpm,omitempty"`
+
+	// TrustedProxies corresponds to the JSON schema field "trusted_proxies".
+	TrustedProxies []string `json:"trusted_proxies,omitempty,omitzero" yaml:"trusted_proxies,omitempty" mapstructure:"trusted_proxies,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *OAuthRateLimitConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain OAuthRateLimitConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["authorize_burst"]; !ok || v == nil {
+		plain.AuthorizeBurst = 30
+	}
+	if v, ok := raw["authorize_rpm"]; !ok || v == nil {
+		plain.AuthorizeRpm = 30
+	}
+	if v, ok := raw["exchange_burst"]; !ok || v == nil {
+		plain.ExchangeBurst = 60
+	}
+	if v, ok := raw["exchange_rpm"]; !ok || v == nil {
+		plain.ExchangeRpm = 60
+	}
+	*j = OAuthRateLimitConfig(plain)
 	return nil
 }
 
