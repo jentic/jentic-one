@@ -120,10 +120,8 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 # parent_permissions (owner inheritance) is still resolved above.
                 permissions = list(resolved.permissions)
             elif resolved.oauth_client_id is not None:
-                # Third-party OAuth client token: honour the consented scopes
-                # (already ceiling-intersected by resolve_access_token) instead
-                # of the user's full grant set.
-                permissions = list(resolved.permissions)
+                consented = set(resolved.permissions)
+                permissions = [p for p in permissions if p in consented]
 
             return Identity(
                 sub=resolved.sub,
@@ -132,6 +130,7 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 parent_permissions=parent_permissions,
                 actor_type=resolved.actor_type,
                 parent_actor_id=resolved.parent_actor_id,
+                oauth_client_id=resolved.oauth_client_id,
             )
         return await verify_token(
             token, secret=ctx.config.admin.auth.jwt_secret.get_secret_value(), ctx=ctx
