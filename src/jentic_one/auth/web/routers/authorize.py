@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
+from jentic_one.auth.core.idp import IdpClaims
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import (
     InvalidGrantError,
@@ -572,14 +573,16 @@ async def oauth_callback(
     needs_consent = oauth_client is not None
 
     if needs_consent and oauth_client is not None:
+        # Do NOT provision the local user yet — third-party consent must gate
+        # account creation so a "Deny" doesn't leave behind a user row and
+        # external-identity link the user never approved. Exchange the IdP code
+        # for claims only; the consent handle carries the claims and the
+        # approve-path provisions from them.
         try:
-            user_id, user_email = await authorize_svc.resolve_idp_user(
+            claims = await authorize_svc.exchange_idp_code_for_claims(
                 code=code,
                 redirect_uri=callback_uri,
             )
-        except UserNotAdmittedError:
-            logger.warning("oauth_user_not_admitted", client_id=client_id)
-            return RedirectResponse(url="/error?error=access_denied", status_code=302)
         except (InvalidGrantError, httpx.HTTPStatusError):
             logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
             return RedirectResponse(url="/error?error=server_error", status_code=302)
@@ -587,7 +590,13 @@ async def oauth_callback(
         consent_handle = secrets.token_urlsafe(32)
         payload_json = json.dumps(
             {
-                "user_id": user_id,
+                "claims": {
+                    "external_subject": claims.external_subject,
+                    "email": claims.email,
+                    "email_verified": claims.email_verified,
+                    "first_name": claims.first_name,
+                    "last_name": claims.last_name,
+                },
                 "redirect_uri": original_redirect_uri,
                 "original_state": original_state,
                 "client_id": client_id,
@@ -596,7 +605,7 @@ async def oauth_callback(
                 "nonce": nonce,
                 "client_name": oauth_client.name,
                 "client_description": oauth_client.description,
-                "user_email": user_email,
+                "user_email": claims.email,
                 "iat": int(time.time()),
             }
         ).encode()
@@ -771,21 +780,43 @@ async def consent_submit(
     raw_state = params.get("original_state")
     original_state = str(raw_state) if raw_state else None
     client_id = str(params.get("client_id") or "")
-    user_id = str(params.get("user_id") or "")
     scope = str(params.get("scope") or "openid")
 
-    is_platform = _is_platform_client(client_id, ctx)
-    if not is_platform and user_id:
+    if action == "deny":
+        # No user_id yet because provisioning is deferred to approve; audit
+        # against the user's IdP email so the deny is still attributable.
+        deny_email = str(params.get("user_email") or "")
+        logger.info("oauth_consent_denied", client_id=client_id, email=deny_email)
+        return _error_redirect(redirect_uri, "access_denied", original_state)
+
+    claims_data = params.get("claims")
+    if not isinstance(claims_data, dict):
+        logger.warning("oauth_consent_missing_claims", client_id=client_id)
+        return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+
+    idp_claims = IdpClaims(
+        external_subject=str(claims_data.get("external_subject") or ""),
+        email=str(claims_data.get("email") or ""),
+        email_verified=bool(claims_data.get("email_verified") or False),
+        first_name=str(claims_data.get("first_name") or ""),
+        last_name=str(claims_data.get("last_name") or ""),
+    )
+    try:
+        user_id = await authorize_svc.provision_from_claims(idp_claims)
+    except UserNotAdmittedError:
+        logger.warning("oauth_user_not_admitted", client_id=client_id)
+        return RedirectResponse(url="/error?error=access_denied", status_code=302)
+    except InvalidGrantError:
+        logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
+        return RedirectResponse(url="/error?error=server_error", status_code=302)
+
+    if not _is_platform_client(client_id, ctx):
         await authorize_svc.record_consent_decision(
             user_id=user_id,
             oauth_client_id=client_id,
-            approved=action != "deny",
+            approved=True,
             scopes=scope,
         )
-
-    if action == "deny":
-        logger.info("oauth_consent_denied", client_id=client_id)
-        return _error_redirect(redirect_uri, "access_denied", original_state)
 
     code_challenge = str(params.get("code_challenge") or "")
     raw_nonce = params.get("nonce")

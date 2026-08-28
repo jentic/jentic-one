@@ -169,6 +169,32 @@ class AuthorizeService:
         user_id = await self._resolve_or_create_user(claims)
         return user_id, claims.email
 
+    async def exchange_idp_code_for_claims(
+        self,
+        *,
+        code: str,
+        redirect_uri: str,
+    ) -> IdpClaims:
+        """Exchange an upstream IdP code and return the claims *without* provisioning.
+
+        Third-party consent flows must not provision a local account until the
+        user has actually approved: an accidentally-triggered /authorize on a
+        registered third-party client should be able to end in a "Deny" without
+        leaving behind an account and an external-identity link the user never
+        agreed to. Consent-approve callers then hand the returned claims to
+        :meth:`provision_from_claims`.
+        """
+        adapter = self._get_idp_adapter()
+        if adapter is None:
+            raise InvalidGrantError("No external IdP configured")
+
+        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        return adapter.map_claims(userinfo)
+
+    async def provision_from_claims(self, claims: IdpClaims) -> str:
+        """Resolve-or-create a local user from IdP claims. Returns the user_id."""
+        return await self._resolve_or_create_user(claims)
+
     async def issue_authorization_code(
         self,
         *,
