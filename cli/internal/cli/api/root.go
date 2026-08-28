@@ -93,6 +93,7 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	// (generate its skills, launch it under isolation, tear its account down),
 	// distinct from the catalog find/run operations above.
 	cmdcore.AddGrouped(root, "client", localagentcmd.NewSkillCmd(app.App))
+	cmdcore.AddGrouped(root, "client", localagentcmd.NewSkillsCmd(app.App))
 	cmdcore.AddGrouped(root, "client", fenced(localagentcmd.NewRunCmd(app.App)))
 	cmdcore.AddGrouped(root, "client", fenced(newResetCmd(app)))
 	// Agent-side read-only self-check (F8-4, impl/5.1 §3c). Not fenced: it never

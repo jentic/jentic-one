@@ -481,6 +481,10 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   including the exact broker URL and headers — before committing side effects.
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
+- `jentic skills` — list available onboarding guidance (step-by-step
+  procedures, pitfalls, and verification for common platform workflows).
+- `jentic skills <name>` — view a specific task guide.
+- `jentic skills init [name]` — install task skill(s) for your operator.
 - Add `--json` to force machine-readable output on a terminal (works on
   `search`, `execute`, `inspect`, `apis`, `access`, `doctor`). `context view`
   has no `--json` flag — it emits JSON automatically in agent/non-TTY mode.

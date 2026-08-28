@@ -568,6 +568,22 @@ func (a *Cmd) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *sk
 		}
 	}
 
+	// Install task skills alongside the main skill.
+	taskSkills, terr := skillgen.TaskSkills("jentic")
+	if terr == nil && len(taskSkills) > 0 {
+		for _, t := range targets {
+			n, werr := a.writeTaskSkills(t.adapter, env, t.scope, taskSkills, opts.dryRun)
+			switch {
+			case werr != nil:
+				fmt.Fprintln(a.Out, "  "+theme.Warnf("%s task skills: %v", t.adapter.Operator(), werr))
+			case opts.dryRun:
+				fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s would install %d task skill(s)", t.adapter.Operator(), n))
+			default:
+				fmt.Fprintln(a.Out, "  "+theme.Successf("%-8s installed %d task skill(s)", t.adapter.Operator(), n))
+			}
+		}
+	}
+
 	if opts.dryRun {
 		fmt.Fprintln(a.Out, theme.Dim.Render("Dry run — nothing was written."))
 		return nil
@@ -762,6 +778,30 @@ func (a *Cmd) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 			}
 		}
 	}
+	// Remove task skills directory for each adapter.
+	for _, ad := range adapters {
+		s := scope
+		if s == "" {
+			s = ad.DefaultScope()
+		}
+		dir := taskSkillsDir(ad, env, s)
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
+		if opts.dryRun {
+			fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s would remove task skills from %s", ad.Operator(), prettyPath(dir)))
+		} else {
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintln(a.Out, "  "+theme.Warnf("%s: failed to remove task skills: %v", ad.Operator(), err))
+			} else {
+				fmt.Fprintln(a.Out, "  "+theme.Successf("%-8s removed task skills from %s", ad.Operator(), prettyPath(dir)))
+			}
+		}
+	}
+
 	if opts.dryRun {
 		fmt.Fprintln(a.Out, theme.Dim.Render("Dry run — nothing was removed."))
 	}
