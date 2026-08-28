@@ -2,46 +2,34 @@ package api
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/x/term"
 	sdkclient "github.com/jentic/jentic-one/cli/client"
-	"github.com/jentic/jentic-one/cli/client/auth"
+	"github.com/jentic/jentic-one/cli/internal/agentops"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
-var errInspectMissingFields = errors.New("inspect response missing method or url")
-
 // apiEnvelopeSchemaVersion pins the machine-contract version of the ad-hoc JSON
-// envelopes this package emits that are NOT a ux wrapper (the execute success
-// map and the catalog import maps). Their bodies are arbitrary upstream/job data
-// so they can't reuse ux.List/Result, but they must still carry schema_version
-// like every sanctioned envelope (AGT-23). Mirrors ux.currentSchemaVersion; bump
-// in lockstep with the ux envelope contract.
+// envelopes this package emits that are NOT a ux wrapper (the catalog import
+// maps; the execute success envelope moved to the shared ux.ExecuteEnvelope,
+// which stamps the same version). Their bodies are arbitrary job data so they
+// can't reuse ux.List/Result, but they must still carry schema_version like
+// every sanctioned envelope (AGT-23). Mirrors ux.currentSchemaVersion; bump in
+// lockstep with the ux envelope contract.
 const apiEnvelopeSchemaVersion = "1"
 
-// operationInfo holds the resolved HTTP method and target for an operation.
-// URL is an absolute upstream URL (from inspect or a METHOD:URL target); Path
-// is a broker-relative path (from a METHOD:/path target). Exactly one of URL or
-// Path is set.
-type operationInfo struct {
-	Method string `json:"method"`
-	URL    string `json:"url"`
-	Path   string `json:"-"`
-}
+// operationInfo — the resolved {method, url|path} pair — moved to the UX-free
+// core as agentops.Operation (plan 0.2); resolveOperation below returns it.
 
 type executeOptions struct {
 	pathParams     []string
@@ -210,65 +198,24 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 
 	// Resolve phase: determine method and path either from METHOD:/path syntax
 	// or by inspecting an operation_id.
-	opInfo, err := a.resolveOperation(cmd, opts, target)
+	opInfo, err := a.resolveOperation(cmd.Context(), target, opts.revision)
 	if err != nil {
 		return err
 	}
 
-	// Build phase: assemble the upstream URL (path params + query), then route
-	// it through the broker.
-	//
-	// All traffic goes through the Jentic broker so the agent authenticates to
-	// the broker with its own token (Authorization: Bearer) and the broker
-	// injects the stored upstream credential. We never send the agent token to
-	// the upstream API directly. The broker is addressed as a catch-all proxy:
-	// {brokerScheme}://{brokerHost}/{upstreamURL}  (mirrors the run-proxy rewrite
-	// in internal/proxy and the broker's /{upstream_url:path} route).
-	//
-	//   - opInfo.URL  (absolute upstream URL, from inspect / METHOD:url) is
-	//     prefixed with the broker host.
-	//   - opInfo.Path (broker-relative METHOD:/path) is sent to the broker host
-	//     verbatim — the caller supplied the broker path themselves.
-	var upstream string
-	brokerRelative := opInfo.URL == ""
-	if brokerRelative {
-		upstream = opInfo.Path
-	} else {
-		upstream = opInfo.URL
+	// Parse the key=value flag surfaces (ARCH-4 coded errors stay here — the
+	// flag syntax is a CLI concern; agentops receives structured pairs).
+	pathParams, err := agentops.ParseKVs(opts.pathParams, func(v string) error { return badFlagKV("--path", v) })
+	if err != nil {
+		return err
 	}
-	for _, kv := range opts.pathParams {
-		k, v, ok := strings.Cut(kv, "=")
-		if !ok {
-			return badFlagKV("--path", kv)
-		}
-		upstream = strings.ReplaceAll(upstream, "{"+k+"}", url.PathEscape(v))
+	queryParams, err := agentops.ParseKVs(opts.queryParams, func(v string) error { return badFlagKV("--query", v) })
+	if err != nil {
+		return err
 	}
 
-	// Append query params to the upstream URL (before broker-wrapping).
-	if len(opts.queryParams) > 0 {
-		qv := url.Values{}
-		for _, kv := range opts.queryParams {
-			k, v, ok := strings.Cut(kv, "=")
-			if !ok {
-				return badFlagKV("--query", kv)
-			}
-			qv.Add(k, v)
-		}
-		sep := "?"
-		if strings.Contains(upstream, "?") {
-			sep = "&"
-		}
-		upstream += sep + qv.Encode()
-	}
-
-	var brokerURL string
-	if brokerRelative {
-		brokerURL = opts.brokerScheme + "://" + opts.brokerHost + upstream
-	} else {
-		brokerURL = opts.brokerScheme + "://" + opts.brokerHost + "/" + upstream
-	}
-
-	// Resolve request body.
+	// Resolve request body (cobra-side by design: the stdin fallback must never
+	// move into agentops — under stdio MCP, stdin is the JSON-RPC wire).
 	var body io.Reader
 	switch {
 	case opts.data == "-" || (opts.data == "" && opts.dataFile == "" && !term.IsTerminal(os.Stdin.Fd())):
@@ -289,114 +236,51 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 		body = strings.NewReader(opts.data)
 	}
 
-	// Build HTTP request.
-	req, err := http.NewRequestWithContext(cmd.Context(), opInfo.Method, brokerURL, body)
+	headers, err := agentops.ParseKVs(opts.headers, func(v string) error { return badFlagKV("--header", v) })
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return err
 	}
 
-	// Forward the agent bearer token to the broker.
-	// SEC-1: never send the bearer over plaintext to a non-loopback broker.
-	if err := auth.RequireSecureURL(brokerURL); err != nil {
-		return &ux.CodedError{
-			Code:       ux.CodeTransportError,
-			Msg:        err.Error(),
-			Actionable: "Use an https broker URL, or a loopback (127.0.0.1/localhost) http broker for local installs.",
-		}
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	// Auto-set Content-Type for body requests.
-	hasContentType := false
-	for _, kv := range opts.headers {
-		k, _, ok := strings.Cut(kv, "=")
-		if ok && strings.EqualFold(strings.TrimSpace(k), "content-type") {
-			hasContentType = true
-			break
-		}
-	}
-	if body != nil && !hasContentType {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	// Merge custom headers.
-	for _, kv := range opts.headers {
-		k, v, ok := strings.Cut(kv, "=")
-		if !ok {
-			return badFlagKV("--header", kv)
-		}
-		req.Header.Set(strings.TrimSpace(k), strings.TrimSpace(v))
-	}
-
-	// Correlation (P5.2, F8-6). execute builds a bare request outside the SDK
-	// editor chain, so the SDK's session/trace editors never run on this path —
-	// we attach the same headers here so a broker-side trace can be joined back
-	// to this invocation:
-	//   - X-Jentic-Session-Id groups every call of one agent run/batch (the SDK
-	//     Config.SessionID, sourced from the active context / $JENTIC_SESSION_ID).
-	//   - traceparent is a fresh W3C trace context per execute so distributed
-	//     tracing correlates the broker span with this CLI call.
-	// A user-provided --header of the same name wins (already set above), so an
-	// orchestrator threading its own trace is never clobbered.
-	if sid := sessionIDFromContext(cmd); sid != "" && req.Header.Get("X-Jentic-Session-Id") == "" {
-		req.Header.Set("X-Jentic-Session-Id", sid)
-	}
-	if req.Header.Get("traceparent") == "" {
-		if tp, ok := newTraceparent(); ok {
-			req.Header.Set("traceparent", tp)
-		}
-	}
-	// Idempotency (13 §4, F8-13). A caller-supplied key makes a retried POST/PUT
-	// de-duplicated by the broker AND flips the SDK transport's retry-safety for
-	// this request (it treats a key-carrying POST as replayable). Without it a
-	// plain POST is never retried, so transient 5xx/timeouts surface as failures.
-	if opts.idempotencyKey != "" && req.Header.Get("Idempotency-Key") == "" {
-		req.Header.Set("Idempotency-Key", opts.idempotencyKey)
+	// Build phase (agentops.BuildRequest): path-param substitution, query
+	// append, the broker catch-all URL, SEC-1 secure-transport guard, bearer/
+	// correlation/idempotency headers. The two-phase drive (Build, then Do)
+	// exists so --dry-run/--export-plan below can render the built request and
+	// stop before firing.
+	req, err := agentops.BuildRequest(cmd.Context(), agentops.ExecuteRequest{
+		Method:         opInfo.Method,
+		URL:            opInfo.URL,
+		Path:           opInfo.Path,
+		PathParams:     pathParams,
+		QueryParams:    queryParams,
+		Headers:        headers,
+		Body:           body,
+		BrokerScheme:   opts.brokerScheme,
+		BrokerHost:     opts.brokerHost,
+		Token:          token,
+		SessionID:      sessionIDFromContext(cmd),
+		IdempotencyKey: opts.idempotencyKey,
+	})
+	if err != nil {
+		return err
 	}
 
 	// Dry-run / plan (impl/5.0 §5, F8-15). execute is a mutating (side-effecting)
 	// call, so it honors --dry-run/--export-plan: render the fully-resolved
 	// request that WOULD be sent — method, broker-wrapped URL, and the correlation
-	// headers we just attached — and STOP before firing. The operation name
+	// headers agentops just attached — and STOP before firing. The operation name
 	// mirrors the effect ("brokerExecute"); the plan-parity test keeps it honest.
 	if maybeEmitPlan(cmd, "brokerExecute", executePlanPayload(req)) {
 		return nil
 	}
 
-	// Send phase. Route through the SDK broker transport (client.BrokerTransport)
-	// rather than a bare http.Client so execute inherits the same response policy
-	// (401 re-exchange, 429 Retry-After, bounded 5xx/transport backoff — 13 §5)
-	// every generated broker call gets, while still composing the broker
-	// catch-all URL itself to preserve its exact contract and exit-2 denial
-	// handling (plan.md Phase 5 item 1). The 60s ceiling is carried on the base
-	// client the policy decorates.
-	httpClient := sdkclient.BrokerTransport(sdkclient.Config{
-		HTTPClient: &http.Client{Timeout: 60 * time.Second},
-	})
-	resp, err := httpClient.Do(req)
+	// Send phase (agentops.Do): the SDK broker transport with its response
+	// policy, and a bounded body read into the UX-free result.
+	result, err := agentops.Do(req)
 	if err != nil {
-		// AGT-23: a failure is single-sourced on stderr as the coded envelope
-		// below. We deliberately do NOT also write an unversioned
-		// {error,status:0} to stdout — that double-signalled the same failure on
-		// two streams, and an agent parsing stdout would see a bogus "response".
-		coded := &ux.CodedError{
-			Code: ux.CodeTransportError,
-			Msg:  fmt.Sprintf("transport error: %v", err),
-		}
-		// UX-4: the classic local papercut is an https default resolving against a
-		// plain-http local broker ("server gave HTTP response to HTTPS client").
-		// Attach the exact recovery when the signature matches a loopback broker,
-		// so the operator isn't left with a bare, unactionable transport error.
-		if brokerTLSMismatch(err, brokerURL) {
-			coded.Actionable = "The broker resolved to https but is serving http. Set the environment's broker_url " +
-				"(`jentic env add <env> --broker-url http://127.0.0.1:8100 --force`), or override this call with " +
-				"`--broker-scheme http --broker-host 127.0.0.1:8100`."
-		}
-		return coded
+		return err
 	}
-	defer resp.Body.Close()
 
-	return a.executeOutput(cmd, opts, resp)
+	return a.executeOutput(cmd, opts, result)
 }
 
 // badFlagKV builds the coded error for a malformed key=value flag (ARCH-4). A
@@ -451,84 +335,29 @@ func sessionIDFromContext(cmd *cobra.Command) string {
 	return sdkclient.SanitizeSessionID(os.Getenv("JENTIC_SESSION_ID"))
 }
 
-// newTraceparent builds a fresh W3C Trace Context `traceparent` header value
-// (version-00): "00-<32 hex trace-id>-<16 hex span-id>-01" with the sampled flag
-// set. execute is the root of its own trace (it does not continue an inbound
-// one), so a new random trace/span id per call is correct. Returns ok=false only
-// if the crypto RNG fails, in which case the header is simply omitted.
-func newTraceparent() (string, bool) {
-	var traceID [16]byte
-	var spanID [8]byte
-	if _, err := rand.Read(traceID[:]); err != nil {
-		return "", false
-	}
-	if _, err := rand.Read(spanID[:]); err != nil {
-		return "", false
-	}
-	return fmt.Sprintf("00-%s-%s-01", hex.EncodeToString(traceID[:]), hex.EncodeToString(spanID[:])), true
-}
-
-// parseMethodPath checks if target is in METHOD:/path format (a broker-relative
-// path, e.g. GET:/v1/pets). Returns the method and path if valid, or empty
-// strings if not in this format. A METHOD:URL absolute form (GET:https://…) is
-// deliberately NOT matched here — that is handled as an inspectable identifier.
+// parseMethodPath reports whether target is in METHOD:/path form (a broker-
+// relative path). Thin shim over the extracted core (agentops.ParseMethodPath)
+// so the CLI-side call sites and tests keep their name.
 func parseMethodPath(target string) (method, path string) {
-	idx := strings.IndexByte(target, ':')
-	if idx < 1 || idx >= len(target)-1 || target[idx+1] != '/' {
-		return "", ""
-	}
-	// Reject the scheme separator of an absolute URL (https://…): the char
-	// after ':' is '/', but it's followed by another '/'.
-	if idx+2 < len(target) && target[idx+2] == '/' {
-		return "", ""
-	}
-	m := strings.ToUpper(target[:idx])
-	switch m {
-	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
-		return m, target[idx+1:]
-	default:
-		return "", ""
-	}
+	return agentops.ParseMethodPath(target)
 }
 
-func (a *app) resolveOperation(cmd *cobra.Command, opts *executeOptions, target string) (*operationInfo, error) {
+// resolveOperation resolves an execute target to its method and destination.
+// It is deliberately cobra-free (plan 0.2): METHOD:/path short-circuits with no
+// network call (and no session resolution — constructing the control client
+// first would fail invocations that never need it), everything else resolves
+// through the agentops core over the apiClient Inspector seam.
+func (a *app) resolveOperation(ctx context.Context, target, revision string) (*agentops.Operation, error) {
 	// METHOD:/path → broker-relative direct send (uses --broker-host/scheme).
 	if method, path := parseMethodPath(target); method != "" {
-		return &operationInfo{Method: method, Path: path}, nil
+		return &agentops.Operation{Method: method, Path: path}, nil
 	}
 
 	// METHOD URL / METHOD:URL (absolute) and opaque operation_id both resolve
 	// via inspect, which returns the absolute upstream URL to send to.
-	client, err := a.apisSession(cmd.Context())
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return nil, err
 	}
-	inspectBody, err := client.Inspect(cmd.Context(), target, opts.revision, "json")
-	if err != nil {
-		var he *HTTPError
-		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
-			// AGT-23: single-source the failure on stderr (the coded envelope
-			// below). No unversioned {error,status:0} on stdout.
-			return nil, &ux.CodedError{
-				Code:       ux.CodeResolveFailed,
-				Msg:        fmt.Sprintf("operation %q not found", target),
-				Actionable: "jentic search \"<what you want to do>\"",
-			}
-		}
-		// A non-404 inspect failure (transport, 5xx, malformed) still exits 2,
-		// but surface the cause so the agent isn't left with a bare exit code.
-		return nil, &ux.CodedError{
-			Code: ux.CodeResolveFailed,
-			Msg:  fmt.Sprintf("resolve %q failed: %v", target, err),
-		}
-	}
-
-	var opInfo operationInfo
-	if err := json.Unmarshal(inspectBody, &opInfo); err != nil {
-		return nil, fmt.Errorf("decode inspect response: %w", err)
-	}
-	if opInfo.Method == "" || opInfo.URL == "" {
-		return nil, errInspectMissingFields
-	}
-	return &opInfo, nil
+	return agentops.ResolveOperation(ctx, client, target, revision)
 }
