@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.2](https://github.com/jentic/jentic-one/compare/v0.37.1...v0.37.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **docker:** move shipped images off Debian's won't-fix glibc CVEs ([#1170](https://github.com/jentic/jentic-one/issues/1170)) ([a0bfee7](https://github.com/jentic/jentic-one/commit/a0bfee76feed842bb64ece4b67f7f37886521062))
+
 ## [0.37.1](https://github.com/jentic/jentic-one/compare/v0.37.0...v0.37.1) (2026-08-27)
 
 
