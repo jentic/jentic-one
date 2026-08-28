@@ -307,10 +307,3 @@ class OAuthClientService:
             return frozenset(client.allowed_scopes)
         return None
 
-    async def requires_consent(self, client_id: str) -> bool:
-        """Return whether the client requires user consent. False if not found."""
-        async with self._ctx.admin_db.session() as session:
-            client = await OAuthClientRepository.get_by_client_id(session, client_id)
-        if client is None:
-            return False
-        return client.require_consent
