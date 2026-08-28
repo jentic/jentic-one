@@ -110,6 +110,7 @@ func GetControlClient(ctx context.Context) (*control.ClientWithResponses, error)
 	if err != nil {
 		return nil, err
 	}
+	applyTransportHook(ctx, &cfg)
 	return client.NewControl(cfg)
 }
 
@@ -126,5 +127,6 @@ func GetControlRawClient(ctx context.Context) (*control.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	applyTransportHook(ctx, &cfg)
 	return client.NewControlRaw(cfg)
 }
