@@ -9,4 +9,4 @@ description: >-
   reject. Dev/eval-grade by design — production deployments should use a
   managed database (see deploy/README.md).
 type: application
-version: 0.37.3 # x-release-please-version
+version: 0.37.4 # x-release-please-version

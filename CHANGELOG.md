@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.37.4](https://github.com/jentic/jentic-one/compare/v0.37.3...v0.37.4) (2026-08-28)
+
+
+### Bug Fixes
+
+* **deploy:** set JENTIC__APPS=broker on the Marketplace broker pod ([#1182](https://github.com/jentic/jentic-one/issues/1182)) ([6d2c883](https://github.com/jentic/jentic-one/commit/6d2c883da9a639263c09046c80fae598fefbf58e))
+* **entitlement:** use Count entitlements and release the checkout seat ([#1184](https://github.com/jentic/jentic-one/issues/1184)) ([a451813](https://github.com/jentic/jentic-one/commit/a4518138997b97db3f7b6df9be19dcbf18b69eab))
+
 ## [0.37.3](https://github.com/jentic/jentic-one/compare/v0.37.2...v0.37.3) (2026-08-28)
 
 
