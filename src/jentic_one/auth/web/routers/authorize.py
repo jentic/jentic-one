@@ -42,6 +42,7 @@ from jentic_one.shared.auth.permission_catalog import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web.deps import get_ctx
 
@@ -461,7 +462,7 @@ async def authorize_endpoint(
     allowed_scopes = await _get_client_allowed_scopes(client_id, ctx)
     if allowed_scopes is not None:
         requested = set(scope.split())
-        excess = requested - allowed_scopes - {"openid", "email", "profile"}
+        excess = requested - allowed_scopes - OIDC_PASSTHROUGH_SCOPES
         if excess:
             logger.warning(
                 "oauth_scope_exceeds_client_allowlist",

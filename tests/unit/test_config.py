@@ -325,7 +325,9 @@ def test_local_dev_signing_kid_rejected_in_production():
     ):
         AuthConfig(
             id_signing=[
-                SigningKeyConfig(kid="local-dev-key", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1))
+                SigningKeyConfig(
+                    kid="local-dev-key", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1)
+                )
             ]
         )
 

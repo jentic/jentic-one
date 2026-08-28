@@ -55,3 +55,5 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
 # point of the purpose-scoped downgrade from ``org:admin`` is that a human
 # operator holds it, not an agent.
 GRANTABLE_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES) | {"apis:write"}
+
+OIDC_PASSTHROUGH_SCOPES: frozenset[str] = frozenset({"openid", "email", "profile"})

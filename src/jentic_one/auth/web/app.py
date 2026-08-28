@@ -30,6 +30,7 @@ from jentic_one.shared.auth.verify import resolve_permissions_for_actor, verify_
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state import build_state_backend
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.health import make_health_router
@@ -124,6 +125,8 @@ def _make_auth_verifier(ctx: Context) -> Any:
             elif resolved.oauth_client_id is not None:
                 consented = set(resolved.permissions)
                 permissions = [p for p in permissions if p in consented]
+                oidc = [s for s in consented if s in OIDC_PASSTHROUGH_SCOPES]
+                permissions.extend(oidc)
 
             return Identity(
                 sub=resolved.sub,
