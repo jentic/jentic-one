@@ -541,7 +541,12 @@ async def oauth_callback(
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
 
     oauth_client = await OAuthClientService(ctx).get_by_client_id(client_id or "")
-    needs_consent = oauth_client is not None and oauth_client.require_consent
+    # Third-party clients always require consent regardless of the client's
+    # require_consent flag: consent-skip is a first-party trust decision that
+    # only platform clients (configured operator-side, not admin-registered)
+    # can make. The require_consent field on registered clients is retained
+    # for future use but currently has no effect on the third-party path.
+    needs_consent = oauth_client is not None
 
     if needs_consent and oauth_client is not None:
         try:
