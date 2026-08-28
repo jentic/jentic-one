@@ -55,6 +55,30 @@ class EventRepository:
         return await session.get(Event, event_id)
 
     @staticmethod
+    async def exists_with_data_value(
+        session: AsyncSession,
+        *,
+        event_type: str,
+        key: str,
+        value: str,
+    ) -> bool:
+        """Return whether any event of ``event_type`` has ``data[key] == value``.
+
+        One narrow lookup used for table-backed dedupe (e.g. one
+        ``mcp.session_started`` per ``data.session_id`` across workers and
+        surfaces). The ``type`` predicate rides the ``ix_events_type_created``
+        index; the JSON comparison then filters the (small) per-type slice.
+        """
+        stmt = (
+            select(Event.id)
+            .where(Event.type == event_type)
+            .where(Event.data[key].as_string() == value)
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
     async def list_all(
         session: AsyncSession,
         *,

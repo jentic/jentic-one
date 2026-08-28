@@ -11,6 +11,7 @@ from jentic.problem_details import Forbidden, Unauthorized
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.context import Context
+from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.web.auth import extract_credential
@@ -30,6 +31,8 @@ def derive_origin(user_agent: str | None) -> Origin:
     if not user_agent:
         return Origin.API
     ua_lower = user_agent.lower()
+    if ua_lower.startswith("jentic-mcp/"):
+        return Origin.MCP
     if ua_lower.startswith("jentic-cli/"):
         return Origin.CLI
     if ua_lower.startswith("mozilla/") or ua_lower.startswith("applewebkit/"):
@@ -60,6 +63,18 @@ async def resolve_identity(request: Request) -> Identity:
         ) from None
 
     identity.origin = derive_origin(request.headers.get("user-agent"))
+
+    # First authenticated MCP request per session emits ``mcp.session_started``
+    # (fire-and-forget; two header checks on the non-MCP fast path). This is the
+    # control-plane half of the two-plane emit — the broker's identity
+    # dependency mirrors it for execute-only sessions.
+    schedule_mcp_session_emit(
+        getattr(request.app.state, "ctx", None),
+        user_agent=request.headers.get("user-agent"),
+        session_id=request.headers.get(SESSION_ID_HEADER),
+        actor_id=identity.sub,
+        actor_type=identity.actor_type.value,
+    )
     return identity
 
 

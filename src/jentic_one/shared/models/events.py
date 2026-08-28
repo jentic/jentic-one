@@ -3,6 +3,8 @@
 import platform
 from enum import StrEnum
 
+from jentic_one.shared.models.actors import Origin
+
 
 class EventSeverity(StrEnum):
     """Severity level for platform events."""
@@ -91,6 +93,20 @@ class EventType:
     # ``AccessRequestService._advise_unserved_bind_references``).
     TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
 
+    # --- Local-MCP transport events (issue #1177) -------------------------
+    # Emitted once per MCP session UUID on the first authenticated request
+    # that carries both the X-Jentic-Session-Id header and a `jentic-mcp/`
+    # User-Agent (the UA — not the header — marks the session as MCP: plain
+    # CLI calls carry the header too). The internal event's `data` holds the
+    # full clientInfo name/version, the transport, and the session UUID (the
+    # dedupe key); the telemetry wire carries at most the closed McpClient tag.
+    MCP_SESSION_STARTED = "mcp.session_started"
+    # Emitted when an MCP config entry is written for an agent runtime
+    # (`jentic setup` / `jentic skill init`). Runtime rides as the closed
+    # McpConfigRuntime tag. The emit path is landed separately (see the
+    # lane-D plan): this constant + the tag enum land first.
+    MCP_CONFIG_REGISTERED = "mcp.config_registered"
+
     ALL: frozenset[str] = frozenset(
         {
             IMPORT_COMPLETED,
@@ -132,6 +148,8 @@ class EventType:
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
             TOOLKIT_BINDING_UNSERVED,
+            MCP_SESSION_STARTED,
+            MCP_CONFIG_REGISTERED,
         }
     )
 
@@ -239,19 +257,76 @@ class HostOs(StrEnum):
             return cls.OTHER
 
 
+class McpClient(StrEnum):
+    """Closed-enum tag naming the MCP client runtime behind a session.
+
+    Attached only to ``mcp_session_started``. Classified from the clientInfo
+    name the MCP server relays in its User-Agent
+    (``jentic-mcp/<version> (<client>/<clientversion>)``) — the raw string
+    never reaches the telemetry wire: anything outside the closed set (or an
+    absent clientInfo — it is a SHOULD in the MCP spec) collapses to ``OTHER``.
+    The full name/version still lands in the internal event's ``data`` for the
+    UI (two-plane pattern).
+    """
+
+    CLAUDE = "claude"
+    CURSOR = "cursor"
+    CODEX = "codex"
+    OTHER = "other"
+
+    @classmethod
+    def from_client_name(cls, name: str | None) -> "McpClient":
+        """Classify a raw clientInfo name into the closed set.
+
+        Substring matching (lowercased) so vendor variants ("Claude Desktop",
+        "claude-code", "Cursor IDE") map to their family without an ever-growing
+        alias table; unknowns collapse to ``OTHER``.
+        """
+        if not name:
+            return cls.OTHER
+        lowered = name.strip().lower()
+        for member in (cls.CLAUDE, cls.CURSOR, cls.CODEX):
+            if member.value in lowered:
+                return member
+        return cls.OTHER
+
+
+class McpConfigRuntime(StrEnum):
+    """Closed-enum tag naming the agent runtime an MCP config entry targets.
+
+    Attached only to ``mcp_config_registered`` — one event per runtime whose
+    config file/entry ``jentic setup``/``jentic skill init`` writes. A closed
+    set (never the raw runtime string) so the config-written → first-session →
+    first-execute funnel stays property-free on the wire.
+    """
+
+    CLAUDE_DESKTOP = "claude_desktop"
+    CLAUDE_CODE = "claude_code"
+    CURSOR = "cursor"
+    CODEX = "codex"
+    OTHER = "other"
+
+
 #: Union of every closed-enum tag type. A tag on the wire is always a member of
 #: one of these — there is deliberately no free-form variant.
-EventTag = ErrorSource | SpecSource | ImportFailReason | HostOs
+EventTag = (
+    ErrorSource | SpecSource | ImportFailReason | HostOs | Origin | McpClient | McpConfigRuntime
+)
 
 
-#: Which closed-enum tag type each event may carry. ``emit_event`` validates
-#: supplied tags against this map: a tag whose type is not allowed for the event
+#: Which closed-enum tag types each event may carry. ``emit_event`` validates
+#: supplied tags against this map: a tag whose type is not in the event's tuple
 #: is dropped (with a logged warning) and the event still emits. An event absent
-#: from this map accepts no tags.
-EVENT_TAGS: dict[str, type[StrEnum]] = {
-    EventType.EXECUTION_FAILED: ErrorSource,
-    EventType.CREDENTIAL_REFRESH_FAILED: ErrorSource,
-    EventType.IMPORT_COMPLETED: SpecSource,
-    EventType.IMPORT_FAILED: ImportFailReason,
-    EventType.INSTANCE_BOOTED: HostOs,
+#: from this map accepts no tags. Values are tuples so an event can carry tags
+#: from more than one closed enum (e.g. ``EXECUTION_FAILED`` splits by both
+#: error source and request origin); ``isinstance`` accepts the tuple directly.
+EVENT_TAGS: dict[str, tuple[type[StrEnum], ...]] = {
+    EventType.EXECUTION_COMPLETED: (Origin,),
+    EventType.EXECUTION_FAILED: (ErrorSource, Origin),
+    EventType.CREDENTIAL_REFRESH_FAILED: (ErrorSource,),
+    EventType.IMPORT_COMPLETED: (SpecSource,),
+    EventType.IMPORT_FAILED: (ImportFailReason,),
+    EventType.INSTANCE_BOOTED: (HostOs,),
+    EventType.MCP_SESSION_STARTED: (McpClient,),
+    EventType.MCP_CONFIG_REGISTERED: (McpConfigRuntime,),
 }

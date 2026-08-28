@@ -237,3 +237,47 @@ async def test_emit_declared_event_round_trips(
 
         by_severity = await EventRepository.list_all(session, severity=[severity.value])
         assert event_id in [e.id for e in by_severity]
+
+
+async def test_exists_with_data_value_dedupes_mcp_session(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """The mcp.session_started dedupe lookup matches on type + data.session_id."""
+    async with admin_db.transaction() as session:
+        await emit_event(
+            session,
+            type=EventType.MCP_SESSION_STARTED,
+            severity=EventSeverity.INFO,
+            summary="MCP session started for agnt_test",
+            created_by="agnt_test",
+            actor_id="agnt_test",
+            actor_type="agent",
+            data={
+                "session_id": "sess-abc123",
+                "transport": "stdio",
+                "client_name": "cursor",
+                "client_version": "1.0",
+            },
+        )
+
+    async with admin_db.session() as session:
+        assert await EventRepository.exists_with_data_value(
+            session,
+            event_type=EventType.MCP_SESSION_STARTED,
+            key="session_id",
+            value="sess-abc123",
+        )
+        # A different session id does not match.
+        assert not await EventRepository.exists_with_data_value(
+            session,
+            event_type=EventType.MCP_SESSION_STARTED,
+            key="session_id",
+            value="sess-other",
+        )
+        # The same data value under a different event type does not match.
+        assert not await EventRepository.exists_with_data_value(
+            session,
+            event_type=EventType.EXECUTION_COMPLETED,
+            key="session_id",
+            value="sess-abc123",
+        )
