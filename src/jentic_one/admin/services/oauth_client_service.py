@@ -306,4 +306,3 @@ class OAuthClientService:
         if client.allowed_scopes is not None:
             return frozenset(client.allowed_scopes)
         return None
-

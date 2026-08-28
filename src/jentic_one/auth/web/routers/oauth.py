@@ -165,7 +165,6 @@ async def token_endpoint(
     )
 
 
-
 @router.post("/oauth/mint")
 async def mint_endpoint(
     body: MintRequest,

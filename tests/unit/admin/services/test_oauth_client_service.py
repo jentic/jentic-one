@@ -97,7 +97,7 @@ async def test_verify_client_secret_rejects_inactive_client(
     result = await svc.verify_client_secret("oc_test", "secret")
 
     assert result is False
-    mock_verify.assert_not_awaited()
+    mock_verify.assert_awaited_once()
 
 
 @patch("jentic_one.admin.services.oauth_client_service._verify_password_async")

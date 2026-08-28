@@ -1,7 +1,8 @@
 """Unit tests verifying ownership enforcement on AgentService.update_jwks.
 
 Only the agent's owner or an org:admin may update the JWKS. A non-owner caller
-with agents:write but not org:admin must be rejected with AgentWriteAccessDeniedError.
+with agents:write but not org:admin must be rejected with ActorNotFoundError
+(denial posture: don't reveal the agent exists to non-owners).
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from jentic_one.auth.services.agent_service import AgentService
-from jentic_one.auth.services.errors import AgentWriteAccessDeniedError
+from jentic_one.auth.services.errors import ActorNotFoundError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 
@@ -115,5 +116,5 @@ async def test_non_owner_without_admin_cannot_update_jwks(
         actor_type=ActorType.USER,
     )
 
-    with pytest.raises(AgentWriteAccessDeniedError):
+    with pytest.raises(ActorNotFoundError):
         await svc.update_jwks("agnt_test", jwks=_VALID_JWKS, identity=identity)
