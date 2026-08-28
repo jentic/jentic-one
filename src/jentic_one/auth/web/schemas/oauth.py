@@ -8,7 +8,7 @@ from jentic_one.shared.web.sensitive import SENSITIVE
 
 
 class TokenRequest(BaseModel):
-    """Token endpoint request (JSON body — not RFC 6749 form-encoded)."""
+    """Token endpoint request — accepts both JSON and form-encoded (RFC 6749)."""
 
     grant_type: str
     refresh_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)

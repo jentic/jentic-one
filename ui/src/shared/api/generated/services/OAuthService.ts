@@ -8,7 +8,6 @@ import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
 import type { RevokeRequest } from '../models/RevokeRequest';
-import type { TokenRequest } from '../models/TokenRequest';
 import type { TokenResponse } from '../models/TokenResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -252,16 +251,10 @@ export class OAuthService {
      * @returns TokenResponse Successful Response
      * @throws ApiError
      */
-    public static tokenEndpoint({
-        requestBody,
-    }: {
-        requestBody: TokenRequest,
-    }): CancelablePromise<TokenResponse> {
+    public static tokenEndpoint(): CancelablePromise<TokenResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/token',
-            body: requestBody,
-            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,

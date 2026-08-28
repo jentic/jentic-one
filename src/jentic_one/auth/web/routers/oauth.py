@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Response
+from pydantic import ValidationError
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.auth.services.assertion_service import AssertionService
@@ -69,9 +70,28 @@ def get_oauth_client_service(ctx: Context = Depends(get_ctx)) -> OAuthClientServ
     return OAuthClientService(ctx)
 
 
+async def _parse_token_request(request: Request) -> TokenRequest:
+    """Parse the token request from JSON or form-encoded body (RFC 6749 §4.1.3)."""
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type == "application/x-www-form-urlencoded":
+        form = await request.form()
+        data = dict(form)
+        try:
+            return TokenRequest.model_validate(data)
+        except ValidationError as exc:
+            raise InvalidGrantError(str(exc.errors()[0]["msg"])) from None
+    body_bytes = await request.body()
+    if not body_bytes:
+        raise InvalidGrantError("request body is required")
+    try:
+        return TokenRequest.model_validate_json(body_bytes)
+    except ValidationError as exc:
+        raise InvalidGrantError(str(exc.errors()[0]["msg"])) from None
+
+
 @router.post("/oauth/token", dependencies=[Depends(_check_token_rate_limit)])
 async def token_endpoint(
-    body: TokenRequest,
+    body: TokenRequest = Depends(_parse_token_request),
     ctx: Context = Depends(get_ctx),
     token_svc: TokenService = Depends(get_token_service),
     assertion_svc: AssertionService = Depends(get_assertion_service),

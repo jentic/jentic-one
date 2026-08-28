@@ -7853,100 +7853,6 @@
         "title": "Sigv4UpdateRequest",
         "type": "object"
       },
-      "TokenRequest": {
-        "description": "Token endpoint request (JSON body — not RFC 6749 form-encoded).",
-        "properties": {
-          "assertion": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assertion",
-            "x-sensitive": true
-          },
-          "client_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Client Id"
-          },
-          "client_secret": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Client Secret",
-            "x-sensitive": true
-          },
-          "code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Code"
-          },
-          "code_verifier": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Code Verifier"
-          },
-          "grant_type": {
-            "title": "Grant Type",
-            "type": "string"
-          },
-          "redirect_uri": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Redirect Uri"
-          },
-          "refresh_token": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Refresh Token",
-            "x-sensitive": true
-          }
-        },
-        "required": [
-          "grant_type"
-        ],
-        "title": "TokenRequest",
-        "type": "object"
-      },
       "TokenResponse": {
         "description": "Token endpoint success response.",
         "properties": {
@@ -27382,16 +27288,6 @@
       "post": {
         "description": "Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.",
         "operationId": "tokenEndpoint",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TokenRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {

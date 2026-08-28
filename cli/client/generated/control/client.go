@@ -2656,18 +2656,6 @@ type Sigv4UpdateRequest struct {
 // Sigv4UpdateRequestType defines model for Sigv4UpdateRequest.Type.
 type Sigv4UpdateRequestType string
 
-// TokenRequest Token endpoint request (JSON body — not RFC 6749 form-encoded).
-type TokenRequest struct {
-	Assertion    *string `json:"assertion,omitempty"`
-	ClientId     *string `json:"client_id,omitempty"`
-	ClientSecret *string `json:"client_secret,omitempty"`
-	Code         *string `json:"code,omitempty"`
-	CodeVerifier *string `json:"code_verifier,omitempty"`
-	GrantType    string  `json:"grant_type"`
-	RedirectUri  *string `json:"redirect_uri,omitempty"`
-	RefreshToken *string `json:"refresh_token,omitempty"`
-}
-
 // TokenResponse Token endpoint success response.
 type TokenResponse struct {
 	AccessToken  string  `json:"access_token"`
@@ -3413,9 +3401,6 @@ type MintEndpointJSONRequestBody = MintRequest
 
 // RevokeEndpointJSONRequestBody defines body for RevokeEndpoint for application/json ContentType.
 type RevokeEndpointJSONRequestBody = RevokeRequest
-
-// TokenEndpointJSONRequestBody defines body for TokenEndpoint for application/json ContentType.
-type TokenEndpointJSONRequestBody = TokenRequest
 
 // RegisterEndpointJSONRequestBody defines body for RegisterEndpoint for application/json ContentType.
 type RegisterEndpointJSONRequestBody = RegisterRequest
@@ -5541,23 +5526,12 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// TokenEndpointWithBody Token Endpoint
-	//
-	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
-	TokenEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// TokenEndpoint Token Endpoint
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
-	// Takes a body of the `application/json` content type.
-	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
-	TokenEndpoint(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	TokenEndpoint(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPermissions List Permissions
 	//
@@ -8885,34 +8859,13 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 	return c.Client.Do(req)
 }
 
-// TokenEndpointWithBody Token Endpoint
-//
-// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
-func (c *Client) TokenEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewTokenEndpointRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // TokenEndpoint Token Endpoint
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
-// Takes a body of the `application/json` content type.
-//
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
-func (c *Client) TokenEndpoint(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewTokenEndpointRequest(c.Server, body)
+func (c *Client) TokenEndpoint(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTokenEndpointRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -16291,19 +16244,8 @@ func NewRevokeEndpointRequestWithBody(server string, contentType string, body io
 	return req, nil
 }
 
-// NewTokenEndpointRequest calls the generic TokenEndpoint builder with application/json body
-func NewTokenEndpointRequest(server string, body TokenEndpointJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewTokenEndpointRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewTokenEndpointRequestWithBody constructs an http.Request for the TokenEndpoint method, with any body, and a specified content type
-func NewTokenEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewTokenEndpointRequest constructs an http.Request for the TokenEndpoint method
+func NewTokenEndpointRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -16321,12 +16263,10 @@ func NewTokenEndpointRequestWithBody(server string, contentType string, body io.
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -19955,23 +19895,14 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithResponse(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
 
-	// TokenEndpointWithBodyWithResponse Token Endpoint
-	//
-	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
-	TokenEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
-
 	// TokenEndpointWithResponse Token Endpoint
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
-	TokenEndpointWithResponse(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
+	TokenEndpointWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
 
 	// ListPermissionsWithResponse List Permissions
 	//
@@ -36058,30 +35989,15 @@ func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, bo
 	return ParseRevokeEndpointHTTPResp(rsp)
 }
 
-// TokenEndpointWithBodyWithResponse Token Endpoint
-//
-// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
-func (c *ClientWithResponses) TokenEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error) {
-	rsp, err := c.TokenEndpointWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseTokenEndpointHTTPResp(rsp)
-}
-
 // TokenEndpointWithResponse Token Endpoint
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
-func (c *ClientWithResponses) TokenEndpointWithResponse(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error) {
-	rsp, err := c.TokenEndpoint(ctx, body, reqEditors...)
+func (c *ClientWithResponses) TokenEndpointWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error) {
+	rsp, err := c.TokenEndpoint(ctx, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

@@ -236,7 +236,6 @@ func (Sigv4CreateRequest) RequiredFields() []string {
 	return []string{"access_key_id", "api", "aws_region", "aws_service", "name", "secret_access_key", "type"}
 }
 func (Sigv4UpdateRequest) RequiredFields() []string       { return []string{"type"} }
-func (TokenRequest) RequiredFields() []string             { return []string{"grant_type"} }
 func (TokenResponse) RequiredFields() []string            { return []string{"access_token", "expires_in"} }
 func (ToolkitAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ToolkitAgentResponse) RequiredFields() []string {
