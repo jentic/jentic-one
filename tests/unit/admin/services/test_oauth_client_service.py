@@ -35,6 +35,11 @@ def test_accepts_http_127_0_0_1() -> None:
     _validate_redirect_uris(["http://127.0.0.1:8080/cb"])
 
 
+def test_accepts_http_ipv6_loopback() -> None:
+    """RFC 8252 §7.3: native-app clients must be able to use either loopback form."""
+    _validate_redirect_uris(["http://[::1]:8080/cb"])
+
+
 def test_rejects_http_non_localhost() -> None:
     with pytest.raises(InvalidInputError, match="http redirect_uri only allowed for localhost"):
         _validate_redirect_uris(["http://example.com/callback"])
