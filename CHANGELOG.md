@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.3](https://github.com/jentic/jentic-one/compare/v0.37.2...v0.37.3) (2026-08-28)
+
+
+### Bug Fixes
+
+* **docker:** venv-install the wheel in the per-service images too ([#1172](https://github.com/jentic/jentic-one/issues/1172)) ([c2f6669](https://github.com/jentic/jentic-one/commit/c2f6669c2b95bc7dc22fc6b15e06bea1bbe2c48d))
+
 ## [0.37.2](https://github.com/jentic/jentic-one/compare/v0.37.1...v0.37.2) (2026-08-28)
 
 
