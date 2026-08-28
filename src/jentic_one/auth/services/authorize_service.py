@@ -229,6 +229,27 @@ class AuthorizeService:
 
         return code_plain
 
+    async def precheck_auth_code(self, code: str) -> None:
+        """Cheap read-only validity check on an auth code before spending argon2.
+
+        Unauthenticated callers hit ``/oauth/token`` with garbage client secrets,
+        and confidential-client verification runs argon2id (~25 ms + 64 MiB per
+        verify, with a dummy-hash timing equalizer for unknown client_ids). That
+        turns the endpoint into a memory/CPU amplifier — a few hundred bytes of
+        request → 64 MiB of server work — before the auth code is even inspected.
+        This shortcut peeks the code hash without ``FOR UPDATE`` and fails fast
+        on a bad/consumed/expired code, so junk requests never reach argon2.
+        """
+        code_hash = _hash_code(code)
+        async with self._ctx.admin_db.session() as session:
+            auth_code = await AuthorizationCodeRepository.get_by_hash(session, code_hash)
+        if auth_code is None:
+            raise InvalidGrantError("authorization code not found")
+        if auth_code.consumed_at is not None:
+            raise InvalidGrantError("authorization code already used")
+        if auth_code.expires_at <= datetime.now(UTC):
+            raise InvalidGrantError("authorization code expired")
+
     async def exchange_code(
         self,
         *,

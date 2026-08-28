@@ -173,6 +173,9 @@ async def token_endpoint(
     if body.grant_type == _AUTHORIZATION_CODE_GRANT:
         if not body.code or not body.code_verifier or not body.redirect_uri or not body.client_id:
             raise InvalidGrantError("code, code_verifier, redirect_uri, and client_id are required")
+        # Pre-validate the auth code before spending argon2 on the client secret,
+        # so an unauthenticated caller can't turn junk input into 64 MiB per hit.
+        await authorize_svc.precheck_auth_code(body.code)
         is_platform = any(pc.client_id == body.client_id for pc in ctx.config.auth.platform_clients)
         third_party_client_id: str | None = None
         if not is_platform:

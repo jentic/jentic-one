@@ -55,6 +55,7 @@ def test_platform_client_does_not_set_oauth_client_id(
 ) -> None:
     """A platform (first-party) client exchange passes oauth_client_id=None."""
     mock_authorize_svc = MagicMock()
+    mock_authorize_svc.precheck_auth_code = AsyncMock(return_value=None)
     mock_authorize_svc.exchange_code = AsyncMock(
         return_value=("at_platform", "rt_platform", "id_token_platform")
     )
@@ -96,6 +97,7 @@ def test_third_party_client_sets_oauth_client_id(
     mock_oauth_svc_cls.return_value = mock_oauth_svc
 
     mock_authorize_svc = MagicMock()
+    mock_authorize_svc.precheck_auth_code = AsyncMock(return_value=None)
     mock_authorize_svc.exchange_code = AsyncMock(
         return_value=("at_third_party", "rt_third_party", "id_token_third_party")
     )
@@ -132,7 +134,9 @@ def test_third_party_client_without_secret_is_rejected(
 ) -> None:
     """A non-platform client_id without a client_secret is rejected."""
     mock_token_cls.return_value = MagicMock(access_ttl_seconds=3600)
-    mock_authorize_cls.return_value = MagicMock()
+    mock_authorize_svc = MagicMock()
+    mock_authorize_svc.precheck_auth_code = AsyncMock(return_value=None)
+    mock_authorize_cls.return_value = mock_authorize_svc
 
     resp = client.post(
         "/oauth/token",
