@@ -20,6 +20,8 @@ from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 _MAX_REDIRECT_URIS = 20
 _MAX_REDIRECT_URI_LENGTH = 2048
 
+_DUMMY_ARGON2_HASH = hash_password("dummy-timing-equalizer")
+
 
 def _validate_redirect_uris(uris: list[str]) -> None:
     """Validate that all redirect URIs are well-formed HTTPS URLs (http only for localhost)."""
@@ -288,6 +290,7 @@ class OAuthClientService:
         async with self._ctx.admin_db.session() as session:
             client = await OAuthClientRepository.get_by_client_id(session, client_id)
         if client is None or not client.active:
+            await _verify_password_async(client_secret, _DUMMY_ARGON2_HASH)
             return False
         return await _verify_password_async(client_secret, client.client_secret_hash)
 
