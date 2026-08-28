@@ -317,6 +317,13 @@ class AuthConfig(BaseModel):
         canonical_base_url is configured, synthesise one so existing
         deployments continue to work without a config change on upgrade.
         """
+        if os.environ.get("JENTIC_ENV", "development") == "production":
+            for sk in self.id_signing:
+                if sk.kid == "local-dev-key":
+                    raise ConfigError(
+                        "auth.id_signing contains the local-dev signing key "
+                        "(kid='local-dev-key') which must not be used in production"
+                    )
         spa_present = any(pc.client_id == _SPA_CLIENT_ID for pc in self.platform_clients)
         if not spa_present and self.canonical_base_url:
             base = self.canonical_base_url.rstrip("/")
