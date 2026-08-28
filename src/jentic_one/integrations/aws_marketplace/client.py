@@ -7,7 +7,8 @@ One protocol, two implementations — the checker doesn't know which:
   one successful call both verifies the entitlement and starts metering.
 - :class:`LicenseManagerClient` (contract pricing) calls AWS **License
   Manager** ``CheckoutLicense`` against the license AWS Marketplace creates in
-  the buyer's account.
+  the buyer's account, then ``CheckInLicense`` to release the seat the probe
+  consumed (counted dimensions have a finite ``MaxCount``).
 
 Both are a single SigV4-signed ``x-amz-json-1.1`` POST built on the project's
 existing signer (``shared/aws/sigv4.py``) and ``httpx`` — no new dependency.
@@ -19,6 +20,7 @@ AWS. Anything ambiguous (throttle, 5xx, network, missing credentials) is
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import uuid
@@ -37,6 +39,11 @@ from jentic_one.shared.config import EntitlementConfig
 _log = structlog.get_logger(__name__)
 
 _REQUEST_TIMEOUT_S = 10.0
+
+# Contract pricing only: how long to wait before the single retry that
+# disambiguates transient seat contention from a genuinely missing license
+# (both surface as NoEntitlementsAllowedException; see LicenseManagerClient).
+_SEAT_CONTENTION_RETRY_DELAY_S = 1.5
 
 # The public key AWS Marketplace vends for RegisterUsage response signatures.
 # We do not verify the (optional) response JWT — transport security is TLS and
@@ -114,25 +121,11 @@ class _BaseLicenseClient:
 
     async def check(self) -> LicenseVerdict:
         url = self._config.endpoint or self._default_url()
-        body = json.dumps(self._body()).encode()
-        try:
-            material = await self._provider.resolve()
-        except CredentialResolutionError:
-            _log.warning("entitlement.credentials_unresolved", exc_info=True)
-            return LicenseVerdict.UNKNOWN
-        headers = {
-            "content-type": "application/x-amz-json-1.1",
-            "x-amz-target": self.target,
-        }
-        headers.update(sign_request(method="POST", url=url, body=body, material=material))
-        try:
-            response = await self._http.post(
-                url, content=body, headers=headers, timeout=_REQUEST_TIMEOUT_S
-            )
-        except httpx.HTTPError:
-            _log.warning("entitlement.check_request_failed", target=self.target, exc_info=True)
+        response = await self._signed_post(url, self.target, self._body())
+        if response is None:
             return LicenseVerdict.UNKNOWN
         if response.status_code == 200:
+            await self._on_entitled(response)
             return LicenseVerdict.ENTITLED
         error_type = _aws_error_type(response)
         if error_type in self.not_entitled_errors:
@@ -149,6 +142,32 @@ class _BaseLicenseClient:
             error_type=error_type,
         )
         return LicenseVerdict.UNKNOWN
+
+    async def _signed_post(
+        self, url: str, target: str, body_dict: dict[str, object]
+    ) -> httpx.Response | None:
+        """One SigV4-signed x-amz-json-1.1 POST; ``None`` for transport failures."""
+        body = json.dumps(body_dict).encode()
+        try:
+            material = await self._provider.resolve()
+        except CredentialResolutionError:
+            _log.warning("entitlement.credentials_unresolved", exc_info=True)
+            return None
+        headers = {
+            "content-type": "application/x-amz-json-1.1",
+            "x-amz-target": target,
+        }
+        headers.update(sign_request(method="POST", url=url, body=body, material=material))
+        try:
+            return await self._http.post(
+                url, content=body, headers=headers, timeout=_REQUEST_TIMEOUT_S
+            )
+        except httpx.HTTPError:
+            _log.warning("entitlement.check_request_failed", target=target, exc_info=True)
+            return None
+
+    async def _on_entitled(self, response: httpx.Response) -> None:
+        """Hook for subclasses that must react to a successful check."""
 
 
 def _aws_error_type(response: httpx.Response) -> str | None:
@@ -195,13 +214,28 @@ class MeteringLicenseClient(_BaseLicenseClient):
 
 
 class LicenseManagerClient(_BaseLicenseClient):
-    """Contract pricing: License Manager ``CheckoutLicense`` (provisional).
+    """Contract pricing: License Manager ``CheckoutLicense`` + ``CheckInLicense``.
 
     ``ProductSKU`` is the Marketplace **product ID** from the portal
     (``config.license_sku``), not the product code. The checkout lists every
     configured dimension (``config.license_dimensions`` — the live listing
     defines ``users`` and ``executions``); License Manager grants the checkout
     only if the buyer's license covers all of them, so one call gates on both.
+
+    Two behaviours verified against the live listing (2026-08-28):
+
+    - A successful PROVISIONAL checkout **consumes a seat** from the
+      dimension's ``MaxCount`` for up to 60 minutes. A 1-seat contract plus
+      two pods re-checking hourly would lock the buyer out of their own
+      license, so every successful checkout is immediately followed by
+      ``CheckInLicense`` — the check is a pure entitlement probe and holds a
+      seat only for the round-trip.
+    - Seat contention (another holder checked out concurrently) and a
+      genuinely absent license return the **same**
+      ``NoEntitlementsAllowedException``, and a false NOT_ENTITLED is cached
+      for a full refresh interval. One short-delay retry disambiguates a
+      transient collision (e.g. app + broker booting together) from a real
+      denial.
     """
 
     service = "license-manager"
@@ -212,13 +246,15 @@ class LicenseManagerClient(_BaseLicenseClient):
         return f"https://license-manager.{self._config.region}.amazonaws.com/"
 
     def _body(self) -> dict[str, object]:
-        # "Unit": "None" matches boolean-style entitlements. The live listing's
-        # counted dimensions may instead require Unit "Count" + a Value — verify
-        # against `aws license-manager list-received-licenses` from the
-        # subscribed test account during the ENTITLEMENT_REAL_AWS smoke and
-        # adjust here if the checkout rejects the shape.
+        # Counted dimensions require Unit "Count" + a Value: the live listing's
+        # license carries `Unit: "Count", MaxCount: N` for users/executions, and
+        # a `Unit: "None"` checkout is rejected with
+        # NoEntitlementsAllowedException (verified against the live listing,
+        # 2026-08-28). Value "1" probes for one available seat, which the
+        # check-in below releases immediately.
         entitlements: list[dict[str, str]] = [
-            {"Name": dimension, "Unit": "None"} for dimension in self._config.license_dimensions
+            {"Name": dimension, "Unit": "Count", "Value": "1"}
+            for dimension in self._config.license_dimensions
         ]
         return {
             "CheckoutType": "PROVISIONAL",
@@ -227,3 +263,38 @@ class LicenseManagerClient(_BaseLicenseClient):
             "Entitlements": entitlements,
             "ClientToken": uuid.uuid4().hex,
         }
+
+    async def check(self) -> LicenseVerdict:
+        verdict = await super().check()
+        if verdict is LicenseVerdict.NOT_ENTITLED:
+            # Could be seat contention rather than a missing license (the
+            # error type is identical). Retry once after a short delay; a
+            # genuinely non-entitled deployment just answers the same twice.
+            await asyncio.sleep(_SEAT_CONTENTION_RETRY_DELAY_S)
+            verdict = await super().check()
+        return verdict
+
+    async def _on_entitled(self, response: httpx.Response) -> None:
+        """Release the seat the successful checkout just consumed."""
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        token = payload.get("LicenseConsumptionToken") if isinstance(payload, dict) else None
+        if not token:
+            # Seat auto-expires after MaxTimeToLiveInMinutes (60) — degraded
+            # but not fatal; flag it because 1-seat contracts will contend.
+            _log.warning("entitlement.checkin_token_missing")
+            return
+        url = self._config.endpoint or self._default_url()
+        checkin = await self._signed_post(
+            url,
+            "AWSLicenseManager.CheckInLicense",
+            {"LicenseConsumptionToken": token},
+        )
+        if checkin is None or checkin.status_code != 200:
+            _log.warning(
+                "entitlement.checkin_failed",
+                status_code=None if checkin is None else checkin.status_code,
+                error_type=None if checkin is None else _aws_error_type(checkin),
+            )
