@@ -26,32 +26,52 @@ in [`tests/arch/`](tests/arch/) and the scoped rules under
 | Target              | Description                                       |
 | ------------------- | ------------------------------------------------- |
 | `help`              | Show available targets                            |
-| `install`           | Full dev setup: sync deps + install lefthook hooks|
-| `sync`              | Install/sync project + dev dependencies           |
+| `install`           | Full dev setup: sync deps + install UI deps + lefthook hooks |
+| `sync`              | Install/sync project + dev dependencies (all extras) |
 | `lock`              | Refresh the lockfile                              |
 | `upgrade`           | Upgrade locked dependencies                       |
-| `fmt`               | Format code with ruff                             |
 | `fix`               | Auto-fix lint issues and reformat code            |
 | `lint`              | Lint (ruff check + format check + mypy)           |
 | `typecheck`         | Run mypy                                          |
-| `test`              | Run unit tests                                    |
+| `test`              | Run tests (unit only by default)                  |
 | `test-unit`         | Run unit tests                                    |
 | `test-fast`         | Run unit + arch tests (no external services)      |
-| `test-integration`  | Run integration tests (requires running fixtures) |
-| `test-arch`         | Run architecture enforcement tests                |
+| `test-integration`  | Run all integration tests against PostgreSQL (requires running fixtures) |
+| `test-integration-sqlite` | Run backend-agnostic integration tests against SQLite (no external services) |
+| `test-integration-all` | Run integration tests on both backends         |
+| `test-arch`         | Run architecture enforcement tests               |
 | `test-smoke`        | Run smoke tests (requires running services)       |
-| `cov`               | Run tests with coverage report                    |
+| `smoke-packaging`   | Build UI+wheel in a clean venv, verify the SPA is packaged & served |
+| `cov`               | Run unit + arch tests with coverage report        |
+| `cov-all`           | Run all tests with coverage (requires fixtures/services) |
+| `openapi`           | Regenerate the control-plane OpenAPI spec (+ UI client schema) from code |
+| `openapi-parity`    | Print the reference-vs-generated OpenAPI coverage report |
+| `endpoints`         | Regenerate the endpoint + scope reference from code |
+| `cli-reference`     | Regenerate the CLI command reference from the cobra command tree |
+| `broker-reference`  | Regenerate the Broker OpenAPI artifact from the hand-curated spec |
 | `score`             | Validate OpenAPI specs with scorecard (80+ req)   |
-| `check`             | Run lint, score, secrets audit, unit + arch tests |
+| `detect-secrets`    | Check for new secrets not in baseline             |
+| `check`             | Run lint, score, secrets audit, and arch-tests    |
 | `hooks`             | Install lefthook git hooks (pre-commit + commit-msg) |
 | `clean`             | Remove caches and build artifacts                 |
-| `start-fixtures`    | Start Docker database fixtures                    |
+| `dev`               | One-command local bring-up (idempotent): fixtures + migrations + UI, then start the app |
+| `start-fixtures`    | Start Docker database fixtures and apply migrations |
 | `stop-fixtures`     | Stop Docker database fixtures                     |
 | `destroy-fixtures`  | Remove Docker database fixtures and volumes       |
 | `start-app`         | Start combined app (all surfaces)                 |
 | `start-registry`    | Start registry surface standalone                 |
 | `start-admin`       | Start admin surface standalone                    |
 | `start-control`     | Start control surface standalone                  |
+| `start-broker`      | Start broker surface standalone                   |
+| `migrate-sqlite`    | Apply all migrations to the local SQLite databases |
+| `start-app-sqlite`  | Start combined app on local SQLite (ingest only; search disabled) |
+| `build-wheel`       | Build Python wheel                                |
+| `build-base`        | Build the Python base Docker image (builder + runtime stages) |
+| `ui-setup`          | Install UI deps for local dev (no-op when node is unavailable) |
+| `ui-install`        | Install UI dependencies                           |
+| `ui-build`          | Build the UI bundle into `ui/dist`                |
+| `ui-lint`           | Lint the UI                                       |
+| `ui-test`           | Run UI unit/component tests                       |
 | `build-all`         | Build every service Docker image (see deploy/README.md) |
 | `save-all`          | Write image tarballs to `build/jentic-<svc>-<ver>.tar` |
 | `images`            | List locally-built `jentic-one/*` images          |
