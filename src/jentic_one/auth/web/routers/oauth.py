@@ -89,7 +89,23 @@ async def _parse_token_request(request: Request) -> TokenRequest:
         raise InvalidGrantError(str(exc.errors()[0]["msg"])) from None
 
 
-@router.post("/oauth/token", dependencies=[Depends(_check_token_rate_limit)])
+_TOKEN_REQUEST_SCHEMA = TokenRequest.model_json_schema()
+_TOKEN_REQUEST_BODY: dict[str, object] = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {"schema": _TOKEN_REQUEST_SCHEMA},
+            "application/x-www-form-urlencoded": {"schema": _TOKEN_REQUEST_SCHEMA},
+        },
+    },
+}
+
+
+@router.post(
+    "/oauth/token",
+    dependencies=[Depends(_check_token_rate_limit)],
+    openapi_extra=_TOKEN_REQUEST_BODY,
+)
 async def token_endpoint(
     body: TokenRequest = Depends(_parse_token_request),
     ctx: Context = Depends(get_ctx),

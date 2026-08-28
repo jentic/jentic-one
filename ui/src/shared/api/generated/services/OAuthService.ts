@@ -251,10 +251,25 @@ export class OAuthService {
      * @returns TokenResponse Successful Response
      * @throws ApiError
      */
-    public static tokenEndpoint(): CancelablePromise<TokenResponse> {
+    public static tokenEndpoint({
+        requestBody,
+    }: {
+        requestBody: {
+            assertion?: (string | null);
+            client_id?: (string | null);
+            client_secret?: (string | null);
+            code?: (string | null);
+            code_verifier?: (string | null);
+            grant_type: string;
+            redirect_uri?: (string | null);
+            refresh_token?: (string | null);
+        },
+    }): CancelablePromise<TokenResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/token',
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,
