@@ -22,7 +22,6 @@ from jentic_one.auth.repos import ToolkitNameRepository
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
-    AgentWriteAccessDeniedError,
     ClaimActorNotAllowedError,
     ClaimTokenInvalidError,
     InvalidOwnerError,
@@ -574,7 +573,7 @@ class AgentService:
             if agent is None:
                 raise ActorNotFoundError(agent_id)
             if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
-                raise AgentWriteAccessDeniedError(agent_id)
+                raise ActorNotFoundError(agent_id)
             if agent.status != ActorStatus.ACTIVE:
                 raise InvalidTransitionError(agent_id, agent.status, "update_jwks")
             before_jwks = agent.jwks
