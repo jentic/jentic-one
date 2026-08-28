@@ -24,23 +24,47 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state.backend import MemoryStateBackend
+from jentic_one.shared.state.backend import SharedStateBackend
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 
 router = APIRouter()
 
 _TOKEN_RATE_LIMIT_RPM = 60
-_token_rate_limit_store = MemoryStateBackend()
-_token_ip_rate_limiter = RateLimiter(
-    _token_rate_limit_store, default_rpm=_TOKEN_RATE_LIMIT_RPM, burst=60
-)
+_TOKEN_RATE_LIMIT_BURST = 60
+
+_cached_token_limiter: RateLimiter | None = None
+
+
+def _resolve_auth_backend(request: Request) -> SharedStateBackend:
+    backend: object = getattr(request.app.state, "auth_state_backend", None)
+    if isinstance(backend, SharedStateBackend):
+        return backend
+    from jentic_one.shared.state.backend import MemoryStateBackend
+
+    return MemoryStateBackend()
+
+
+def _get_token_limiter(request: Request) -> RateLimiter:
+    global _cached_token_limiter
+    if _cached_token_limiter is not None:
+        return _cached_token_limiter
+    backend = _resolve_auth_backend(request)
+    _cached_token_limiter = RateLimiter(
+        backend, default_rpm=_TOKEN_RATE_LIMIT_RPM, burst=_TOKEN_RATE_LIMIT_BURST
+    )
+    return _cached_token_limiter
 
 
 async def _check_token_rate_limit(request: Request) -> None:
-    """Per-IP rate limiter for the token endpoint."""
-    ip = request.client.host if request.client else "unknown"
-    outcome = await _token_ip_rate_limiter.acquire(ip)
+    """Per-client+IP rate limiter for the token endpoint."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        ip = forwarded.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else "unknown"
+    limiter = _get_token_limiter(request)
+    outcome = await limiter.acquire(ip)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 

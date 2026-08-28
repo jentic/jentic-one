@@ -61,8 +61,11 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 
 def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Install the auth token verifier on the app for shared identity resolution."""
+    """Install the auth token verifier and shared state on the app."""
+    from jentic_one.shared.state import build_state_backend
+
     app.state.verify_token = make_superset_verifier(ctx)
+    app.state.auth_state_backend = build_state_backend(ctx.config.broker.resilience.backend)
 
 
 def make_superset_verifier(ctx: Context) -> Any:

@@ -42,7 +42,7 @@ from jentic_one.shared.auth.permission_catalog import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state.backend import MemoryStateBackend
+from jentic_one.shared.state.backend import SharedStateBackend
 from jentic_one.shared.web.deps import get_ctx
 
 logger = structlog.get_logger(__name__)
@@ -50,14 +50,48 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 _AUTHORIZE_RATE_LIMIT_RPM = 30
-_rate_limit_store = MemoryStateBackend()
-_ip_rate_limiter = RateLimiter(_rate_limit_store, default_rpm=_AUTHORIZE_RATE_LIMIT_RPM, burst=30)
+_AUTHORIZE_RATE_LIMIT_BURST = 30
+
+_cached_authorize_limiter: RateLimiter | None = None
+
+
+def _resolve_auth_backend(request: Request) -> SharedStateBackend:
+    backend: object = getattr(request.app.state, "auth_state_backend", None)
+    if isinstance(backend, SharedStateBackend):
+        return backend
+    from jentic_one.shared.state.backend import MemoryStateBackend
+
+    return MemoryStateBackend()
+
+
+def _get_authorize_limiter(request: Request) -> RateLimiter:
+    global _cached_authorize_limiter
+    if _cached_authorize_limiter is not None:
+        return _cached_authorize_limiter
+    backend = _resolve_auth_backend(request)
+    _cached_authorize_limiter = RateLimiter(
+        backend, default_rpm=_AUTHORIZE_RATE_LIMIT_RPM, burst=_AUTHORIZE_RATE_LIMIT_BURST
+    )
+    return _cached_authorize_limiter
+
+
+def _client_rate_key(request: Request, client_id: str | None = None) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        ip = forwarded.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else "unknown"
+    if client_id:
+        return f"{client_id}:{ip}"
+    return ip
 
 
 async def _check_rate_limit(request: Request) -> None:
-    """Per-IP rate limiter for unauthenticated authorization endpoints."""
-    ip = request.client.host if request.client else "unknown"
-    outcome = await _ip_rate_limiter.acquire(ip)
+    """Per-client+IP rate limiter for unauthenticated authorization endpoints."""
+    client_id = request.query_params.get("client_id")
+    key = _client_rate_key(request, client_id)
+    limiter = _get_authorize_limiter(request)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
@@ -378,12 +412,21 @@ def _verify_payload(
     return payload
 
 
-_consent_nonce_store = MemoryStateBackend()
+_consent_nonce_backend: SharedStateBackend | None = None
 
 
-async def _consume_consent_nonce(nonce: str) -> bool:
+def _get_consent_backend(request: Request) -> SharedStateBackend:
+    global _consent_nonce_backend
+    if _consent_nonce_backend is not None:
+        return _consent_nonce_backend
+    _consent_nonce_backend = _resolve_auth_backend(request)
+    return _consent_nonce_backend
+
+
+async def _consume_consent_nonce(nonce: str, request: Request) -> bool:
     """Attempt to consume a consent nonce. Returns False if already consumed."""
-    return await _consent_nonce_store.set_if_absent(
+    backend = _get_consent_backend(request)
+    return await backend.set_if_absent(
         f"consent-nonce:{nonce}", b"1", ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS)
     )
 
@@ -660,6 +703,7 @@ async def consent_page(
 
 @router.post("/oauth/consent", dependencies=[Depends(_check_rate_limit)])
 async def consent_submit(
+    request: Request,
     consent_token: str = Form(...),
     action: str = Form(...),
     ctx: Context = Depends(get_ctx),
@@ -678,7 +722,7 @@ async def consent_submit(
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
 
     consent_nonce = params.get("consent_nonce") or ""
-    if not await _consume_consent_nonce(consent_nonce):
+    if not await _consume_consent_nonce(consent_nonce, request):
         logger.warning("oauth_consent_nonce_replay", nonce=consent_nonce[:8])
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
 
