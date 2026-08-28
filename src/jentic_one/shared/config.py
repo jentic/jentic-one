@@ -294,9 +294,7 @@ class PlatformClientConfig(BaseModel):
 _SPA_CLIENT_ID = "jentic-one-spa"
 _SPA_CALLBACK_PATH = "/app/auth/callback"
 
-_LOCAL_DEV_KEY_FINGERPRINT = (
-    "cdf9bf0510b631d8222d7b3be8766165b917e5c0a607151dc11272d7e68e2a11"
-)
+_LOCAL_DEV_KEY_FINGERPRINT = "cdf9bf0510b631d8222d7b3be8766165b917e5c0a607151dc11272d7e68e2a11"
 
 
 def _signing_key_fingerprint(pem: str) -> str:

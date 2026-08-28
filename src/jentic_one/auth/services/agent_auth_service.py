@@ -142,4 +142,3 @@ class AgentAuthService:
             raise InvalidTransitionError(agent_id, agent.status, "generate-api-key")
         if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
             raise ActorNotFoundError(agent_id)
-

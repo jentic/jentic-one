@@ -24,7 +24,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state.backend import SharedStateBackend
+from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 
@@ -40,8 +40,6 @@ def _resolve_auth_backend(request: Request) -> SharedStateBackend:
     backend: object = getattr(request.app.state, "auth_state_backend", None)
     if isinstance(backend, SharedStateBackend):
         return backend
-    from jentic_one.shared.state.backend import MemoryStateBackend
-
     return MemoryStateBackend()
 
 

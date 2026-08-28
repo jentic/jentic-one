@@ -42,7 +42,7 @@ from jentic_one.shared.auth.permission_catalog import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state.backend import SharedStateBackend
+from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web.deps import get_ctx
 
 logger = structlog.get_logger(__name__)
@@ -59,8 +59,6 @@ def _resolve_auth_backend(request: Request) -> SharedStateBackend:
     backend: object = getattr(request.app.state, "auth_state_backend", None)
     if isinstance(backend, SharedStateBackend):
         return backend
-    from jentic_one.shared.state.backend import MemoryStateBackend
-
     return MemoryStateBackend()
 
 
