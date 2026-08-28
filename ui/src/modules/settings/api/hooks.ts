@@ -67,8 +67,12 @@ export function useReactivateOAuthClient() {
 }
 
 export function useRotateOAuthClientSecret() {
+	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => OAuthClientsService.rotateOauthClientSecret({ id }),
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: QUERY_KEY });
+		},
 	});
 }
 
