@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
+from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import (
     InvalidGrantError,
@@ -111,7 +112,30 @@ def _platform_client_allows_redirect(redirect_uri: str, client_id: str, ctx: Con
     return False
 
 
-async def _is_allowed_redirect_uri(redirect_uri: str, client_id: str, ctx: Context) -> bool:
+async def _get_cached_oauth_client(
+    request: Request, client_id: str, ctx: Context
+) -> OAuthClientView | None:
+    """Return the OAuth client view for ``client_id``, cached per request.
+
+    /authorize touches the same client row three times (redirect-URI validation,
+    scope-allowlist check, consent decision); this collapses them into one DB
+    read. ``None`` in the cache means "confirmed unknown" — a repeat lookup for
+    the same client_id in the same request skips the DB round-trip.
+    """
+    cache: dict[str, OAuthClientView | None] | None = getattr(
+        request.state, "_oauth_client_cache", None
+    )
+    if cache is None:
+        cache = {}
+        request.state._oauth_client_cache = cache
+    if client_id not in cache:
+        cache[client_id] = await OAuthClientService(ctx).get_by_client_id(client_id)
+    return cache[client_id]
+
+
+async def _is_allowed_redirect_uri(
+    request: Request, redirect_uri: str, client_id: str, ctx: Context
+) -> bool:
     """Validate redirect_uri against platform clients (config) or registered clients (DB).
 
     Platform clients are validated against their configured redirect_uris.
@@ -120,15 +144,22 @@ async def _is_allowed_redirect_uri(redirect_uri: str, client_id: str, ctx: Conte
     """
     if _is_platform_client(client_id, ctx):
         return _platform_client_allows_redirect(redirect_uri, client_id, ctx)
+    client = await _get_cached_oauth_client(request, client_id, ctx)
+    if client is None or not client.active:
+        return False
+    return redirect_uri in client.redirect_uris
 
-    return await OAuthClientService(ctx).is_redirect_uri_allowed(client_id, redirect_uri)
 
-
-async def _get_client_allowed_scopes(client_id: str, ctx: Context) -> frozenset[str] | None:
+async def _get_client_allowed_scopes(
+    request: Request, client_id: str, ctx: Context
+) -> frozenset[str] | None:
     """Return allowed scopes for a registered client, or None for platform clients."""
     if _is_platform_client(client_id, ctx):
         return None
-    return await OAuthClientService(ctx).get_allowed_scopes(client_id)
+    client = await _get_cached_oauth_client(request, client_id, ctx)
+    if client is None or client.allowed_scopes is None:
+        return None
+    return frozenset(client.allowed_scopes)
 
 
 def _callback_uri(request: Request, canonical_base_url: str) -> str:
@@ -447,7 +478,7 @@ async def authorize_endpoint(
     If an external IdP is configured, redirects to the upstream provider.
     Otherwise returns an error (direct login requires a separate credential exchange).
     """
-    if not await _is_allowed_redirect_uri(redirect_uri, client_id, ctx):
+    if not await _is_allowed_redirect_uri(request, redirect_uri, client_id, ctx):
         logger.warning(
             "oauth_invalid_redirect_uri",
             client_id=client_id,
@@ -462,7 +493,7 @@ async def authorize_endpoint(
         return _error_redirect(redirect_uri, "invalid_request", state, "only S256 is supported")
 
     # Validate requested scopes against client's allowed scopes
-    allowed_scopes = await _get_client_allowed_scopes(client_id, ctx)
+    allowed_scopes = await _get_client_allowed_scopes(request, client_id, ctx)
     if allowed_scopes is not None:
         requested = set(scope.split())
         excess = requested - allowed_scopes - OIDC_PASSTHROUGH_SCOPES
@@ -540,7 +571,7 @@ async def oauth_callback(
 
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
 
-    oauth_client = await OAuthClientService(ctx).get_by_client_id(client_id or "")
+    oauth_client = await _get_cached_oauth_client(request, client_id or "", ctx)
     # Third-party clients always require consent regardless of the client's
     # require_consent flag: consent-skip is a first-party trust decision that
     # only platform clients (configured operator-side, not admin-registered)
