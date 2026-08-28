@@ -2,24 +2,19 @@
 
 from __future__ import annotations
 
-import hmac
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
     AgentCredentialRepository,
     AgentRepository,
     AuditRepository,
 )
 from jentic_one.auth.services.crypto import (
     generate_agent_api_key,
-    generate_client_secret,
     hash_secret,
 )
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
-    InvalidGrantError,
     InvalidTransitionError,
     NoApiKeyError,
 )
@@ -29,11 +24,10 @@ from jentic_one.shared.audit import (
     AuditAction,
     AuditTargetType,
     record_audit,
-    record_audit_best_effort,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorStatus, ActorType, AuditReason
+from jentic_one.shared.models import ActorStatus, AuditReason
 
 
 class AgentAuthService:
@@ -69,29 +63,6 @@ class AgentAuthService:
             )
 
         return key
-
-    async def register_client_secret(self, agent_id: str, *, identity: Identity) -> str:
-        """Generate and store a new client secret. Returns the plaintext (shown once)."""
-        secret = generate_client_secret()
-        secret_hash = hash_secret(secret)
-
-        async with self._ctx.admin_db.transaction() as session:
-            await self._ensure_active_and_owned(session, agent_id, identity)
-            await AgentCredentialRepository.set_client_secret_hash(
-                session, agent_id, client_secret_hash=secret_hash, created_by=identity.sub
-            )
-            await record_audit(
-                session,
-                action=AuditAction.ROTATE,
-                target_type=AuditTargetType.AGENT,
-                target_id=agent_id,
-                actor_type=identity.actor_type,
-                actor_id=identity.sub,
-                reason=AuditReason.CLIENT_SECRET_ROTATED,
-                origin=identity.origin.value,
-            )
-
-        return secret
 
     async def revoke_api_key(self, agent_id: str, *, identity: Identity) -> None:
         """Revoke (nullify) the agent's API key without generating a new one."""
@@ -172,40 +143,3 @@ class AgentAuthService:
         if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
             raise ActorNotFoundError(agent_id)
 
-    async def authenticate_client_credentials(
-        self, client_id: str, client_secret: str
-    ) -> tuple[str, str]:
-        """Verify agent client_id + client_secret, issue an access+refresh pair.
-
-        The client_id is the agent's ID (agt_...). Returns (access_token, refresh_token).
-        Raises InvalidGrantError on authentication failure.
-        """
-        async with self._ctx.admin_db.session() as session:
-            agent = await AgentRepository.get_by_id(session, client_id)
-            if agent is None or agent.status != ActorStatus.ACTIVE:
-                raise InvalidGrantError("invalid_client")
-
-            cred = await AgentCredentialRepository.get_by_agent_id(session, client_id)
-            if cred is None or cred.client_secret_hash is None:
-                raise InvalidGrantError("invalid_client")
-
-            if not hmac.compare_digest(hash_secret(client_secret), cred.client_secret_hash):
-                raise InvalidGrantError("invalid_client")
-
-            grants = await ActorScopeGrantRepository.list_for_actor(
-                session, client_id, actor_type=ActorType.AGENT
-            )
-            scopes = [g.scope for g in grants]
-
-        await record_audit_best_effort(
-            self._ctx,
-            action=AuditAction.LOGIN,
-            target_type=AuditTargetType.SESSION,
-            target_id=client_id,
-            actor_type=ActorType.AGENT,
-            actor_id=client_id,
-            reason="client credentials grant",
-            origin=None,
-        )
-
-        return await self._token_svc.issue_pair(client_id, ActorType.AGENT, scopes)

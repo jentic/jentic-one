@@ -137,16 +137,6 @@ class ClaimActorNotAllowedError(AuthServiceError):
         self.actor_type = actor_type
 
 
-class AgentWriteAccessDeniedError(AuthServiceError):
-    """Raised when a non-owner, non-admin attempts a privileged agent mutation."""
-
-    def __init__(self, agent_id: str) -> None:
-        super().__init__(
-            f"Only the agent owner or an org admin may perform this action on '{agent_id}'"
-        )
-        self.agent_id = agent_id
-
-
 class RateLimitExceededError(AuthServiceError):
     """Raised when a pre-auth rate limit is exceeded (429)."""
 
