@@ -140,6 +140,10 @@ func (LoginRequest) RequiredFields() []string      { return []string{"email", "p
 func (LoginResponse) RequiredFields() []string {
 	return []string{"access_token", "expires_in", "must_change_password", "token_type"}
 }
+func (McpConfigRegistrationRequest) RequiredFields() []string { return []string{"runtime"} }
+func (McpConfigRegistrationResponse) RequiredFields() []string {
+	return []string{"recorded", "runtime"}
+}
 func (MeAgent) RequiredFields() []string {
 	return []string{"id", "name", "scopes", "status", "token_scopes", "toolkit_bindings"}
 }

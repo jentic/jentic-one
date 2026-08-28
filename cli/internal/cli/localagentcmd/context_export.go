@@ -39,6 +39,15 @@ import (
 // session the actor IS an agent, so fencing must hold there regardless of the
 // operator-side mode.
 func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount) error {
+	return a.exportContextMaterial(ctx, acct.User, acct.HomeDir)
+}
+
+// exportContextMaterial is the shared export core: it writes the active
+// context's minimal config + credentials into the XDG store under homeDir and
+// chowns them to user. Used by the launch path (exportContextToAgent) and by
+// the MCP isolation step, which hands the material to a per-runtime service
+// account (local-MCP §3.7.5 rung 2).
+func (a *Cmd) exportContextMaterial(ctx context.Context, user, homeDir string) error {
 	st := clictx.ActiveContext(ctx)
 	if st == nil {
 		fmt.Fprintln(a.Out, theme.Dim.Render(
@@ -53,17 +62,17 @@ func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount
 			"Running file-less (JENTIC_BASE_URL/JENTIC_BEARER_TOKEN) — nothing to export to the agent home."))
 		return nil
 	}
-	if acct.HomeDir == "" {
-		return errors.New("agent account has no recorded home directory")
+	if homeDir == "" {
+		return errors.New("target account has no recorded home directory")
 	}
 	// The home is about to receive files and a privileged recursive chown;
 	// guard the recorded path exactly as the reset teardown does.
-	if err := localagent.ValidateHomeDir(acct.HomeDir); err != nil {
+	if err := localagent.ValidateHomeDir(homeDir); err != nil {
 		return fmt.Errorf("refusing to export the context: %w", err)
 	}
 
-	cfgDir := filepath.Join(acct.HomeDir, ".config", "jentic")
-	stateDir := filepath.Join(acct.HomeDir, ".local", "state", "jentic")
+	cfgDir := filepath.Join(homeDir, ".config", "jentic")
+	stateDir := filepath.Join(homeDir, ".local", "state", "jentic")
 	keysDir := filepath.Join(cfgDir, "keys")
 	for _, d := range []string{cfgDir, stateDir, keysDir} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -161,8 +170,8 @@ func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount
 	// the agent must read its own 0600 key/tokens when it runs as itself.
 	// Best-effort, like the V1 hand-off: a chown failure is reported, not
 	// fatal (the launch may still work if a previous export already chowned).
-	for _, d := range []string{filepath.Join(acct.HomeDir, ".config"), filepath.Join(acct.HomeDir, ".local")} {
-		chown := localagent.ChownToAgentCmd(acct.User, d)
+	for _, d := range []string{filepath.Join(homeDir, ".config"), filepath.Join(homeDir, ".local")} {
+		chown := localagent.ChownToAgentCmd(user, d)
 		chown.Stdout, chown.Stderr = a.Out, a.Err
 		if err := chown.Run(); err != nil {
 			fmt.Fprintln(a.Out, theme.Warnf("could not hand the agent its config (%s): %v", d, err))
