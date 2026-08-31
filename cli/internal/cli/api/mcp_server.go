@@ -1,11 +1,11 @@
 package api
 
 // mcp_server.go assembles the MCP server: tool registration (with the
-// --read-only / --exclude-tools filters), the shared result/soft-error shape
-// (every tool result is a JSON object with a top-level sibling `instance`
-// stamp — never a wrapper, never _meta, §3.7.4), and the attribution
-// RoundTripper (User-Agent + X-Jentic-Session-Id fallback, §3.6) that rides
-// the clictx transport hook.
+// --read-only / --exclude-tools filters), the skill:// resource registration
+// (mcp_resources.go), the shared result/soft-error shape (every tool result
+// is a JSON object with a top-level sibling `instance` stamp — never a
+// wrapper, never _meta, §3.7.4), and the attribution RoundTripper (User-Agent
+// + X-Jentic-Session-Id fallback, §3.6) that rides the clictx transport hook.
 
 import (
 	"context"
@@ -52,6 +52,10 @@ type mcpServer struct {
 	// maxResultBytes is the §3.7 context-protection cap applied to relayed
 	// upstream bodies (the execute family) — see mcp_execute.go.
 	maxResultBytes int64
+	// hostedFetchTimeout overrides the hosted skill probe's sub-budget
+	// (mcp_resources.go); zero means the hostedSkillFetchTimeout default.
+	// It exists as a field only so tests can inject a short budget.
+	hostedFetchTimeout time.Duration
 
 	// sessionID is the per-process UUID fallback for X-Jentic-Session-Id. The
 	// RoundTripper stamps it ONLY when the header is absent, so an env-set
@@ -101,7 +105,9 @@ func newMCPServer(a *app, version string, opts *mcpOptions, logger *slog.Logger)
 				"Call whoami to see the agent identity, status, scopes, and toolkit bindings. " +
 				"Every tool result carries a top-level `instance` key identifying the Jentic " +
 				"One instance it came from; instance.backend is \"unreachable\" when the " +
-				"control plane could not be reached.",
+				"control plane could not be reached. The skill://jentic resource is the " +
+				"canonical guide to the whole flow (skill://index lists every skill document); " +
+				"read it when unsure how the pieces fit together.",
 			Logger: logger,
 			// Legacy clients (< 2026-07-28) still send initialize; capture
 			// their clientInfo for the User-Agent upgrade the same way a
@@ -112,6 +118,7 @@ func newMCPServer(a *app, version string, opts *mcpOptions, logger *slog.Logger)
 		},
 	)
 	s.registerTools()
+	s.registerResources()
 	return s
 }
 

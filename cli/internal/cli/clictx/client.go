@@ -98,16 +98,34 @@ func stateForClient(state *ActiveState) (*ActiveState, error) {
 }
 
 // BrokerHTTPClient builds the base *http.Client for the broker leg of an
-// execute from the active context: the SEC-20 CA-pinned transport when the
-// environment declares ca_cert_path (fail closed on a broken bundle, exactly
-// like the control-plane clients), the default transport otherwise, with the
-// context's TransportHook composed over it (wrap, never displace — the pinning
-// decision stays the inner RoundTripper). Local-MCP §3.7.2: `execute`'s broker
-// leg historically built its own un-pinned client; the MCP path routes through
+// execute from the active context. Local-MCP §3.7.2: `execute`'s broker leg
+// historically built its own un-pinned client; the MCP path routes through
 // this constructor so broker calls honor the same trust decision as every
 // other backend call. Callers pass the result to client.BrokerTransport, which
 // decorates the retry/backoff policy on the outside.
 func BrokerHTTPClient(ctx context.Context) (*http.Client, error) {
+	return hookedPlaneHTTPClient(ctx)
+}
+
+// ControlHTTPClient builds the base *http.Client for RAW control-plane
+// requests that have no generated route — the schema-hidden agent-discovery
+// documents (`GET /skills/<name>.md` / `/skills/index.json`, #651) the
+// `jentic mcp` skill:// resources fetch. Those routes are public (no auth
+// editors needed — they must be fetchable while a registration is still
+// pending), but the transport posture is identical to every other plane call:
+// the SEC-20 CA-pinned client when the environment declares ca_cert_path,
+// with the context's TransportHook composed over it.
+func ControlHTTPClient(ctx context.Context) (*http.Client, error) {
+	return hookedPlaneHTTPClient(ctx)
+}
+
+// hookedPlaneHTTPClient is the shared constructor behind the raw plane
+// clients: the SEC-20 CA-pinned transport when the environment declares
+// ca_cert_path (fail closed on a broken bundle, exactly like the generated
+// clients), the default transport otherwise, with the context's TransportHook
+// composed over it (wrap, never displace — the pinning decision stays the
+// inner RoundTripper).
+func hookedPlaneHTTPClient(ctx context.Context) (*http.Client, error) {
 	state, err := stateForClient(FromContext(ctx))
 	if err != nil {
 		return nil, err
