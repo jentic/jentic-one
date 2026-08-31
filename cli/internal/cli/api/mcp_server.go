@@ -52,6 +52,10 @@ type mcpServer struct {
 	// maxResultBytes is the §3.7 context-protection cap applied to relayed
 	// upstream bodies (the execute family) — see mcp_execute.go.
 	maxResultBytes int64
+	// hostedFetchTimeout overrides the hosted skill probe's sub-budget
+	// (mcp_resources.go); zero means the hostedSkillFetchTimeout default.
+	// It exists as a field only so tests can inject a short budget.
+	hostedFetchTimeout time.Duration
 
 	// sessionID is the per-process UUID fallback for X-Jentic-Session-Id. The
 	// RoundTripper stamps it ONLY when the header is absent, so an env-set

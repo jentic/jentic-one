@@ -19,6 +19,7 @@ package api
 // registration is still pending approval).
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,6 +28,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -55,6 +57,13 @@ const (
 	skillMarkdownMIME = "text/markdown; charset=utf-8"
 	skillIndexMIME    = "application/json"
 )
+
+// hostedSkillFetchTimeout is the default sub-budget for one hosted document
+// probe, applied as a child deadline inside the call's mcpCallTimeout. The
+// hosted copy is a preference with a bundled fallback always in hand, so a
+// hung backend must cost seconds — not the whole 30s call budget — before the
+// read degrades to the embed.
+const hostedSkillFetchTimeout = 5 * time.Second
 
 // skillProvenanceNote is appended to every skill resource description so a
 // client (and its model) knows where the bytes come from and how to read the
@@ -92,7 +101,12 @@ func (s *mcpServer) registerResources() {
 		Name:  "index",
 		Title: "Jentic skill index",
 		Description: "Manifest of the served skill set: name, description, version, and the sha256 of each " +
-			"document's raw bytes, so a client can pick and verify skills without reading them all." +
+			"document's raw bytes, so a client can pick and verify skills without reading them all. " +
+			"Rows served from the backend locate each document with an absolute `url`; the offline " +
+			"bundled manifest carries the `uri` of the skill:// resource this server serves instead. " +
+			"A sha256 digest is only valid for verifying a document read when that read reports the " +
+			"same " + skillMetaSource + " as the index read (the two sources may carry different " +
+			"revisions of the same skill)." +
 			skillProvenanceNote,
 		MIMEType: skillIndexMIME,
 	}, s.handleSkillIndexResource)
@@ -127,10 +141,22 @@ func (s *mcpServer) handleSkillResource(ctx context.Context, req *mcp.ReadResour
 // hosted document may be newer or older than this binary), the bundled embed
 // otherwise (source bundled). A hosted failure is never an error — offline is
 // a supported state — but it is logged so version-skew debugging has a trail.
+//
+// A 200 body only counts as the hosted document when it is shape-valid: the
+// frontmatter must parse and its `name` must be the requested skill. Anything
+// else (a captive portal's HTML, a proxy error page, the wrong document) is
+// treated exactly like a non-200 — logged, then the bundled copy serves.
+// Without this gate, ParseDocMeta would happily label arbitrary bytes as a
+// hosted skill at fabricated version "1".
 func (s *mcpServer) skillDocFor(ctx context.Context, name string) (skillDoc, error) {
-	if raw, err := s.fetchHostedSkill(ctx, "/skills/"+name+".md"); err == nil {
-		return skillDoc{raw: raw, source: skillgen.SourceHosted, version: skillgen.ParseDocMeta(raw).Version}, nil
-	} else if !errors.Is(err, errNoBackend) {
+	hosted, err := s.fetchHostedSkill(ctx, "/skills/"+name+".md")
+	if err == nil {
+		if meta := skillgen.ParseDocMeta(hosted); meta.Name == name {
+			return skillDoc{raw: hosted, source: skillgen.SourceHosted, version: meta.Version}, nil
+		}
+		err = fmt.Errorf("hosted body is not skill %q (missing or mismatched frontmatter name)", name)
+	}
+	if !errors.Is(err, errNoBackend) {
 		s.logger.Info("skill resource: hosted fetch failed, serving bundled", "skill", name, "error", err)
 	}
 	raw, err := skillgen.RawBundled(name)
@@ -142,17 +168,30 @@ func (s *mcpServer) skillDocFor(ctx context.Context, name string) (skillDoc, err
 
 // handleSkillIndexResource reads skill://index: the backend's own manifest
 // verbatim when reachable (it describes exactly what `GET /skills/*` serves,
-// including per-row versions and sha256 digests), else a locally composed
-// manifest of the bundled set in the same row shape, with each row's url
-// replaced by the skill:// URI this server actually serves.
+// including per-row versions and sha256 digests — hosted rows locate each
+// document with a backend-stamped absolute `url`), else a locally composed
+// manifest of the bundled set in the same row shape with `uri` (the skill://
+// resource URI this server actually serves) in place of `url`. The verbatim
+// posture is deliberate: hosted bytes are never rewritten (the per-row sha256
+// covers the raw served bytes), so the `url`/`uri` key difference is the
+// documented tell for which source produced the manifest.
+//
+// A hosted 200 body only serves when it is shape-valid — well-formed JSON
+// whose top level is an array (the manifest's row list). Anything else is
+// treated exactly like a non-200: logged, then the bundled manifest serves.
 func (s *mcpServer) handleSkillIndexResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	cctx, cancel := s.callContext(ctx)
 	defer cancel()
 
-	if raw, err := s.fetchHostedSkill(cctx, "/skills/index.json"); err == nil {
-		s.logger.Info("skill index read", "source", skillgen.SourceHosted)
-		return skillReadResult(req.Params.URI, skillIndexMIME, skillDoc{raw: raw, source: skillgen.SourceHosted}), nil
-	} else if !errors.Is(err, errNoBackend) {
+	hosted, err := s.fetchHostedSkill(cctx, "/skills/index.json")
+	if err == nil {
+		if validSkillIndex(hosted) {
+			s.logger.Info("skill index read", "source", skillgen.SourceHosted)
+			return skillReadResult(req.Params.URI, skillIndexMIME, skillDoc{raw: hosted, source: skillgen.SourceHosted}), nil
+		}
+		err = errors.New("hosted body is not a JSON-array manifest")
+	}
+	if !errors.Is(err, errNoBackend) {
 		s.logger.Info("skill index: hosted fetch failed, serving bundled manifest", "error", err)
 	}
 
@@ -164,10 +203,24 @@ func (s *mcpServer) handleSkillIndexResource(ctx context.Context, req *mcp.ReadR
 	return skillReadResult(req.Params.URI, skillIndexMIME, skillDoc{raw: raw, source: skillgen.SourceBundled}), nil
 }
 
+// validSkillIndex is the shape gate for a hosted index body: well-formed JSON
+// whose top level is an array. The row list is the only manifest shape either
+// side of the fetch has ever served, so anything else (an HTML error page, a
+// JSON error object) is a bad response, not a manifest.
+func validSkillIndex(raw []byte) bool {
+	if !json.Valid(raw) {
+		return false
+	}
+	trimmed := bytes.TrimLeft(raw, " \t\r\n")
+	return len(trimmed) > 0 && trimmed[0] == '['
+}
+
 // bundledSkillIndex composes the offline manifest from the embedded set: the
 // backend's row shape (name, description, version, sha256 of the raw served
 // bytes) with `uri` pointing at the skill:// resource instead of the
-// backend's base-stamped absolute URL (there is no backend to stamp).
+// backend's base-stamped absolute `url` (there is no backend to stamp). The
+// offline manifest always emits `uri`; `url` stays a hosted-only key because
+// hosted bytes are served verbatim (see handleSkillIndexResource).
 func bundledSkillIndex() ([]byte, error) {
 	names := skillgen.BundledNames()
 	rows := make([]map[string]string, 0, len(names))
@@ -223,6 +276,15 @@ var errNoBackend = errors.New("no backend configured")
 // document larger than that cannot be served whole into a model's context, so
 // an oversized response is treated as a bad response — the caller falls back
 // to the bundled copy — never truncated mid-document.
+//
+// The probe carries its own sub-budget (hostedFetchTimeout) inside the call's
+// mcpCallTimeout deadline: a hung backend must degrade the read to the
+// bundled copy in seconds, not stall resources/read for the full call budget.
+//
+// Redirects are NOT followed: the backend serves these documents directly, so
+// a 3xx is a bad response (fall back to bundled), never a license for the CLI
+// to fetch an arbitrary — possibly internal/link-local — location with the
+// session's attribution headers and label the bytes hosted.
 func (s *mcpServer) fetchHostedSkill(ctx context.Context, path string) ([]byte, error) {
 	st := clictx.ActiveContext(ctx)
 	if st == nil || st.BaseURL == "" {
@@ -232,6 +294,13 @@ func (s *mcpServer) fetchHostedSkill(ctx context.Context, path string) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	budget := s.hostedFetchTimeout
+	if budget <= 0 {
+		budget = hostedSkillFetchTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(st.BaseURL, "/")+path, nil)
 	if err != nil {
 		return nil, err
