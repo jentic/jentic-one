@@ -52,6 +52,11 @@ type setupProbe struct {
 	// config.yaml (client_id present / status).
 	registered bool
 	regStatus  string
+	// configErr is a config.yaml READ failure (EACCES, corruption) hit while
+	// resolving the registration state: registration is then UNKNOWN, not
+	// absent — the diagnosis must surface the cause instead of prescribing a
+	// re-register that cannot help while the file is unreadable.
+	configErr error
 	// probeErr is the GET /instance result; only probed when the identity
 	// ladder passes (probed=true) — an unregistered machine reports its
 	// registration gap without a pointless dial.
@@ -119,6 +124,15 @@ func diagnoseSetup(p setupProbe) setupDiagnosis {
 			Instruction: fmt.Sprintf("Environment %q has no base_url. Ask your operator to set it "+
 				"(`jentic env add`, or re-run `jentic register --url <control-plane URL>`).", p.environment),
 		}
+	case !p.fileless && !p.hasAPIKey && p.configErr != nil:
+		return setupDiagnosis{
+			State:   setupNotRegistered,
+			Summary: fmt.Sprintf("the registration state for %s could not be read: %v", pair, p.configErr),
+			Instruction: fmt.Sprintf("The Jentic configuration could not be read (%v). Ask your operator to "+
+				"fix the configuration file (permissions or corruption) under the XDG config directory "+
+				"(~/.config/jentic), then retry get_started. Re-registering will not help while the file "+
+				"is unreadable.", p.configErr),
+		}
 	case !p.fileless && !p.hasAPIKey && !p.registered:
 		return setupDiagnosis{
 			State:       setupNotRegistered,
@@ -181,10 +195,15 @@ func (s *mcpServer) gatherSetup(ctx context.Context) setupProbe {
 		}
 	}
 	if !p.fileless && !p.hasAPIKey {
-		// A config the resolver could not parse never reaches here (the
-		// interceptor degrades to no-context, the no_config branch above); a
-		// read error now is reported as not-registered with its cause intact.
-		if cfg, err := config.Load(); err == nil {
+		// A read/parse error means the registration state is UNKNOWN: carry
+		// the cause into the probe so the diagnosis can surface it instead of
+		// misreporting an EACCES/corrupt config.yaml as "not registered" (and
+		// prescribing a re-register that cannot help while the file is
+		// unreadable). Note the interceptor may still have resolved a context
+		// from the env override, so this branch is reachable.
+		if cfg, err := config.Load(); err != nil {
+			p.configErr = err
+		} else {
 			reg, ok := cfg.Identities[st.IdentityName].Environments[st.EnvironmentName]
 			p.registered = ok && reg.ClientID != ""
 			p.regStatus = reg.Status
