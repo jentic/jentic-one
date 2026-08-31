@@ -11,6 +11,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -174,7 +175,13 @@ func TestDoctorMCPEntryContextUndefinedNameWarns(t *testing.T) {
 // golden-tested in mcpcfg).
 func TestReadMCPEntriesFindsWrittenConfigs(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	// os.UserHomeDir reads USERPROFILE on Windows, HOME elsewhere — set the
+	// one the running OS resolves so readMCPEntries surveys the temp home.
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	} else {
+		t.Setenv("HOME", home)
+	}
 	if _, err := mcpcfg.WriteJSONEntry(mcpcfg.RuntimeCursor,
 		mcpcfg.CursorConfigPath(home), mcpcfg.PlainEntry("/abs/jentic", "dev")); err != nil {
 		t.Fatal(err)

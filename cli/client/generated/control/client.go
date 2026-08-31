@@ -1860,9 +1860,6 @@ type McpConfigRegistrationResponse struct {
 // config file/entry “jentic setup“/“jentic skill init“ writes. A closed
 // set (never the raw runtime string) so the config-written → first-session →
 // first-execute funnel stays property-free on the wire.
-//
-// Mirrored verbatim from PR #1178 (“feat/mcp-telemetry-origin“) so the two
-// lanes stay wire-compatible; reconcile on merge.
 type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
