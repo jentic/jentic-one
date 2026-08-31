@@ -120,15 +120,17 @@ func (a *App) banner(cmd *cobra.Command) {
 // non-runnable parents (which fall through to the help screen, where helpFunc
 // draws the header itself), the help/completion/install/update command trees
 // (which either own their header or must emit machine-readable output — e.g.
-// the completion *script* must stay clean), and `execute`, whose output is the
-// upstream response and is commonly piped/captured, so the logo would be noise.
+// the completion *script* must stay clean), `execute`, whose output is the
+// upstream response and is commonly piped/captured, so the logo would be noise,
+// and `mcp`, whose stdout IS the JSON-RPC wire — anything but protocol frames
+// corrupts the session.
 func bannerSkip(cmd *cobra.Command) bool {
 	if !cmd.Runnable() {
 		return true
 	}
 	for c := cmd; c != nil; c = c.Parent() {
 		switch c.Name() {
-		case "help", "completion", "install", "update", "execute":
+		case "help", "completion", "install", "update", "execute", "mcp":
 			return true
 		}
 	}

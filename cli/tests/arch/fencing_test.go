@@ -88,6 +88,11 @@ var fencingExemptPrefixes = []string{
 	// Agent-facing self-check (read-only) and login/logout of the agent's own
 	// session (not an operator context switch).
 	"doctor", "whoami", "login", "logout",
+	// The MCP stdio server: serves the agent's data-plane surface to a local
+	// MCP client. Read-only host-wise (it writes only its own log file), never
+	// prompts, never switches or reveals a non-active context; every backend
+	// call is server-side-scope-authorized like the data-plane commands above.
+	"mcp",
 	// Skill self-provisioning + own-identity key management (writes only the
 	// agent's own runtime / its own credential, never another identity). NOTE:
 	// `setup` is NOT here — it is fenced (AGT-5): it hangs on a human

@@ -232,6 +232,23 @@ jentic execute <operation>
 > without re-registering.) See [Local setup](#local-setup) for the loopback
 > case, where `register` seeds the broker automatically.
 
+## MCP server (`jentic mcp`)
+
+`jentic mcp` runs a Model Context Protocol server on stdin/stdout for a local
+MCP client (Claude Code, Cursor, …) to spawn. The session always boots —
+`tools/list` works with no or invalid configuration — and the `get_started`
+tool diagnoses this machine's setup state with the exact operator instruction
+for each gap. Context selection uses the root `--context` flag /
+`$JENTIC_CONTEXT`; server logs go to `--log-file` (default under the XDG state
+dir), never stdout.
+
+**Windows is in scope** for `jentic mcp`: the `jentic` binary ships natively
+for Windows (see [Supported platforms](#supported-platforms)) and the stdio
+server runs with it — the remaining work is verification, not porting (the
+stdio path and per-runtime config writers are to be verified on Windows —
+paths, `.exe` in written entries — before one-click client configs are
+published; WSL is documented only as an alternative).
+
 ## Local setup
 
 Running against a **local** install (the stack `jenticctl install` stands up on
