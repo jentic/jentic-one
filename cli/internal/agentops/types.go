@@ -138,6 +138,11 @@ type Denial struct {
 	// Directive is the parsed agent_directive, or nil when the denial carried
 	// none (the caller synthesizes a status-keyed recovery hint instead).
 	Directive *ux.Directive
+	// DirectiveRaw is the verbatim agent_directive JSON sub-object the denial
+	// carried (nil when Directive is nil). Relaying surfaces (the MCP payload)
+	// use it so unknown future broker fields survive intact; the CLI's styled
+	// renderer keeps reading the typed Directive projection.
+	DirectiveRaw json.RawMessage
 }
 
 // Err returns the typed denial every broker-denial exit shares (AGT-6):

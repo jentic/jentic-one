@@ -31,6 +31,15 @@ import (
 // the CALL, not wedge the session.
 const mcpCallTimeout = 30 * time.Second
 
+// mcpExecuteCallTimeout bounds one execute/execute_read call. It is
+// deliberately ABOVE the 60s broker-leg ceiling the CLI's execute carries
+// (agentops.DoWith's default client timeout), so the per-call context never
+// undercuts it: an upstream that answers in 45s succeeds over MCP exactly
+// like it does over the CLI, and the effective ceiling on both surfaces is
+// the same 60s client timeout. The headroom covers the pre-send control-plane
+// work (resolve/inspect) that shares this context.
+const mcpExecuteCallTimeout = 90 * time.Second
+
 // mcpServer is one `jentic mcp` process: a single stdio session plus the
 // process-scoped attribution state (session UUID, last-seen clientInfo) and
 // the TTL instance-stamp cache.
@@ -295,8 +304,17 @@ func (s *mcpServer) noteClient(ci *mcp.Implementation) {
 
 // callContext derives the per-call context every handler uses: the session
 // context's values (ActiveState, transport hook) with this call's deadline.
+// Control-plane-only tools get the 30s mcpCallTimeout.
 func (s *mcpServer) callContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, mcpCallTimeout)
+}
+
+// executeCallContext is callContext for the execute family: the broker leg
+// relays arbitrary upstream latency, so it gets the wider
+// mcpExecuteCallTimeout instead of the control-plane deadline (which would
+// silently cap the advertised 60s execute ceiling at 30s).
+func (s *mcpServer) executeCallContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, mcpExecuteCallTimeout)
 }
 
 // result builds the one tool-result shape every tool returns: the payload

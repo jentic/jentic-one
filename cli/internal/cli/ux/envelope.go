@@ -134,6 +134,10 @@ type CodedError struct {
 	Msg        string         // human/LLM-readable prose (redacted on output)
 	Actionable string         // machine-runnable recovery step, when one exists
 	Details    map[string]any // e.g. {"agent_directive": ..., "http_status": 403}
+	// Cause optionally preserves the underlying error for errors.Is/As
+	// classification (e.g. distinguishing a pre-send dial failure from a
+	// mid-flight timeout). It is never rendered: Msg carries the prose.
+	Cause error
 
 	// reported records that an Audience.ReportError already rendered this error
 	// (envelope on stderr in agent mode, styled line in human mode), so the
@@ -143,6 +147,10 @@ type CodedError struct {
 }
 
 func (e *CodedError) Error() string { return e.Msg }
+
+// Unwrap exposes the preserved cause (when any) to errors.Is/errors.As, so
+// callers can classify the underlying failure without parsing Msg.
+func (e *CodedError) Unwrap() error { return e.Cause }
 
 // MarkReported flags the error as already rendered by an Audience. Called by
 // every ReportError implementation; command code never needs it.

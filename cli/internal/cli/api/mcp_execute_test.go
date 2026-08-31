@@ -7,7 +7,9 @@ package api
 // contract of execute_read, and the live-route get_execution_result poll.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -17,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 
@@ -149,6 +153,41 @@ func TestMCPExecute_DenialPassesDirectiveThrough(t *testing.T) {
 	}
 }
 
+// TestMCPExecute_DenialRelaysUnknownDirectiveFields pins the VERBATIM half of
+// the directive passthrough: the payload carries the RAW agent_directive JSON
+// sub-object, so a field this CLI build has never heard of still reaches the
+// model (a struct projection would silently drop it).
+func TestMCPExecute_DenialRelaysUnknownDirectiveFields(t *testing.T) {
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"detail":"no toolkit binding","agent_directive":{"strategy":"prompt_human",` +
+			`"future_field":"must-survive","parameters":{"nested_unknown":{"keep":"me"}},` +
+			`"human_readable_instruction":"Ask your operator."}}`))
+	}))
+	defer broker.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute", `{"operation_id":"POST:/v1/pets"}`))
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	directive, ok := payload["agent_directive"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload has no agent_directive: %v", payload)
+	}
+	if directive["future_field"] != "must-survive" {
+		t.Errorf("directive = %v, want the unknown top-level field relayed verbatim", directive)
+	}
+	params, _ := directive["parameters"].(map[string]any)
+	if nested, _ := params["nested_unknown"].(map[string]any); nested["keep"] != "me" {
+		t.Errorf("directive.parameters = %v, want the nested unknown value intact", params)
+	}
+}
+
 func TestMCPExecute_DenialWithoutDirectiveSynthesizesHint(t *testing.T) {
 	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Jentic-Error-Origin", "broker")
@@ -245,7 +284,9 @@ func TestMCPExecute_TransportFailureIsRetryableSoftError(t *testing.T) {
 
 	s := stampedTestMCPServer(t)
 	// POST without an idempotency key: never retried by the SDK policy, so
-	// the failure surfaces immediately.
+	// the failure surfaces immediately. Connection refused is a PRE-SEND
+	// failure — the upstream provably never saw the request — so even an
+	// unkeyed POST earns retryable: true.
 	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", brokerURL),
 		callToolRequest("execute", `{"operation_id":"POST:/v1/pets"}`))
 	if err != nil {
@@ -259,10 +300,128 @@ func TestMCPExecute_TransportFailureIsRetryableSoftError(t *testing.T) {
 		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeTransportError)
 	}
 	if payload["retryable"] != true {
-		t.Errorf("retryable = %v, want true (the broker may come back)", payload["retryable"])
+		t.Errorf("retryable = %v, want true (pre-send failure: the request never left)", payload["retryable"])
 	}
 	if payload["next_tool"] != "get_started" {
 		t.Errorf("next_tool = %v, want get_started (diagnoses a down instance)", payload["next_tool"])
+	}
+}
+
+// midflightBroker accepts the request in full and then kills the connection
+// without writing a response — a transport failure that is NOT provably
+// pre-send: the upstream may have received (and executed) the call.
+func midflightBroker(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		_ = conn.Close()
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestMCPExecute_MidflightFailureUnkeyedPostIsNotRetryable pins the
+// double-execution guard: a mid-flight failure on a POST with no
+// Idempotency-Key may have ALREADY executed upstream, so the soft error must
+// NOT carry retryable: true — it must say the request may have been
+// delivered and route recovery through idempotency keys /
+// get_execution_result instead of a blind re-send.
+func TestMCPExecute_MidflightFailureUnkeyedPostIsNotRetryable(t *testing.T) {
+	broker := midflightBroker(t)
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute", `{"operation_id":"POST:/v1/pets","body":{"name":"Bob"}}`))
+	if err != nil {
+		t.Fatalf("a transport failure must be a soft error, not a protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeTransportError {
+		t.Fatalf("error_code = %v, want %q", payload["error_code"], ux.CodeTransportError)
+	}
+	if payload["retryable"] != false {
+		t.Errorf("retryable = %v, want false (mid-flight unkeyed POST: a retry may double-execute)", payload["retryable"])
+	}
+	if msg, _ := payload["error"].(string); !strings.Contains(msg, "may already have reached the upstream") {
+		t.Errorf("error %q must say the request may have been delivered", msg)
+	}
+	step, _ := payload["actionable_step"].(string)
+	for _, want := range []string{"idempotency_key", "get_execution_result"} {
+		if !strings.Contains(step, want) {
+			t.Errorf("actionable_step %q must point at %s", step, want)
+		}
+	}
+}
+
+// TestMCPExecute_MidflightFailureWithIdempotencyKeyIsRetryable: the same
+// mid-flight failure IS safely retryable when the call carries an
+// Idempotency-Key — the broker de-duplicates the re-send.
+func TestMCPExecute_MidflightFailureWithIdempotencyKeyIsRetryable(t *testing.T) {
+	broker := midflightBroker(t)
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute", `{"operation_id":"POST:/v1/pets","body":{"name":"Bob"},"idempotency_key":"key-1"}`))
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeTransportError || payload["retryable"] != true {
+		t.Errorf("payload = {error_code: %v, retryable: %v}, want a retryable TRANSPORT_ERROR (keyed POST is de-duplicated)",
+			payload["error_code"], payload["retryable"])
+	}
+}
+
+// TestMCPExecuteRead_MidflightFailureIsRetryable: a GET cannot mutate, so a
+// mid-flight failure on the read variant keeps the retryable hint.
+func TestMCPExecuteRead_MidflightFailureIsRetryable(t *testing.T) {
+	broker := midflightBroker(t)
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecuteRead(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute_read", `{"operation_id":"GET:/v1/pets"}`))
+	if err != nil {
+		t.Fatalf("handleExecuteRead: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeTransportError || payload["retryable"] != true {
+		t.Errorf("payload = {error_code: %v, retryable: %v}, want a retryable TRANSPORT_ERROR (GET is idempotent)",
+			payload["error_code"], payload["retryable"])
+	}
+}
+
+// TestMCPCallContexts_DeadlineSplit pins the deadline split: the execute
+// family's per-call deadline must sit ABOVE the 60s broker-leg ceiling the
+// CLI's execute carries (agentops.DoWith's default client timeout) — the 30s
+// control-plane deadline would make the advertised ceiling unreachable —
+// while control-plane-only tools keep the tight 30s bound.
+func TestMCPCallContexts_DeadlineSplit(t *testing.T) {
+	s := newTestMCPServer(t, nil)
+	now := time.Now()
+
+	cctx, cancel := s.callContext(context.Background())
+	defer cancel()
+	ectx, ecancel := s.executeCallContext(context.Background())
+	defer ecancel()
+
+	controlDeadline, ok := cctx.Deadline()
+	if !ok {
+		t.Fatalf("callContext must carry a deadline")
+	}
+	executeDeadline, ok := ectx.Deadline()
+	if !ok {
+		t.Fatalf("executeCallContext must carry a deadline")
+	}
+	if got := executeDeadline.Sub(now); got < 60*time.Second {
+		t.Errorf("execute deadline = %v, want >= the 60s CLI execute ceiling", got.Round(time.Second))
+	}
+	if got := controlDeadline.Sub(now); got > 31*time.Second {
+		t.Errorf("control-plane deadline = %v, want the tight 30s bound", got.Round(time.Second))
 	}
 }
 
@@ -360,6 +519,122 @@ func TestMCPExecute_TruncatesOversizedBody(t *testing.T) {
 	}
 }
 
+// TestMCPExecute_TruncationDropsRuneSplitAtCap pins the UTF-8 boundary: when
+// the cap lands mid-rune, the split rune's leading byte is dropped rather
+// than relayed as garbage (a tool result must stay valid UTF-8).
+func TestMCPExecute_TruncationDropsRuneSplitAtCap(t *testing.T) {
+	// 1023 ASCII bytes, then two-byte runes: byte 1024 (the cap) falls in the
+	// middle of the first "é".
+	payloadBody := strings.Repeat("a", 1023) + strings.Repeat("é", 64)
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payloadBody))
+	}))
+	defer broker.Close()
+
+	s := stampedTestMCPServer(t)
+	s.maxResultBytes = 1024
+	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute", `{"operation_id":"POST:/v1/pets"}`))
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["truncated"] != true {
+		t.Fatalf("truncated = %v, want true", payload["truncated"])
+	}
+	body, _ := payload["body"].(string)
+	if !utf8.ValidString(body) {
+		t.Errorf("truncated body must be valid UTF-8")
+	}
+	if body != strings.Repeat("a", 1023) {
+		t.Errorf("body = %q..., want the 1023 leading bytes with the split rune dropped", body[:16])
+	}
+}
+
+// TestMCPExecute_TruncationSanitizesBinaryBody pins the docstring's "leading
+// bytes, sanitized to valid UTF-8": a binary body's invalid sequences are
+// stripped EVERYWHERE, not only at the cap boundary, so the relayed string is
+// always valid UTF-8 (and therefore not byte-identical to the raw prefix).
+func TestMCPExecute_TruncationSanitizesBinaryBody(t *testing.T) {
+	chunk := append([]byte("data"), 0xFF, 0xFE, 0x00)
+	raw := bytes.Repeat(chunk, 300) // 2100 bytes, invalid UTF-8 throughout
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(raw)
+	}))
+	defer broker.Close()
+
+	s := stampedTestMCPServer(t)
+	s.maxResultBytes = 1024
+	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute", `{"operation_id":"POST:/v1/pets"}`))
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["truncated"] != true || payload["total_bytes"] != float64(len(raw)) {
+		t.Fatalf("payload = {truncated: %v, total_bytes: %v}, want the truncation envelope for %d bytes",
+			payload["truncated"], payload["total_bytes"], len(raw))
+	}
+	body, _ := payload["body"].(string)
+	if !utf8.ValidString(body) {
+		t.Errorf("binary body must be sanitized to valid UTF-8")
+	}
+	if !strings.HasPrefix(body, "data") || strings.ContainsRune(body, 0xFFFD) {
+		t.Errorf("body %q..., want the readable bytes kept and invalid sequences dropped (not replaced)", body[:8])
+	}
+}
+
+// TestMCPExecute_CapsOversizedResponseHeaders pins the header half of the
+// §3.7 context-protection cap: response headers ride under their own
+// aggregate budget, so a hostile/buggy upstream cannot push megabytes into
+// the model's context THROUGH headers while the body cap holds. Small
+// headers survive a fat sibling; the marker names the truncation.
+func TestMCPExecute_CapsOversizedResponseHeaders(t *testing.T) {
+	fat := strings.Repeat("h", 64<<10) // 64 KiB in ONE header, body tiny
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Bloat", fat)
+		w.Header().Set("Jentic-Execution-Id", "exec_fat")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer broker.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute", `{"operation_id":"POST:/v1/pets"}`))
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("header truncation is not an error: %v", res.Content)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["headers_truncated"] != true {
+		t.Fatalf("headers_truncated = %v, want true", payload["headers_truncated"])
+	}
+	headers, _ := payload["headers"].(map[string]any)
+	if _, ok := headers["X-Bloat"]; ok {
+		t.Errorf("the over-budget header must be dropped")
+	}
+	if headers["Content-Type"] != "application/json" {
+		t.Errorf("headers = %v, want the small headers to survive the fat sibling", headers)
+	}
+	serialized, _ := json.Marshal(headers)
+	if int64(len(serialized)) > s.headerBytesBudget()+256 {
+		t.Errorf("serialized headers = %d bytes, want them under the %d budget", len(serialized), s.headerBytesBudget())
+	}
+	// The BODY cap is untouched: the small body is relayed whole.
+	if _, ok := payload["truncated"]; ok {
+		t.Errorf("a small body must not carry the body-truncation envelope")
+	}
+	if body, ok := payload["body"].(map[string]any); !ok || body["ok"] != true {
+		t.Errorf("body = %v, want the upstream JSON intact", payload["body"])
+	}
+	if payload["execution_id"] != "exec_fat" {
+		t.Errorf("execution_id = %v, must survive header truncation", payload["execution_id"])
+	}
+}
+
 // TestMCPExecute_NeverReadsStdin pins the §3.7 structural guarantee: under
 // stdio MCP, stdin is the JSON-RPC wire — a tool call with no body argument
 // must send NO body and must not consume a single byte from stdin, even when
@@ -431,6 +706,37 @@ func TestMCPExecuteRead_RejectsNonGetOperations(t *testing.T) {
 	}
 	if !strings.Contains(wireErr.Message, "execute") {
 		t.Errorf("message %q must point at the execute tool", wireErr.Message)
+	}
+}
+
+// TestMCPExecuteRead_AcceptsLowercaseRegistryMethod pins the resolve-time
+// method normalization: a registry inspect document carrying "get" (allowed —
+// the document is data, not our canon) must pass the GET/HEAD gate and go on
+// the wire as canonical GET, not be rejected with "resolves to get".
+func TestMCPExecuteRead_AcceptsLowercaseRegistryMethod(t *testing.T) {
+	var gotMethod string
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer broker.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"method":"get","url":"https://acme.com/pets"}`))
+	}))
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecuteRead(activeCtxWithBroker(srv.URL, broker.URL),
+		callToolRequest("execute_read", `{"operation_id":"op_lower"}`))
+	if err != nil {
+		t.Fatalf("a lowercase registry method must not fail the GET/HEAD gate: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected soft error: %v", res.Content)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("method on the wire = %q, want the canonical GET", gotMethod)
 	}
 }
 
@@ -622,6 +928,41 @@ func TestMCPGetExecutionResult_UnknownJobIsSoftResolveFailed(t *testing.T) {
 	// never get_started.
 	if payload["next_tool"] != "get_execution_result" {
 		t.Errorf("next_tool = %v, want get_execution_result", payload["next_tool"])
+	}
+}
+
+// TestMCPGetExecutionResult_TransportFailureIsRetryable pins the §3.7
+// transport row on the POLL tool: its most likely transient failure is
+// "control plane briefly down, poll again", so a transport failure must come
+// back as a retryable TRANSPORT_ERROR with the get_started pointer — not as
+// INTERNAL_ERROR ("stop, CLI bug") with no hints. The poll is a GET, so
+// re-polling is always safe.
+func TestMCPGetExecutionResult_TransportFailureIsRetryable(t *testing.T) {
+	// A control plane that is down: bind a listener, note the address, close it.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	baseURL := srv.URL
+	srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleGetExecutionResult(activeCtx(baseURL), callToolRequest("get_execution_result", `{"job_id":"job_9"}`))
+	if err != nil {
+		t.Fatalf("a transport failure must be a soft error, not a protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeTransportError {
+		t.Errorf("error_code = %v, want %q (never INTERNAL_ERROR for a down control plane)",
+			payload["error_code"], ux.CodeTransportError)
+	}
+	if payload["retryable"] != true {
+		t.Errorf("retryable = %v, want true (polling again is the recovery)", payload["retryable"])
+	}
+	if payload["next_tool"] != "get_started" {
+		t.Errorf("next_tool = %v, want get_started (diagnoses a down instance)", payload["next_tool"])
 	}
 }
 

@@ -19,7 +19,10 @@ package api
 //     the only broker source (SEC-21 pinning is structural).
 //   - Relayed bodies are capped at maxResultBytes (§3.7 context protection —
 //     the transport's 64 MiB bound is not context protection) with the
-//     truncation envelope {truncated: true, total_bytes, execution_id}.
+//     truncation envelope {truncated: true, total_bytes, execution_id}, and
+//     relayed response headers ride under their own aggregate budget
+//     (headerBytesBudget) with a headers_truncated marker — headers must not
+//     smuggle around the body cap.
 
 import (
 	"bytes"
@@ -127,7 +130,10 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 		toolName = "execute_read"
 	}
 	s.noteClient(req.ClientInfo())
-	cctx, cancel := s.callContext(ctx)
+	// The execute family gets the wider deadline: the broker leg relays
+	// arbitrary upstream latency, and the 30s control-plane deadline would
+	// silently cap the 60s execute ceiling (agentops.DoWith's client timeout).
+	cctx, cancel := s.executeCallContext(ctx)
 	defer cancel()
 
 	args, err := normalizeToolArgs(req.Params.Arguments, executeParams)
@@ -211,7 +217,13 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	}
 	res, err := agentops.DoWith(hc, breq)
 	if err != nil {
-		return s.executeTransportError(cctx, err), nil
+		// Retrying is provably safe when the call cannot double-execute: a
+		// GET/HEAD, or a mutating call the broker de-duplicates on its
+		// Idempotency-Key. Anything else defers to the pre-send/mid-flight
+		// classification inside executeTransportError.
+		retrySafe := execReq.IdempotencyKey != "" ||
+			op.Method == http.MethodGet || op.Method == http.MethodHead
+		return s.executeTransportError(cctx, err, retrySafe), nil
 	}
 	s.logger.Info(toolName, "target", target, "method", op.Method, "status", res.Status, "execution_id", res.ExecutionID)
 
@@ -318,34 +330,78 @@ func (s *mcpServer) executeResolveError(ctx context.Context, target string, err 
 	}, "search_apis")
 }
 
-// executeTransportError maps a broker transport failure per the §3.7 table:
-// retryable (the broker may be coming back), with the get_started pointer —
-// on a local install a dead broker usually means the instance is down, which
-// get_started diagnoses with the exact operator instruction. The instance
-// stamp on the result degrades naturally when the control plane is down too.
-func (s *mcpServer) executeTransportError(ctx context.Context, err error) *mcp.CallToolResult {
-	s.logger.Warn("execute transport failed", "error", err)
-	var extra map[string]any
-	nextTool := ""
-	if asCoded(err).Code == ux.CodeTransportError {
-		extra = map[string]any{"retryable": true}
-		nextTool = "get_started"
+// executeTransportError maps a transport failure per the §3.7 table: a soft
+// TRANSPORT_ERROR with the get_started pointer — on a local install a dead
+// broker usually means the instance is down, which get_started diagnoses with
+// the exact operator instruction. The instance stamp on the result degrades
+// naturally when the control plane is down too.
+//
+// The retryable hint is earned, not blanket: `retryable: true` only when the
+// caller proved the retry safe (GET/HEAD, or an Idempotency-Key the broker
+// de-duplicates on) or the failure is provably pre-send (dial/TLS/connection
+// refused — the upstream never saw the request). A mid-flight failure on an
+// unkeyed mutating call (deadline exceeded, connection reset) may have
+// ALREADY been delivered: hinting a retry there instructs the model to
+// double-execute, so it gets `retryable: false` plus recovery guidance
+// (verify first, idempotency_key, get_execution_result for held jobs).
+// get_execution_result shares this helper for its own transport failures
+// (finding: they previously surfaced as INTERNAL_ERROR with no hints).
+func (s *mcpServer) executeTransportError(ctx context.Context, err error, retrySafe bool) *mcp.CallToolResult {
+	s.logger.Warn("transport failure", "error", err, "retry_safe", retrySafe)
+	coded := asCoded(err)
+	if coded.Code != ux.CodeTransportError {
+		return s.softError(ctx, err)
 	}
-	return s.softErrorExtra(ctx, err, nextTool, extra)
+	retryable := retrySafe || agentops.TransportFailurePreSend(coded)
+	if !retryable {
+		coded = &ux.CodedError{
+			Code: coded.Code,
+			Msg:  coded.Msg + " — the failure happened mid-flight, so the request may already have reached the upstream",
+			Actionable: "Do not re-send this call blindly: it may have executed. Verify the effect with a read " +
+				"(execute_read) first, or re-send with an idempotency_key so the broker de-duplicates the retry. " +
+				"If the execute returned a held (202) job, poll it with get_execution_result — never re-send.",
+			Details: coded.Details,
+			Cause:   coded.Cause,
+		}
+	}
+	return s.softErrorExtra(ctx, coded, "get_started", map[string]any{"retryable": retryable})
+}
+
+// classifyTransportErr maps a generated-client transport failure (the request
+// never completed: no *HTTPError, no meaningful taxonomy code) onto the §3.7
+// transport row, so callers degrade like execute does — TRANSPORT_ERROR with
+// the retryable hint and the get_started pointer — instead of INTERNAL_ERROR
+// ("stop, CLI bug" semantics) with no recovery. Completed calls (*HTTPError)
+// and already-classifiable failures (auth, pending, no-config) pass through
+// untouched.
+func classifyTransportErr(err error) error {
+	var he *HTTPError
+	if err == nil || errors.As(err, &he) {
+		return err
+	}
+	if coded := asCoded(err); coded.Code != ux.CodeInternalError {
+		return err
+	}
+	return &ux.CodedError{
+		Code:  ux.CodeTransportError,
+		Msg:   fmt.Sprintf("transport error: %v", err),
+		Cause: err,
+	}
 }
 
 // executeDenialError maps a broker denial per the §3.7 table: a soft
-// BROKER_DENIED with the agent_directive passed through VERBATIM (the broker's
-// recovery instructions must reach the model intact), retryable: false —
-// re-sending the same call cannot succeed until access changes. next_tool is
-// whoami (deliberate): the §3.2 flow guidance is "check your bindings, never
-// execute to probe access", and no access-request tool exists on this surface
-// yet (it queues behind this PR).
+// BROKER_DENIED with the agent_directive relayed as the RAW JSON sub-object
+// the broker sent (the broker's recovery instructions must reach the model
+// intact — a struct projection would silently drop unknown future fields),
+// retryable: false — re-sending the same call cannot succeed until access
+// changes. next_tool is whoami (deliberate): the §3.2 flow guidance is "check
+// your bindings, never execute to probe access", and no access-request tool
+// exists on this surface yet (it queues behind this PR).
 func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Denial) *mcp.CallToolResult {
 	coded := denial.Err()
 	extra := map[string]any{"retryable": false}
 	if denial.Directive != nil {
-		extra["agent_directive"] = denial.Directive
+		extra["agent_directive"] = denial.DirectiveRaw
 		coded.Actionable = denial.Directive.Instruction
 	}
 	if coded.Actionable == "" {
@@ -377,17 +433,27 @@ func synthesizedDenialHint(status int) string {
 // executeResultPayload projects an ExecuteResult onto the tool payload: the
 // exact CLI envelope keys ({schema_version, status, headers, body,
 // execution_id} — shared goldens compare this sub-object with the sibling
-// `instance` stamp stripped), with the §3.7 size cap applied to the body. A
-// capped body is replaced by its leading maxResultBytes bytes as a string plus
-// the truncation envelope {truncated: true, total_bytes, execution_id} so the
-// model can fetch or act deliberately instead of flooding its context.
+// `instance` stamp stripped), with the §3.7 size cap applied to the body AND
+// an aggregate budget applied to the headers (Go's HTTP/1 transport accepts
+// up to 10 MiB of response headers — without their own budget they would ride
+// straight around the body cap). A capped body is replaced by its leading
+// maxResultBytes bytes — sanitized to valid UTF-8, which also strips invalid
+// sequences a binary body carries anywhere — as a string plus the truncation
+// envelope {truncated: true, total_bytes, execution_id} so the model can
+// fetch or act deliberately instead of flooding its context. Normal-sized
+// responses are relayed byte-identically to the CLI envelope.
 func (s *mcpServer) executeResultPayload(res *agentops.ExecuteResult) map[string]any {
 	env := res.Envelope()
+	headers, headersTruncated := capHeaders(env.Headers, s.headerBytesBudget())
 	payload := map[string]any{
 		"schema_version": env.SchemaVersion,
 		"status":         env.Status,
-		"headers":        env.Headers,
+		"headers":        headers,
 		"body":           env.Body,
+	}
+	if headersTruncated {
+		payload["headers_truncated"] = true
+		s.logger.Info("execute response headers truncated", "cap", s.headerBytesBudget())
 	}
 	if env.ExecutionID != "" {
 		payload["execution_id"] = env.ExecutionID
@@ -399,6 +465,57 @@ func (s *mcpServer) executeResultPayload(res *agentops.ExecuteResult) map[string
 		s.logger.Info("execute result truncated", "total_bytes", len(res.Body), "cap", s.maxResultBytes)
 	}
 	return payload
+}
+
+// headerBytesBudget is the slice of the §3.7 cap reserved for relayed
+// response headers: 8 KiB — generous for any sane API's headers — clamped to
+// the whole result cap when the operator shrank --max-result-bytes below it.
+func (s *mcpServer) headerBytesBudget() int64 {
+	const headerBudget int64 = 8 << 10
+	if s.maxResultBytes < headerBudget {
+		return s.maxResultBytes
+	}
+	return headerBudget
+}
+
+// capHeaders bounds the aggregate serialized size of the relayed response
+// headers to budget bytes. Headers are admitted whole in sorted key order; a
+// header that would overflow the remaining budget is dropped whole (a
+// half-relayed value is worse than an absent one) while smaller later headers
+// still fit — one hostile fat header must not evict Content-Type. When
+// everything fits (every normal response), the input map is returned
+// UNTOUCHED so the shared CLI-envelope bytes cannot change.
+func capHeaders(headers map[string]string, budget int64) (map[string]string, bool) {
+	var total int64
+	for k, v := range headers {
+		total += headerCost(k, v)
+	}
+	if total <= budget {
+		return headers, false
+	}
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	capped := make(map[string]string, len(keys))
+	var used int64
+	for _, k := range keys {
+		cost := headerCost(k, headers[k])
+		if used+cost > budget {
+			continue
+		}
+		used += cost
+		capped[k] = headers[k]
+	}
+	return capped, true
+}
+
+// headerCost estimates one header's serialized JSON size (pre-escaping —
+// close enough for a budget that sits far below the body cap).
+func headerCost(k, v string) int64 {
+	const perEntryOverhead = 6 // two quote pairs, colon, comma
+	return int64(len(k) + len(v) + perEntryOverhead)
 }
 
 // handleGetExecutionResult polls one job through the LIVE control-plane
@@ -442,7 +559,11 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 			}, "get_execution_result"), nil
 		}
 		s.logger.Warn("get_execution_result failed", "job_id", jobID, "error", err)
-		return s.softError(cctx, err), nil
+		// §3.7 transport row: a transport failure on the RECOVERY path ("the
+		// control plane is briefly down, poll again") must come back as a
+		// retryable TRANSPORT_ERROR with the get_started pointer, never as
+		// INTERNAL_ERROR. The poll is a GET — re-polling is always safe.
+		return s.executeTransportError(cctx, classifyTransportErr(err), true), nil
 	}
 	if resp.JSON200 == nil {
 		return s.softError(cctx, &ux.CodedError{
@@ -471,9 +592,10 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 }
 
 // attachJobResult adds the completed job's result document to the payload
-// (GET /jobs/{id}/result), size-capped like every relayed body. A result
-// fetch failure degrades to a `result_error` note rather than failing the
-// poll — the status the model asked for is already in hand.
+// (GET /jobs/{id}/result), size-capped like every relayed body (a capped
+// result is its leading maxResultBytes bytes, sanitized to valid UTF-8). A
+// result fetch failure degrades to a `result_error` note rather than failing
+// the poll — the status the model asked for is already in hand.
 func (s *mcpServer) attachJobResult(ctx context.Context, client jobResultClient, jobID string, payload map[string]any) {
 	resp, err := client.GetJobResultWithResponse(ctx, jobID)
 	if err := apiErrorFor(resp, err); err != nil {
@@ -528,7 +650,9 @@ func executeInputSchema(withBody bool) map[string]any {
 	if withBody {
 		props["body"] = map[string]any{
 			"description": "The request body as a JSON value (object, array, or string; \"data\" is an accepted alias). " +
-				"Omit it for bodyless calls — the body is ALWAYS this argument, never read from anywhere else.",
+				"Omit it for bodyless calls — the body is ALWAYS this argument, never read from anywhere else. " +
+				"A string whose content parses as JSON is deliberately treated as a stringified body and sent " +
+				"as that JSON value, not as a quoted string.",
 		}
 		props["idempotency_key"] = map[string]any{
 			"type": "string",

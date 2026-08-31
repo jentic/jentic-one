@@ -47,16 +47,30 @@ func IsBrokerDenial(r *ExecuteResult) bool {
 // 4xx (including an upstream pass-through with an incidental
 // "agent_directive"-shaped body) can't trip the caller's exit code.
 func ParseAgentDirective(r *ExecuteResult) (ux.Directive, bool) {
+	directive, _, ok := parseAgentDirectiveRaw(r)
+	return directive, ok
+}
+
+// parseAgentDirectiveRaw extracts both the typed projection (what the CLI's
+// renderer branches on) and the verbatim agent_directive JSON sub-object (what
+// the MCP payload relays — unknown future broker fields must survive the
+// round-trip, which a struct projection would silently drop).
+func parseAgentDirectiveRaw(r *ExecuteResult) (ux.Directive, json.RawMessage, bool) {
 	if !IsBrokerDenial(r) {
-		return ux.Directive{}, false
+		return ux.Directive{}, nil, false
 	}
 	var envelope struct {
-		Directive *ux.Directive `json:"agent_directive"`
+		Directive json.RawMessage `json:"agent_directive"`
 	}
-	if err := json.Unmarshal(r.Body, &envelope); err != nil || envelope.Directive == nil {
-		return ux.Directive{}, false
+	if err := json.Unmarshal(r.Body, &envelope); err != nil ||
+		len(envelope.Directive) == 0 || string(envelope.Directive) == "null" {
+		return ux.Directive{}, nil, false
 	}
-	return *envelope.Directive, true
+	var directive ux.Directive
+	if json.Unmarshal(envelope.Directive, &directive) != nil {
+		return ux.Directive{}, nil, false
+	}
+	return directive, envelope.Directive, true
 }
 
 // Classify is the unfused classification step (response → denial-or-not) the
@@ -72,8 +86,9 @@ func Classify(r *ExecuteResult) *Denial {
 		return nil
 	}
 	d := &Denial{Status: r.Status}
-	if directive, ok := ParseAgentDirective(r); ok {
+	if directive, raw, ok := parseAgentDirectiveRaw(r); ok {
 		d.Directive = &directive
+		d.DirectiveRaw = raw
 	}
 	return d
 }

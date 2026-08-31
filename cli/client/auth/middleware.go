@@ -96,6 +96,13 @@ func BearerToken(creds Credentials) (string, error) {
 		// is purely an efficiency guard for long-lived concurrent embedders
 		// (the `jentic mcp` server) — every waiter gets the winner's
 		// independently valid token.
+		//
+		// Waiters are uncancellable today: BearerToken takes no context, so a
+		// caller whose own deadline fires still blocks here until the
+		// winner's exchange finishes (bounded by the exchange client's own
+		// timeout — oauth.go). A future ctx-aware BearerToken should switch
+		// to mintGroup.DoChan and select on ctx.Done() so a cancelled caller
+		// stops waiting without cancelling the shared flight.
 		v, xerr, _ := mintGroup.Do(mintKey(creds), func() (any, error) {
 			newTokens, xerr := performOAuthExchange(creds)
 			if xerr != nil {

@@ -3,6 +3,8 @@ package agentops
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	sdkclient "github.com/jentic/jentic-one/cli/client"
@@ -83,6 +86,11 @@ func ResolveOperation(ctx context.Context, ins Inspector, target, revision strin
 	if op.Method == "" || op.URL == "" {
 		return nil, ErrInspectMissingFields
 	}
+	// Normalize once at resolve time: registry documents may carry a
+	// lower/mixed-case method ("get"), and every downstream consumer — the
+	// execute_read GET/HEAD gate, BuildRequest, logging — assumes the
+	// canonical uppercase form.
+	op.Method = strings.ToUpper(op.Method)
 	return &op, nil
 }
 
@@ -240,8 +248,9 @@ func DoWith(hc *http.Client, req *http.Request) (*ExecuteResult, error) {
 		// {error,status:0} to stdout — that double-signalled the same failure on
 		// two streams, and an agent parsing stdout would see a bogus "response".
 		coded := &ux.CodedError{
-			Code: ux.CodeTransportError,
-			Msg:  fmt.Sprintf("transport error: %v", err),
+			Code:  ux.CodeTransportError,
+			Msg:   fmt.Sprintf("transport error: %v", err),
+			Cause: err,
 		}
 		// UX-4: the classic local papercut is an https default resolving against a
 		// plain-http local broker ("server gave HTTP response to HTTPS client").
@@ -295,6 +304,46 @@ func newTraceparent() (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("00-%s-%s-01", hex.EncodeToString(traceID[:]), hex.EncodeToString(spanID[:])), true
+}
+
+// TransportFailurePreSend reports whether a transport failure provably
+// happened BEFORE the request could reach the server: dial failures
+// (connection refused, unreachable host, DNS) and TLS handshake/verification
+// failures. For these a retry cannot double-execute — the upstream never saw
+// the request. Everything else (deadline exceeded, connection reset, EOF
+// mid-response) is ambiguous: the request MAY have been delivered, so callers
+// must not advertise a blind retry for unkeyed mutating calls. The
+// classification is a whitelist on purpose — the fail-safe answer is false.
+func TransportFailurePreSend(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	// TLS handshake/verification failures: the connection never carried the
+	// request. CertificateVerificationError wraps the x509 chain errors, and
+	// RecordHeaderError is the "server gave HTTP response to HTTPS client"
+	// signature.
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return true
+	}
+	var recErr tls.RecordHeaderError
+	if errors.As(err, &recErr) {
+		return true
+	}
+	var unknownAuthority x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthority) {
+		return true
+	}
+	var hostname x509.HostnameError
+	return errors.As(err, &hostname)
 }
 
 // brokerTLSMismatch reports whether err is the "https client hit an http server"
