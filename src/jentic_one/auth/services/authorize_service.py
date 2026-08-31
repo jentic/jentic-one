@@ -104,6 +104,33 @@ class AuthorizeService:
 
         Returns the platform authorization code.
         """
+        platform_code, _ = await self.handle_idp_callback_with_email(
+            code=code,
+            redirect_uri=redirect_uri,
+            client_id=client_id,
+            original_redirect_uri=original_redirect_uri,
+            code_challenge=code_challenge,
+            scopes=scopes,
+            nonce=nonce,
+        )
+        return platform_code
+
+    async def handle_idp_callback_with_email(
+        self,
+        *,
+        code: str,
+        redirect_uri: str,
+        client_id: str,
+        original_redirect_uri: str,
+        code_challenge: str,
+        scopes: str,
+        nonce: str | None,
+    ) -> tuple[str, str]:
+        """Handle IdP callback and return both platform code and user email.
+
+        Returns (platform_authorization_code, user_email).
+        Used by consent flow to display user identity on the consent page.
+        """
         adapter = self._get_idp_adapter()
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
@@ -112,7 +139,7 @@ class AuthorizeService:
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
 
-        return await self._issue_authorization_code(
+        platform_code = await self._issue_authorization_code(
             user_id=user_id,
             client_id=client_id,
             redirect_uri=original_redirect_uri,
@@ -120,6 +147,53 @@ class AuthorizeService:
             scopes=scopes,
             nonce=nonce,
         )
+        return platform_code, claims.email
+
+    async def resolve_idp_user(
+        self,
+        *,
+        code: str,
+        redirect_uri: str,
+    ) -> tuple[str, str]:
+        """Exchange an upstream IdP code and resolve the local user.
+
+        Returns (user_id, user_email) without minting an authorization code.
+        Used by the consent flow to defer code minting until after approval.
+        """
+        adapter = self._get_idp_adapter()
+        if adapter is None:
+            raise InvalidGrantError("No external IdP configured")
+
+        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        claims = adapter.map_claims(userinfo)
+        user_id = await self._resolve_or_create_user(claims)
+        return user_id, claims.email
+
+    async def exchange_idp_code_for_claims(
+        self,
+        *,
+        code: str,
+        redirect_uri: str,
+    ) -> IdpClaims:
+        """Exchange an upstream IdP code and return the claims *without* provisioning.
+
+        Third-party consent flows must not provision a local account until the
+        user has actually approved: an accidentally-triggered /authorize on a
+        registered third-party client should be able to end in a "Deny" without
+        leaving behind an account and an external-identity link the user never
+        agreed to. Consent-approve callers then hand the returned claims to
+        :meth:`provision_from_claims`.
+        """
+        adapter = self._get_idp_adapter()
+        if adapter is None:
+            raise InvalidGrantError("No external IdP configured")
+
+        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        return adapter.map_claims(userinfo)
+
+    async def provision_from_claims(self, claims: IdpClaims) -> str:
+        """Resolve-or-create a local user from IdP claims. Returns the user_id."""
+        return await self._resolve_or_create_user(claims)
 
     async def issue_authorization_code(
         self,
@@ -181,6 +255,54 @@ class AuthorizeService:
 
         return code_plain
 
+    async def record_consent_decision(
+        self,
+        *,
+        user_id: str,
+        oauth_client_id: str,
+        approved: bool,
+        scopes: str,
+    ) -> None:
+        """Audit a user's approve/deny decision on the OAuth consent screen.
+
+        Third-party consent decisions were previously only logged, so the audit
+        trail contained no record of *which* user consented to *which* client
+        with *which* scopes — impossible to reconstruct after the fact.
+        """
+        async with self._ctx.admin_db.transaction() as session:
+            await record_audit(
+                session,
+                action=AuditAction.APPROVE if approved else AuditAction.DENY,
+                target_type=AuditTargetType.OAUTH_CLIENT,
+                target_id=oauth_client_id,
+                actor_type=ActorType.USER,
+                actor_id=user_id,
+                after={"scopes": scopes, "oauth_client_id": oauth_client_id},
+                reason="oauth consent approved" if approved else "oauth consent denied",
+                origin=None,
+            )
+
+    async def precheck_auth_code(self, code: str) -> None:
+        """Cheap read-only validity check on an auth code before spending argon2.
+
+        Unauthenticated callers hit ``/oauth/token`` with garbage client secrets,
+        and confidential-client verification runs argon2id (~25 ms + 64 MiB per
+        verify, with a dummy-hash timing equalizer for unknown client_ids). That
+        turns the endpoint into a memory/CPU amplifier — a few hundred bytes of
+        request → 64 MiB of server work — before the auth code is even inspected.
+        This shortcut peeks the code hash without ``FOR UPDATE`` and fails fast
+        on a bad/consumed/expired code, so junk requests never reach argon2.
+        """
+        code_hash = _hash_code(code)
+        async with self._ctx.admin_db.session() as session:
+            auth_code = await AuthorizationCodeRepository.get_by_hash(session, code_hash)
+        if auth_code is None:
+            raise InvalidGrantError("authorization code not found")
+        if auth_code.consumed_at is not None:
+            raise InvalidGrantError("authorization code already used")
+        if auth_code.expires_at <= datetime.now(UTC):
+            raise InvalidGrantError("authorization code expired")
+
     async def exchange_code(
         self,
         *,
@@ -188,6 +310,7 @@ class AuthorizeService:
         code_verifier: str,
         redirect_uri: str,
         client_id: str,
+        oauth_client_id: str | None = None,
     ) -> tuple[str, str, str]:
         """Exchange auth code + PKCE verifier for tokens.
 
@@ -240,7 +363,7 @@ class AuthorizeService:
 
         scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
         access_token, refresh_token = await self._token_svc.issue_pair(
-            user.id, ActorType.USER, scopes
+            user.id, ActorType.USER, scopes, oauth_client_id=oauth_client_id
         )
 
         id_token = issue_id_token(

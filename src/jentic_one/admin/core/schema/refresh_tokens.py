@@ -39,3 +39,7 @@ class RefreshToken(AuditableMixin, AdminBase):
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     replaced_by_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Scoped to third-party delegation only: set when tokens are issued via the
+    # authorization code flow through a registered OAuth client. NULL for platform
+    # client logins (the SPA), agent JWKS assertions, and service account auth.
+    oauth_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

@@ -24,6 +24,7 @@ class RefreshTokenRepository:
         token_family_id: str,
         expires_at: datetime,
         created_by: str,
+        oauth_client_id: str | None = None,
     ) -> RefreshToken:
         token = RefreshToken(
             token_hash=token_hash,
@@ -33,6 +34,7 @@ class RefreshTokenRepository:
             token_family_id=token_family_id,
             expires_at=expires_at,
             created_by=created_by,
+            oauth_client_id=oauth_client_id,
         )
         session.add(token)
         await session.flush()

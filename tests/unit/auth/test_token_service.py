@@ -59,6 +59,7 @@ def _make_access_token_row(
     row.created_at = datetime.now(UTC)
     row.revoked_at = revoked_at
     row.is_ephemeral = is_ephemeral
+    row.oauth_client_id = None
     return row
 
 
@@ -86,6 +87,7 @@ def _make_refresh_token_row(
     row.revoked_at = revoked_at
     row.consumed_at = consumed_at
     row.replaced_by_id = replaced_by_id
+    row.oauth_client_id = None
     return row
 
 
@@ -663,3 +665,78 @@ async def test_introspect_disabled_agent_refresh_token_inactive(
     result = await svc.introspect("rt_disabledagent")
 
     assert result["active"] is False
+
+
+# ---------- scope intersection for third-party tokens ----------
+
+
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_intersects_scopes_with_client_allowlist(
+    mock_at_repo: MagicMock,
+    mock_client_repo: MagicMock,
+) -> None:
+    """Third-party tokens have scopes intersected with the client's allowed_scopes."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(scopes=["agents:read", "agents:write", "openid"])
+    at_row.oauth_client_id = "oc_ext_123"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.allowed_scopes = ["agents:read", "openid"]
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_thirdparty")
+
+    assert resolved is not None
+    assert set(resolved.permissions) == {"agents:read", "openid"}
+
+
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_empty_allowed_scopes_denies_all(
+    mock_at_repo: MagicMock,
+    mock_client_repo: MagicMock,
+) -> None:
+    """An empty allowed_scopes list means the client has no permitted scopes."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(scopes=["agents:read", "openid"])
+    at_row.oauth_client_id = "oc_ext_456"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.allowed_scopes = []
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_empty_scopes")
+
+    assert resolved is not None
+    assert resolved.permissions == []
+
+
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_null_allowed_scopes_is_unrestricted(
+    mock_at_repo: MagicMock,
+    mock_client_repo: MagicMock,
+) -> None:
+    """A client with allowed_scopes=None does not restrict the token's scopes."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(scopes=["agents:read", "agents:write"])
+    at_row.oauth_client_id = "oc_ext_789"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.allowed_scopes = None
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_unrestricted")
+
+    assert resolved is not None
+    assert set(resolved.permissions) == {"agents:read", "agents:write"}

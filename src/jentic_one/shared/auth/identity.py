@@ -61,3 +61,4 @@ class Identity(BaseModel):
 
     expires_at: datetime | None = None
     active: bool = True
+    oauth_client_id: str | None = None

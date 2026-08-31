@@ -135,7 +135,8 @@ func (JobListResponse) RequiredFields() []string      { return []string{"data", 
 func (JobResponse) RequiredFields() []string {
 	return []string{"_links", "created_at", "job_id", "kind", "status"}
 }
-func (LoginRequest) RequiredFields() []string { return []string{"email", "password"} }
+func (JwksUpdateRequest) RequiredFields() []string { return []string{"jwks"} }
+func (LoginRequest) RequiredFields() []string      { return []string{"email", "password"} }
 func (LoginResponse) RequiredFields() []string {
 	return []string{"access_token", "expires_in", "must_change_password", "token_type"}
 }
@@ -148,13 +149,22 @@ func (MeServiceAccount) RequiredFields() []string {
 func (MeUser) RequiredFields() []string {
 	return []string{"admin", "email", "id", "must_change_password", "name", "scopes", "status"}
 }
-func (MintRequest) RequiredFields() []string         { return []string{"scope", "target_agent_id"} }
-func (MintResponse) RequiredFields() []string        { return []string{"access_token", "expires_in"} }
-func (NoAuthCreateRequest) RequiredFields() []string { return []string{"api", "name", "type"} }
-func (NoteApiReference) RequiredFields() []string    { return []string{"name", "vendor", "version"} }
-func (NoteCreateRequest) RequiredFields() []string   { return []string{"body", "resource"} }
-func (OAuth2CreateRequest) RequiredFields() []string { return []string{"api", "name", "type"} }
-func (OAuth2UpdateRequest) RequiredFields() []string { return []string{"type"} }
+func (MintRequest) RequiredFields() []string              { return []string{"scope", "target_agent_id"} }
+func (MintResponse) RequiredFields() []string             { return []string{"access_token", "expires_in"} }
+func (NoAuthCreateRequest) RequiredFields() []string      { return []string{"api", "name", "type"} }
+func (NoteApiReference) RequiredFields() []string         { return []string{"name", "vendor", "version"} }
+func (NoteCreateRequest) RequiredFields() []string        { return []string{"body", "resource"} }
+func (OAuth2CreateRequest) RequiredFields() []string      { return []string{"api", "name", "type"} }
+func (OAuth2UpdateRequest) RequiredFields() []string      { return []string{"type"} }
+func (OAuthClientCreateRequest) RequiredFields() []string { return []string{"name", "redirect_uris"} }
+func (OAuthClientCreateResponse) RequiredFields() []string {
+	return []string{"active", "allowed_scopes", "client_id", "client_secret", "created_at", "created_by", "description", "id", "name", "redirect_uris", "require_consent", "updated_at"}
+}
+func (OAuthClientListResponse) RequiredFields() []string { return []string{"data"} }
+func (OAuthClientResponse) RequiredFields() []string {
+	return []string{"active", "allowed_scopes", "client_id", "created_at", "created_by", "description", "id", "name", "redirect_uris", "require_consent", "updated_at"}
+}
+func (OAuthClientRotateSecretResponse) RequiredFields() []string { return []string{"client_secret"} }
 func (OperationPreviewListResponse) RequiredFields() []string {
 	return []string{"data", "info", "offset", "security_schemes", "total", "truncated"}
 }
@@ -226,7 +236,6 @@ func (Sigv4CreateRequest) RequiredFields() []string {
 	return []string{"access_key_id", "api", "aws_region", "aws_service", "name", "secret_access_key", "type"}
 }
 func (Sigv4UpdateRequest) RequiredFields() []string       { return []string{"type"} }
-func (TokenRequest) RequiredFields() []string             { return []string{"grant_type"} }
 func (TokenResponse) RequiredFields() []string            { return []string{"access_token", "expires_in"} }
 func (ToolkitAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ToolkitAgentResponse) RequiredFields() []string {

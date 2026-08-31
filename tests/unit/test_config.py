@@ -15,6 +15,7 @@ from jentic_one.shared.config import (
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
+    AuthConfig,
     CatalogConfig,
     ConfigError,
     CredentialsConfig,
@@ -22,6 +23,7 @@ from jentic_one.shared.config import (
     EncryptionConfig,
     EntitlementConfig,
     RuntimeConfig,
+    SigningKeyConfig,
     TelemetryConfig,
     _csv_to_list,
     _deep_merge,
@@ -275,6 +277,59 @@ def test_explicit_invite_pepper_accepted_in_production():
     with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
         cfg = AdminInviteConfig(pepper=SecretStr("a-real-generated-pepper"))
     assert cfg.pepper.get_secret_value() == "a-real-generated-pepper"
+
+
+_LOCAL_DEV_KEY_SEC1 = """\
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIBG7o+PPPIdPqMK4RwNWnj+UaW8fZFzxw7oZD5XFqW5CoAoGCCqGSM49
+AwEHoUQDQgAElriD/rpklmqTXbUOa9uLHAB2l+qr+DoeDmmykYLGblbxs+a1qvxB
+369JIs2Ej4zMfkjBTGES38wMDs1J+PJG6g==
+-----END EC PRIVATE KEY-----"""
+
+_LOCAL_DEV_KEY_PKCS8 = """\
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgEbuj4888h0+owrhH
+A1aeP5Rpbx9kXPHDuhkPlcWpbkKhRANCAASWuIP+umSWapNdtQ5r24scAHaX6qv4
+Oh4OabKRgsZuVvGz5rWq/EHfr0kizYSPjMx+SMFMYRLfzAwOzUn48kbq
+-----END PRIVATE KEY-----"""
+
+
+def test_local_dev_signing_key_rejected_in_production_sec1():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1))
+            ]
+        )
+
+
+def test_local_dev_signing_key_rejected_in_production_pkcs8():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_PKCS8))
+            ]
+        )
+
+
+def test_local_dev_signing_kid_rejected_in_production():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev key id"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(
+                    kid="local-dev-key", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1)
+                )
+            ]
+        )
 
 
 def test_boolean_like_password_preserved_as_string(config_file: Path):

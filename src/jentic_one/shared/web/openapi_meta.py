@@ -655,6 +655,15 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "tracked follow-up."
         ),
     },
+    {
+        "name": "OAuth Clients",
+        "description": (
+            "Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). "
+            "Registered clients integrate with Jentic One via the standard Authorization Code + "
+            "PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. "
+            "Deactivating a client immediately invalidates all tokens issued through it."
+        ),
+    },
 ]
 
 # Redoc tag groups (vendor extension). Tags not listed here still render; this
@@ -697,6 +706,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Audit",
             "Monitoring",
             "Configuration",
+            "OAuth Clients",
         ],
     },
     {
@@ -771,6 +781,9 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # OAuth redirect callbacks (bound by a signed state param, not a session).
         "oauthCallback",
         "authorizeOauthCallback",
+        # OAuth consent screen (presented after IdP login, before issuing the code).
+        "consentPage",
+        "consentSubmit",
         # Browser-facing OAuth error page (no auth; just renders an error code).
         "errorPage",
         # Unauthenticated discovery metadata.
@@ -838,6 +851,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/auth/(login|refresh)"), "Users"),
     (re.compile(r"^/auth/idp"), "Discovery"),
     (re.compile(r"^/audit"), "Audit"),
+    (re.compile(r"^/admin/oauth-clients"), "OAuth Clients"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
     (re.compile(r"^/service-accounts"), "Service Accounts"),

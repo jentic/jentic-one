@@ -44,3 +44,8 @@ class AccessToken(AuditableMixin, AdminBase):
     is_ephemeral: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
+    # Scoped to third-party delegation only: set when tokens are issued via the
+    # authorization code flow through a registered OAuth client. NULL for platform
+    # client logins (the SPA), agent JWKS assertions, and service account auth.
+    # Used to invalidate tokens when an admin deactivates the issuing client.
+    oauth_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
+from urllib.parse import urlparse
 
 import structlog
 import yaml
@@ -260,6 +261,51 @@ class IdpConfig(BaseModel):
     hosted_domain: str | None = None
 
 
+class PlatformClientConfig(BaseModel):
+    """A static first-party OAuth client (e.g. the operator SPA).
+
+    Platform clients authenticate via PKCE only — no client secret. They are
+    defined in config (not the oauth_clients DB table) because they are
+    deployment-time constants, not admin-managed dynamic registrations.
+    """
+
+    client_id: str
+    redirect_uris: list[str] = Field(min_length=1)
+
+    @field_validator("redirect_uris", mode="after")
+    @classmethod
+    def _validate_redirect_uris(cls, uris: list[str]) -> list[str]:
+        for uri in uris:
+            parsed = urlparse(uri)
+            if not parsed.scheme or not parsed.netloc:
+                msg = f"invalid platform redirect_uri (must be an absolute URL): {uri}"
+                raise ValueError(msg)
+            if parsed.scheme not in ("https", "http"):
+                msg = f"platform redirect_uri must use https or http: {uri}"
+                raise ValueError(msg)
+            if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
+                msg = f"http redirect_uri only allowed for localhost: {uri}"
+                raise ValueError(msg)
+        return uris
+
+
+_SPA_CLIENT_ID = "jentic-one-spa"
+_SPA_CALLBACK_PATH = "/app/auth/callback"
+
+_LOCAL_DEV_KEY_FINGERPRINT = "d35355bfb727b96b885e0ff817efd947bc5d8a88f169cabfa764932b57b3f3db"
+_LOCAL_DEV_KEY_KID = "local-dev-key"
+
+
+class OAuthRateLimitConfig(BaseModel):
+    """Pre-auth rate limit tunables for OAuth endpoints."""
+
+    authorize_rpm: int = 30
+    authorize_burst: int = 30
+    exchange_rpm: int = 60
+    exchange_burst: int = 60
+    trusted_proxies: list[str] = Field(default_factory=list)
+
+
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
@@ -275,6 +321,40 @@ class AuthConfig(BaseModel):
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
+    platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
+    oauth_rate_limit: OAuthRateLimitConfig = Field(default_factory=OAuthRateLimitConfig)
+
+    def model_post_init(self, __context: object) -> None:
+        """Ensure the SPA platform client is always registered.
+
+        If no platform_clients entry exists for the operator SPA and a
+        canonical_base_url is configured, synthesise one so existing
+        deployments continue to work without a config change on upgrade.
+        """
+        if os.environ.get("JENTIC_ENV", "development") == "production":
+            from jentic_one.shared.crypto.signing import signing_key_spki_fingerprint
+
+            for sk in self.id_signing:
+                if sk.kid == _LOCAL_DEV_KEY_KID:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] uses the local-dev key id "
+                        "which must not be used in production"
+                    )
+                fp = signing_key_spki_fingerprint(sk.private_key_pem.get_secret_value())
+                if fp == _LOCAL_DEV_KEY_FINGERPRINT:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] contains the local-dev "
+                        "signing key material which must not be used in production"
+                    )
+        spa_present = any(pc.client_id == _SPA_CLIENT_ID for pc in self.platform_clients)
+        if not spa_present and self.canonical_base_url:
+            base = self.canonical_base_url.rstrip("/")
+            self.platform_clients.append(
+                PlatformClientConfig(
+                    client_id=_SPA_CLIENT_ID,
+                    redirect_uris=[f"{base}{_SPA_CALLBACK_PATH}"],
+                )
+            )
 
 
 _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")

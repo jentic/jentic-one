@@ -257,6 +257,14 @@ export { OverlaysService } from '@/shared/api/generated/services/OverlaysService
 // response model is added here. Append-only.
 export type { VersionResponse } from '@/shared/api/generated/models/VersionResponse';
 
+// OAuth client management (third-party application registrations). Append-only.
+export { OAuthClientsService } from '@/shared/api/generated/services/OAuthClientsService';
+export type { OAuthClientCreateRequest } from '@/shared/api/generated/models/OAuthClientCreateRequest';
+export type { OAuthClientCreateResponse } from '@/shared/api/generated/models/OAuthClientCreateResponse';
+export type { OAuthClientResponse } from '@/shared/api/generated/models/OAuthClientResponse';
+export type { OAuthClientRotateSecretResponse } from '@/shared/api/generated/models/OAuthClientRotateSecretResponse';
+export type { OAuthClientUpdateRequest } from '@/shared/api/generated/models/OAuthClientUpdateRequest';
+
 // External-IdP (SSO) login. The public capability descriptor (`GET /auth/idp`)
 // tells the login page whether to show a "Continue with <provider>" button, and
 // the authorization-code + PKCE exchange (`POST /oauth/token`) yields the same

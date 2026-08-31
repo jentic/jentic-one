@@ -2,12 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { Body_consentSubmit } from '../models/Body_consentSubmit';
 import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
 import type { RevokeRequest } from '../models/RevokeRequest';
-import type { TokenRequest } from '../models/TokenRequest';
 import type { TokenResponse } from '../models/TokenResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -116,6 +116,63 @@ export class OAuthService {
         });
     }
     /**
+     * Consent Page
+     * Display the OAuth consent screen.
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static consentPage({
+        ch,
+    }: {
+        /**
+         * Opaque consent-flow handle
+         */
+        ch: string,
+    }): CancelablePromise<string> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/oauth/consent',
+            query: {
+                'ch': ch,
+            },
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Consent Submit
+     * Process the consent form submission. Mints the auth code only on approval.
+     *
+     * ``consent_token`` is the opaque handle emitted by the callback. It never
+     * leaves the state backend as anything more than an ID — the actual consent
+     * parameters (user_id, email, scopes, redirect_uri) live server-side and
+     * can't be tampered with or captured from browser history/proxy logs.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static consentSubmit({
+        formData,
+    }: {
+        formData: Body_consentSubmit,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/consent',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Introspect Endpoint
      * Introspect a token (RFC 7662).
      * @returns IntrospectResponse Successful Response
@@ -205,7 +262,16 @@ export class OAuthService {
     public static tokenEndpoint({
         requestBody,
     }: {
-        requestBody: TokenRequest,
+        requestBody: {
+            assertion?: (string | null);
+            client_id?: (string | null);
+            client_secret?: (string | null);
+            code?: (string | null);
+            code_verifier?: (string | null);
+            grant_type: string;
+            redirect_uri?: (string | null);
+            refresh_token?: (string | null);
+        },
     }): CancelablePromise<TokenResponse> {
         return __request(OpenAPI, {
             method: 'POST',

@@ -159,6 +159,7 @@ const (
 	AuditTargetTypeInviteToken       AuditTargetType = "invite_token"
 	AuditTargetTypeJob               AuditTargetType = "job"
 	AuditTargetTypeNote              AuditTargetType = "note"
+	AuditTargetTypeOauthClient       AuditTargetType = "oauth_client"
 	AuditTargetTypeOrganisation      AuditTargetType = "organisation"
 	AuditTargetTypeOverlay           AuditTargetType = "overlay"
 	AuditTargetTypePermission        AuditTargetType = "permission"
@@ -194,6 +195,8 @@ func (e AuditTargetType) Valid() bool {
 	case AuditTargetTypeJob:
 		return true
 	case AuditTargetTypeNote:
+		return true
+	case AuditTargetTypeOauthClient:
 		return true
 	case AuditTargetTypeOrganisation:
 		return true
@@ -1273,6 +1276,12 @@ type BindingWarningSchema struct {
 	Message string `json:"message"`
 }
 
+// BodyConsentSubmit defines model for Body_consentSubmit.
+type BodyConsentSubmit struct {
+	Action       string `json:"action"`
+	ConsentToken string `json:"consent_token"`
+}
+
 // CatalogEntryLinksResponse Hypermedia links for a catalog entry.
 //
 // Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
@@ -1778,6 +1787,15 @@ type JobResponse struct {
 	UpdatedAt       *time.Time       `json:"updated_at,omitempty"`
 }
 
+// JwksUpdateRequest Request body for updating an agent's JWKS (public keys).
+//
+// The JWKS must contain at least one Ed25519 public key and must not
+// contain any private key material.
+type JwksUpdateRequest struct {
+	// Jwks JWKS containing public keys
+	Jwks map[string]interface{} `json:"jwks"`
+}
+
 // LoginRequest Credentials for login.
 type LoginRequest struct {
 	Email    string `json:"email"`
@@ -1953,6 +1971,102 @@ type OAuth2UpdateRequest struct {
 
 // OAuth2UpdateRequestType defines model for OAuth2UpdateRequest.Type.
 type OAuth2UpdateRequestType string
+
+// OAuthClientCreateRequest Request body for creating an OAuth client.
+//
+// Examples: {"description":"My application production deployment","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
+type OAuthClientCreateRequest struct {
+	// AllowedScopes If set, restricts which scopes this client may request. An empty list denies all non-OIDC scopes. Null means unrestricted (all scopes permitted).
+	AllowedScopes *[]string `json:"allowed_scopes,omitempty"`
+
+	// Description Optional description of the client.
+	Description *string `json:"description,omitempty"`
+
+	// Name Human-readable name for the client.
+	Name string `json:"name"`
+
+	// RedirectUris Allowed OAuth callback URLs. At least one required.
+	RedirectUris []string `json:"redirect_uris"`
+
+	// RequireConsent Whether to show a consent screen during authorization. Set to false for trusted first-party integrations.
+	RequireConsent *bool `json:"require_consent,omitempty"`
+}
+
+// OAuthClientCreateResponse Returned on creation — includes the one-time plaintext client secret.
+//
+// Examples: {"active":true,"client_id":"oc_abc123...","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
+type OAuthClientCreateResponse struct {
+	Active bool `json:"active"`
+
+	// AllowedScopes Scopes this client may request. Null means unrestricted.
+	AllowedScopes *[]string `json:"allowed_scopes"`
+
+	// ClientId Public client identifier used in OAuth flows.
+	ClientId string `json:"client_id"`
+
+	// ClientSecret The client secret. Shown only once at creation — store it securely.
+	ClientSecret string    `json:"client_secret"`
+	CreatedAt    time.Time `json:"created_at"`
+	CreatedBy    *string   `json:"created_by"`
+	Description  *string   `json:"description"`
+
+	// Id Internal ID (ksuid).
+	Id           string   `json:"id"`
+	Name         string   `json:"name"`
+	RedirectUris []string `json:"redirect_uris"`
+
+	// RequireConsent Whether a consent screen is shown during authorization.
+	RequireConsent bool       `json:"require_consent"`
+	UpdatedAt      *time.Time `json:"updated_at"`
+}
+
+// OAuthClientListResponse A list of OAuth clients.
+type OAuthClientListResponse struct {
+	Data []OAuthClientResponse `json:"data"`
+}
+
+// OAuthClientResponse An OAuth client in API responses.
+//
+// Examples: {"active":true,"client_id":"oc_abc123...","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
+type OAuthClientResponse struct {
+	Active bool `json:"active"`
+
+	// AllowedScopes Scopes this client may request. Null means unrestricted.
+	AllowedScopes *[]string `json:"allowed_scopes"`
+
+	// ClientId Public client identifier used in OAuth flows.
+	ClientId    string    `json:"client_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	CreatedBy   *string   `json:"created_by"`
+	Description *string   `json:"description"`
+
+	// Id Internal ID (ksuid).
+	Id           string   `json:"id"`
+	Name         string   `json:"name"`
+	RedirectUris []string `json:"redirect_uris"`
+
+	// RequireConsent Whether a consent screen is shown during authorization.
+	RequireConsent bool       `json:"require_consent"`
+	UpdatedAt      *time.Time `json:"updated_at"`
+}
+
+// OAuthClientRotateSecretResponse Returned on secret rotation — the new one-time plaintext secret.
+type OAuthClientRotateSecretResponse struct {
+	// ClientSecret The new client secret. Store it securely; the previous secret is now invalid.
+	ClientSecret string `json:"client_secret"`
+}
+
+// OAuthClientUpdateRequest Request body for updating an OAuth client.
+type OAuthClientUpdateRequest struct {
+	Active *bool `json:"active,omitempty"`
+
+	// AllowedScopes Scope restriction list. Null means no change; an empty list denies all non-OIDC scopes; the wildcard ``["*"]`` resets to unrestricted.
+	AllowedScopes  *[]string `json:"allowed_scopes,omitempty"`
+	Description    *string   `json:"description,omitempty"`
+	Name           *string   `json:"name,omitempty"`
+	RedirectUris   *[]string `json:"redirect_uris,omitempty"`
+	RequireConsent *bool     `json:"require_consent,omitempty"`
+}
 
 // OperationPreviewListResponse Capped, offset-paginated operation preview for a catalog entry.
 //
@@ -2542,18 +2656,6 @@ type Sigv4UpdateRequest struct {
 // Sigv4UpdateRequestType defines model for Sigv4UpdateRequest.Type.
 type Sigv4UpdateRequestType string
 
-// TokenRequest Token endpoint request (JSON body — not RFC 6749 form-encoded).
-type TokenRequest struct {
-	Assertion    *string `json:"assertion,omitempty"`
-	ClientId     *string `json:"client_id,omitempty"`
-	ClientSecret *string `json:"client_secret,omitempty"`
-	Code         *string `json:"code,omitempty"`
-	CodeVerifier *string `json:"code_verifier,omitempty"`
-	GrantType    string  `json:"grant_type"`
-	RedirectUri  *string `json:"redirect_uri,omitempty"`
-	RefreshToken *string `json:"refresh_token,omitempty"`
-}
-
 // TokenResponse Token endpoint success response.
 type TokenResponse struct {
 	AccessToken  string  `json:"access_token"`
@@ -2917,6 +3019,11 @@ type ListActorsParams struct {
 	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListOauthClientsParams defines parameters for ListOauthClients.
+type ListOauthClientsParams struct {
+	IncludeInactive *bool `form:"include_inactive,omitempty" json:"include_inactive,omitempty"`
+}
+
 // ListAgentsParams defines parameters for ListAgents.
 type ListAgentsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -3159,6 +3266,36 @@ type AuthorizeOauthCallbackParams struct {
 	State string `form:"state" json:"state"`
 }
 
+// ConsentPageParams defines parameters for ConsentPage.
+type ConsentPageParams struct {
+	// Ch Opaque consent-flow handle
+	Ch string `form:"ch" json:"ch"`
+}
+
+// TokenEndpointJSONBody defines parameters for TokenEndpoint.
+type TokenEndpointJSONBody struct {
+	Assertion    *string `json:"assertion,omitempty"`
+	ClientId     *string `json:"client_id,omitempty"`
+	ClientSecret *string `json:"client_secret,omitempty"`
+	Code         *string `json:"code,omitempty"`
+	CodeVerifier *string `json:"code_verifier,omitempty"`
+	GrantType    string  `json:"grant_type"`
+	RedirectUri  *string `json:"redirect_uri,omitempty"`
+	RefreshToken *string `json:"refresh_token,omitempty"`
+}
+
+// TokenEndpointFormdataBody defines parameters for TokenEndpoint.
+type TokenEndpointFormdataBody struct {
+	Assertion    *string `form:"assertion,omitempty" json:"assertion,omitempty"`
+	ClientId     *string `form:"client_id,omitempty" json:"client_id,omitempty"`
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty"`
+	Code         *string `form:"code,omitempty" json:"code,omitempty"`
+	CodeVerifier *string `form:"code_verifier,omitempty" json:"code_verifier,omitempty"`
+	GrantType    string  `form:"grant_type" json:"grant_type"`
+	RedirectUri  *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty"`
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty"`
+}
+
 // ListServiceAccountsParams defines parameters for ListServiceAccounts.
 type ListServiceAccountsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -3212,11 +3349,20 @@ type DecideAccessRequestJSONRequestBody = DecideRequest
 // SetProviderConfigJSONRequestBody defines body for SetProviderConfig for application/json ContentType.
 type SetProviderConfigJSONRequestBody = ProviderConfigSetRequest
 
+// CreateOauthClientJSONRequestBody defines body for CreateOauthClient for application/json ContentType.
+type CreateOauthClientJSONRequestBody = OAuthClientCreateRequest
+
+// UpdateOauthClientJSONRequestBody defines body for UpdateOauthClient for application/json ContentType.
+type UpdateOauthClientJSONRequestBody = OAuthClientUpdateRequest
+
 // CreateAgentJSONRequestBody defines body for CreateAgent for application/json ContentType.
 type CreateAgentJSONRequestBody = AgentCreateRequest
 
 // UpdateAgentJSONRequestBody defines body for UpdateAgent for application/json ContentType.
 type UpdateAgentJSONRequestBody = AgentPatchRequest
+
+// UpdateAgentJwksJSONRequestBody defines body for UpdateAgentJwks for application/json ContentType.
+type UpdateAgentJwksJSONRequestBody = JwksUpdateRequest
 
 // ReplaceAgentScopesJSONRequestBody defines body for ReplaceAgentScopes for application/json ContentType.
 type ReplaceAgentScopesJSONRequestBody = AgentScopesRequest
@@ -3269,6 +3415,9 @@ type CreateNoteJSONRequestBody = NoteCreateRequest
 // UpdateNoteJSONRequestBody defines body for UpdateNote for application/json ContentType.
 type UpdateNoteJSONRequestBody = NoteUpdateRequest
 
+// ConsentSubmitFormdataRequestBody defines body for ConsentSubmit for application/x-www-form-urlencoded ContentType.
+type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
+
 // IntrospectEndpointJSONRequestBody defines body for IntrospectEndpoint for application/json ContentType.
 type IntrospectEndpointJSONRequestBody = IntrospectRequest
 
@@ -3279,7 +3428,10 @@ type MintEndpointJSONRequestBody = MintRequest
 type RevokeEndpointJSONRequestBody = RevokeRequest
 
 // TokenEndpointJSONRequestBody defines body for TokenEndpoint for application/json ContentType.
-type TokenEndpointJSONRequestBody = TokenRequest
+type TokenEndpointJSONRequestBody TokenEndpointJSONBody
+
+// TokenEndpointFormdataRequestBody defines body for TokenEndpoint for application/x-www-form-urlencoded ContentType.
+type TokenEndpointFormdataRequestBody TokenEndpointFormdataBody
 
 // RegisterEndpointJSONRequestBody defines body for RegisterEndpoint for application/json ContentType.
 type RegisterEndpointJSONRequestBody = RegisterRequest
@@ -4249,6 +4401,80 @@ type ClientInterface interface {
 	// Corresponds with GET /admin/health (the `Health` operationId).
 	Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListOauthClients List OAuth clients
+	//
+	// List all registered OAuth clients.
+	//
+	// Corresponds with GET /admin/oauth-clients (the `ListOauthClients` operationId).
+	ListOauthClients(ctx context.Context, params *ListOauthClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOauthClientWithBody Register OAuth client
+	//
+	// Register a new OAuth client for third-party application integration.
+	//
+	// The generated ``client_id`` and ``client_secret`` are returned in the
+	// response. The secret is shown only once — store it securely.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
+	CreateOauthClientWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOauthClient Register OAuth client
+	//
+	// Register a new OAuth client for third-party application integration.
+	//
+	// The generated ``client_id`` and ``client_secret`` are returned in the
+	// response. The secret is shown only once — store it securely.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
+	CreateOauthClient(ctx context.Context, body CreateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeactivateOauthClient Deactivate OAuth client
+	//
+	// Soft-delete an OAuth client by setting active=False.
+	//
+	// Deactivated clients can no longer initiate authorization flows.
+	//
+	// Corresponds with DELETE /admin/oauth-clients/{id} (the `DeactivateOauthClient` operationId).
+	DeactivateOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOauthClient Get OAuth client
+	//
+	// Get an OAuth client by its internal ID.
+	//
+	// Corresponds with GET /admin/oauth-clients/{id} (the `GetOauthClient` operationId).
+	GetOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateOauthClientWithBody Update OAuth client
+	//
+	// Update an OAuth client's name, description, redirect_uris, or active status.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /admin/oauth-clients/{id} (the `UpdateOauthClient` operationId).
+	UpdateOauthClientWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateOauthClient Update OAuth client
+	//
+	// Update an OAuth client's name, description, redirect_uris, or active status.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /admin/oauth-clients/{id} (the `UpdateOauthClient` operationId).
+	UpdateOauthClient(ctx context.Context, id string, body UpdateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateOauthClientSecret Rotate client secret
+	//
+	// Generate a new client secret. The previous secret is immediately invalidated.
+	//
+	// The new secret is shown only once — store it securely.
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}/rotate-secret (the `RotateOauthClientSecret` operationId).
+	RotateOauthClientSecret(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListAgents List Agents
 	//
 	// List agents — scoped by identity via dynamic query scoping.
@@ -4319,6 +4545,32 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 	GetAgentApiKeyHistory(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAgentJwksWithBody Update Agent Jwks
+	//
+	// Update an agent's JWKS (public keys for JWT-bearer authentication).
+	//
+	// The JWKS must contain at least one Ed25519 public key and must not contain
+	// any private key material. This enables the agent to authenticate via
+	// JWT-bearer assertions signed with the corresponding private key.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
+	UpdateAgentJwksWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAgentJwks Update Agent Jwks
+	//
+	// Update an agent's JWKS (public keys for JWT-bearer authentication).
+	//
+	// The JWKS must contain at least one Ed25519 public key and must not contain
+	// any private key material. This enables the agent to authenticate via
+	// JWT-bearer assertions signed with the corresponding private key.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
+	UpdateAgentJwks(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAgentScopes Get Agent Scopes
 	//
@@ -5220,6 +5472,41 @@ type ClientInterface interface {
 	// Corresponds with GET /oauth/callback (the `AuthorizeOauthCallback` operationId).
 	AuthorizeOauthCallback(ctx context.Context, params *AuthorizeOauthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ConsentPage Consent Page
+	//
+	// Display the OAuth consent screen.
+	//
+	// Corresponds with GET /oauth/consent (the `ConsentPage` operationId).
+	ConsentPage(ctx context.Context, params *ConsentPageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConsentSubmitWithBody Consent Submit
+	//
+	// Process the consent form submission. Mints the auth code only on approval.
+	//
+	// ``consent_token`` is the opaque handle emitted by the callback. It never
+	// leaves the state backend as anything more than an ID — the actual consent
+	// parameters (user_id, email, scopes, redirect_uri) live server-side and
+	// can't be tampered with or captured from browser history/proxy logs.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
+	ConsentSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConsentSubmitWithFormdataBody Consent Submit
+	//
+	// Process the consent form submission. Mints the auth code only on approval.
+	//
+	// ``consent_token`` is the opaque handle emitted by the callback. It never
+	// leaves the state backend as anything more than an ID — the actual consent
+	// parameters (user_id, email, scopes, redirect_uri) live server-side and
+	// can't be tampered with or captured from browser history/proxy logs.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
+	ConsentSubmitWithFormdataBody(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// IntrospectEndpointWithBody Introspect Endpoint
 	//
 	// Introspect a token (RFC 7662).
@@ -5297,6 +5584,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpoint(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TokenEndpointWithFormdataBody Token Endpoint
+	//
+	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
+	TokenEndpointWithFormdataBody(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPermissions List Permissions
 	//
@@ -6218,6 +6514,160 @@ func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*ht
 	return c.Client.Do(req)
 }
 
+// ListOauthClients List OAuth clients
+//
+// List all registered OAuth clients.
+//
+// Corresponds with GET /admin/oauth-clients (the `ListOauthClients` operationId).
+func (c *Client) ListOauthClients(ctx context.Context, params *ListOauthClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListOauthClientsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateOauthClientWithBody Register OAuth client
+//
+// Register a new OAuth client for third-party application integration.
+//
+// The generated “client_id“ and “client_secret“ are returned in the
+// response. The secret is shown only once — store it securely.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
+func (c *Client) CreateOauthClientWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOauthClientRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateOauthClient Register OAuth client
+//
+// Register a new OAuth client for third-party application integration.
+//
+// The generated “client_id“ and “client_secret“ are returned in the
+// response. The secret is shown only once — store it securely.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
+func (c *Client) CreateOauthClient(ctx context.Context, body CreateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOauthClientRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeactivateOauthClient Deactivate OAuth client
+//
+// Soft-delete an OAuth client by setting active=False.
+//
+// Deactivated clients can no longer initiate authorization flows.
+//
+// Corresponds with DELETE /admin/oauth-clients/{id} (the `DeactivateOauthClient` operationId).
+func (c *Client) DeactivateOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeactivateOauthClientRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOauthClient Get OAuth client
+//
+// Get an OAuth client by its internal ID.
+//
+// Corresponds with GET /admin/oauth-clients/{id} (the `GetOauthClient` operationId).
+func (c *Client) GetOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOauthClientRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateOauthClientWithBody Update OAuth client
+//
+// Update an OAuth client's name, description, redirect_uris, or active status.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /admin/oauth-clients/{id} (the `UpdateOauthClient` operationId).
+func (c *Client) UpdateOauthClientWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateOauthClientRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateOauthClient Update OAuth client
+//
+// Update an OAuth client's name, description, redirect_uris, or active status.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /admin/oauth-clients/{id} (the `UpdateOauthClient` operationId).
+func (c *Client) UpdateOauthClient(ctx context.Context, id string, body UpdateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateOauthClientRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateOauthClientSecret Rotate client secret
+//
+// Generate a new client secret. The previous secret is immediately invalidated.
+//
+// The new secret is shown only once — store it securely.
+//
+// Corresponds with POST /admin/oauth-clients/{id}/rotate-secret (the `RotateOauthClientSecret` operationId).
+func (c *Client) RotateOauthClientSecret(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateOauthClientSecretRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListAgents List Agents
 //
 // List agents — scoped by identity via dynamic query scoping.
@@ -6369,6 +6819,52 @@ func (c *Client) GetAgentApiKeyInfo(ctx context.Context, agentId string, reqEdit
 // Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentApiKeyHistoryRequest(c.Server, agentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAgentJwksWithBody Update Agent Jwks
+//
+// Update an agent's JWKS (public keys for JWT-bearer authentication).
+//
+// The JWKS must contain at least one Ed25519 public key and must not contain
+// any private key material. This enables the agent to authenticate via
+// JWT-bearer assertions signed with the corresponding private key.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
+func (c *Client) UpdateAgentJwksWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAgentJwksRequestWithBody(c.Server, agentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAgentJwks Update Agent Jwks
+//
+// Update an agent's JWKS (public keys for JWT-bearer authentication).
+//
+// The JWKS must contain at least one Ed25519 public key and must not contain
+// any private key material. This enables the agent to authenticate via
+// JWT-bearer assertions signed with the corresponding private key.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
+func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAgentJwksRequest(c.Server, agentId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8249,6 +8745,71 @@ func (c *Client) AuthorizeOauthCallback(ctx context.Context, params *AuthorizeOa
 	return c.Client.Do(req)
 }
 
+// ConsentPage Consent Page
+//
+// Display the OAuth consent screen.
+//
+// Corresponds with GET /oauth/consent (the `ConsentPage` operationId).
+func (c *Client) ConsentPage(ctx context.Context, params *ConsentPageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentPageRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConsentSubmitWithBody Consent Submit
+//
+// Process the consent form submission. Mints the auth code only on approval.
+//
+// “consent_token“ is the opaque handle emitted by the callback. It never
+// leaves the state backend as anything more than an ID — the actual consent
+// parameters (user_id, email, scopes, redirect_uri) live server-side and
+// can't be tampered with or captured from browser history/proxy logs.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
+func (c *Client) ConsentSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentSubmitRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConsentSubmitWithFormdataBody Consent Submit
+//
+// Process the consent form submission. Mints the auth code only on approval.
+//
+// “consent_token“ is the opaque handle emitted by the callback. It never
+// leaves the state backend as anything more than an ID — the actual consent
+// parameters (user_id, email, scopes, redirect_uri) live server-side and
+// can't be tampered with or captured from browser history/proxy logs.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
+func (c *Client) ConsentSubmitWithFormdataBody(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentSubmitRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // IntrospectEndpointWithBody Introspect Endpoint
 //
 // Introspect a token (RFC 7662).
@@ -8397,6 +8958,25 @@ func (c *Client) TokenEndpointWithBody(ctx context.Context, contentType string, 
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 func (c *Client) TokenEndpoint(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewTokenEndpointRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TokenEndpointWithFormdataBody Token Endpoint
+//
+// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
+func (c *Client) TokenEndpointWithFormdataBody(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTokenEndpointRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10238,6 +10818,249 @@ func NewHealthRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListOauthClientsRequest constructs an http.Request for the ListOauthClients method
+func NewListOauthClientsRequest(server string, params *ListOauthClientsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.IncludeInactive != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "include_inactive", *params.IncludeInactive, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateOauthClientRequest calls the generic CreateOauthClient builder with application/json body
+func NewCreateOauthClientRequest(server string, body CreateOauthClientJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateOauthClientRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateOauthClientRequestWithBody constructs an http.Request for the CreateOauthClient method, with any body, and a specified content type
+func NewCreateOauthClientRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeactivateOauthClientRequest constructs an http.Request for the DeactivateOauthClient method
+func NewDeactivateOauthClientRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetOauthClientRequest constructs an http.Request for the GetOauthClient method
+func NewGetOauthClientRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateOauthClientRequest calls the generic UpdateOauthClient builder with application/json body
+func NewUpdateOauthClientRequest(server string, id string, body UpdateOauthClientJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateOauthClientRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateOauthClientRequestWithBody constructs an http.Request for the UpdateOauthClient method, with any body, and a specified content type
+func NewUpdateOauthClientRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRotateOauthClientSecretRequest constructs an http.Request for the RotateOauthClientSecret method
+func NewRotateOauthClientSecretRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients/%s/rotate-secret", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListAgentsRequest constructs an http.Request for the ListAgents method
 func NewListAgentsRequest(server string, params *ListAgentsParams) (*http.Request, error) {
 	var err error
@@ -10535,6 +11358,53 @@ func NewGetAgentApiKeyHistoryRequest(server string, agentId string) (*http.Reque
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUpdateAgentJwksRequest calls the generic UpdateAgentJwks builder with application/json body
+func NewUpdateAgentJwksRequest(server string, agentId string, body UpdateAgentJwksJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateAgentJwksRequestWithBody(server, agentId, "application/json", bodyReader)
+}
+
+// NewUpdateAgentJwksRequestWithBody constructs an http.Request for the UpdateAgentJwks method, with any body, and a specified content type
+func NewUpdateAgentJwksRequestWithBody(server string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/jwks", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -15275,6 +16145,96 @@ func NewAuthorizeOauthCallbackRequest(server string, params *AuthorizeOauthCallb
 	return req, nil
 }
 
+// NewConsentPageRequest constructs an http.Request for the ConsentPage method
+func NewConsentPageRequest(server string, params *ConsentPageParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/consent")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ch", params.Ch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewConsentSubmitRequestWithFormdataBody calls the generic ConsentSubmit builder with application/x-www-form-urlencoded body
+func NewConsentSubmitRequestWithFormdataBody(server string, body ConsentSubmitFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewConsentSubmitRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewConsentSubmitRequestWithBody constructs an http.Request for the ConsentSubmit method, with any body, and a specified content type
+func NewConsentSubmitRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/consent")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewIntrospectEndpointRequest calls the generic IntrospectEndpoint builder with application/json body
 func NewIntrospectEndpointRequest(server string, body IntrospectEndpointJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -15404,6 +16364,17 @@ func NewTokenEndpointRequest(server string, body TokenEndpointJSONRequestBody) (
 	}
 	bodyReader = bytes.NewReader(buf)
 	return NewTokenEndpointRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewTokenEndpointRequestWithFormdataBody calls the generic TokenEndpoint builder with application/x-www-form-urlencoded body
+func NewTokenEndpointRequestWithFormdataBody(server string, body TokenEndpointFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewTokenEndpointRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
 }
 
 // NewTokenEndpointRequestWithBody constructs an http.Request for the TokenEndpoint method, with any body, and a specified content type
@@ -17757,6 +18728,88 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /admin/health (the `Health` operationId).
 	HealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthHTTPResp, error)
 
+	// ListOauthClientsWithResponse List OAuth clients
+	//
+	// List all registered OAuth clients.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /admin/oauth-clients (the `ListOauthClients` operationId).
+	ListOauthClientsWithResponse(ctx context.Context, params *ListOauthClientsParams, reqEditors ...RequestEditorFn) (*ListOauthClientsHTTPResp, error)
+
+	// CreateOauthClientWithBodyWithResponse Register OAuth client
+	//
+	// Register a new OAuth client for third-party application integration.
+	//
+	// The generated ``client_id`` and ``client_secret`` are returned in the
+	// response. The secret is shown only once — store it securely.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
+	CreateOauthClientWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOauthClientHTTPResp, error)
+
+	// CreateOauthClientWithResponse Register OAuth client
+	//
+	// Register a new OAuth client for third-party application integration.
+	//
+	// The generated ``client_id`` and ``client_secret`` are returned in the
+	// response. The secret is shown only once — store it securely.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
+	CreateOauthClientWithResponse(ctx context.Context, body CreateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOauthClientHTTPResp, error)
+
+	// DeactivateOauthClientWithResponse Deactivate OAuth client
+	//
+	// Soft-delete an OAuth client by setting active=False.
+	//
+	// Deactivated clients can no longer initiate authorization flows.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /admin/oauth-clients/{id} (the `DeactivateOauthClient` operationId).
+	DeactivateOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeactivateOauthClientHTTPResp, error)
+
+	// GetOauthClientWithResponse Get OAuth client
+	//
+	// Get an OAuth client by its internal ID.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /admin/oauth-clients/{id} (the `GetOauthClient` operationId).
+	GetOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOauthClientHTTPResp, error)
+
+	// UpdateOauthClientWithBodyWithResponse Update OAuth client
+	//
+	// Update an OAuth client's name, description, redirect_uris, or active status.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /admin/oauth-clients/{id} (the `UpdateOauthClient` operationId).
+	UpdateOauthClientWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateOauthClientHTTPResp, error)
+
+	// UpdateOauthClientWithResponse Update OAuth client
+	//
+	// Update an OAuth client's name, description, redirect_uris, or active status.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /admin/oauth-clients/{id} (the `UpdateOauthClient` operationId).
+	UpdateOauthClientWithResponse(ctx context.Context, id string, body UpdateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOauthClientHTTPResp, error)
+
+	// RotateOauthClientSecretWithResponse Rotate client secret
+	//
+	// Generate a new client secret. The previous secret is immediately invalidated.
+	//
+	// The new secret is shown only once — store it securely.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}/rotate-secret (the `RotateOauthClientSecret` operationId).
+	RotateOauthClientSecretWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RotateOauthClientSecretHTTPResp, error)
+
 	// ListAgentsWithResponse List Agents
 	//
 	// List agents — scoped by identity via dynamic query scoping.
@@ -17837,6 +18890,32 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 	GetAgentApiKeyHistoryWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentApiKeyHistoryHTTPResp, error)
+
+	// UpdateAgentJwksWithBodyWithResponse Update Agent Jwks
+	//
+	// Update an agent's JWKS (public keys for JWT-bearer authentication).
+	//
+	// The JWKS must contain at least one Ed25519 public key and must not contain
+	// any private key material. This enables the agent to authenticate via
+	// JWT-bearer assertions signed with the corresponding private key.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
+	UpdateAgentJwksWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentJwksHTTPResp, error)
+
+	// UpdateAgentJwksWithResponse Update Agent Jwks
+	//
+	// Update an agent's JWKS (public keys for JWT-bearer authentication).
+	//
+	// The JWKS must contain at least one Ed25519 public key and must not contain
+	// any private key material. This enables the agent to authenticate via
+	// JWT-bearer assertions signed with the corresponding private key.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
+	UpdateAgentJwksWithResponse(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentJwksHTTPResp, error)
 
 	// GetAgentScopesWithResponse Get Agent Scopes
 	//
@@ -18864,6 +19943,43 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /oauth/callback (the `AuthorizeOauthCallback` operationId).
 	AuthorizeOauthCallbackWithResponse(ctx context.Context, params *AuthorizeOauthCallbackParams, reqEditors ...RequestEditorFn) (*AuthorizeOauthCallbackHTTPResp, error)
 
+	// ConsentPageWithResponse Consent Page
+	//
+	// Display the OAuth consent screen.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /oauth/consent (the `ConsentPage` operationId).
+	ConsentPageWithResponse(ctx context.Context, params *ConsentPageParams, reqEditors ...RequestEditorFn) (*ConsentPageHTTPResp, error)
+
+	// ConsentSubmitWithBodyWithResponse Consent Submit
+	//
+	// Process the consent form submission. Mints the auth code only on approval.
+	//
+	// ``consent_token`` is the opaque handle emitted by the callback. It never
+	// leaves the state backend as anything more than an ID — the actual consent
+	// parameters (user_id, email, scopes, redirect_uri) live server-side and
+	// can't be tampered with or captured from browser history/proxy logs.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
+	ConsentSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error)
+
+	// ConsentSubmitWithFormdataBodyWithResponse Consent Submit
+	//
+	// Process the consent form submission. Mints the auth code only on approval.
+	//
+	// ``consent_token`` is the opaque handle emitted by the callback. It never
+	// leaves the state backend as anything more than an ID — the actual consent
+	// parameters (user_id, email, scopes, redirect_uri) live server-side and
+	// can't be tampered with or captured from browser history/proxy logs.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
+	ConsentSubmitWithFormdataBodyWithResponse(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error)
+
 	// IntrospectEndpointWithBodyWithResponse Introspect Endpoint
 	//
 	// Introspect a token (RFC 7662).
@@ -18941,6 +20057,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpointWithResponse(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
+
+	// TokenEndpointWithFormdataBodyWithResponse Token Endpoint
+	//
+	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
+	TokenEndpointWithFormdataBodyWithResponse(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
 
 	// ListPermissionsWithResponse List Permissions
 	//
@@ -20686,6 +21811,525 @@ func (r HealthHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListOauthClientsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthClientListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListOauthClientsHTTPResp) GetJSON200() *OAuthClientListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListOauthClientsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListOauthClientsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListOauthClientsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListOauthClientsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateOauthClientHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *OAuthClientCreateResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateOauthClientHTTPResp) GetJSON201() *OAuthClientCreateResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateOauthClientHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateOauthClientHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateOauthClientHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateOauthClientHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeactivateOauthClientHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeactivateOauthClientHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeactivateOauthClientHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeactivateOauthClientHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeactivateOauthClientHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetOauthClientHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthClientResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOauthClientHTTPResp) GetJSON200() *OAuthClientResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOauthClientHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOauthClientHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOauthClientHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOauthClientHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateOauthClientHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthClientResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateOauthClientHTTPResp) GetJSON200() *OAuthClientResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateOauthClientHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateOauthClientHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateOauthClientHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateOauthClientHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotateOauthClientSecretHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthClientRotateSecretResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RotateOauthClientSecretHTTPResp) GetJSON200() *OAuthClientRotateSecretResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RotateOauthClientSecretHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateOauthClientSecretHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateOauthClientSecretHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotateOauthClientSecretHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListAgentsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21254,6 +22898,89 @@ func (r GetAgentApiKeyHistoryHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAgentApiKeyHistoryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateAgentJwksHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateAgentJwksHTTPResp) GetJSON200() *AgentResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateAgentJwksHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateAgentJwksHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateAgentJwksHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateAgentJwksHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27669,6 +29396,109 @@ func (r AuthorizeOauthCallbackHTTPResp) ContentType() string {
 	return ""
 }
 
+type ConsentPageHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r ConsentPageHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConsentPageHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConsentPageHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConsentPageHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ConsentSubmitHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConsentSubmitHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ConsentSubmitHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConsentSubmitHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConsentSubmitHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConsentSubmitHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type IntrospectEndpointHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -32270,6 +34100,136 @@ func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, reqEditors
 	return ParseHealthHTTPResp(rsp)
 }
 
+// ListOauthClientsWithResponse List OAuth clients
+//
+// List all registered OAuth clients.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /admin/oauth-clients (the `ListOauthClients` operationId).
+func (c *ClientWithResponses) ListOauthClientsWithResponse(ctx context.Context, params *ListOauthClientsParams, reqEditors ...RequestEditorFn) (*ListOauthClientsHTTPResp, error) {
+	rsp, err := c.ListOauthClients(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListOauthClientsHTTPResp(rsp)
+}
+
+// CreateOauthClientWithBodyWithResponse Register OAuth client
+//
+// Register a new OAuth client for third-party application integration.
+//
+// The generated “client_id“ and “client_secret“ are returned in the
+// response. The secret is shown only once — store it securely.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
+func (c *ClientWithResponses) CreateOauthClientWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOauthClientHTTPResp, error) {
+	rsp, err := c.CreateOauthClientWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOauthClientHTTPResp(rsp)
+}
+
+// CreateOauthClientWithResponse Register OAuth client
+//
+// Register a new OAuth client for third-party application integration.
+//
+// The generated “client_id“ and “client_secret“ are returned in the
+// response. The secret is shown only once — store it securely.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
+func (c *ClientWithResponses) CreateOauthClientWithResponse(ctx context.Context, body CreateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOauthClientHTTPResp, error) {
+	rsp, err := c.CreateOauthClient(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOauthClientHTTPResp(rsp)
+}
+
+// DeactivateOauthClientWithResponse Deactivate OAuth client
+//
+// Soft-delete an OAuth client by setting active=False.
+//
+// Deactivated clients can no longer initiate authorization flows.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /admin/oauth-clients/{id} (the `DeactivateOauthClient` operationId).
+func (c *ClientWithResponses) DeactivateOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeactivateOauthClientHTTPResp, error) {
+	rsp, err := c.DeactivateOauthClient(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeactivateOauthClientHTTPResp(rsp)
+}
+
+// GetOauthClientWithResponse Get OAuth client
+//
+// Get an OAuth client by its internal ID.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /admin/oauth-clients/{id} (the `GetOauthClient` operationId).
+func (c *ClientWithResponses) GetOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOauthClientHTTPResp, error) {
+	rsp, err := c.GetOauthClient(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOauthClientHTTPResp(rsp)
+}
+
+// UpdateOauthClientWithBodyWithResponse Update OAuth client
+//
+// Update an OAuth client's name, description, redirect_uris, or active status.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /admin/oauth-clients/{id} (the `UpdateOauthClient` operationId).
+func (c *ClientWithResponses) UpdateOauthClientWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateOauthClientHTTPResp, error) {
+	rsp, err := c.UpdateOauthClientWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateOauthClientHTTPResp(rsp)
+}
+
+// UpdateOauthClientWithResponse Update OAuth client
+//
+// Update an OAuth client's name, description, redirect_uris, or active status.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /admin/oauth-clients/{id} (the `UpdateOauthClient` operationId).
+func (c *ClientWithResponses) UpdateOauthClientWithResponse(ctx context.Context, id string, body UpdateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOauthClientHTTPResp, error) {
+	rsp, err := c.UpdateOauthClient(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateOauthClientHTTPResp(rsp)
+}
+
+// RotateOauthClientSecretWithResponse Rotate client secret
+//
+// Generate a new client secret. The previous secret is immediately invalidated.
+//
+// The new secret is shown only once — store it securely.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /admin/oauth-clients/{id}/rotate-secret (the `RotateOauthClientSecret` operationId).
+func (c *ClientWithResponses) RotateOauthClientSecretWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RotateOauthClientSecretHTTPResp, error) {
+	rsp, err := c.RotateOauthClientSecret(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateOauthClientSecretHTTPResp(rsp)
+}
+
 // ListAgentsWithResponse List Agents
 //
 // List agents — scoped by identity via dynamic query scoping.
@@ -32403,6 +34363,44 @@ func (c *ClientWithResponses) GetAgentApiKeyHistoryWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseGetAgentApiKeyHistoryHTTPResp(rsp)
+}
+
+// UpdateAgentJwksWithBodyWithResponse Update Agent Jwks
+//
+// Update an agent's JWKS (public keys for JWT-bearer authentication).
+//
+// The JWKS must contain at least one Ed25519 public key and must not contain
+// any private key material. This enables the agent to authenticate via
+// JWT-bearer assertions signed with the corresponding private key.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
+func (c *ClientWithResponses) UpdateAgentJwksWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentJwksHTTPResp, error) {
+	rsp, err := c.UpdateAgentJwksWithBody(ctx, agentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAgentJwksHTTPResp(rsp)
+}
+
+// UpdateAgentJwksWithResponse Update Agent Jwks
+//
+// Update an agent's JWKS (public keys for JWT-bearer authentication).
+//
+// The JWKS must contain at least one Ed25519 public key and must not contain
+// any private key material. This enables the agent to authenticate via
+// JWT-bearer assertions signed with the corresponding private key.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
+func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentJwksHTTPResp, error) {
+	rsp, err := c.UpdateAgentJwks(ctx, agentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAgentJwksHTTPResp(rsp)
 }
 
 // GetAgentScopesWithResponse Get Agent Scopes
@@ -34013,6 +36011,61 @@ func (c *ClientWithResponses) AuthorizeOauthCallbackWithResponse(ctx context.Con
 	return ParseAuthorizeOauthCallbackHTTPResp(rsp)
 }
 
+// ConsentPageWithResponse Consent Page
+//
+// Display the OAuth consent screen.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /oauth/consent (the `ConsentPage` operationId).
+func (c *ClientWithResponses) ConsentPageWithResponse(ctx context.Context, params *ConsentPageParams, reqEditors ...RequestEditorFn) (*ConsentPageHTTPResp, error) {
+	rsp, err := c.ConsentPage(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentPageHTTPResp(rsp)
+}
+
+// ConsentSubmitWithBodyWithResponse Consent Submit
+//
+// Process the consent form submission. Mints the auth code only on approval.
+//
+// “consent_token“ is the opaque handle emitted by the callback. It never
+// leaves the state backend as anything more than an ID — the actual consent
+// parameters (user_id, email, scopes, redirect_uri) live server-side and
+// can't be tampered with or captured from browser history/proxy logs.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
+func (c *ClientWithResponses) ConsentSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error) {
+	rsp, err := c.ConsentSubmitWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentSubmitHTTPResp(rsp)
+}
+
+// ConsentSubmitWithFormdataBodyWithResponse Consent Submit
+//
+// Process the consent form submission. Mints the auth code only on approval.
+//
+// “consent_token“ is the opaque handle emitted by the callback. It never
+// leaves the state backend as anything more than an ID — the actual consent
+// parameters (user_id, email, scopes, redirect_uri) live server-side and
+// can't be tampered with or captured from browser history/proxy logs.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
+func (c *ClientWithResponses) ConsentSubmitWithFormdataBodyWithResponse(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error) {
+	rsp, err := c.ConsentSubmitWithFormdataBody(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentSubmitHTTPResp(rsp)
+}
+
 // IntrospectEndpointWithBodyWithResponse Introspect Endpoint
 //
 // Introspect a token (RFC 7662).
@@ -34133,6 +36186,21 @@ func (c *ClientWithResponses) TokenEndpointWithBodyWithResponse(ctx context.Cont
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 func (c *ClientWithResponses) TokenEndpointWithResponse(ctx context.Context, body TokenEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error) {
 	rsp, err := c.TokenEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTokenEndpointHTTPResp(rsp)
+}
+
+// TokenEndpointWithFormdataBodyWithResponse Token Endpoint
+//
+// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
+func (c *ClientWithResponses) TokenEndpointWithFormdataBodyWithResponse(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error) {
+	rsp, err := c.TokenEndpointWithFormdataBody(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -36095,6 +38163,438 @@ func ParseHealthHTTPResp(rsp *http.Response) (*HealthHTTPResp, error) {
 	return response, nil
 }
 
+// ParseListOauthClientsHTTPResp parses an HTTP response from a ListOauthClientsWithResponse call
+func ParseListOauthClientsHTTPResp(rsp *http.Response) (*ListOauthClientsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListOauthClientsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthClientListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateOauthClientHTTPResp parses an HTTP response from a CreateOauthClientWithResponse call
+func ParseCreateOauthClientHTTPResp(rsp *http.Response) (*CreateOauthClientHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateOauthClientHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest OAuthClientCreateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeactivateOauthClientHTTPResp parses an HTTP response from a DeactivateOauthClientWithResponse call
+func ParseDeactivateOauthClientHTTPResp(rsp *http.Response) (*DeactivateOauthClientHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeactivateOauthClientHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetOauthClientHTTPResp parses an HTTP response from a GetOauthClientWithResponse call
+func ParseGetOauthClientHTTPResp(rsp *http.Response) (*GetOauthClientHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOauthClientHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthClientResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateOauthClientHTTPResp parses an HTTP response from a UpdateOauthClientWithResponse call
+func ParseUpdateOauthClientHTTPResp(rsp *http.Response) (*UpdateOauthClientHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateOauthClientHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthClientResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotateOauthClientSecretHTTPResp parses an HTTP response from a RotateOauthClientSecretWithResponse call
+func ParseRotateOauthClientSecretHTTPResp(rsp *http.Response) (*RotateOauthClientSecretHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateOauthClientSecretHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthClientRotateSecretResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListAgentsHTTPResp parses an HTTP response from a ListAgentsWithResponse call
 func ParseListAgentsHTTPResp(rsp *http.Response) (*ListAgentsHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -36515,6 +39015,74 @@ func ParseGetAgentApiKeyHistoryHTTPResp(rsp *http.Response) (*GetAgentApiKeyHist
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ApiKeyHistoryResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateAgentJwksHTTPResp parses an HTTP response from a UpdateAgentJwksWithResponse call
+func ParseUpdateAgentJwksHTTPResp(rsp *http.Response) (*UpdateAgentJwksHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateAgentJwksHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -41767,6 +44335,76 @@ func ParseAuthorizeOauthCallbackHTTPResp(rsp *http.Response) (*AuthorizeOauthCal
 	}
 
 	response := &AuthorizeOauthCallbackHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseConsentPageHTTPResp parses an HTTP response from a ConsentPageWithResponse call
+func ParseConsentPageHTTPResp(rsp *http.Response) (*ConsentPageHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConsentPageHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseConsentSubmitHTTPResp parses an HTTP response from a ConsentSubmitWithResponse call
+func ParseConsentSubmitHTTPResp(rsp *http.Response) (*ConsentSubmitHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConsentSubmitHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

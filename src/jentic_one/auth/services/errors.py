@@ -135,3 +135,11 @@ class ClaimActorNotAllowedError(AuthServiceError):
     def __init__(self, actor_type: str) -> None:
         super().__init__(f"Actor type '{actor_type}' cannot claim agent ownership")
         self.actor_type = actor_type
+
+
+class RateLimitExceededError(AuthServiceError):
+    """Raised when a pre-auth rate limit is exceeded (429)."""
+
+    def __init__(self, retry_after: int = 1) -> None:
+        super().__init__("Too many requests")
+        self.retry_after = retry_after

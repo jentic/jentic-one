@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import delete
@@ -197,9 +197,14 @@ async def test_token_endpoint_unsupported_grant_type(
     token_service: TokenService, clean_tokens: None
 ) -> None:
     """Invalid grant_type raises InvalidGrantError."""
+    request = MagicMock()
+    request.headers = {}
+    response = MagicMock()
+    response.headers = {}
+
     with pytest.raises(InvalidGrantError, match="unsupported grant_type"):
         body = TokenRequest(grant_type="invalid_grant", refresh_token=None)
-        await token_endpoint(body=body, token_svc=token_service)
+        await token_endpoint(request=request, response=response, body=body, token_svc=token_service)
 
 
 async def test_invalid_refresh_token(token_service: TokenService, clean_tokens: None) -> None:

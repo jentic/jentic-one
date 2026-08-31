@@ -13,6 +13,7 @@ import type { ApiKeyInfoResponse } from '../models/ApiKeyInfoResponse';
 import type { ApiKeyResponse } from '../models/ApiKeyResponse';
 import type { ClaimRequest } from '../models/ClaimRequest';
 import type { jentic_one__auth__web__schemas__agents__DenyRequest } from '../models/jentic_one__auth__web__schemas__agents__DenyRequest';
+import type { JwksUpdateRequest } from '../models/JwksUpdateRequest';
 import type { ToolkitBindingListResponse } from '../models/ToolkitBindingListResponse';
 import type { ToolkitBindingResponse } from '../models/ToolkitBindingResponse';
 import type { ToolkitBindRequest } from '../models/ToolkitBindRequest';
@@ -208,6 +209,41 @@ export class AgentsService {
             path: {
                 'agent_id': agentId,
             },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Update Agent Jwks
+     * Update an agent's JWKS (public keys for JWT-bearer authentication).
+     *
+     * The JWKS must contain at least one Ed25519 public key and must not contain
+     * any private key material. This enables the agent to authenticate via
+     * JWT-bearer assertions signed with the corresponding private key.
+     * @returns AgentResponse Successful Response
+     * @throws ApiError
+     */
+    public static updateAgentJwks({
+        agentId,
+        requestBody,
+    }: {
+        agentId: string,
+        requestBody: JwksUpdateRequest,
+    }): CancelablePromise<AgentResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/agents/{agent_id}/jwks',
+            path: {
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
