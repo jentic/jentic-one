@@ -3,17 +3,20 @@ package localagentcmd
 // mcpisolate.go is `jentic setup`'s optional MCP isolation step (local-MCP
 // §3.7.5 rung 2): after the MCP entries are written, offer to move each one
 // behind a boundary so the desktop-user side holds only a disposable spawn
-// line, never the signing key. Two variants, per the hardening ladder:
+// line, never the signing key. The automated rung is the SUDO-SHIM entry
+// (macOS/Linux only): a dedicated per-runtime service user
+// (`_jentic-<runtime>` — `_` prefix, system uid, no login shell, 0700 state
+// dir) owns the context's key material; the entry becomes
+// `sudo -n -H -u <user> /abs/jentic mcp --context <name>`, matched by an
+// argv-pinned NOPASSWD sudoers line.
 //
-//   - CONTAINER entry (offered FIRST where Docker Desktop is present — the
-//     MCP ecosystem's mainstream isolation pattern): the entry becomes a
-//     hardened `docker run -i --rm` with a named state volume; key material
-//     lives in the volume.
-//   - SUDO-SHIM entry (docker-less machines; macOS/Linux only): a dedicated
-//     per-runtime service user (`_jentic-<runtime>` — `_` prefix, system uid,
-//     no login shell, 0700 state dir) owns the context's key material; the
-//     entry becomes `sudo -n -u <user> /abs/jentic mcp --context <name>`,
-//     matched by an argv-pinned NOPASSWD sudoers line.
+// The CONTAINER rung (§3.7.5's ecosystem-normal variant) is deliberately NOT
+// automated here: no published CLI image exists yet (2-E4 owns publishing
+// one), and rewriting a working entry to a container spawn would also need
+// volume provisioning plus a smoke-spawn to honour the invariant that a
+// failed isolation keeps the working non-isolated entry. Docker-equipped
+// operators are pointed at the documented manual recipe instead
+// (docs/security/mcp-same-host-hardening.md, Recipe 3).
 //
 // The whole step is BEST-EFFORT and consent-gated: it never runs sudo
 // unattended (interactive sessions only), and any failure leaves the working
@@ -24,12 +27,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/jentic/jentic-one/cli/client/auth"
@@ -41,16 +42,10 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
-// mcpContainerImageEnv overrides the container-entry image (a mirror, a
-// pinned digest). The default image must already be present locally — the
-// step never pulls.
-const mcpContainerImageEnv = "JENTIC_MCP_CONTAINER_IMAGE"
-
-// defaultMCPContainerImage is the CLI image the container entry runs. There
-// is no published CLI image yet (2-E4's registry/release automation owns
-// that), so the container variant is offered only when this image — or the
-// env override — already exists locally.
-const defaultMCPContainerImage = "ghcr.io/jentic/jentic-one-cli:latest"
+// containerRecipePointer is the manual container-isolation pointer printed
+// where Docker is present. It names the shipped doc so the operator can build
+// the rung by hand; nothing is rewritten automatically (see the file comment).
+const containerRecipePointer = "Prefer a container? The manual recipe is docs/security/mcp-same-host-hardening.md (Recipe 3)."
 
 // offerMCPIsolation runs the optional isolation step over the entries that
 // were just written. interactive gates the whole step: a non-interactive run
@@ -83,55 +78,37 @@ func (a *Cmd) offerMCPIsolation(ctx context.Context, outcomes []mcpcfg.Outcome, 
 		"the context's signing key. Isolation moves the key and the server behind a boundary;"))
 	fmt.Fprintln(a.Out, theme.Dim.Render(
 		"your side keeps only the spawn line."))
+	if _, err := exec.LookPath("docker"); err == nil {
+		fmt.Fprintln(a.Out, theme.Dim.Render(containerRecipePointer))
+	}
 
-	image, haveDocker := a.containerVariantAvailable(ctx)
+	// One shared context can only be MOVED once: the operator-side key
+	// removal is offered AFTER the last runtime, never inside the loop —
+	// removing it mid-loop would strand every later runtime's export with a
+	// keyless service account while still printing success.
+	isolatedAny := false
 	for _, out := range outcomes {
-		if err := a.isolateOne(ctx, out.Runtime, binPath, ctxName, image, haveDocker); err != nil {
+		isolated, err := a.isolateSudoShim(ctx, out.Runtime, binPath, ctxName)
+		if err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("MCP isolation cancelled."))
-				return
+				break
 			}
 			// Best-effort: the non-isolated entry keeps working.
 			fmt.Fprintln(a.Out, theme.Warnf("could not isolate the %s entry (its non-isolated entry still works): %v", out.Runtime, err))
+			continue
 		}
+		isolatedAny = isolatedAny || isolated
 	}
-}
 
-// containerVariantAvailable reports whether the container entry can be
-// offered: Docker Desktop (a responsive docker CLI) plus the CLI image
-// already present locally. The probe never pulls and never blocks long.
-func (a *Cmd) containerVariantAvailable(ctx context.Context) (image string, ok bool) {
-	image = os.Getenv(mcpContainerImageEnv)
-	if image == "" {
-		image = defaultMCPContainerImage
+	// 5. Complete the move: with the key now living under the service
+	//    user(s), offer to remove the operator-side copy so the desktop side
+	//    holds no long-lived key material. Separate consent — it also cuts
+	//    the OPERATOR's own CLI off from this context, which is the point but
+	//    must be a deliberate choice.
+	if isolatedAny {
+		a.offerOperatorKeyRemoval(ctx, ctxName)
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		return image, false
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(probeCtx, "docker", "image", "inspect", image) //nolint:gosec // image is a fixed default or the operator's own env override.
-	cmd.Stdout, cmd.Stderr = nil, nil
-	return image, cmd.Run() == nil
-}
-
-// isolateOne offers and applies one runtime's isolation: the container
-// variant first where available, else the sudo-shim.
-func (a *Cmd) isolateOne(ctx context.Context, rt mcpcfg.Runtime, binPath, ctxName, image string, haveDocker bool) error {
-	if haveDocker {
-		accepted, err := a.confirmIsolation(rt,
-			fmt.Sprintf("Isolate the %s entry in a container? (recommended)", rt),
-			"Rewrites the entry as a hardened `docker run -i --rm` with a named state volume ("+
-				mcpcfg.ContainerStateVolume(ctxName)+"). No sudo needed.")
-		if err != nil {
-			return err
-		}
-		if accepted {
-			return a.applyIsolatedEntry(ctx, rt, mcpcfg.ContainerEntry(image, ctxName), "container")
-		}
-		// Declining the container rung falls through to the sudo-shim offer.
-	}
-	return a.isolateSudoShim(ctx, rt, binPath, ctxName)
 }
 
 // confirmIsolation runs one consent prompt; declining is a clean no.
@@ -149,17 +126,22 @@ func (a *Cmd) confirmIsolation(_ mcpcfg.Runtime, title, description string) (boo
 }
 
 // isolateSudoShim provisions the per-runtime service account and rewrites the
-// entry in sudo-shim form. Every privileged command runs only after the
+// entry in sudo-shim form, returning whether the entry was actually isolated
+// (false on a clean decline). Every privileged command runs only after the
 // explicit consent above, with stdio wired to the terminal so the sudo
-// password prompt is visible — never unattended.
-func (a *Cmd) isolateSudoShim(ctx context.Context, rt mcpcfg.Runtime, binPath, ctxName string) error {
+// password prompt is visible — never unattended. Ordering is load-bearing:
+// home creation (root-side, 0700, no operator grant) → context export via
+// `sudo install` (the operator never needs access to the home) → the sudoers
+// rule → the entry rewrite, so a failure at any step leaves the working
+// non-isolated entry in place.
+func (a *Cmd) isolateSudoShim(ctx context.Context, rt mcpcfg.Runtime, binPath, ctxName string) (bool, error) {
 	serviceUser := localagent.ServiceUserName(string(rt))
 	homeDir := localagent.ServiceHomeDir(serviceUser)
 	if err := localagent.ValidateAccount(serviceUser, homeDir); err != nil {
-		return err
+		return false, err
 	}
 	if err := localagent.ValidateMcpSudoersInputs(binPath, ctxName); err != nil {
-		return err
+		return false, err
 	}
 
 	accepted, err := a.confirmIsolation(rt,
@@ -167,70 +149,108 @@ func (a *Cmd) isolateSudoShim(ctx context.Context, rt mcpcfg.Runtime, binPath, c
 		"Creates a no-login system account owning the context's key material, adds one NOPASSWD "+
 			"sudoers line pinned to exactly `jentic mcp --context "+ctxName+"`, and rewrites the entry as a sudo shim.")
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !accepted {
 		fmt.Fprintln(a.Out, theme.Dimf("Keeping the non-isolated %s entry.", rt))
-		return nil
+		return false, nil
+	}
+
+	// Render the context material into an operator-private staging dir BEFORE
+	// any privileged step: a keyless/unresolvable context fails here, loudly,
+	// with nothing created yet.
+	mat, skip, err := a.buildExportMaterial(ctx)
+	if err != nil {
+		return false, fmt.Errorf("hand the context to the service account: %w", err)
+	}
+	if skip {
+		return false, errors.New("no exportable context material (register a context, then re-run `jentic setup`)")
+	}
+	staging, err := a.renderExportStaging(mat)
+	if staging != "" {
+		defer os.RemoveAll(staging)
+	}
+	if err != nil {
+		return false, fmt.Errorf("stage the context material: %w", err)
 	}
 
 	// 1. Service account + 0700 state dir (idempotent-ish: an existing
 	//    account is reused only when its live home is the managed one).
-	if localagent.UserExists(ctx, serviceUser) {
+	exists := localagent.UserExists(ctx, serviceUser)
+	if exists {
 		if err := localagent.VerifyManagedHome(serviceUser, homeDir); err != nil {
-			return fmt.Errorf("refusing to reuse existing account %q: %w", serviceUser, err)
+			return false, fmt.Errorf("refusing to reuse existing account %q: %w", serviceUser, err)
 		}
 		fmt.Fprintln(a.Out, theme.Dimf("Service account %q already exists — reusing it.", serviceUser))
 	} else {
 		fmt.Fprintln(a.Out, theme.Infof("Creating service account %q (state dir %s) ...", serviceUser, homeDir))
-		for _, step := range localagent.CreateServiceAccountCmds(serviceUser, homeDir) {
-			c := step.Cmd
-			c.Stdout, c.Stderr = a.Out, a.Err
-			if err := c.Run(); err != nil {
-				return fmt.Errorf("%s: %w", step.What, err)
-			}
-		}
-		if !localagent.UserExists(ctx, serviceUser) {
-			return fmt.Errorf("service account %q was not created (the account tool reported success but the account does not exist)", serviceUser)
-		}
 	}
 
-	// 2. Move the context's key material under the service user. The export
-	//    writes the minimal config + key + tokens into the service home and
-	//    chowns them to the service uid; the operator-side removal below is
-	//    what turns the copy into a MOVE.
-	if err := a.exportContextMaterial(ctx, serviceUser, homeDir); err != nil {
-		return fmt.Errorf("hand the context to the service account: %w", err)
-	}
-	// The state dir may have been re-created by the export as the operator;
-	// re-pin ownership best-effort (the export already chowns .config/.local).
-	pin := localagent.ChownToAgentCmd(serviceUser, homeDir)
-	pin.Stdout, pin.Stderr = a.Out, io.Discard
-	_ = pin.Run()
-
-	// 3. The argv-pinned NOPASSWD line: one source user → one target user →
-	//    exactly the pinned command. Uses the same visudo-validated drop-in
-	//    plumbing as the launch rule; `jentic reset`'s RemoveSudoersCmd
-	//    (anchored on the runas spec) reverses it.
+	// 2+3. The ordered privileged plan: home creation (when needed), the
+	//    root-side export installs, then the argv-pinned NOPASSWD line (one
+	//    source user → one target user → exactly the pinned command, on the
+	//    same visudo-validated drop-in plumbing as the launch rule;
+	//    RemoveSudoersCmd — wired into `jentic reset` — reverses it).
 	rule := localagent.McpSudoersRule(currentOperator(), serviceUser, binPath, ctxName)
-	install := localagent.InstallSudoersRuleCmd(rule)
-	install.Stdout, install.Stderr = a.Out, a.Err
-	if err := install.Run(); err != nil {
-		return fmt.Errorf("install the sudoers rule: %w", err)
+	for i, step := range sudoShimPrivilegedSteps(!exists, serviceUser, homeDir, staging, mat, rule) {
+		c := step.Cmd
+		c.Stdout, c.Stderr = a.Out, a.Err
+		if err := c.Run(); err != nil {
+			return false, fmt.Errorf("%s: %w", step.What, err)
+		}
+		// Verify the account actually exists right after the create step:
+		// sysadminctl can refuse the add yet still exit 0.
+		if !exists && i == 0 && !localagent.UserExists(ctx, serviceUser) {
+			return false, fmt.Errorf("service account %q was not created (the account tool reported success but the account does not exist)", serviceUser)
+		}
 	}
 
 	// 4. Rewrite the runtime's entry in sudo-shim form.
 	if err := a.applyIsolatedEntry(ctx, rt, mcpcfg.SudoShimEntry(serviceUser, binPath, ctxName), "sudo-shim"); err != nil {
-		return err
+		return false, err
 	}
+	return true, nil
+}
 
-	// 5. Complete the move: with the key now living under the service user,
-	//    offer to remove the operator-side copy so the desktop side holds no
-	//    long-lived key material. Separate consent — it also cuts the
-	//    OPERATOR's own CLI off from this context, which is the point but
-	//    must be a deliberate choice.
-	a.offerOperatorKeyRemoval(ctx, ctxName)
-	return nil
+// sudoShimPrivilegedSteps assembles the ordered privileged plan for one
+// runtime's sudo-shim isolation: account + home creation (when the account is
+// new) → context export via root-side `sudo install` → the sudoers rule LAST
+// (the NOPASSWD line must never exist before the material it grants access to
+// is in place). Enumerated so the ordering is assertable in tests without
+// sudo.
+func sudoShimPrivilegedSteps(createAccount bool, serviceUser, homeDir, staging string, mat *exportMaterial, rule string) []localagent.AccountStep {
+	var steps []localagent.AccountStep
+	if createAccount {
+		steps = append(steps, localagent.CreateServiceAccountCmds(serviceUser, homeDir)...)
+	}
+	steps = append(steps, localagent.ExportInstallCmds(serviceUser, homeDir, staging, mat.relDirs, mat.relFiles())...)
+	steps = append(steps, localagent.AccountStep{
+		What: "install the sudoers rule",
+		Cmd:  localagent.InstallSudoersRuleCmd(rule),
+	})
+	return steps
+}
+
+// renderExportStaging writes the export material into a fresh operator-private
+// (0700) temp dir laid out exactly like the target home's XDG tree, returning
+// the staging root. The caller removes it once the root-side install ran.
+func (a *Cmd) renderExportStaging(mat *exportMaterial) (string, error) {
+	staging, err := os.MkdirTemp("", "jentic-mcp-export-*")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(staging, 0o700); err != nil { //nolint:gosec // 0700 not 0600: a directory needs owner-execute to be traversable; no group/world bits.
+		return staging, err
+	}
+	for _, rel := range mat.relDirs {
+		if err := os.MkdirAll(filepath.Join(staging, rel), 0o700); err != nil {
+			return staging, err
+		}
+	}
+	if err := mat.renderInto(staging); err != nil {
+		return staging, err
+	}
+	return staging, nil
 }
 
 // applyIsolatedEntry rewrites one runtime's MCP entry with the isolated
@@ -249,11 +269,14 @@ func (a *Cmd) applyIsolatedEntry(ctx context.Context, rt mcpcfg.Runtime, entry m
 }
 
 // offerOperatorKeyRemoval offers to delete the OPERATOR-side key/token files
-// for the active context, completing the move behind the service user. It is
-// deliberately its own consent: after removal, the operator's own CLI can no
-// longer act as this context (that asymmetry is the security property, but it
-// must never happen silently). Declining keeps a copy on both sides — noted,
-// since a desktop-side key is exactly what isolation exists to eliminate.
+// for the active context, completing the move behind the service user(s). It
+// runs ONCE, after the LAST runtime's isolation — with one shared context a
+// true move is only safe once, so removing the operator copy inside the
+// per-runtime loop would strand every later runtime. It is deliberately its
+// own consent: after removal, the operator's own CLI can no longer act as
+// this context (that asymmetry is the security property, but it must never
+// happen silently). Declining keeps a copy on both sides — noted, since a
+// desktop-side key is exactly what isolation exists to eliminate.
 func (a *Cmd) offerOperatorKeyRemoval(ctx context.Context, ctxName string) {
 	st := clictx.ActiveContext(ctx)
 	if st == nil || st.InjectedBearerToken != "" {

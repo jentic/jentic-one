@@ -1847,7 +1847,7 @@ type McpConfigRegistrationRequest struct {
 
 // McpConfigRegistrationResponse Acknowledgement of a config-registration report.
 type McpConfigRegistrationResponse struct {
-	// Recorded Whether the report was accepted for recording.
+	// Recorded Whether the report was recorded as an event. `false` means it was accepted but throttled (an identical (actor, runtime) report was already recorded within the last 24h).
 	Recorded bool `json:"recorded"`
 
 	// Runtime The runtime the report was recorded for.
@@ -5453,7 +5453,10 @@ type ClientInterface interface {
 	// config entry it wrote (best-effort on the CLI side — a failed report never
 	// blocks setup). Emits the `mcp.config_registered` internal event; when the
 	// operator opted into telemetry, the event is forwarded carrying at most the
-	// closed runtime tag. Any authenticated actor may report.
+	// closed runtime tag. Reports are throttled per (actor, runtime) within a
+	// 24h in-process window — a throttled repeat is still a 202 with
+	// `recorded: false`, since the CLI treats the report as fire-and-forget.
+	// Any authenticated actor may report.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5468,7 +5471,10 @@ type ClientInterface interface {
 	// config entry it wrote (best-effort on the CLI side — a failed report never
 	// blocks setup). Emits the `mcp.config_registered` internal event; when the
 	// operator opted into telemetry, the event is forwarded carrying at most the
-	// closed runtime tag. Any authenticated actor may report.
+	// closed runtime tag. Reports are throttled per (actor, runtime) within a
+	// 24h in-process window — a throttled repeat is still a 202 with
+	// `recorded: false`, since the CLI treats the report as fire-and-forget.
+	// Any authenticated actor may report.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8646,7 +8652,10 @@ func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...Requ
 // config entry it wrote (best-effort on the CLI side — a failed report never
 // blocks setup). Emits the `mcp.config_registered` internal event; when the
 // operator opted into telemetry, the event is forwarded carrying at most the
-// closed runtime tag. Any authenticated actor may report.
+// closed runtime tag. Reports are throttled per (actor, runtime) within a
+// 24h in-process window — a throttled repeat is still a 202 with
+// `recorded: false`, since the CLI treats the report as fire-and-forget.
+// Any authenticated actor may report.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8671,7 +8680,10 @@ func (c *Client) ReportMcpConfigRegistrationWithBody(ctx context.Context, conten
 // config entry it wrote (best-effort on the CLI side — a failed report never
 // blocks setup). Emits the `mcp.config_registered` internal event; when the
 // operator opted into telemetry, the event is forwarded carrying at most the
-// closed runtime tag. Any authenticated actor may report.
+// closed runtime tag. Reports are throttled per (actor, runtime) within a
+// 24h in-process window — a throttled repeat is still a 202 with
+// `recorded: false`, since the CLI treats the report as fire-and-forget.
+// Any authenticated actor may report.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -20030,7 +20042,10 @@ type ClientWithResponsesInterface interface {
 	// config entry it wrote (best-effort on the CLI side — a failed report never
 	// blocks setup). Emits the `mcp.config_registered` internal event; when the
 	// operator opted into telemetry, the event is forwarded carrying at most the
-	// closed runtime tag. Any authenticated actor may report.
+	// closed runtime tag. Reports are throttled per (actor, runtime) within a
+	// 24h in-process window — a throttled repeat is still a 202 with
+	// `recorded: false`, since the CLI treats the report as fire-and-forget.
+	// Any authenticated actor may report.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20045,7 +20060,10 @@ type ClientWithResponsesInterface interface {
 	// config entry it wrote (best-effort on the CLI side — a failed report never
 	// blocks setup). Emits the `mcp.config_registered` internal event; when the
 	// operator opted into telemetry, the event is forwarded carrying at most the
-	// closed runtime tag. Any authenticated actor may report.
+	// closed runtime tag. Reports are throttled per (actor, runtime) within a
+	// 24h in-process window — a throttled repeat is still a 202 with
+	// `recorded: false`, since the CLI treats the report as fire-and-forget.
+	// Any authenticated actor may report.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -36145,7 +36163,10 @@ func (c *ClientWithResponses) CancelJobWithResponse(ctx context.Context, jobId s
 // config entry it wrote (best-effort on the CLI side — a failed report never
 // blocks setup). Emits the `mcp.config_registered` internal event; when the
 // operator opted into telemetry, the event is forwarded carrying at most the
-// closed runtime tag. Any authenticated actor may report.
+// closed runtime tag. Reports are throttled per (actor, runtime) within a
+// 24h in-process window — a throttled repeat is still a 202 with
+// `recorded: false`, since the CLI treats the report as fire-and-forget.
+// Any authenticated actor may report.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -36166,7 +36187,10 @@ func (c *ClientWithResponses) ReportMcpConfigRegistrationWithBodyWithResponse(ct
 // config entry it wrote (best-effort on the CLI side — a failed report never
 // blocks setup). Emits the `mcp.config_registered` internal event; when the
 // operator opted into telemetry, the event is forwarded carrying at most the
-// closed runtime tag. Any authenticated actor may report.
+// closed runtime tag. Reports are throttled per (actor, runtime) within a
+// 24h in-process window — a throttled repeat is still a 202 with
+// `recorded: false`, since the CLI treats the report as fire-and-forget.
+// Any authenticated actor may report.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

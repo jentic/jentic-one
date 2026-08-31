@@ -12,10 +12,12 @@ package localagentcmd
 // adoption funnel has its first leg.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
@@ -183,21 +185,37 @@ func (a *Cmd) applyMCPEntry(ctx context.Context, rt mcpcfg.Runtime, env mcpcfg.E
 	}
 }
 
-// runClaudeCodeSteps executes the `claude mcp` exec plan (remove-then-add so
-// re-runs converge). Claude Code owns its own config file locking; going
-// through its CLI is the supported write path.
+// runClaudeCodeSteps converges Claude Code's user-scope config on entry via
+// its own CLI (Claude Code owns its config file locking; going through its
+// CLI is the supported write path). A read-only `claude mcp get` probe runs
+// first: an already-convergent entry is a reported no-op (re-runs never
+// rewrite), a stale entry is removed then re-added, an absent entry is added
+// directly — so a working entry is only ever removed when a change is
+// genuinely needed. Failures carry claude's own stderr, not a bare exit code.
 func (a *Cmd) runClaudeCodeSteps(ctx context.Context, env mcpcfg.Env, entry mcpcfg.Entry) (mcpcfg.Outcome, error) {
 	out := mcpcfg.Outcome{Runtime: mcpcfg.RuntimeClaudeCode, Path: "claude mcp add (user scope)"}
 	claudePath, err := env.LookPath("claude")
 	if err != nil {
 		return out, fmt.Errorf("claude binary not found on PATH: %w", err)
 	}
-	for _, step := range mcpcfg.ClaudeCodeSteps(claudePath, entry) {
+
+	probe := mcpcfg.ClaudeCodeProbeArgv(claudePath)
+	probeOut, probeErr := exec.CommandContext(ctx, probe[0], probe[1:]...).Output() //nolint:gosec // argv is the resolved claude path plus fixed words.
+	entryExists := probeErr == nil
+	if entryExists && mcpcfg.ClaudeCodeConverged(probeOut, entry) {
+		return out, nil // already up to date — no destructive rewrite
+	}
+
+	for _, step := range mcpcfg.ClaudeCodeSteps(claudePath, entry, entryExists) {
 		cmd := exec.CommandContext(ctx, step.Argv[0], step.Argv[1:]...) //nolint:gosec // argv is assembled from the resolved claude path and fixed words + validated names.
-		cmd.Stdout, cmd.Stderr = nil, nil
+		var stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = nil, &stderr
 		if err := cmd.Run(); err != nil {
 			if step.BestEffort {
-				continue // removing a not-yet-registered entry legitimately fails
+				continue // removing an already-gone entry legitimately fails
+			}
+			if diag := strings.TrimSpace(stderr.String()); diag != "" {
+				return out, fmt.Errorf("%s: %w: %s", step.What, err, diag)
 			}
 			return out, fmt.Errorf("%s: %w", step.What, err)
 		}
@@ -231,7 +249,14 @@ func (a *Cmd) reportConfigRegistered(ctx context.Context, rt mcpcfg.Runtime) {
 	body := control.ReportMcpConfigRegistrationJSONRequestBody{
 		Runtime: control.McpConfigRuntime(rt.WireTag()),
 	}
-	if _, err := cli.ReportMcpConfigRegistrationWithResponse(ctx, body); err != nil {
+	resp, err := cli.ReportMcpConfigRegistrationWithResponse(ctx, body)
+	switch {
+	case err != nil:
 		fmt.Fprintln(a.Out, theme.Dimf("  (could not report the %s registration to the control plane: %v)", rt, err))
+	case resp.StatusCode() < 200 || resp.StatusCode() > 299:
+		// The generated client errors only on transport failure — an HTTP
+		// 401/422/500 comes back as err == nil, so the promised dim note must
+		// key off the status code too.
+		fmt.Fprintln(a.Out, theme.Dimf("  (could not report the %s registration to the control plane: HTTP %d)", rt, resp.StatusCode()))
 	}
 }

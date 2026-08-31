@@ -9,6 +9,7 @@ package mcpcfg
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -58,8 +59,13 @@ func tomlString(s string) string {
 // duplicate tables, so writing our block alongside a hand-written entry would
 // corrupt the whole Codex config. The caller reports it and leaves the file
 // alone (the operator already wired jentic up by hand).
+//
+// Marker/table SEARCHING is newline-agnostic (a line may start after '\n' or
+// '\r'), but the splice always edits the ORIGINAL bytes: a CRLF-saved file
+// keeps every byte outside our markers exactly as the operator's editor wrote
+// it — only the managed block itself is normalized to LF.
 func MergeCodexTOML(existing []byte, entry Entry) (out []byte, changed bool, err error) {
-	content := normalizeNewlines(string(existing))
+	content := string(existing)
 	block := renderCodexBlock(entry)
 
 	begin := lineAnchoredIndex(content, tomlBeginMarker)
@@ -69,11 +75,13 @@ func MergeCodexTOML(existing []byte, entry Entry) (out []byte, changed bool, err
 				"%s already defines %s outside the jentic-managed block — leaving it untouched (remove the manual entry to let jentic manage it)",
 				"config.toml", codexTable)
 		}
-		trimmed := strings.TrimRight(content, "\n")
+		trimmed := strings.TrimRight(content, "\r\n")
 		if trimmed == "" {
 			return []byte(block + "\n"), true, nil
 		}
-		return []byte(trimmed + "\n\n" + block + "\n"), true, nil
+		// Append after the original content — byte-identical, including its
+		// own line endings — separated by one blank line.
+		return []byte(content + terminatorIfMissing(content) + "\n" + block + "\n"), true, nil
 	}
 
 	relEnd := lineAnchoredIndex(content[begin:], tomlEndMarker)
@@ -92,24 +100,75 @@ func MergeCodexTOML(existing []byte, entry Entry) (out []byte, changed bool, err
 	}
 
 	next := content[:begin] + block + content[endPos:]
-	if next == content && string(existing) == content {
+	if next == content {
 		return existing, false, nil
 	}
-	return []byte(next), next != string(existing), nil
+	return []byte(next), true, nil
 }
 
-// normalizeNewlines collapses CRLF/CR to LF so marker matching and splicing
-// behave identically regardless of how an editor saved the file.
-func normalizeNewlines(s string) string {
-	if !strings.ContainsRune(s, '\r') {
-		return s
+// terminatorIfMissing returns "\n" when content does not already end with a
+// newline, so the appended managed block always starts on its own line.
+func terminatorIfMissing(content string) string {
+	if strings.HasSuffix(content, "\n") {
+		return ""
 	}
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
+	return "\n"
+}
+
+// ReadCodexEntry parses the jentic entry back out of the managed block in the
+// Codex TOML config. ok=false (no error) when the file or our block is absent.
+// It only understands the exact shape renderCodexBlock writes (command = "…",
+// args = ["…", …]) — a hand-mangled block reads as absent, which doctor then
+// reports as "no entry" rather than guessing.
+func ReadCodexEntry(path string) (entry Entry, ok bool, err error) {
+	data, err := os.ReadFile(path) //nolint:gosec // path is the fixed ~/.codex/config.toml location.
+	if os.IsNotExist(err) {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, err
+	}
+	content := string(data)
+	begin := lineAnchoredIndex(content, tomlBeginMarker)
+	if begin < 0 {
+		return Entry{}, false, nil
+	}
+	relEnd := lineAnchoredIndex(content[begin:], tomlEndMarker)
+	if relEnd < 0 {
+		return Entry{}, false, nil
+	}
+	for _, line := range strings.FieldsFunc(content[begin:begin+relEnd], func(r rune) bool { return r == '\n' || r == '\r' }) {
+		line = strings.TrimSpace(line)
+		if v, isCmd := strings.CutPrefix(line, "command = "); isCmd {
+			entry.Command = unquoteTOMLString(v)
+		}
+		if v, isArgs := strings.CutPrefix(line, "args = ["); isArgs {
+			for _, item := range strings.Split(strings.TrimSuffix(v, "]"), ", ") {
+				if s := unquoteTOMLString(strings.TrimSpace(item)); s != "" {
+					entry.Args = append(entry.Args, s)
+				}
+			}
+		}
+	}
+	return entry, entry.Command != "", nil
+}
+
+// unquoteTOMLString reverses tomlString for the values we write (quote and
+// backslash escapes only). Returns "" when s is not a quoted string.
+func unquoteTOMLString(s string) string {
+	if len(s) < 2 || !strings.HasPrefix(s, `"`) || !strings.HasSuffix(s, `"`) {
+		return ""
+	}
+	inner := s[1 : len(s)-1]
+	inner = strings.ReplaceAll(inner, `\"`, `"`)
+	return strings.ReplaceAll(inner, `\\`, `\`)
 }
 
 // lineAnchoredIndex returns the byte offset of the first occurrence of marker
-// that begins a line (offset 0 or immediately after '\n'), or -1. Line
-// anchoring keeps a marker quoted inside a TOML string from matching.
+// that begins a line (offset 0 or immediately after '\n' or '\r'), or -1.
+// Line anchoring keeps a marker quoted inside a TOML string from matching;
+// accepting '\r' as a line boundary makes the search behave as if newlines
+// were normalized WITHOUT rewriting any byte of a CRLF (or CR) file.
 func lineAnchoredIndex(s, marker string) int {
 	from := 0
 	for {
@@ -118,7 +177,7 @@ func lineAnchoredIndex(s, marker string) int {
 			return -1
 		}
 		abs := from + i
-		if abs == 0 || s[abs-1] == '\n' {
+		if abs == 0 || s[abs-1] == '\n' || s[abs-1] == '\r' {
 			return abs
 		}
 		from = abs + 1

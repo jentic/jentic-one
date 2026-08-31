@@ -1,9 +1,11 @@
 package ctlcmd
 
 // Tests for doctor's MCP section (2-E3): the four legs an auto-registered MCP
-// entry stands on — binary, CA bundle, pinned context, broker. No live sudo,
-// no live broker: only the deterministic checks are unit-tested here (the
-// broker probe reuses serverinfo.Probe, covered by the Server checks' tests).
+// entry stands on — binary, CA bundle, pinned context, broker — judged from
+// the entries ACTUALLY WRITTEN into the runtime configs, not from PATH or the
+// active context. No live sudo, no live broker: only the deterministic checks
+// are unit-tested here (the broker probe reuses serverinfo.Probe, covered by
+// the Server checks' tests).
 
 import (
 	"context"
@@ -13,39 +15,69 @@ import (
 	"testing"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/mcpcfg"
 )
 
-// seedAgentConfig writes a minimal config.yaml into the (already isolated)
-// XDG_CONFIG_HOME and returns the parsed form (what checkMCP passes around).
-// Call testApp first: it points XDG_CONFIG_HOME at a fresh temp dir.
-func seedAgentConfig(t *testing.T, yaml string) *sdkconfig.Config {
-	t.Helper()
-	t.Setenv("JENTIC_BASE_URL", "")
-	t.Setenv("JENTIC_BEARER_TOKEN", "")
-	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "jentic")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := sdkconfig.Load()
-	if err != nil {
-		t.Fatalf("load seeded config: %v", err)
-	}
-	return cfg
+// writtenEntry builds the parsed form of one runtime's written entry.
+func writtenEntry(rt mcpcfg.Runtime, entry mcpcfg.Entry) mcpWrittenEntry {
+	return mcpWrittenEntry{runtime: rt, path: "/ignored", entry: entry}
 }
 
-func TestDoctorMCPBinaryMissingIsWarn(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // guaranteed-absent jentic
+// validCfg is a config where context "dev" fully resolves.
+func validCfg() *sdkconfig.Config {
+	return &sdkconfig.Config{
+		Contexts:     map[string]sdkconfig.Context{"dev": {Environment: "local", Identity: "me", Mode: "agent"}},
+		Environments: map[string]sdkconfig.Env{"local": {BaseURL: "https://example.test"}},
+		Identities:   map[string]sdkconfig.Identity{"me": {Type: "agent"}},
+	}
+}
+
+// TestDoctorMCPNoEntriesIsSingleWarn: with nothing registered there is
+// nothing truthful to probe — one CI-safe warn row pointing at setup.
+func TestDoctorMCPNoEntriesIsSingleWarn(t *testing.T) {
 	d := &doctor{app: testApp(t), ctx: context.Background()}
-	d.checkMCPBinary()
+	d.checkMCPEntries(validCfg(), nil)
 
 	if len(d.checks) != 1 || d.checks[0].status != statusWarn {
-		t.Fatalf("missing jentic binary should be a single warn row (CI-safe), got %+v", d.checks)
+		t.Fatalf("no entries should be a single warn row, got %+v", d.checks)
+	}
+	if !strings.Contains(d.checks[0].hint, "jentic setup") {
+		t.Errorf("row should hint at setup, got %q", d.checks[0].hint)
 	}
 	if d.failed() != 0 {
-		t.Error("a missing jentic binary must not flip doctor's exit code")
+		t.Error("no entries must not flip doctor's exit code")
+	}
+}
+
+// TestDoctorMCPEntryBinaryChecksWrittenPath: the binary row judges the path
+// the ENTRY pins — present passes, missing warns — for both plain and
+// sudo-shim shapes. A `jentic` on PATH is irrelevant (and deliberately absent
+// here).
+func TestDoctorMCPEntryBinaryChecksWrittenPath(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // guaranteed-absent jentic on PATH
+	realBin := filepath.Join(t.TempDir(), "jentic")
+	if err := os.WriteFile(realBin, []byte("#!"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &doctor{app: testApp(t), ctx: context.Background()}
+	d.checkMCPEntries(validCfg(), []mcpWrittenEntry{
+		writtenEntry(mcpcfg.RuntimeCursor, mcpcfg.PlainEntry(realBin, "dev")),
+		writtenEntry(mcpcfg.RuntimeCodex, mcpcfg.SudoShimEntry("_jentic-codex", "/gone/jentic", "dev")),
+	})
+
+	byName := map[string]checkStatus{}
+	for _, c := range d.checks {
+		byName[c.name] = c.status
+	}
+	if byName["binary (cursor)"] != statusPass {
+		t.Errorf("existing pinned binary should pass, got %+v", d.checks)
+	}
+	if byName["binary (codex)"] != statusWarn {
+		t.Errorf("missing pinned binary should warn (CI-safe), got %+v", d.checks)
+	}
+	if d.failed() != 0 {
+		t.Error("a stranded entry must not flip doctor's exit code")
 	}
 }
 
@@ -79,44 +111,42 @@ func TestDoctorMCPCACertReadablePassesAndDanglingFails(t *testing.T) {
 	}
 }
 
-func TestDoctorMCPContextValidPasses(t *testing.T) {
-	app := testApp(t)
-	cfg := seedAgentConfig(t, `
-active_context: dev
-contexts:
-  dev: {environment: local, identity: me, mode: agent}
-environments:
-  local: {base_url: https://example.test}
-identities:
-  me: {type: agent}
-`)
-	d := &doctor{app: app, ctx: context.Background()}
-	d.checkMCPContext(cfg)
+// TestDoctorMCPEntryContextValidPasses: the context row validates the name
+// the entry PINS against the config.
+func TestDoctorMCPEntryContextValidPasses(t *testing.T) {
+	d := &doctor{app: testApp(t), ctx: context.Background()}
+	d.checkMCPEntryContext(validCfg(), writtenEntry(mcpcfg.RuntimeCursor, mcpcfg.PlainEntry("/abs/jentic", "dev")))
 
 	if len(d.checks) != 1 || d.checks[0].status != statusPass {
-		t.Fatalf("a fully-defined active context should pass, got %+v", d.checks)
+		t.Fatalf("a fully-resolving pinned context should pass, got %+v", d.checks)
 	}
 }
 
-func TestDoctorMCPContextUndefinedEnvironmentWarns(t *testing.T) {
-	app := testApp(t)
-	cfg := seedAgentConfig(t, `
-active_context: dev
-contexts:
-  dev: {environment: local, identity: me, mode: agent}
-environments:
-  local: {base_url: https://example.test}
-identities:
-  me: {type: agent}
-`)
-	// Simulate the strand-every-entry case: the context's environment was
-	// removed after the entries were written.
+// TestDoctorMCPEntryContextIgnoresActiveContext: switching the ACTIVE context
+// must not flip the row — the entry still pins "dev", and that is what the
+// runtime will spawn.
+func TestDoctorMCPEntryContextIgnoresActiveContext(t *testing.T) {
+	cfg := validCfg()
+	cfg.ActiveContext = "somewhere-else" // undefined on purpose
+
+	d := &doctor{app: testApp(t), ctx: context.Background()}
+	d.checkMCPEntryContext(cfg, writtenEntry(mcpcfg.RuntimeCursor, mcpcfg.PlainEntry("/abs/jentic", "dev")))
+
+	if len(d.checks) != 1 || d.checks[0].status != statusPass {
+		t.Fatalf("the pinned context resolves — the active context is irrelevant, got %+v", d.checks)
+	}
+}
+
+func TestDoctorMCPEntryContextUndefinedEnvironmentWarns(t *testing.T) {
+	cfg := validCfg()
+	// Simulate the strand-every-entry case: the pinned context's environment
+	// was removed after the entries were written.
 	cctx := cfg.Contexts["dev"]
 	cctx.Environment = "gone"
 	cfg.Contexts["dev"] = cctx
 
-	d := &doctor{app: app, ctx: context.Background()}
-	d.checkMCPContext(cfg)
+	d := &doctor{app: testApp(t), ctx: context.Background()}
+	d.checkMCPEntryContext(cfg, writtenEntry(mcpcfg.RuntimeCursor, mcpcfg.PlainEntry("/abs/jentic", "dev")))
 
 	if len(d.checks) != 1 || d.checks[0].status != statusWarn {
 		t.Fatalf("an undefined environment should warn, got %+v", d.checks)
@@ -126,18 +156,35 @@ identities:
 	}
 }
 
-func TestDoctorMCPContextMissingWarnsWithSetupHint(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("JENTIC_BASE_URL", "")
-	t.Setenv("JENTIC_BEARER_TOKEN", "")
-
+func TestDoctorMCPEntryContextUndefinedNameWarns(t *testing.T) {
 	d := &doctor{app: testApp(t), ctx: context.Background()}
-	d.checkMCPContext(&sdkconfig.Config{})
+	d.checkMCPEntryContext(&sdkconfig.Config{},
+		writtenEntry(mcpcfg.RuntimeCursor, mcpcfg.PlainEntry("/abs/jentic", "deleted-ctx")))
 
 	if len(d.checks) != 1 || d.checks[0].status != statusWarn {
-		t.Fatalf("no active context should warn, got %+v", d.checks)
+		t.Fatalf("an undefined pinned context should warn, got %+v", d.checks)
 	}
 	if d.checks[0].hint == "" {
-		t.Error("the no-context row should carry a remediation hint")
+		t.Error("the row should carry a remediation hint")
+	}
+}
+
+// TestReadMCPEntriesFindsWrittenConfigs: the survey parses real written
+// files back into entries (cursor JSON here; the parsers themselves are
+// golden-tested in mcpcfg).
+func TestReadMCPEntriesFindsWrittenConfigs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if _, err := mcpcfg.WriteJSONEntry(mcpcfg.RuntimeCursor,
+		mcpcfg.CursorConfigPath(home), mcpcfg.PlainEntry("/abs/jentic", "dev")); err != nil {
+		t.Fatal(err)
+	}
+
+	entries := readMCPEntries()
+	if len(entries) != 1 || entries[0].runtime != mcpcfg.RuntimeCursor {
+		t.Fatalf("entries = %+v, want the cursor entry", entries)
+	}
+	if entries[0].entry.PinnedContext() != "dev" {
+		t.Errorf("parsed entry = %+v", entries[0].entry)
 	}
 }

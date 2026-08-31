@@ -104,6 +104,71 @@ func CreateServiceAccountCmds(serviceUser, homeDir string) []AccountStep {
 	return steps
 }
 
+// ExportInstallCmds returns the ordered privileged steps that move rendered
+// context material from stagingDir (an operator-private temp dir) into the
+// service account's home ROOT-SIDE. The service home is deliberately 0700
+// under the service uid with NO operator grant, so the operator process can
+// never write into it directly — `sudo install` places each directory
+// (0700, service-owned) and file (0600, service-owned) without the operator
+// ever needing access to the home. relDirs/relFiles are home-relative paths;
+// files are copied from the same relative location under stagingDir. Steps
+// are enumerated (never run here) so the recipe is assertable in tests
+// without sudo — the AccountStep pattern. Callers validate serviceUser and
+// homeDir (ValidateAccount) before running any step.
+func ExportInstallCmds(serviceUser, homeDir, stagingDir string, relDirs, relFiles []string) []AccountStep {
+	steps := make([]AccountStep, 0, len(relDirs)+len(relFiles))
+	for _, rel := range relDirs {
+		steps = append(steps, AccountStep{
+			What: "create the service account's " + rel + " dir",
+			// `install -d` creates missing parents with the same owner/mode,
+			// so the whole XDG chain lands 0700 under the service uid.
+			//nolint:gosec // serviceUser/homeDir are validated; rel is a fixed XDG-relative join.
+			Cmd: exec.Command("sudo", "install", "-d", "-o", serviceUser, "-m", "0700",
+				filepath.Join(homeDir, rel)),
+		})
+	}
+	for _, rel := range relFiles {
+		steps = append(steps, AccountStep{
+			What: "install " + rel + " into the service account's home",
+			//nolint:gosec // serviceUser/homeDir are validated; stagingDir is a Go-created private temp dir; rel is a fixed relative join.
+			Cmd: exec.Command("sudo", "install", "-o", serviceUser, "-m", "0600",
+				filepath.Join(stagingDir, rel), filepath.Join(homeDir, rel)),
+		})
+	}
+	return steps
+}
+
+// McpServiceTeardownCmds returns the ordered privileged steps that reverse
+// everything the MCP isolation step created for one service account: the
+// account's `/etc/sudoers.d/jentic-agent` NOPASSWD line (RemoveSudoersCmd,
+// anchored on the runas spec), the 0700 home holding the exported key
+// material, and the Unix account itself. Sudoers first (drop the operator's
+// passwordless path before anything else), then the home (the exported
+// signing key must not outlive the account), then the account record.
+// Callers guard the home with ValidateHomeDir + VerifyManagedHome before
+// running any step, exactly like the agent-account teardown.
+func McpServiceTeardownCmds(serviceUser, homeDir string, accountExists bool) []AccountStep {
+	steps := []AccountStep{
+		{
+			What: "remove the " + serviceUser + " sudoers line",
+			Cmd:  RemoveSudoersCmd(serviceUser),
+		},
+	}
+	if homeDir != "" {
+		steps = append(steps, AccountStep{
+			What: "delete the service account's home " + homeDir + " (exported key material)",
+			Cmd:  DeleteHomeCmd(homeDir),
+		})
+	}
+	if accountExists {
+		steps = append(steps, AccountStep{
+			What: "delete the Unix account " + serviceUser,
+			Cmd:  DeleteAccountCmd(serviceUser),
+		})
+	}
+	return steps
+}
+
 // ValidateMcpSudoersInputs guards the two values the argv-pinned rule
 // interpolates beyond the account names: the binary path and the context
 // name. Both land verbatim on a sudoers line, where a space, comma, colon,

@@ -32,11 +32,14 @@ async def report_mcp_config_registration(
     config entry it wrote (best-effort on the CLI side — a failed report never
     blocks setup). Emits the `mcp.config_registered` internal event; when the
     operator opted into telemetry, the event is forwarded carrying at most the
-    closed runtime tag. Any authenticated actor may report.
+    closed runtime tag. Reports are throttled per (actor, runtime) within a
+    24h in-process window — a throttled repeat is still a 202 with
+    `recorded: false`, since the CLI treats the report as fire-and-forget.
+    Any authenticated actor may report.
     """
-    await svc.report_config_registered(
+    recorded = await svc.report_config_registered(
         runtime=body.runtime,
         actor_id=identity.sub,
         actor_type=identity.actor_type.value,
     )
-    return McpConfigRegistrationResponse(runtime=body.runtime, recorded=True)
+    return McpConfigRegistrationResponse(runtime=body.runtime, recorded=recorded)

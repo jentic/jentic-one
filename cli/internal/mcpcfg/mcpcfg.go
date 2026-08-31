@@ -6,11 +6,12 @@
 // Writers are idempotent and edit-preserving: JSON targets are merged (we own
 // exactly the "jentic" server key; every foreign key is preserved), the TOML
 // target is spliced as a clearly-marked managed block, and the exec target is
-// a remove-then-add plan so re-runs converge. The entry always names the
-// binary by ABSOLUTE (stable) path — GUI runtimes spawn servers with a minimal
-// PATH (master plan §3.7.3) — and always pins `--context <name>` so a later
-// `jentic context use` can never silently re-point a runtime at a different
-// agent/instance (§3.10).
+// probed first (`claude mcp get`) and rewritten only when it differs, so
+// re-runs converge without a destructive remove window. The entry always names
+// the binary by ABSOLUTE (stable) path — GUI runtimes spawn servers with a
+// minimal PATH (master plan §3.7.3) — and always pins `--context <name>` so a
+// later `jentic context use` can never silently re-point a runtime at a
+// different agent/instance (§3.10).
 package mcpcfg
 
 import (
@@ -31,6 +32,13 @@ const (
 	RuntimeClaudeCode    Runtime = "claude-code"
 	RuntimeCodex         Runtime = "codex"
 )
+
+// SupportedRuntimes enumerates every runtime an MCP entry (and thus a
+// `_jentic-<runtime>` service account) can exist for — the closed set
+// `jentic reset` surveys when tearing isolation down.
+func SupportedRuntimes() []Runtime {
+	return []Runtime{RuntimeCursor, RuntimeClaudeDesktop, RuntimeClaudeCode, RuntimeCodex}
+}
 
 // WireTag maps a runtime to the closed telemetry tag value the backend's
 // McpConfigRuntime enum accepts ("cursor", "claude_desktop", "claude_code",
@@ -77,16 +85,21 @@ func PlainEntry(binPath, contextName string) Entry {
 }
 
 // SudoShimEntry is the §3.7.5 rung-2 isolated entry: the runtime spawns
-// `sudo -n -u <serviceUser> /abs/jentic mcp --context <name>`. sudo inherits
-// stdin/stdout so the JSON-RPC pipe survives; `-n` because a GUI spawn can
-// never answer a password prompt (the matching argv-pinned NOPASSWD sudoers
-// line makes the prompt unnecessary). The argv after the service user is
-// EXACTLY the command the sudoers rule pins, so the entry cannot be replayed
-// with a different context.
+// `sudo -n -H -u <serviceUser> /abs/jentic mcp --context <name>`. sudo
+// inherits stdin/stdout so the JSON-RPC pipe survives; `-n` because a GUI
+// spawn can never answer a password prompt (the matching argv-pinned NOPASSWD
+// sudoers line makes the prompt unnecessary); `-H` because macOS's stock
+// sudoers ships `Defaults env_keep += "HOME MAIL"`, so without it a
+// GUI-spawned shim keeps HOME pointing at the OPERATOR's home and the
+// isolated server resolves its XDG config against a tree the service uid
+// cannot (and must not) read. Option flags do not participate in sudoers
+// command matching, so the argv-pinned rule is unaffected. The argv after the
+// service user is EXACTLY the command the sudoers rule pins, so the entry
+// cannot be replayed with a different context.
 func SudoShimEntry(serviceUser, binPath, contextName string) Entry {
 	return Entry{
 		Command: "sudo",
-		Args:    append([]string{"-n", "-u", serviceUser}, McpArgv(binPath, contextName)...),
+		Args:    append([]string{"-n", "-H", "-u", serviceUser}, McpArgv(binPath, contextName)...),
 	}
 }
 
@@ -97,32 +110,42 @@ func McpArgv(binPath, contextName string) []string {
 	return []string{binPath, "mcp", "--context", contextName}
 }
 
-// ContainerEntry is the container-isolation variant (§3.7.5, the
-// ecosystem-normal rung, offered first where Docker Desktop is present): a
-// hardened `docker run -i --rm` with the standard flags and a named state
-// volume holding the runtime's own jentic config, running `jentic mcp
-// --context <name>` inside. The desktop user's side holds only this spawn
-// line; key material lives in the volume, not in any desktop-user file.
-func ContainerEntry(image, contextName string) Entry {
-	return Entry{
-		Command: "docker",
-		Args: []string{
-			"run", "-i", "--rm",
-			"--read-only",
-			"--cap-drop=ALL",
-			"--security-opt", "no-new-privileges",
-			"--volume", ContainerStateVolume(contextName) + ":/home/jentic",
-			image,
-			"jentic", "mcp", "--context", contextName,
-		},
+// The container-isolation entry variant was deliberately DEMOTED to the
+// documented manual recipe (docs/security/mcp-same-host-hardening.md,
+// Recipe 3): no published CLI image exists yet (2-E4 owns publishing one),
+// and an automated rewrite would need volume provisioning + a smoke-spawn to
+// honour the invariant that a failed isolation keeps the working
+// non-isolated entry. The isolation step points docker-equipped operators at
+// the recipe instead of rewriting anything.
+
+// PinnedBinary returns the absolute jentic binary path a written entry
+// actually spawns: the entry's own command for a plain entry, or the pinned
+// argv's binary for a sudo-shim entry (the first argument after the sudo
+// flags, i.e. the element preceding the "mcp" subcommand). Empty when the
+// entry does not look like one of ours — doctor uses this to probe the
+// binary the ENTRY names rather than whatever `jentic` resolves on PATH.
+func (e Entry) PinnedBinary() string {
+	if e.Command != "sudo" {
+		return e.Command
 	}
+	for i, a := range e.Args {
+		if a == "mcp" && i > 0 {
+			return e.Args[i-1]
+		}
+	}
+	return ""
 }
 
-// ContainerStateVolume is the named Docker volume that holds a containerized
-// entry's jentic state (config, key, tokens), one per pinned context so
-// runtimes never share key material.
-func ContainerStateVolume(contextName string) string {
-	return "jentic-mcp-" + contextName
+// PinnedContext returns the context name the entry pins with `--context`, or
+// "" when the flag is absent. Doctor validates THIS name (what the runtime
+// will actually spawn with), not the operator's currently active context.
+func (e Entry) PinnedContext() string {
+	for i, a := range e.Args {
+		if a == "--context" && i+1 < len(e.Args) {
+			return e.Args[i+1]
+		}
+	}
+	return ""
 }
 
 // Env carries the probes the writers need, injected so detection and target

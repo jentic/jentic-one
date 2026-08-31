@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 )
 
 // mcpServersKey is the top-level object both Cursor and Claude Desktop read
@@ -27,7 +28,13 @@ func MergeJSON(existing []byte, entry Entry) (out []byte, changed bool, err erro
 	root := map[string]any{}
 	trimmed := bytes.TrimSpace(existing)
 	if len(trimmed) > 0 {
-		if err := json.Unmarshal(trimmed, &root); err != nil {
+		// UseNumber keeps foreign numeric values textual (json.Number), so an
+		// integer above 2^53 in a sibling server's config (an ID, a timestamp)
+		// round-trips exactly instead of being silently corrupted by a
+		// float64 detour.
+		dec := json.NewDecoder(bytes.NewReader(trimmed))
+		dec.UseNumber()
+		if err := dec.Decode(&root); err != nil {
 			return nil, false, fmt.Errorf("existing config is not a JSON object: %w", err)
 		}
 	}
@@ -56,4 +63,36 @@ func MergeJSON(existing []byte, entry Entry) (out []byte, changed bool, err erro
 	}
 	out = buf.Bytes() // Encode appends the trailing newline
 	return out, !bytes.Equal(out, existing), nil
+}
+
+// ReadJSONEntry parses the jentic server entry back out of a JSON MCP config
+// file. It returns ok=false (no error) when the file, the mcpServers object,
+// or our key is absent — doctor uses this to validate what was ACTUALLY
+// written for a runtime rather than re-deriving it from the live environment.
+func ReadJSONEntry(path string) (entry Entry, ok bool, err error) {
+	data, err := os.ReadFile(path) //nolint:gosec // path is a fixed per-runtime config location under the user's home.
+	if os.IsNotExist(err) {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, err
+	}
+	root := map[string]any{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return Entry{}, false, fmt.Errorf("%s: %w", path, err)
+	}
+	servers, _ := root[mcpServersKey].(map[string]any)
+	raw, _ := servers[ServerName].(map[string]any)
+	if raw == nil {
+		return Entry{}, false, nil
+	}
+	entry.Command, _ = raw["command"].(string)
+	if args, isList := raw["args"].([]any); isList {
+		for _, a := range args {
+			if s, isStr := a.(string); isStr {
+				entry.Args = append(entry.Args, s)
+			}
+		}
+	}
+	return entry, entry.Command != "", nil
 }

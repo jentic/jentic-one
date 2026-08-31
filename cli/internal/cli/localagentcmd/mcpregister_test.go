@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/mcpcfg"
@@ -119,5 +121,128 @@ func TestMcpEnvHonorsInjectedLookup(t *testing.T) {
 	}
 	if _, err := env.LookPath("claude"); !errors.Is(err, exec.ErrNotFound) {
 		t.Fatalf("LookPath through a stubbed detectEnv = %v, want ErrNotFound", err)
+	}
+}
+
+// --- Claude Code exec route (fake claude binary) -----------------------------
+
+// fakeClaude writes an executable shell script standing in for the claude CLI
+// and returns an Env resolving "claude" to it. The script logs every
+// invocation to logPath; `mcp get` prints $FAKE_CLAUDE_GET (exit 1 when
+// unset: entry absent), `mcp add` fails with stderr when $FAKE_CLAUDE_ADD_FAIL
+// is set.
+func fakeClaude(t *testing.T, logPath string) mcpcfg.Env {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	script := filepath.Join(t.TempDir(), "claude")
+	body := `#!/bin/sh
+echo "$@" >> "` + logPath + `"
+case "$1 $2" in
+"mcp get")
+  [ -n "$FAKE_CLAUDE_GET" ] || exit 1
+  printf '%s\n' "$FAKE_CLAUDE_GET"
+  exit 0 ;;
+"mcp add")
+  if [ -n "$FAKE_CLAUDE_ADD_FAIL" ]; then echo "user scope rejected by policy" >&2; exit 1; fi
+  exit 0 ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return mcpcfg.Env{LookPath: func(string) (string, error) { return script, nil }}
+}
+
+func claudeLog(t *testing.T, logPath string) string {
+	t.Helper()
+	data, _ := os.ReadFile(logPath)
+	return string(data)
+}
+
+// TestRunClaudeCodeStepsConvergentIsNoOp: when `claude mcp get` already shows
+// our exact entry, nothing is rewritten and the outcome reports "already up
+// to date" (Changed=false) — re-runs must not claim "updated".
+func TestRunClaudeCodeStepsConvergentIsNoOp(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "log")
+	env := fakeClaude(t, logPath)
+	entry := mcpcfg.PlainEntry("/abs/jentic", "claude-code")
+	t.Setenv("FAKE_CLAUDE_GET", "Command: /abs/jentic\nArgs: mcp --context claude-code")
+
+	app := testApp(t)
+	out, err := app.runClaudeCodeSteps(t.Context(), env, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Changed {
+		t.Error("convergent entry must be a no-op (Changed=false)")
+	}
+	log := claudeLog(t, logPath)
+	if !strings.Contains(log, "mcp get jentic") {
+		t.Errorf("probe not run:\n%s", log)
+	}
+	if strings.Contains(log, "mcp add") || strings.Contains(log, "mcp remove") {
+		t.Errorf("no-op path must not rewrite:\n%s", log)
+	}
+}
+
+// TestRunClaudeCodeStepsFirstRunAddsWithoutRemove: an absent entry (probe
+// fails) goes straight to add — no destructive remove window on a first run.
+func TestRunClaudeCodeStepsFirstRunAddsWithoutRemove(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "log")
+	env := fakeClaude(t, logPath)
+
+	app := testApp(t)
+	out, err := app.runClaudeCodeSteps(t.Context(), env, mcpcfg.PlainEntry("/abs/jentic", "claude-code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Changed {
+		t.Error("first run must report Changed")
+	}
+	log := claudeLog(t, logPath)
+	if !strings.Contains(log, "mcp add --scope user jentic") {
+		t.Errorf("add not run:\n%s", log)
+	}
+	if strings.Contains(log, "mcp remove") {
+		t.Errorf("first run must not remove:\n%s", log)
+	}
+}
+
+// TestRunClaudeCodeStepsStaleEntryRemovesThenAdds: a probe that shows a
+// DIFFERENT entry triggers the remove-then-add rewrite.
+func TestRunClaudeCodeStepsStaleEntryRemovesThenAdds(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "log")
+	env := fakeClaude(t, logPath)
+	t.Setenv("FAKE_CLAUDE_GET", "Command: /old/jentic\nArgs: mcp --context stale")
+
+	app := testApp(t)
+	out, err := app.runClaudeCodeSteps(t.Context(), env, mcpcfg.PlainEntry("/abs/jentic", "claude-code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Changed {
+		t.Error("stale entry must report Changed")
+	}
+	log := claudeLog(t, logPath)
+	removeIdx, addIdx := strings.Index(log, "mcp remove"), strings.Index(log, "mcp add")
+	if removeIdx < 0 || addIdx < 0 || removeIdx > addIdx {
+		t.Errorf("want remove then add:\n%s", log)
+	}
+}
+
+// TestRunClaudeCodeStepsSurfacesStderr: a failing add returns claude's own
+// stderr in the error, not a bare exit status.
+func TestRunClaudeCodeStepsSurfacesStderr(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "log")
+	env := fakeClaude(t, logPath)
+	t.Setenv("FAKE_CLAUDE_ADD_FAIL", "1")
+
+	app := testApp(t)
+	_, err := app.runClaudeCodeSteps(t.Context(), env, mcpcfg.PlainEntry("/abs/jentic", "claude-code"))
+	if err == nil || !strings.Contains(err.Error(), "user scope rejected by policy") {
+		t.Fatalf("error must carry claude's stderr, got: %v", err)
 	}
 }

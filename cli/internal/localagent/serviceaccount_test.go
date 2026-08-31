@@ -146,3 +146,79 @@ func TestValidateMcpSudoersInputs(t *testing.T) {
 		}
 	}
 }
+
+// TestExportInstallCmds pins the ROOT-SIDE export recipe: the operator never
+// writes into the 0700 service home itself — every directory lands via
+// `sudo install -d -o <svc> -m 0700` and every file via
+// `sudo install -o <svc> -m 0600 <staging>/<rel> <home>/<rel>`, dirs strictly
+// before files.
+func TestExportInstallCmds(t *testing.T) {
+	user := "_jentic-cursor"
+	home := ServiceHomeDir(user)
+	staging := "/tmp/jentic-mcp-export-123"
+	steps := ExportInstallCmds(user, home, staging,
+		[]string{".config/jentic", ".config/jentic/keys"},
+		[]string{".config/jentic/config.yaml", ".config/jentic/keys/id.key"})
+	if len(steps) != 4 {
+		t.Fatalf("want 2 dir + 2 file steps, got %d", len(steps))
+	}
+	lines := make([]string, 0, len(steps))
+	for _, s := range steps {
+		if s.Cmd.Args[0] != "sudo" || s.Cmd.Args[1] != "install" {
+			t.Errorf("step %q: expected sudo install, got %v", s.What, s.Cmd.Args)
+		}
+		lines = append(lines, strings.Join(s.Cmd.Args, " "))
+	}
+	if want := "sudo install -d -o " + user + " -m 0700 " + home + "/.config/jentic"; lines[0] != want {
+		t.Errorf("dir step:\n got %q\nwant %q", lines[0], want)
+	}
+	if want := "sudo install -o " + user + " -m 0600 " + staging + "/.config/jentic/config.yaml " + home + "/.config/jentic/config.yaml"; lines[2] != want {
+		t.Errorf("file step:\n got %q\nwant %q", lines[2], want)
+	}
+	// Files land 0600 (no exec, no group/world), dirs 0700 — never wider.
+	joined := strings.Join(lines, "\n")
+	for _, forbidden := range []string{"0644", "0755", "chmod", "chown"} {
+		if strings.Contains(joined, forbidden) {
+			t.Errorf("export install must not use %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
+// TestMcpServiceTeardownCmds pins the isolation teardown recipe and its
+// ordering: the NOPASSWD sudoers line first, then the home holding the
+// exported key material, then the account itself — all sudo-fronted.
+func TestMcpServiceTeardownCmds(t *testing.T) {
+	user := "_jentic-cursor"
+	home := ServiceHomeDir(user)
+	steps := McpServiceTeardownCmds(user, home, true)
+	if len(steps) != 3 {
+		t.Fatalf("want sudoers+home+account steps, got %d", len(steps))
+	}
+	for _, s := range steps {
+		if s.Cmd.Args[0] != "sudo" {
+			t.Errorf("step %q must be sudo-fronted: %v", s.What, s.Cmd.Args)
+		}
+	}
+	first := strings.Join(steps[0].Cmd.Args, " ")
+	if !strings.Contains(first, "/etc/sudoers.d/jentic-agent") || !strings.Contains(first, "'(_jentic-cursor)'") {
+		t.Errorf("first step must remove the runas-anchored sudoers line: %s", first)
+	}
+	second := strings.Join(steps[1].Cmd.Args, " ")
+	if !strings.Contains(second, "rm -rf "+home) {
+		t.Errorf("second step must delete the service home: %s", second)
+	}
+	third := strings.Join(steps[2].Cmd.Args, " ")
+	if runtime.GOOS == "darwin" {
+		if !strings.Contains(third, "dscl . -delete /Users/"+user) {
+			t.Errorf("third step must delete the account: %s", third)
+		}
+	} else if !strings.Contains(third, "userdel") {
+		t.Errorf("third step must delete the account: %s", third)
+	}
+
+	// Home unknown / account gone: the sudoers line is still removed.
+	minimal := McpServiceTeardownCmds(user, "", false)
+	if len(minimal) != 1 || !strings.Contains(strings.Join(minimal[0].Cmd.Args, " "), "sudoers") {
+		t.Errorf("minimal teardown must still drop the sudoers line: %+v", minimal)
+	}
+}

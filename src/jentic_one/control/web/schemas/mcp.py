@@ -24,4 +24,10 @@ class McpConfigRegistrationResponse(BaseModel):
     """Acknowledgement of a config-registration report."""
 
     runtime: McpConfigRuntime = Field(description="The runtime the report was recorded for.")
-    recorded: bool = Field(description="Whether the report was accepted for recording.")
+    recorded: bool = Field(
+        description=(
+            "Whether the report was recorded as an event. `false` means it was "
+            "accepted but throttled (an identical (actor, runtime) report was "
+            "already recorded within the last 24h)."
+        )
+    )

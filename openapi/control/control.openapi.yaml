@@ -2771,7 +2771,7 @@ components:
       description: Acknowledgement of a config-registration report.
       properties:
         recorded:
-          description: Whether the report was accepted for recording.
+          description: Whether the report was recorded as an event. `false` means it was accepted but throttled (an identical (actor, runtime) report was already recorded within the last 24h).
           title: Recorded
           type: boolean
         runtime:
@@ -13688,7 +13688,10 @@ paths:
         config entry it wrote (best-effort on the CLI side — a failed report never
         blocks setup). Emits the `mcp.config_registered` internal event; when the
         operator opted into telemetry, the event is forwarded carrying at most the
-        closed runtime tag. Any authenticated actor may report.
+        closed runtime tag. Reports are throttled per (actor, runtime) within a
+        24h in-process window — a throttled repeat is still a 202 with
+        `recorded: false`, since the CLI treats the report as fire-and-forget.
+        Any authenticated actor may report.
       operationId: reportMcpConfigRegistration
       requestBody:
         content:

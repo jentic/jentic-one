@@ -109,6 +109,50 @@ func TestMergeJSONRefusesNonObject(t *testing.T) {
 	}
 }
 
+// TestMergeJSONPreservesLargeIntegers: a sibling server carrying an integer
+// above 2^53 (an ID, a timestamp in ns) must round-trip exactly — a float64
+// detour would silently corrupt it.
+func TestMergeJSONPreservesLargeIntegers(t *testing.T) {
+	existing := []byte(`{"mcpServers":{"other":{"command":"x","env":{"ACCOUNT_ID":9007199254740993}}}}`)
+	out, _, err := MergeJSON(existing, plain())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "9007199254740993") {
+		t.Errorf("large integer corrupted:\n%s", out)
+	}
+	if strings.Contains(string(out), "9007199254740992") || strings.Contains(string(out), "e+") {
+		t.Errorf("large integer took the float64 detour:\n%s", out)
+	}
+}
+
+// TestReadJSONEntry: the read-back doctor uses — absent file / absent entry /
+// present entry round-trips the exact command+args we wrote.
+func TestReadJSONEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	if _, ok, err := ReadJSONEntry(path); err != nil || ok {
+		t.Fatalf("absent file: ok=%v err=%v, want false/nil", ok, err)
+	}
+
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"other":{"command":"x"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := ReadJSONEntry(path); err != nil || ok {
+		t.Fatalf("foreign-only file: ok=%v err=%v, want false/nil", ok, err)
+	}
+
+	if _, err := WriteJSONEntry(RuntimeCursor, path, plain()); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok, err := ReadJSONEntry(path)
+	if err != nil || !ok {
+		t.Fatalf("written file: ok=%v err=%v", ok, err)
+	}
+	if entry.Command != plain().Command || strings.Join(entry.Args, " ") != strings.Join(plain().Args, " ") {
+		t.Errorf("round-trip mismatch: %+v", entry)
+	}
+}
+
 // --- Codex TOML managed block -------------------------------------------------
 
 func TestMergeCodexTOMLFreshFile(t *testing.T) {
@@ -180,18 +224,90 @@ func TestMergeCodexTOMLRefusesManualEntry(t *testing.T) {
 	}
 }
 
+// TestMergeCodexTOMLCRLFRoundTrip: a CRLF-saved config keeps every byte
+// outside the managed block exactly as the operator's editor wrote it — the
+// splice searches newline-agnostically but never rewrites foreign line
+// endings. Covers both the first append and an in-place block update.
+func TestMergeCodexTOMLCRLFRoundTrip(t *testing.T) {
+	foreign := "# crlf config\r\nmodel = \"o3\"\r\n\r\n[mcp_servers.github]\r\ncommand = \"gh-mcp\"\r\n"
+	entry := PlainEntry("/usr/local/bin/jentic", "codex")
+
+	out, changed, err := MergeCodexTOML([]byte(foreign), entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("append must report changed")
+	}
+	if !strings.HasPrefix(string(out), foreign) {
+		t.Errorf("CRLF foreign content not byte-identical:\n%q", out)
+	}
+
+	// Idempotent over the mixed-endings result.
+	if _, changed, err := MergeCodexTOML(out, entry); err != nil || changed {
+		t.Errorf("re-merge must be a no-op: changed=%v err=%v", changed, err)
+	}
+
+	// Update in place: the block (found after a \r\n boundary in the mixed
+	// file? here after \n) changes, the CRLF prefix still survives untouched.
+	updated, changed, err := MergeCodexTOML(out, PlainEntry("/usr/local/bin/jentic", "codex2"))
+	if err != nil || !changed {
+		t.Fatalf("update: changed=%v err=%v", changed, err)
+	}
+	if !strings.HasPrefix(string(updated), foreign) {
+		t.Errorf("CRLF foreign content lost on update:\n%q", updated)
+	}
+
+	// Markers preceded by \r\n directly are found too (fully-CRLF file whose
+	// block a previous tool converted): synthesize one.
+	crlfBlocked := "a = 1\r\n" + tomlBeginMarker + "\n[mcp_servers.jentic]\ncommand = \"/old\"\nargs = []\n" + tomlEndMarker + "\r\ntail = 2\r\n"
+	out2, changed, err := MergeCodexTOML([]byte(crlfBlocked), entry)
+	if err != nil || !changed {
+		t.Fatalf("crlf-boundary update: changed=%v err=%v", changed, err)
+	}
+	if !strings.HasPrefix(string(out2), "a = 1\r\n") || !strings.HasSuffix(string(out2), "\r\ntail = 2\r\n") {
+		t.Errorf("bytes around the block not preserved:\n%q", out2)
+	}
+	if !strings.Contains(string(out2), "/usr/local/bin/jentic") || strings.Contains(string(out2), "/old") {
+		t.Errorf("block not replaced:\n%q", out2)
+	}
+}
+
+// TestReadCodexEntry: the managed-block read-back doctor uses.
+func TestReadCodexEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if _, ok, err := ReadCodexEntry(path); err != nil || ok {
+		t.Fatalf("absent file: ok=%v err=%v", ok, err)
+	}
+	entry := PlainEntry(`/abs/with"quote/jentic`, "codex")
+	if _, err := WriteCodexEntry(path, entry); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := ReadCodexEntry(path)
+	if err != nil || !ok {
+		t.Fatalf("written file: ok=%v err=%v", ok, err)
+	}
+	if got.Command != entry.Command || strings.Join(got.Args, "\x00") != strings.Join(entry.Args, "\x00") {
+		t.Errorf("round-trip mismatch:\n got %+v\nwant %+v", got, entry)
+	}
+}
+
 // --- Claude Code exec plan ------------------------------------------------------
 
-// TestClaudeCodeSteps: the plan is remove (best-effort) then add, with the
-// entry's command/args after the `--` separator so claude never parses them
-// as its own flags. Assembly only — nothing is executed.
+// TestClaudeCodeSteps: with a stale entry present the plan is remove
+// (best-effort) then add; with no entry it is add ONLY (no destructive
+// remove window on a first run). The entry's command/args ride after the
+// `--` separator so claude never parses them as its own flags. Assembly only
+// — nothing is executed.
 func TestClaudeCodeSteps(t *testing.T) {
-	steps := ClaudeCodeSteps("/usr/local/bin/claude", PlainEntry("/opt/homebrew/bin/jentic", "claude-code"))
+	entry := PlainEntry("/opt/homebrew/bin/jentic", "claude-code")
+
+	steps := ClaudeCodeSteps("/usr/local/bin/claude", entry, true)
 	if len(steps) != 2 {
-		t.Fatalf("want 2 steps, got %d", len(steps))
+		t.Fatalf("stale entry: want 2 steps, got %d", len(steps))
 	}
 	if !steps[0].BestEffort {
-		t.Error("remove step must be best-effort (absent entry on first run)")
+		t.Error("remove step must be best-effort")
 	}
 	wantRemove := "/usr/local/bin/claude mcp remove --scope user jentic"
 	if got := strings.Join(steps[0].Argv, " "); got != wantRemove {
@@ -203,6 +319,46 @@ func TestClaudeCodeSteps(t *testing.T) {
 	}
 	if steps[1].BestEffort {
 		t.Error("add step must not be best-effort")
+	}
+
+	fresh := ClaudeCodeSteps("/usr/local/bin/claude", entry, false)
+	if len(fresh) != 1 {
+		t.Fatalf("absent entry: want 1 step (add only), got %d", len(fresh))
+	}
+	if got := strings.Join(fresh[0].Argv, " "); got != wantAdd {
+		t.Errorf("fresh add argv:\n got %q\nwant %q", got, wantAdd)
+	}
+}
+
+// TestClaudeCodeProbeArgv pins the read-only probe that decides between
+// no-op, add-only, and remove-then-add.
+func TestClaudeCodeProbeArgv(t *testing.T) {
+	want := "/usr/local/bin/claude mcp get jentic"
+	if got := strings.Join(ClaudeCodeProbeArgv("/usr/local/bin/claude"), " "); got != want {
+		t.Errorf("probe argv = %q, want %q", got, want)
+	}
+}
+
+// TestClaudeCodeConverged: convergence requires BOTH the command path and the
+// full space-joined argv — a partial or reordered match must re-run the
+// rewrite, never skip it.
+func TestClaudeCodeConverged(t *testing.T) {
+	entry := PlainEntry("/opt/homebrew/bin/jentic", "claude-code")
+	cases := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{"typical get output", "jentic:\n  Command: /opt/homebrew/bin/jentic\n  Args: mcp --context claude-code\n", true},
+		{"command missing", "Args: mcp --context claude-code", false},
+		{"different context", "Command: /opt/homebrew/bin/jentic\nArgs: mcp --context other", false},
+		{"partial args", "Command: /opt/homebrew/bin/jentic\nArgs: mcp", false},
+		{"empty", "", false},
+	}
+	for _, tc := range cases {
+		if got := ClaudeCodeConverged([]byte(tc.out), entry); got != tc.want {
+			t.Errorf("%s: converged = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -220,22 +376,37 @@ func TestSudoShimEntry(t *testing.T) {
 	if e.Command != "sudo" {
 		t.Errorf("command = %q", e.Command)
 	}
-	want := "-n -u _jentic-cursor /abs/jentic mcp --context cursor"
+	// -H is load-bearing: without it macOS's `env_keep HOME` leaks the
+	// operator's home into the isolated server's XDG resolution.
+	want := "-n -H -u _jentic-cursor /abs/jentic mcp --context cursor"
 	if got := strings.Join(e.Args, " "); got != want {
 		t.Errorf("args:\n got %q\nwant %q", got, want)
 	}
 }
 
-func TestContainerEntryHardening(t *testing.T) {
-	e := ContainerEntry("ghcr.io/jentic/jentic-one-cli:1.0.0", "cursor")
-	joined := strings.Join(e.Args, " ")
-	for _, flag := range []string{"run", "-i", "--rm", "--read-only", "--cap-drop=ALL", "no-new-privileges", "jentic-mcp-cursor:"} {
-		if !strings.Contains(joined, flag) {
-			t.Errorf("container args missing %q: %s", flag, joined)
-		}
+// TestEntryPins covers the read-back helpers doctor keys off: the binary an
+// entry actually spawns and the context it actually pins, for both plain and
+// sudo-shim shapes.
+func TestEntryPins(t *testing.T) {
+	plainE := PlainEntry("/abs/jentic", "cursor")
+	if got := plainE.PinnedBinary(); got != "/abs/jentic" {
+		t.Errorf("plain PinnedBinary = %q", got)
 	}
-	if !strings.HasSuffix(joined, "jentic mcp --context cursor") {
-		t.Errorf("container argv must end with the pinned mcp command: %s", joined)
+	if got := plainE.PinnedContext(); got != "cursor" {
+		t.Errorf("plain PinnedContext = %q", got)
+	}
+	shim := SudoShimEntry("_jentic-cursor", "/abs/jentic", "cursor")
+	if got := shim.PinnedBinary(); got != "/abs/jentic" {
+		t.Errorf("shim PinnedBinary = %q", got)
+	}
+	if got := shim.PinnedContext(); got != "cursor" {
+		t.Errorf("shim PinnedContext = %q", got)
+	}
+	if got := (Entry{Command: "sudo", Args: []string{"-n"}}).PinnedBinary(); got != "" {
+		t.Errorf("unrecognized shim PinnedBinary = %q, want empty", got)
+	}
+	if got := (Entry{Command: "/abs/jentic"}).PinnedContext(); got != "" {
+		t.Errorf("context-less PinnedContext = %q, want empty", got)
 	}
 }
 
@@ -307,6 +478,60 @@ func TestWriteCodexEntryLifecycle(t *testing.T) {
 	}
 	if out.Changed {
 		t.Errorf("re-run must be a no-op: %+v", out)
+	}
+}
+
+// TestWriteFilePreservingAtomicity pins the crash-safety semantics of the
+// third-party config writer: the rewrite lands via a rename of a temp file
+// staged IN THE TARGET DIR (same filesystem, so the rename is atomic and a
+// crash can never leave a truncated config), no temp litter survives, and an
+// existing file's wider mode is preserved while a fresh file lands 0600.
+func TestWriteFilePreservingAtomicity(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeFilePreserving(path, []byte("new"), true); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rename-based replace: the path names a NEW file, never a truncated
+	// in-place rewrite of the old inode.
+	if os.SameFile(before, after) {
+		t.Error("rewrite reused the old inode — expected an atomic rename of a fresh temp file")
+	}
+	if after.Mode().Perm() != 0o644 {
+		t.Errorf("existing mode not preserved: %o", after.Mode().Perm())
+	}
+	if data, _ := os.ReadFile(path); string(data) != "new" {
+		t.Errorf("content = %q", data)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Errorf("temp file litter left behind: %s", e.Name())
+		}
+	}
+
+	// Fresh file: parent created, 0600.
+	freshPath := filepath.Join(dir, "sub", "config.toml")
+	if err := writeFilePreserving(freshPath, []byte("x"), false); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(freshPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("fresh file mode = %v (%v), want 0600", info.Mode().Perm(), err)
 	}
 }
 

@@ -4330,7 +4330,7 @@
         "description": "Acknowledgement of a config-registration report.",
         "properties": {
           "recorded": {
-            "description": "Whether the report was accepted for recording.",
+            "description": "Whether the report was recorded as an event. `false` means it was accepted but throttled (an identical (actor, runtime) report was already recorded within the last 24h).",
             "title": "Recorded",
             "type": "boolean"
           },
@@ -25142,7 +25142,7 @@
     },
     "/mcp/config-registrations": {
       "post": {
-        "description": "Record that an MCP server entry was written for an agent runtime.\n\nCalled by `jentic setup` / `jentic skill init` once per runtime whose MCP\nconfig entry it wrote (best-effort on the CLI side — a failed report never\nblocks setup). Emits the `mcp.config_registered` internal event; when the\noperator opted into telemetry, the event is forwarded carrying at most the\nclosed runtime tag. Any authenticated actor may report.",
+        "description": "Record that an MCP server entry was written for an agent runtime.\n\nCalled by `jentic setup` / `jentic skill init` once per runtime whose MCP\nconfig entry it wrote (best-effort on the CLI side — a failed report never\nblocks setup). Emits the `mcp.config_registered` internal event; when the\noperator opted into telemetry, the event is forwarded carrying at most the\nclosed runtime tag. Reports are throttled per (actor, runtime) within a\n24h in-process window — a throttled repeat is still a 202 with\n`recorded: false`, since the CLI treats the report as fire-and-forget.\nAny authenticated actor may report.",
         "operationId": "reportMcpConfigRegistration",
         "requestBody": {
           "content": {
