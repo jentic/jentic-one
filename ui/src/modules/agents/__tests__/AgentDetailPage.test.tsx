@@ -688,6 +688,102 @@ describe('AgentDetailPage', () => {
 		expect(screen.getByText('Connect via MCP')).toBeInTheDocument();
 	});
 
+	it('survives a set-but-unparseable canonical_base_url (scheme-less) without crashing', async () => {
+		const user = userEvent.setup();
+		// The backend allows an unparseable canonical_base_url with host: ""
+		// (instance_identity.py) — a scheme-less value must degrade to the raw
+		// string, not throw in render and take out the page via the boundary.
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'jentic.example.com',
+					host: '',
+					instance_id: null,
+				}),
+			),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		expect(await screen.findByText('Connect via MCP')).toBeInTheDocument();
+
+		// The register snippet carries the configured (raw) address…
+		expect(
+			await screen.findByText('jentic register --url jentic.example.com'),
+		).toBeInTheDocument();
+		// …and the Instance meta item falls back to the raw string as the host.
+		expect(screen.getAllByText('jentic.example.com').length).toBeGreaterThan(0);
+		// The page survived — no error boundary.
+		expect(screen.getByRole('heading', { name: 'support-agent' })).toBeInTheDocument();
+	});
+
+	it('shows an error state — not a false empty state — when the sessions read fails (500)', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('get', '/events', { status: 500 }));
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+
+		// A real failure surfaces as an error, never as "No MCP sessions
+		// recorded" (which would tell the operator the transport is unused).
+		expect(await screen.findByText('Failed to load MCP sessions.')).toBeInTheDocument();
+		expect(screen.getByRole('alert')).toBeInTheDocument();
+		expect(screen.queryByText(/No MCP sessions recorded/)).not.toBeInTheDocument();
+		expect(
+			screen.queryByText('MCP session history requires event-read permissions.'),
+		).not.toBeInTheDocument();
+		// The config card is independent and still renders.
+		expect(screen.getByText('Connect via MCP')).toBeInTheDocument();
+	});
+
+	it('falls back to the browser origin when GET /instance fails (500)', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('get', '/instance', { status: 500 }));
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		expect(await screen.findByText('Connect via MCP')).toBeInTheDocument();
+
+		// The identity read failing is not fatal: the operator is looking at a
+		// working address of this instance, so the browser origin stands in.
+		expect(
+			await screen.findByText(`jentic register --url "${window.location.origin}"`),
+		).toBeInTheDocument();
+	});
+
+	it('includes the --broker-url hint in the register snippet on a remote install', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'remote',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+				}),
+			),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
+
+		// On a remote install the broker is never derived from the control-plane
+		// URL; without --broker-url `jentic execute` fail-closes (register.go),
+		// so the snippet must carry the flag.
+		expect(
+			await screen.findByText(
+				'jentic register --url "https://jentic.example.test" --broker-url <broker-url>',
+			),
+		).toBeInTheDocument();
+		expect(screen.getByText(/fail-closes/)).toBeInTheDocument();
+	});
+
 	// --- #607: agent-side bind / unbind toolkit ---------------------------
 
 	it('binds a toolkit picked from the picker and updates the bound list', async () => {
