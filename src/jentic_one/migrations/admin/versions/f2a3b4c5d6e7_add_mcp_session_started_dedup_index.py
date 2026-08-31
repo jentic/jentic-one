@@ -13,7 +13,7 @@ No data cleanup is needed: ``mcp.session_started`` ships in the same release
 as this index, so upgraded deployments cannot hold rows of this type yet.
 
 Revision ID: f2a3b4c5d6e7
-Revises: e1f2a3b4c5d6
+Revises: aa6b7c8d9e0f
 Create Date: 2026-08-31
 
 """
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f2a3b4c5d6e7"
-down_revision: str | None = "e1f2a3b4c5d6"
+down_revision: str | None = "aa6b7c8d9e0f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
