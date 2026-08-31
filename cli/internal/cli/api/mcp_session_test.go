@@ -100,7 +100,7 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = tool
 	}
-	for _, want := range []string{"get_started", "whoami", "search_apis", "inspect_operation"} {
+	for _, want := range []string{"get_started", "whoami", "search_apis", "inspect_operation", "execute_read", "get_execution_result"} {
 		tool, ok := names[want]
 		if !ok {
 			t.Fatalf("tools/list = %v, missing %q", keys(names), want)
@@ -109,15 +109,36 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 			t.Errorf("tool %q must carry readOnlyHint", want)
 		}
 	}
-	if len(names) != 4 {
-		t.Errorf("PR 1-B serves exactly get_started, whoami, search_apis, and inspect_operation, got %v", keys(names))
+	// execute is the ONLY tool carrying destructiveHint (§3.2 annotations),
+	// and it must not be read-only.
+	execTool, ok := names["execute"]
+	if !ok {
+		t.Fatalf("tools/list = %v, missing execute", keys(names))
+	}
+	if execTool.Annotations == nil || execTool.Annotations.ReadOnlyHint {
+		t.Errorf("execute must not carry readOnlyHint")
+	}
+	if execTool.Annotations == nil || execTool.Annotations.DestructiveHint == nil || !*execTool.Annotations.DestructiveHint {
+		t.Errorf("execute must carry destructiveHint")
+	}
+	for name, tool := range names {
+		if name == "execute" {
+			continue
+		}
+		if tool.Annotations != nil && tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint {
+			t.Errorf("tool %q must not carry destructiveHint (execute alone does)", name)
+		}
+	}
+	if len(names) != 7 {
+		t.Errorf("PR 1-C serves exactly the 7 phase-1 tools, got %v", keys(names))
 	}
 }
 
-// TestMCPSession_ReadOnlyServesDiscoveryTools pins the --read-only contract on
-// the 1-B surface: every discovery tool is annotated read-only, so the flag
-// must not withhold any of them (it starts biting with 1-C's execute).
-func TestMCPSession_ReadOnlyServesDiscoveryTools(t *testing.T) {
+// TestMCPSession_ReadOnlyWithholdsExactlyExecute pins the --read-only contract
+// on the 1-C surface: every tool except `execute` is annotated read-only, so
+// the flag withholds exactly that one (execute_read and get_execution_result
+// stay servable).
+func TestMCPSession_ReadOnlyWithholdsExactlyExecute(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -128,26 +149,45 @@ func TestMCPSession_ReadOnlyServesDiscoveryTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
-	if len(tools.Tools) != 4 {
-		names := make([]string, 0, len(tools.Tools))
-		for _, tool := range tools.Tools {
-			names = append(names, tool.Name)
+	names := make([]string, 0, len(tools.Tools))
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+		if tool.Name == "execute" {
+			t.Errorf("--read-only must withhold the execute tool")
 		}
-		t.Errorf("--read-only must serve all 4 read-only tools, got %v", names)
+	}
+	if len(tools.Tools) != 6 {
+		t.Errorf("--read-only must serve the 6 read-only tools, got %v", names)
 	}
 }
 
-// TestMCPSession_DiscoveryRoundTrip drives search_apis → inspect_operation
-// through a real client session against an httptest control plane: the state
-// and pagination/alias tolerance must survive the full JSON-RPC round trip,
-// not just a direct handler call.
-func TestMCPSession_DiscoveryRoundTrip(t *testing.T) {
+// TestMCPSession_FullRoundTrip drives the complete §3.2 flow — whoami →
+// search_apis → inspect_operation → execute — through a real client session
+// against httptest control and broker planes: state, alias tolerance, the
+// broker leg, and the stamped envelopes must survive the full JSON-RPC round
+// trip, not just direct handler calls.
+func TestMCPSession_FullRoundTrip(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "acme.com/pets") {
+			t.Errorf("broker got %s %s, want the resolved upstream GET", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer tok_abc" {
+			t.Errorf("broker Authorization = %q, want the agent bearer", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Jentic-Execution-Id", "exec_42")
+		_, _ = w.Write([]byte(`{"pets":[{"id":1}]}`))
+	}))
+	defer broker.Close()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/me":
+			_, _ = w.Write([]byte(`{"type":"agent","id":"agent_1","name":"pets-agent","scopes":["execute"],"status":"active","token_scopes":["execute"],"toolkit_bindings":[]}`))
 		case "/search":
 			_, _ = w.Write([]byte(`{
 				"data": [{"type":"operation","api":{"vendor":"acme","name":"pets","version":"v1","host":"acme.com"},"operation_id":"op1","method":"GET","url":"/pets","name":"List Pets","relevance_score":0.9,"_links":{"inspect":"/inspect?id=GET%20/pets"}}],
@@ -166,10 +206,24 @@ func TestMCPSession_DiscoveryRoundTrip(t *testing.T) {
 
 	s := newTestMCPServer(t, nil)
 	s.instances.fetch = fetchInstance // the real GET /instance path, against the httptest plane
-	cs := connectTestClientWithContext(activeCtx(srv.URL), t, s)
+	cs := connectTestClientWithContext(activeCtxWithBroker(srv.URL, broker.URL), t, s)
 	ctx := context.Background()
 
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+	// 1. whoami — identity before discovery.
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "whoami"})
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("whoami soft-errored: %v", res.Content)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["id"] != "agent_1" || payload["status"] != "active" {
+		t.Fatalf("whoami payload = %v, want the agent identity", payload)
+	}
+
+	// 2. search_apis.
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "search_apis",
 		Arguments: map[string]any{"query": "list pets"},
 	})
@@ -179,7 +233,7 @@ func TestMCPSession_DiscoveryRoundTrip(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("search_apis soft-errored: %v", res.Content)
 	}
-	payload := decodeToolJSON(t, res)
+	payload = decodeToolJSON(t, res)
 	hits, ok := payload["data"].([]any)
 	if !ok || len(hits) != 1 {
 		t.Fatalf("data = %v, want one hit", payload["data"])
@@ -192,8 +246,8 @@ func TestMCPSession_DiscoveryRoundTrip(t *testing.T) {
 		t.Errorf("instance stamp = %v, want the live identity", payload["instance"])
 	}
 
-	// Feed the hit's operation_id back — under the `id` alias, as a drifting
-	// model would.
+	// 3. inspect_operation — the hit's id under the `id` alias, as a drifting
+	// model would send it.
 	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "inspect_operation",
 		Arguments: map[string]any{"id": opID},
@@ -207,6 +261,29 @@ func TestMCPSession_DiscoveryRoundTrip(t *testing.T) {
 	payload = decodeToolJSON(t, res)
 	if payload["method"] != "GET" || payload["url"] != "https://acme.com/pets" {
 		t.Errorf("inspect payload = %v, want the raw contract passed through", payload)
+	}
+
+	// 4. execute — the inspected operation, through the broker leg.
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "execute",
+		Arguments: map[string]any{"operation_id": opID},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("execute soft-errored: %v", res.Content)
+	}
+	payload = decodeToolJSON(t, res)
+	if payload["status"] != float64(200) || payload["execution_id"] != "exec_42" {
+		t.Fatalf("execute envelope = %v, want status 200 + execution_id", payload)
+	}
+	body, _ := payload["body"].(map[string]any)
+	if _, ok := body["pets"]; !ok {
+		t.Errorf("execute body = %v, want the upstream JSON parsed", payload["body"])
+	}
+	if stamp, ok := payload["instance"].(map[string]any); !ok || stamp["backend"] != "local" {
+		t.Errorf("execute result stamp = %v, want the live identity", payload["instance"])
 	}
 }
 
@@ -285,8 +362,8 @@ func TestMCPSession_ExcludeToolsFilters(t *testing.T) {
 			t.Errorf("--exclude-tools=whoami must withhold the tool")
 		}
 	}
-	if len(tools.Tools) != 3 {
-		t.Errorf("tools = %d, want 3 after exclusion", len(tools.Tools))
+	if len(tools.Tools) != 6 {
+		t.Errorf("tools = %d, want 6 after exclusion", len(tools.Tools))
 	}
 }
 

@@ -31,9 +31,10 @@ import (
 // targeting flag: context selection is the root --context flag, and broker
 // targeting comes from the context's environment (broker_url, never derived).
 type mcpOptions struct {
-	readOnly     bool
-	excludeTools []string
-	logFile      string
+	readOnly       bool
+	excludeTools   []string
+	logFile        string
+	maxResultBytes int64
 }
 
 func newMCPCmd(app *app) *cobra.Command {
@@ -67,6 +68,8 @@ func newMCPCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.readOnly, "read-only", false, "serve only tools annotated read-only")
 	cmd.Flags().StringSliceVar(&opts.excludeTools, "exclude-tools", nil, "tool names to withhold from the client (repeatable or comma-separated)")
 	cmd.Flags().StringVar(&opts.logFile, "log-file", "", "server log file (default: <XDG state dir>/jentic/logs/mcp.log)")
+	cmd.Flags().Int64Var(&opts.maxResultBytes, "max-result-bytes", defaultMaxResultBytes,
+		"hard cap on a relayed response body in a tool result; larger bodies are truncated with {truncated, total_bytes, execution_id}")
 	return cmd
 }
 

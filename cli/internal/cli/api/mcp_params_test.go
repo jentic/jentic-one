@@ -202,3 +202,92 @@ func TestNormalizeToolArgs_NumberCoercesToString(t *testing.T) {
 		t.Errorf("operation_id = %v, want \"42\"", got["operation_id"])
 	}
 }
+
+// --- coerceJSON: the execute body's paramJSON semantics ----------------------
+
+// TestCoerceJSON_Table pins the DELIBERATE reinterpretation rule for the
+// execute tools' body: a string whose content parses as JSON is treated as
+// the stringified form and its content kept verbatim (models routinely
+// stringify bodies), so a literal string body that happens to parse as JSON
+// — "123", "true", "[1,2]" — CANNOT be sent as a quoted JSON string. That
+// trade-off is intentional and stated in the body schema description; this
+// table is the contract.
+func TestCoerceJSON_Table(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string // the JSON value the model sent for "body"
+		want string // the exact bytes that go on the wire
+	}{
+		{
+			name: "object passes through",
+			raw:  `{"name":"Bob"}`,
+			want: `{"name":"Bob"}`,
+		},
+		{
+			name: "array passes through",
+			raw:  `[1,2,3]`,
+			want: `[1,2,3]`,
+		},
+		{
+			name: "stringified object unwraps to its content verbatim",
+			raw:  `"{\"name\":\"Bob\"}"`,
+			want: `{"name":"Bob"}`,
+		},
+		{
+			name: "plain string stays a JSON string",
+			raw:  `"just some text"`,
+			want: `"just some text"`,
+		},
+		{
+			name: "string that parses as a scalar is reinterpreted as the scalar",
+			raw:  `"123"`,
+			want: `123`,
+		},
+		{
+			name: "string that parses as a bool is reinterpreted as the bool",
+			raw:  `"true"`,
+			want: `true`,
+		},
+		{
+			name: "string that parses as an array is reinterpreted as the array",
+			raw:  `"[1,2]"`,
+			want: `[1,2]`,
+		},
+		{
+			name: "bare number encodes as JSON",
+			raw:  `42`,
+			want: `42`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var v any
+			if err := json.Unmarshal(json.RawMessage(tc.raw), &v); err != nil {
+				t.Fatalf("test input is not JSON: %v", err)
+			}
+			got, err := coerceJSON(v)
+			if err != nil {
+				t.Fatalf("coerceJSON: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("coerceJSON(%s) = %s, want %s", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCoerceJSON_ThroughNormalizer proves the same semantics hold end-to-end
+// through the execute tools' spec table (the "data" alias included).
+func TestCoerceJSON_ThroughNormalizer(t *testing.T) {
+	got, err := normalizeToolArgs(json.RawMessage(`{"operation_id":"op1","data":"{\"a\":1}"}`), executeParams)
+	if err != nil {
+		t.Fatalf("normalizeToolArgs: %v", err)
+	}
+	body, ok := got["body"].(json.RawMessage)
+	if !ok {
+		t.Fatalf("body = %T, want json.RawMessage", got["body"])
+	}
+	if string(body) != `{"a":1}` {
+		t.Errorf("body = %s, want the stringified object's content verbatim", body)
+	}
+}

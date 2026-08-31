@@ -1,12 +1,22 @@
 package agentops
 
+// execute_test.go pins the transport-failure behaviors no golden can pin:
+// the dial-level branch of Do (a real dial failure's error string embeds an
+// ephemeral port and OS-specific text, never byte-stable) and the pre-send
+// classification the MCP execute surface keys its retryable hint off — only
+// provably PRE-SEND failures (the upstream cannot have received the request)
+// may invite a blind retry of an unkeyed mutating call.
+
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
@@ -114,5 +124,72 @@ func TestDo_DialClosedPortIsBareTransportError(t *testing.T) {
 	}
 	if coded.Actionable != "" {
 		t.Errorf("actionable = %q, want empty — a plain refused dial is not the TLS-mismatch papercut", coded.Actionable)
+	}
+}
+
+func TestTransportFailurePreSend(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "dial failure is pre-send",
+			err:  &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			want: true,
+		},
+		{
+			name: "connection refused is pre-send",
+			err:  syscall.ECONNREFUSED,
+			want: true,
+		},
+		{
+			name: "DNS failure is pre-send",
+			err:  &net.DNSError{Err: "no such host", Name: "broker.invalid"},
+			want: true,
+		},
+		{
+			name: "TLS record header mismatch is pre-send",
+			err:  tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"},
+			want: true,
+		},
+		{
+			name: "TLS certificate verification failure is pre-send",
+			err:  &tls.CertificateVerificationError{Err: errors.New("x509: certificate signed by unknown authority")},
+			want: true,
+		},
+		{
+			name: "deadline exceeded is NOT provably pre-send",
+			err:  context.DeadlineExceeded,
+			want: false,
+		},
+		{
+			name: "mid-flight EOF is NOT provably pre-send",
+			err:  io.EOF,
+			want: false,
+		},
+		{
+			name: "connection reset is NOT provably pre-send",
+			err:  &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET},
+			want: false,
+		},
+		{
+			name: "nil is not a failure at all",
+			err:  nil,
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TransportFailurePreSend(tc.err); got != tc.want {
+				t.Errorf("TransportFailurePreSend(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+			// The classification must survive DoWith's CodedError wrapping
+			// (the Cause chain is how the MCP handler reaches it).
+			wrapped := &ux.CodedError{Code: ux.CodeTransportError, Msg: "transport error", Cause: tc.err}
+			if got := TransportFailurePreSend(wrapped); got != tc.want {
+				t.Errorf("TransportFailurePreSend(CodedError{Cause: %v}) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
