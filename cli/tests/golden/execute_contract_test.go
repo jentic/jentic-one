@@ -22,7 +22,9 @@ import (
 // refusal (plaintext http to a non-loopback broker) rather than a real dial
 // failure: a refused dial's error string embeds an ephemeral port and
 // OS-specific text, which can never be golden-stable. Dial-level transport
-// failures stay covered by the api unit tests, which assert fields, not bytes.
+// failures are covered by the internal/agentops unit tests
+// (TestDo_DialTLSMismatchAgainstLoopbackBroker and
+// TestDo_DialClosedPortIsBareTransportError), which assert fields, not bytes.
 func TestGolden_ExecuteContract(t *testing.T) {
 	// Handlers keyed by role. Each case runs one httptest server that plays
 	// both the control plane (/inspect) and the broker catch-all — the same

@@ -159,6 +159,108 @@ func TestAgentopsReproducesGoldens(t *testing.T) {
 		}
 	})
 
+	t.Run("execute_upstream_4xx_passthrough_json classification and envelope", func(t *testing.T) {
+		wantStdout := goldenSection(t, "execute_upstream_4xx_passthrough_json", "stdout")
+
+		// A denial-class status stamped origin UPSTREAM: the broker proxied the
+		// call and mirrored the upstream's own 403 — NOT a denial.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header()["Date"] = nil
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Jentic-Error-Origin", "upstream")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"upstream said no"}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		op, err := agentops.ResolveOperation(ctx, nil, "GET:/v1/pets", "")
+		if err != nil {
+			t.Fatalf("ResolveOperation: %v", err)
+		}
+		res, err := agentops.Execute(ctx, agentops.ExecuteRequest{
+			Method:       op.Method,
+			Path:         op.Path,
+			BrokerScheme: "http",
+			BrokerHost:   srv.Listener.Addr().String(),
+			Token:        "tok_abc",
+		})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+
+		// The disambiguation branch guarding the exit-0/exit-2 boundary: a 403
+		// with origin "upstream" must classify as NOT-a-denial (exit 0
+		// pass-through caller-side), never as a broker denial.
+		if d := agentops.Classify(res); d != nil {
+			t.Fatalf("Classify(403 + origin: upstream) = %+v, want nil (pass-through exits 0 caller-side)", d)
+		}
+
+		var got bytes.Buffer
+		if err := cmdcore.WriteJSON(&got, res.Envelope()); err != nil {
+			t.Fatalf("WriteJSON: %v", err)
+		}
+		if got.String() != wantStdout {
+			t.Errorf("pass-through envelope diverged from the golden.\n--- want ---\n%s\n--- got ---\n%s", wantStdout, got.String())
+		}
+	})
+
+	t.Run("execute_broker_denial_no_directive_json synthesized recovery", func(t *testing.T) {
+		wantStderr := goldenSection(t, "execute_broker_denial_no_directive_json", "stderr")
+
+		// A broker denial with NO agent_directive (e.g. credential gap): the
+		// caller synthesizes the status-keyed recovery via the moved renderer.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header()["Date"] = nil
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.Header().Set("Jentic-Error-Origin", "broker")
+			w.WriteHeader(http.StatusFailedDependency)
+			_, _ = w.Write([]byte(`{
+			"type": "credential_not_provisioned",
+			"title": "No credential provisioned",
+			"status": 424,
+			"error_origin": "broker"
+		}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		op, err := agentops.ResolveOperation(ctx, nil, "GET:/v1/pets", "")
+		if err != nil {
+			t.Fatalf("ResolveOperation: %v", err)
+		}
+		res, err := agentops.Execute(ctx, agentops.ExecuteRequest{
+			Method:       op.Method,
+			Path:         op.Path,
+			BrokerScheme: "http",
+			BrokerHost:   srv.Listener.Addr().String(),
+			Token:        "tok_abc",
+		})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+
+		denial := agentops.Classify(res)
+		if denial == nil || denial.Status != http.StatusFailedDependency || denial.Directive != nil {
+			t.Fatalf("Classify = %+v, want a 424 denial with no directive", denial)
+		}
+
+		// The stderr golden is (synthesized recovery rendered by ux) + (the
+		// coded error envelope the Audience layer emits from denial.Err()). The
+		// moved renderer must reproduce the recovery block byte-for-byte.
+		var recovery bytes.Buffer
+		ux.RenderSynthesizedDenialRecovery(ctx, &recovery, denial.Status)
+		if !strings.HasPrefix(wantStderr, recovery.String()) {
+			t.Errorf("ux.RenderSynthesizedDenialRecovery diverged from the golden recovery block.\n--- want prefix of ---\n%s\n--- got ---\n%s",
+				wantStderr, recovery.String())
+		}
+		coded := denial.Err()
+		rest := strings.TrimPrefix(wantStderr, recovery.String())
+		for _, frozen := range []string{`"error_code":"BROKER_DENIED"`, `"http_status":424`, jsonField(t, "error", coded.Msg)} {
+			if !strings.Contains(rest, frozen) {
+				t.Errorf("golden stderr envelope %q does not carry %s from denial.Err()", strings.TrimSpace(rest), frozen)
+			}
+		}
+	})
+
 	t.Run("execute_resolve_not_found_json coded error", func(t *testing.T) {
 		wantStderr := goldenSection(t, "execute_resolve_not_found_json", "stderr")
 

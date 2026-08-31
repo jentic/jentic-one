@@ -169,9 +169,9 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	// install and never configured a broker. Silently dialing 127.0.0.1 would
 	// leak the agent bearer + injected upstream context at the caller's own
 	// loopback and fail with a confusing connection-refused. Refuse with a
-	// recovery directive instead. Keyed off loopback-ness (reusing the auth
-	// layer's classifier via isLoopbackHostname), so a genuinely-local workflow
-	// (loopback base_url, seeded loopback broker) never trips it.
+	// recovery directive instead. Keyed off loopback-ness (reusing the execute
+	// core's classifier via agentops.IsLoopbackHost), so a genuinely-local
+	// workflow (loopback base_url, seeded loopback broker) never trips it.
 	//
 	// M1 (review round-3 #3): only fire when the loopback broker is the built-in
 	// DEFAULT, not an EXPLICIT operator choice. An operator running
