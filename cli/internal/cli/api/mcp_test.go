@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 // newTestMCPServer builds an mcpServer with the network seam stubbed: fetch
@@ -57,6 +60,17 @@ func TestDiagnoseSetup_Branches(t *testing.T) {
 			wantState: setupNotRegistered,
 			// Mirrors the skill's step-1 branch, including the 127.0.0.1 audience note.
 			wantInstruction: []string{"jentic register --url", "approve the agent", "http://127.0.0.1:8000"},
+		},
+		{
+			name: "config read error surfaces its cause, not a re-register",
+			probe: setupProbe{
+				hasContext: true, baseURL: "http://127.0.0.1:8000", identity: "dev", environment: "local",
+				configErr: errors.New("open config.yaml: permission denied"),
+			},
+			wantState: setupNotRegistered,
+			// The cause is surfaced and the instruction routes to fixing the
+			// file — an unreadable config must not prescribe `jentic register`.
+			wantInstruction: []string{"could not be read", "permission denied", "Re-registering will not help"},
 		},
 		{
 			name: "registered but pending",
@@ -266,6 +280,304 @@ func TestInstanceProbe_ForcesRefresh(t *testing.T) {
 	}
 	if fetches != 2 {
 		t.Errorf("fetches = %d, want 2 (probe must ignore the TTL — it IS the reachability check)", fetches)
+	}
+}
+
+// --- instance cache concurrency (fetch must run OUTSIDE the mutex) -----------
+
+// TestInstanceStamp_ConcurrentRefreshesShareOneFetch pins the singleflight
+// contract: N tool calls arriving on an expired cache produce ONE wire call,
+// and every caller gets the winner's result.
+func TestInstanceStamp_ConcurrentRefreshesShareOneFetch(t *testing.T) {
+	var fetches atomic.Int32
+	release := make(chan struct{})
+	c := &instanceCache{
+		ttl:        time.Minute,
+		failureTTL: time.Second,
+		now:        time.Now,
+		fetch: func(context.Context) (*control.InstanceIdentityResponse, error) {
+			fetches.Add(1)
+			<-release
+			return &control.InstanceIdentityResponse{Backend: "local", Host: "127.0.0.1:8000"}, nil
+		},
+	}
+
+	const callers = 16
+	var wg sync.WaitGroup
+	results := make([]map[string]any, callers)
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = c.stamp(context.Background())
+		}()
+	}
+	// Let callers pile up on the single in-flight fetch, then let it finish.
+	// (Callers arriving after the release hit the fresh cache — same result,
+	// still one fetch.)
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	if got := fetches.Load(); got != 1 {
+		t.Errorf("fetches = %d, want 1 (concurrent refreshes must share one wire call)", got)
+	}
+	for i, stamp := range results {
+		if stamp["backend"] != "local" {
+			t.Errorf("caller %d stamp = %#v, want the shared winner's identity", i, stamp)
+		}
+	}
+}
+
+// TestInstanceStamp_FreshCacheAnswersWhileRefreshHangs pins the head-of-line
+// fix: a tool call that can answer from the fresh cache must NOT queue behind
+// a hung force-refresh (get_started probing a black-holed control plane).
+func TestInstanceStamp_FreshCacheAnswersWhileRefreshHangs(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var primed atomic.Bool
+	c := &instanceCache{
+		ttl:        time.Hour,
+		failureTTL: time.Second,
+		now:        time.Now,
+		fetch: func(context.Context) (*control.InstanceIdentityResponse, error) {
+			if primed.Load() {
+				close(started)
+				<-release // the hung dial
+			}
+			return &control.InstanceIdentityResponse{Backend: "local", Host: "h"}, nil
+		},
+	}
+	c.stamp(context.Background()) // prime the cache
+	primed.Store(true)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = c.probe(context.Background()) // force-refresh: hangs on release
+	}()
+	<-started
+
+	done := make(chan map[string]any, 1)
+	go func() { done <- c.stamp(context.Background()) }()
+	select {
+	case stamp := <-done:
+		if stamp["backend"] != "local" {
+			t.Errorf("cache-hit stamp = %#v, want the fresh cached identity", stamp)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a cache-hit stamp blocked behind an in-flight refresh (mutex held across network I/O)")
+	}
+	close(release)
+	wg.Wait()
+}
+
+// TestInstanceStamp_WaiterHonorsItsOwnDeadline pins that a caller sharing an
+// in-flight fetch stops waiting when ITS context ends — a hung leader dial
+// must cost a waiter at most its own budget, then degrade.
+func TestInstanceStamp_WaiterHonorsItsOwnDeadline(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := &instanceCache{
+		ttl:        time.Minute,
+		failureTTL: time.Second,
+		now:        time.Now,
+		fetch: func(context.Context) (*control.InstanceIdentityResponse, error) {
+			close(started)
+			<-release
+			return nil, errors.New("black-holed")
+		},
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = c.stamp(context.Background()) // leader: hangs on release
+	}()
+	<-started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	done := make(chan map[string]any, 1)
+	go func() { done <- c.stamp(ctx) }()
+	select {
+	case stamp := <-done:
+		if stamp["backend"] != backendUnreachable {
+			t.Errorf("expired-waiter stamp backend = %v, want %q (degraded form)", stamp["backend"], backendUnreachable)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a waiter ignored its own context deadline while sharing an in-flight fetch")
+	}
+	close(release)
+	wg.Wait()
+}
+
+// TestInstanceStamp_RecentFailureShortCircuitsRedial pins the negative cache:
+// get_started's probe→stamp sequence dials once per call, and a down control
+// plane is not re-dialed by every tool call inside the failure window.
+func TestInstanceStamp_RecentFailureShortCircuitsRedial(t *testing.T) {
+	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	fetches := 0
+	c := &instanceCache{
+		ttl:        time.Minute,
+		failureTTL: 5 * time.Second,
+		now:        func() time.Time { return now },
+		fetch: func(context.Context) (*control.InstanceIdentityResponse, error) {
+			fetches++
+			return nil, errors.New("connection refused")
+		},
+	}
+	if err := c.probe(context.Background()); err == nil {
+		t.Fatal("probe must surface the fetch failure")
+	}
+	stamp := c.stamp(context.Background())
+	if fetches != 1 {
+		t.Errorf("fetches = %d, want 1 (the stamp after a failed probe must reuse its outcome, not dial again)", fetches)
+	}
+	if stamp["backend"] != backendUnreachable {
+		t.Errorf("backend = %v, want %q", stamp["backend"], backendUnreachable)
+	}
+
+	// Past the failure window the stamp re-dials (recovery must be noticed).
+	now = now.Add(6 * time.Second)
+	c.stamp(context.Background())
+	if fetches != 2 {
+		t.Errorf("fetches = %d, want 2 (the negative cache must expire)", fetches)
+	}
+}
+
+// TestInstanceStamp_AnsweredHTTPErrorIsNotUnreachable pins the §3.7.4 honesty
+// rule: an instance that ANSWERED GET /instance with an HTTP error is
+// reachable — the degraded stamp says "error", never "unreachable", and keeps
+// the last-known identity + real fetched_at.
+func TestInstanceStamp_AnsweredHTTPErrorIsNotUnreachable(t *testing.T) {
+	fetchTime := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	now := fetchTime
+	healthy := true
+	c := &instanceCache{
+		ttl:        time.Minute,
+		failureTTL: time.Second,
+		now:        func() time.Time { return now },
+		fetch: func(context.Context) (*control.InstanceIdentityResponse, error) {
+			if !healthy {
+				return nil, &HTTPError{StatusCode: http.StatusUnauthorized, Body: `{"detail":"revoked"}`}
+			}
+			return &control.InstanceIdentityResponse{Backend: "local", Host: "127.0.0.1:8000"}, nil
+		},
+	}
+	c.stamp(context.Background()) // prime the last-known identity
+
+	healthy = false
+	now = now.Add(5 * time.Minute) // TTL expired; the refresh gets an HTTP 401
+	stamp := c.stamp(context.Background())
+	if stamp["backend"] != backendError {
+		t.Fatalf("backend = %v, want %q (a status response proves reachability)", stamp["backend"], backendError)
+	}
+	if stamp["host"] != "127.0.0.1:8000" {
+		t.Errorf("degraded stamp must keep the last-known identity, got %#v", stamp)
+	}
+	if stamp["fetched_at"] != fetchTime.Format(time.RFC3339) {
+		t.Errorf("fetched_at = %v, want the REAL last-success time", stamp["fetched_at"])
+	}
+}
+
+// TestInstanceCache_InvalidateForcesRefreshInsideTTL pins §3.7.4's
+// refresh-on-auth-error hook: invalidate() makes the next stamp re-fetch even
+// though the TTL has not lapsed.
+func TestInstanceCache_InvalidateForcesRefreshInsideTTL(t *testing.T) {
+	fetches := 0
+	c := &instanceCache{
+		ttl:        time.Hour,
+		failureTTL: time.Second,
+		now:        time.Now,
+		fetch: func(context.Context) (*control.InstanceIdentityResponse, error) {
+			fetches++
+			return &control.InstanceIdentityResponse{Backend: "local", Host: "h"}, nil
+		},
+	}
+	c.stamp(context.Background())
+	c.stamp(context.Background())
+	if fetches != 1 {
+		t.Fatalf("fetches = %d, want 1 (TTL cache must hold before invalidate)", fetches)
+	}
+	c.invalidate()
+	c.stamp(context.Background())
+	if fetches != 2 {
+		t.Errorf("fetches = %d, want 2 (invalidate must force a refresh inside the TTL)", fetches)
+	}
+}
+
+// --- soft-error taxonomy mapping ----------------------------------------------
+
+// TestMCPCoded_Wire401And403MapToNotAuthenticated pins the §3.7 table's
+// revoked-identity row: a control-plane 401/403 that survived the retry
+// transport's re-exchange is NOT_AUTHENTICATED with the get_started pointer —
+// never the INTERNAL_ERROR "report a CLI bug" catch-all.
+func TestMCPCoded_Wire401And403MapToNotAuthenticated(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		coded := mcpCoded(&HTTPError{StatusCode: status, Body: `{"detail":"identity revoked"}`})
+		if coded.Code != ux.CodeNotAuthenticated {
+			t.Errorf("status %d: code = %q, want %q", status, coded.Code, ux.CodeNotAuthenticated)
+		}
+		if !strings.Contains(coded.Actionable, "get_started") {
+			t.Errorf("status %d: actionable %q must point at get_started", status, coded.Actionable)
+		}
+	}
+	// Any other wire status keeps the fail-toward-generic rule.
+	if coded := mcpCoded(&HTTPError{StatusCode: http.StatusInternalServerError}); coded.Code != ux.CodeInternalError {
+		t.Errorf("500 code = %q, want %q", coded.Code, ux.CodeInternalError)
+	}
+}
+
+// TestSoftError_Revoked401CarriesNextToolAndRefreshesStamp exercises the MCP
+// soft-error path end to end: the result is isError with the coded envelope +
+// next_tool, and the auth failure invalidates the stamp cache (§3.7.4
+// refresh-on-auth-error) so the stamp on this very result is re-validated.
+func TestSoftError_Revoked401CarriesNextToolAndRefreshesStamp(t *testing.T) {
+	s := newTestMCPServer(t, nil)
+	fetches := 0
+	s.instances.fetch = func(context.Context) (*control.InstanceIdentityResponse, error) {
+		fetches++
+		return &control.InstanceIdentityResponse{Backend: "local", Host: "h"}, nil
+	}
+	ctx := context.Background()
+	s.instances.stamp(ctx) // prime: the stamp is "fresh" when the 401 arrives
+	if fetches != 1 {
+		t.Fatalf("fetches = %d, want 1 after priming", fetches)
+	}
+
+	res := s.softError(ctx, &HTTPError{StatusCode: http.StatusUnauthorized, Body: `{"detail":"identity revoked"}`})
+	if !res.IsError {
+		t.Fatal("softError must mark the result isError")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeNotAuthenticated {
+		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeNotAuthenticated)
+	}
+	if payload["next_tool"] != "get_started" {
+		t.Errorf("next_tool = %v, want get_started (the recovery loop pointer)", payload["next_tool"])
+	}
+	if fetches != 2 {
+		t.Errorf("fetches = %d, want 2 (an auth error inside the TTL must re-validate the stamp)", fetches)
+	}
+}
+
+// --- long-running annotation (interceptor exemption) --------------------------
+
+// TestMCPCommand_CarriesLongRunningAnnotation guards the interceptor
+// exemption's command side: without this annotation the agent-mode 60s
+// wall-clock deadline would kill every `jentic mcp` session mid-flight (the
+// interceptor side is pinned in cmdcore's fencing tests).
+func TestMCPCommand_CarriesLongRunningAnnotation(t *testing.T) {
+	a := testApp(t)
+	root := newAPIRootCmd(a.App)
+	cmd, _, err := root.Find([]string{"mcp"})
+	if err != nil {
+		t.Fatalf("find mcp command: %v", err)
+	}
+	if cmd.Annotations[cmdcore.LongRunningAnnotation] != "true" {
+		t.Errorf("`jentic mcp` must carry the %s annotation", cmdcore.LongRunningAnnotation)
 	}
 }
 

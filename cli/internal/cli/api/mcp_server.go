@@ -10,6 +10,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -203,9 +204,15 @@ func (s *mcpServer) result(ctx context.Context, payload map[string]any) *mcp.Cal
 	data, err := json.Marshal(payload)
 	if err != nil {
 		// A map[string]any of JSON-decoded values can't fail to marshal;
-		// guard anyway so a future payload bug degrades, not panics.
-		data = []byte(fmt.Sprintf(`{"schema_version":%q,"error_code":%q,"error":"encoding tool result: %v"}`,
-			mcpSchemaVersion, ux.CodeInternalError, err))
+		// guard anyway so a future payload bug degrades, not panics. The
+		// fallback is itself marshalled (a map[string]string cannot fail) so
+		// an error text carrying quotes/backslashes can't break the JSON this
+		// path exists to preserve.
+		data, _ = json.Marshal(map[string]string{
+			"schema_version": mcpSchemaVersion,
+			"error_code":     ux.CodeInternalError,
+			"error":          "encoding tool result: " + err.Error(),
+		})
 	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: string(ux.RedactBytes(data))}},
@@ -224,7 +231,7 @@ const mcpSchemaVersion = "1"
 // reach the model as data it can act on. Auth/config failures append the
 // get_started pointer so the model's next step is always discoverable.
 func (s *mcpServer) softError(ctx context.Context, err error) *mcp.CallToolResult {
-	coded := asCoded(err)
+	coded := mcpCoded(err)
 	payload := map[string]any{
 		"schema_version": mcpSchemaVersion,
 		"error_code":     coded.Code,
@@ -240,9 +247,41 @@ func (s *mcpServer) softError(ctx context.Context, err error) *mcp.CallToolResul
 	case ux.CodeNotAuthenticated, ux.CodePendingApproval, ux.CodeResolveFailed:
 		payload["next_tool"] = "get_started"
 	}
+	switch coded.Code {
+	case ux.CodeNotAuthenticated, ux.CodePendingApproval:
+		// §3.7.4 refresh-on-auth-error: an auth failure inside the stamp TTL
+		// means the cached identity can no longer be presumed current (the
+		// backend may have been re-pointed, the identity revoked) — force the
+		// stamp joining THIS result to re-validate instead of serving the
+		// cached "fresh" identity next to an auth error.
+		s.instances.invalidate()
+	}
 	res := s.result(ctx, payload)
 	res.IsError = true
 	return res
+}
+
+// mcpCoded is the MCP-side error mapping: asCoded's taxonomy plus the wire
+// case only a long-lived server sees. A control-plane 401 that SURVIVED the
+// retry transport's one token re-exchange means the identity was rejected
+// post-mint — revoked or kill-switched (the §3.7 table's "revoked identity"
+// row); a 403 is the same recovery loop (identity known, not permitted).
+// asCoded has no *HTTPError branch (mint-time failures never produce one), so
+// without this mapping the one taxonomy row written for the long-lived-agent
+// recovery loop would fall into the INTERNAL_ERROR "report a CLI bug"
+// catch-all with no next_tool pointer.
+func mcpCoded(err error) *ux.CodedError {
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) &&
+		(httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) {
+		return &ux.CodedError{
+			Code: ux.CodeNotAuthenticated,
+			Msg: fmt.Sprintf("the control plane rejected this agent's credentials (%v) — "+
+				"the identity may have been revoked or disabled", err),
+			Actionable: "call get_started to diagnose this machine's setup and relay its instruction to your operator",
+		}
+	}
+	return asCoded(err)
 }
 
 // transportHook returns the clictx.TransportHook this session installs: it
