@@ -66,8 +66,15 @@ class EventRepository:
 
         One narrow lookup used for table-backed dedupe (e.g. one
         ``mcp.session_started`` per ``data.session_id`` across workers and
-        surfaces). The ``type`` predicate rides the ``ix_events_type_created``
-        index; the JSON comparison then filters the (small) per-type slice.
+        surfaces — a pair additionally *enforced* by the partial unique index
+        ``uq_events_mcp_session_started_session``; this lookup is the cheap
+        first check, the index is the guarantee). On Postgres that same index
+        covers the ``(type, data->>'session_id')`` read here. For other
+        type/key pairs the ``type`` predicate rides ``ix_events_type_created``
+        and the JSON comparison filters the (small) per-type slice. On SQLite
+        the JSON comparison compiles to a ``json_extract`` path form that does
+        not match the index expression, so the lookup stays a per-type scan —
+        acceptable for the embedded single-file target.
         """
         stmt = (
             select(Event.id)

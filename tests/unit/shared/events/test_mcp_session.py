@@ -1,18 +1,21 @@
 """Unit tests for ``mcp.session_started`` emission (lane D, issue #1177).
 
-Covers the User-Agent parser, the session-id header validation, the two-layer
-dedupe (per-process seen-set + events-table lookup), and the shape of the
-emitted internal event vs. the closed-enum telemetry tag.
+Covers the User-Agent parser, the session-id header validation, the layered
+dedupe (synchronous in-flight/seen-set short-circuits + events-table lookup +
+unique-index race tolerance), and the shape of the emitted internal event vs.
+the closed-enum telemetry tag.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import jentic_one.shared.events.mcp_session as mcp_session
+from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.events.mcp_session import (
     McpUserAgent,
     parse_mcp_user_agent,
@@ -27,8 +30,10 @@ from jentic_one.shared.models.events import EventSeverity, EventType, McpClient
 def _clear_seen_sessions():
     """Isolate the module-level dedupe state per test."""
     mcp_session._seen_sessions.clear()
+    mcp_session._in_flight.clear()
     yield
     mcp_session._seen_sessions.clear()
+    mcp_session._in_flight.clear()
 
 
 def _fake_ctx() -> MagicMock:
@@ -94,6 +99,16 @@ def test_parse_mcp_user_agent_malformed_tail_degrades_to_unknown_client() -> Non
     assert parsed is not None
     assert parsed.client_name is None
     assert McpClient.from_client_name(parsed.client_name) is McpClient.OTHER
+
+
+def test_parse_mcp_user_agent_truncates_oversized_fields() -> None:
+    """Untrusted UA fields are capped before they can reach persisted event data."""
+    ua = f"jentic-mcp/{'v' * 300} ({'c' * 300}/{'x' * 300})"
+    parsed = parse_mcp_user_agent(ua)
+    assert parsed is not None
+    assert parsed.server_version == "v" * 128
+    assert parsed.client_name == "c" * 128
+    assert parsed.client_version == "x" * 128
 
 
 # --- Session-id validation -----------------------------------------------------
@@ -196,6 +211,32 @@ async def test_record_failure_is_swallowed_and_retryable() -> None:
     assert "sess-err" not in mcp_session._seen_sessions
 
 
+@pytest.mark.asyncio
+async def test_record_lost_insert_race_treated_as_already_emitted() -> None:
+    """A unique-index IntegrityError means another worker won — skip, don't retry."""
+    ctx = _fake_ctx()
+    ua = McpUserAgent(server_version="1.0", client_name=None, client_version=None)
+
+    with (
+        patch(
+            "jentic_one.shared.events.mcp_session.EventRepository.exists_with_data_value",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "jentic_one.shared.events.mcp_session.emit_event",
+            # transaction() maps the raw IntegrityError to this domain error.
+            AsyncMock(side_effect=DatabaseIntegrityError("UNIQUE constraint failed")),
+        ),
+    ):
+        await record_mcp_session_started(
+            ctx, ua=ua, session_id="sess-race", actor_id="agnt_abc", actor_type="agent"
+        )
+
+    # The row exists (written by the race winner) — remember so this process
+    # never re-schedules the emit for this session.
+    assert "sess-race" in mcp_session._seen_sessions
+
+
 # --- schedule_mcp_session_emit -------------------------------------------------
 
 
@@ -271,6 +312,67 @@ async def test_schedule_seen_set_short_circuits() -> None:
             await task
 
     record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_schedule_concurrent_first_requests_emit_once() -> None:
+    """Two concurrent first requests for one session schedule exactly one emit.
+
+    Reproduces the reviewed race: before the in-flight set, both schedules
+    passed the seen-set check (it is only populated after the background task
+    commits) and both created tasks. The in-flight check-and-add is synchronous
+    in schedule_mcp_session_emit, so the second schedule must no-op even while
+    the first task is still mid-transaction.
+    """
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow_record(*args: Any, **kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        await release.wait()
+
+    with patch(
+        "jentic_one.shared.events.mcp_session.record_mcp_session_started",
+        AsyncMock(side_effect=slow_record),
+    ):
+        _schedule(_fake_ctx())
+        _schedule(_fake_ctx())  # concurrent duplicate — same session id
+        assert "sess-1" in mcp_session._in_flight
+        # A third request arriving while the emit is still in flight also skips.
+        await asyncio.sleep(0)
+        _schedule(_fake_ctx())
+        release.set()
+        for task in list(mcp_session._background_tasks):
+            await task
+        # Let the done callbacks run.
+        await asyncio.sleep(0)
+
+    assert calls == 1
+    assert "sess-1" not in mcp_session._in_flight
+    assert not mcp_session._background_tasks
+
+
+@pytest.mark.asyncio
+async def test_schedule_retries_after_failed_emit() -> None:
+    """A failed emit clears the in-flight entry so the next request retries."""
+    with patch(
+        "jentic_one.shared.events.mcp_session.record_mcp_session_started",
+        new_callable=AsyncMock,
+    ) as record:
+        _schedule(_fake_ctx())
+        for task in list(mcp_session._background_tasks):
+            await task
+        await asyncio.sleep(0)
+
+        # The emit failed (record swallows errors and does not touch the
+        # seen-set), so a later request for the same session schedules again.
+        assert "sess-1" not in mcp_session._in_flight
+        _schedule(_fake_ctx())
+        for task in list(mcp_session._background_tasks):
+            await task
+
+    assert record.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import EventRepository
+from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.events import emit_credential_access, emit_event
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -281,3 +283,78 @@ async def test_exists_with_data_value_dedupes_mcp_session(
             key="session_id",
             value="sess-abc123",
         )
+
+
+async def _emit_session_started(session: AsyncSession, session_id: str) -> None:
+    await emit_event(
+        session,
+        type=EventType.MCP_SESSION_STARTED,
+        severity=EventSeverity.INFO,
+        summary="MCP session started for agnt_test",
+        created_by="agnt_test",
+        actor_id="agnt_test",
+        actor_type="agent",
+        data={"session_id": session_id, "transport": "stdio"},
+    )
+
+
+async def test_mcp_session_started_duplicate_insert_rejected_by_unique_index(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """The partial unique index makes the emit idempotent at the store.
+
+    Two workers racing past the exists_with_data_value lookup both insert;
+    uq_events_mcp_session_started_session must reject the second commit so the
+    table can never hold two mcp.session_started rows for one session id.
+    ``transaction()`` maps the raw IntegrityError to DatabaseIntegrityError.
+    """
+    async with admin_db.transaction() as session:
+        await _emit_session_started(session, "sess-race")
+
+    with pytest.raises(DatabaseIntegrityError):
+        async with admin_db.transaction() as session:
+            await _emit_session_started(session, "sess-race")
+
+    async with admin_db.session() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(Event.id).where(Event.type == EventType.MCP_SESSION_STARTED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+
+
+async def test_mcp_session_started_index_scoped_to_one_event_type(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """Other event types (and other session ids) are not constrained by the index."""
+    async with admin_db.transaction() as session:
+        await _emit_session_started(session, "sess-scoped")
+        # A second session id of the same type is fine.
+        await _emit_session_started(session, "sess-scoped-2")
+        # A different event type reusing the same session id is fine too —
+        # the unique index is partial, scoped to mcp.session_started.
+        await emit_event(
+            session,
+            type=EventType.MCP_CONFIG_REGISTERED,
+            severity=EventSeverity.INFO,
+            summary="MCP config registered",
+            created_by="agnt_test",
+            data={"session_id": "sess-scoped"},
+        )
+        await emit_event(
+            session,
+            type=EventType.MCP_CONFIG_REGISTERED,
+            severity=EventSeverity.INFO,
+            summary="MCP config registered again",
+            created_by="agnt_test",
+            data={"session_id": "sess-scoped"},
+        )
+
+    async with admin_db.session() as session:
+        rows = (await session.execute(select(Event.id))).scalars().all()
+        assert len(rows) == 4
