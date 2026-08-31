@@ -196,3 +196,58 @@ export interface PermissionCatalogEntry {
 	implies: string[];
 	grantableByCaller: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// MCP transport visibility (local-MCP 2-E2, #1188).
+//
+// MCP is a TRANSPORT of an existing agent, not a new entity — nothing new in
+// the data model. These shapes are read straight off existing surfaces: the
+// `mcp.session_started` internal event's `data` (`GET /events`) and the
+// MCP-origin execution records (`GET /executions?origin=mcp`).
+// ---------------------------------------------------------------------------
+
+/**
+ * One MCP session recorded for an agent — a projection of the
+ * `mcp.session_started` internal event. `transport` is what the emitter knew
+ * (`stdio` today; `http` when phase 3's mounted app lands) and renders
+ * verbatim so a future value degrades gracefully. `clientName`/`clientVersion`
+ * come from the relayed MCP clientInfo and are null when the client didn't
+ * send it (a SHOULD in the MCP spec) — "client unknown", not an error.
+ */
+export interface McpSessionEntity {
+	eventId: string;
+	sessionId: string | null;
+	transport: string | null;
+	clientName: string | null;
+	clientVersion: string | null;
+	startedAt: string;
+}
+
+/** The latest MCP session per agent — the roster's "last seen via MCP" cell. */
+export interface McpLastSeen {
+	clientName: string | null;
+	clientVersion: string | null;
+	startedAt: string;
+}
+
+/** "claude-desktop 1.5.2" (or "unknown client") — one label rule everywhere. */
+export function mcpClientLabel(s: {
+	clientName: string | null;
+	clientVersion: string | null;
+}): string {
+	if (!s.clientName) return 'unknown client';
+	return s.clientVersion ? `${s.clientName} ${s.clientVersion}` : s.clientName;
+}
+
+/**
+ * The backend's self-described identity (`GET /instance`) — which install a
+ * pasted MCP snippet will talk to. `baseUrl`/`host` are '' when the operator
+ * never configured a canonical base URL; callers fall back to the browser's
+ * origin (the URL the operator is looking at IS an address of this instance).
+ */
+export interface InstanceIdentityEntity {
+	/** 'local' | 'remote' — operator-declared locality hint. */
+	backend: string;
+	baseUrl: string;
+	host: string;
+}

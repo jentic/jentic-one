@@ -141,6 +141,17 @@ export const handlers = [
 	http.get('/system/version', () =>
 		HttpResponse.json({ current: '0.26.0', latest: null, update_available: false }),
 	),
+	// Backend self-identity (GET /instance, unauthenticated) — the per-agent
+	// MCP config card shows which instance a pasted snippet registers against
+	// (local-MCP 2-E2). Canonical base URL configured, local install.
+	http.get('/instance', () =>
+		HttpResponse.json({
+			backend: 'local',
+			canonical_base_url: 'https://jentic.example.test',
+			host: 'jentic.example.test',
+			instance_id: 'inst_digest_1',
+		}),
+	),
 	// Feature modules append their handlers here, e.g.:
 	//   import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 	//   ...discoverHandlers,

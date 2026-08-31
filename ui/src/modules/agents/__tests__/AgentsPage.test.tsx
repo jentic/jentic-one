@@ -95,6 +95,42 @@ describe('AgentsPage — agents lifecycle', () => {
 		await checkA11y(container);
 	});
 
+	// --- local-MCP 2-E2 (#1188): "last seen via MCP" roster enrichment ------
+
+	it('shows "Last seen via MCP" from the mcp.session_started events', async () => {
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+
+		// Column appears once the events page resolves; support-agent's newest
+		// session is claude-desktop 1.5.2.
+		expect(await screen.findByText('Last seen via MCP')).toBeInTheDocument();
+		const row = tableRowFor('support-agent');
+		expect(await within(row).findByText('claude-desktop 1.5.2')).toBeInTheDocument();
+	});
+
+	it('hides the MCP column entirely when the events read is gated (403)', async () => {
+		worker.use(createErrorHandler('get', '/events', { status: 403 }));
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+
+		// The usage enrichment settles independently; once the table is fully
+		// enriched the MCP column must still be absent — a permission gate is
+		// not an error (no alert), the roster just narrows.
+		await screen.findByText('Activity (7d)');
+		expect(screen.queryByText('Last seen via MCP')).not.toBeInTheDocument();
+	});
+
+	it('keeps the MCP column off the service-accounts roster (agents-only transport)', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+		await screen.findByText('Last seen via MCP');
+
+		await user.click(screen.getByRole('button', { name: 'Service accounts' }));
+		await screen.findAllByText('metrics-exporter');
+		expect(screen.queryByText('Last seen via MCP')).not.toBeInTheDocument();
+	});
+
 	it('approves a pending agent from the queue → status flips to active', async () => {
 		const user = userEvent.setup();
 		renderPage();
@@ -308,10 +344,11 @@ describe('AgentsPage — agents lifecycle', () => {
 		// Actors absent from the top-50 aggregate are UNKNOWN, not idle — the
 		// three activity columns degrade to em-dashes (f2: the backend caps
 		// `top_limit` at 50, so absence never proves zero executions). Plus the
-		// pending row's empty Approved cell → 4 dashes total.
+		// pending row's empty Approved cell and its empty "Last seen via MCP"
+		// cell (no session event in the fixture) → 5 dashes total.
 		const pending = tableRowFor('inbox-triage-bot');
 		expect(within(pending).queryByText('idle')).not.toBeInTheDocument();
-		expect(within(pending).getAllByText('—')).toHaveLength(4);
+		await waitFor(() => expect(within(pending).getAllByText('—')).toHaveLength(5));
 	});
 
 	it('renders the plain roster when the usage aggregate is admin-gated (403)', async () => {
