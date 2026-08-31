@@ -32,6 +32,22 @@ class Event(AuditableMixin, AdminBase):
             postgresql_where=text("trace_id IS NOT NULL"),
         ),
         Index("ix_events_actor", "actor_id", "actor_type"),
+        # Cross-worker exactly-once backstop for mcp.session_started: the emit
+        # path (shared/events/mcp_session.py) is check-then-insert, so two
+        # workers can both pass the dedupe lookup before either commits. This
+        # partial unique index turns the loser's insert into an IntegrityError
+        # (tolerated there), and doubles as the read-path index for
+        # EventRepository.exists_with_data_value on Postgres. Scoped to the one
+        # event type so other events carrying a session_id stay unconstrained.
+        # The SQLite migration (f2a3b4c5d6e7) creates the same index with
+        # json_extract(data, '$.session_id') instead of the Postgres operator.
+        Index(
+            "uq_events_mcp_session_started_session",
+            "type",
+            text("(data ->> 'session_id')"),
+            unique=True,
+            postgresql_where=text("type = 'mcp.session_started'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(

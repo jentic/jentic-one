@@ -27,6 +27,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import RuleEvaluatorProtocol, ToolkitDeriverProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event
+from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.resilience import RateLimiter
@@ -114,6 +115,17 @@ async def require_broker_identity(request: Request) -> Identity:
         ) from exc
 
     resolved.origin = derive_origin(request.headers.get("user-agent"))
+
+    # Broker half of the two-plane ``mcp.session_started`` emit: an MCP session
+    # whose only traffic is ``execute`` never touches the control plane, so it
+    # must be detected here too (table-backed dedupe keeps it to one event).
+    schedule_mcp_session_emit(
+        getattr(request.app.state, "ctx", None),
+        user_agent=request.headers.get("user-agent"),
+        session_id=request.headers.get(SESSION_ID_HEADER),
+        actor_id=resolved.sub,
+        actor_type=resolved.actor_type.value,
+    )
     return resolved
 
 

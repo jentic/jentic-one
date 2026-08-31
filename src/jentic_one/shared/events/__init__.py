@@ -53,7 +53,9 @@ def valid_trace_id_or_minted(trace_id: str | None) -> str:
 def _validate_tags(type: str, tags: set[EventTag] | None) -> list[EventTag]:
     """Drop tags whose closed-enum type is not allowed for this event.
 
-    Invalid tags are logged and discarded; the event still emits (never raises).
+    ``EVENT_TAGS`` maps each event to a *tuple* of allowed tag types (an event
+    may split along more than one closed enum). Invalid tags are logged and
+    discarded; the event still emits (never raises).
     """
     if not tags:
         return []

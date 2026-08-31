@@ -16,6 +16,7 @@ from jentic_one.broker.services.execution.service import (
     run_execution,
 )
 from jentic_one.shared.models import ExecutionStatus
+from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventType
 
 
@@ -487,3 +488,142 @@ async def test_run_execution_no_auth_tag_without_vendor() -> None:
     ]
     assert len(failed_calls) == 1
     assert not failed_calls[0].kwargs.get("tags")
+
+
+# --- Origin tagging (lane D, #1177) --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_execution_tags_completed_event_with_origin() -> None:
+    """The request-derived origin rides EXECUTION_COMPLETED as a closed-enum tag."""
+    session = AsyncMock()
+    broker = default_broker(_SuccessRunner())
+
+    with (
+        patch(
+            "jentic_one.broker.services.execution.service.record_execution",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "jentic_one.broker.services.execution.service.emit_event",
+            new_callable=AsyncMock,
+        ) as mock_emit,
+    ):
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            session=session,
+            broker=broker,
+            actor_id="agt_abc",
+            actor_type="agent",
+            origin="mcp",
+        )
+
+    mock_emit.assert_called_once()
+    call_kwargs = mock_emit.call_args.kwargs
+    assert call_kwargs["type"] == EventType.EXECUTION_COMPLETED
+    assert call_kwargs["tags"] == {Origin.MCP}
+
+
+@pytest.mark.asyncio
+async def test_run_execution_failed_carries_origin_and_error_source_tags() -> None:
+    """An MCP-origin upstream 401 tags the failure with both closed enums."""
+    session = AsyncMock()
+    broker = default_broker(_StatusRunner(401))
+
+    with (
+        patch(
+            "jentic_one.broker.services.execution.service.record_execution",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "jentic_one.broker.services.execution.service.emit_event",
+            new_callable=AsyncMock,
+        ) as mock_emit,
+    ):
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            session=session,
+            broker=broker,
+            actor_id="agt_abc",
+            actor_type="agent",
+            origin="mcp",
+        )
+
+    failed_calls = [
+        c for c in mock_emit.call_args_list if c.kwargs.get("type") == EventType.EXECUTION_FAILED
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs["tags"] == {
+        ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
+        Origin.MCP,
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_execution_unknown_origin_is_not_tagged() -> None:
+    """A garbage origin string never becomes a tag (and never raises)."""
+    session = AsyncMock()
+    broker = default_broker(_SuccessRunner())
+
+    with (
+        patch(
+            "jentic_one.broker.services.execution.service.record_execution",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "jentic_one.broker.services.execution.service.emit_event",
+            new_callable=AsyncMock,
+        ) as mock_emit,
+    ):
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            session=session,
+            broker=broker,
+            actor_id="agt_abc",
+            actor_type="agent",
+            origin="carrier-pigeon",
+        )
+
+    call_kwargs = mock_emit.call_args.kwargs
+    assert call_kwargs["type"] == EventType.EXECUTION_COMPLETED
+    assert call_kwargs["tags"] is None
+
+
+@pytest.mark.asyncio
+async def test_persist_streaming_execution_tags_events_with_origin() -> None:
+    """The streaming path threads the same origin tag onto its lifecycle event."""
+    session = AsyncMock()
+
+    with (
+        patch(
+            "jentic_one.broker.services.execution.service.record_execution",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "jentic_one.broker.services.execution.service.emit_event",
+            new_callable=AsyncMock,
+        ) as mock_emit,
+    ):
+        await persist_streaming_execution(
+            session,
+            execution_id="exec_stream_origin",
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.COMPLETED,
+            http_status=200,
+            duration_ms=10,
+            error=None,
+            ctx_req=_ctx_req(),
+            actor_id="agt_stream",
+            actor_type="agent",
+            origin="cli",
+        )
+
+    call_kwargs = mock_emit.call_args.kwargs
+    assert call_kwargs["type"] == EventType.EXECUTION_COMPLETED
+    assert call_kwargs["tags"] == {Origin.CLI}
