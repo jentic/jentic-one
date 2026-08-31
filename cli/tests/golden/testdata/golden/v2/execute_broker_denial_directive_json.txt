@@ -1,0 +1,39 @@
+exit: 2
+--- stdout ---
+{
+  "body": {
+    "agent_directive": {
+      "human_readable_instruction": "You are not bound to a toolkit for this API.",
+      "parameters": {
+        "candidates": [
+          "acme/pets",
+          "acme/pets-admin"
+        ],
+        "provisioning_url": "https://console.example/connect/acme",
+        "retry_after_seconds": 30,
+        "suggested_command": "jentic access request --toolkit acme/pets --wait"
+      },
+      "strategy": "wait"
+    },
+    "error_origin": "broker",
+    "status": 403,
+    "title": "No toolkit binding for this API",
+    "type": "no_toolkit_binding"
+  },
+  "headers": {
+    "Content-Length": "520",
+    "Content-Type": "application/problem+json",
+    "Jentic-Error-Origin": "broker"
+  },
+  "schema_version": "1",
+  "status": 403
+}
+--- stderr ---
+Denied — recovery required:
+  You are not bound to a toolkit for this API.
+  run: jentic access request --toolkit acme/pets --wait
+  open: https://console.example/connect/acme
+  candidates: acme/pets, acme/pets-admin
+  retry after: 30
+  stuck? jentic doctor
+{"details":{"http_status":403},"error":"the broker denied this call before it reached the upstream API","error_code":"BROKER_DENIED","schema_version":"1"}

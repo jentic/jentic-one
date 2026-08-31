@@ -41,6 +41,53 @@ func TestBadFlagKV(t *testing.T) {
 	}
 }
 
+// TestExecuteMalformedHeaderWinsOverInsecureBroker freezes the doubly-invalid
+// precedence the agentops extraction changed (PR #1179 review #2): ParseKVs on
+// --header now runs BEFORE BuildRequest's SEC-1 secure-transport guard, so a
+// malformed --header combined with a SEC-1-violating broker target (plaintext
+// http to a non-loopback host) surfaces MISSING_ARGUMENT — previously SEC-1 ran
+// first and TRANSPORT_ERROR won. Both codes map to exit 1 (ux/contract.go), so
+// exit parity holds; error_code is part of the closed machine contract (13
+// §3a), so the new order is pinned here as a decision, not an accident.
+func TestExecuteMalformedHeaderWinsOverInsecureBroker(t *testing.T) {
+	app := testApp(t)
+	// Loopback control plane; never dialed — GET:/v1/pets short-circuits the
+	// resolve phase and the header parse fails before any request is built.
+	seedRegistered(t, app, "default", "http://127.0.0.1:1")
+
+	out := new(bytes.Buffer)
+	errBuf := new(bytes.Buffer)
+	app.Out = out
+	app.Err = errBuf
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(errBuf)
+	root.SetArgs([]string{
+		"execute", "GET:/v1/pets",
+		"--header", "no-equals-sign",
+		// SEC-1 violation (plaintext http to a non-loopback broker) — would be
+		// TRANSPORT_ERROR if the request were ever built.
+		"--broker-scheme", "http",
+		"--broker-host", "203.0.113.9:8100",
+	})
+
+	err := root.Execute()
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("doubly-invalid execute returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeMissingArgument {
+		t.Errorf("code = %q, want %q (the malformed --header wins over the SEC-1 refusal)",
+			coded.Code, ux.CodeMissingArgument)
+	}
+	if coded.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1 (exit parity with the old TRANSPORT_ERROR precedence)", coded.ExitCode())
+	}
+	if !strings.Contains(coded.Msg, "--header") || !strings.Contains(coded.Msg, "no-equals-sign") {
+		t.Errorf("msg %q should name the flag and offending value", coded.Msg)
+	}
+}
+
 func TestExecuteCmdJSONEnvelope(t *testing.T) {
 	// One server plays both roles: control plane (/inspect) and broker (the
 	// catch-all that receives /{upstreamURL}). Inspect returns an upstream URL;
