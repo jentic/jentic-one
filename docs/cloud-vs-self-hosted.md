@@ -22,8 +22,8 @@ stdio server** — available in the `jentic` CLI from the next release; check
 spawns it as an ordinary stdio MCP entry; it authenticates with the agent's
 registered identity and exposes the same discover → execute loop the CLI
 drives (`search_apis`, `inspect_operation`, `execute`, …). Every tool result
-carries an identity stamp (`backend`, `host`, `instance_id`) so an agent can
-always tell which instance answered.
+carries an identity stamp (`backend`, `host`, `instance_id`, `fetched_at`)
+so an agent can always tell which instance answered.
 
 There is still **no hosted `/mcp` HTTP endpoint** on the deployment itself.
 Probing the control plane (`:8000/mcp`, `/v1/mcp`, `/api/mcp`, `/sse`) returns

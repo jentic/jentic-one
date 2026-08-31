@@ -274,10 +274,11 @@ def test_llms_txt_advertises_mcp_server(client: TestClient) -> None:
     assert "jentic mcp --help" in body
     # The §3.5 routing paragraph: MCP preferred, CLI for recovery, same instance.
     assert "prefer them" in body
+    assert "`setup`/`access` recovery" in body
     assert "same instance" in body
     assert "`backend`/`host`" in body
     # The /mcp probe still 404s — the advertisement must not imply an HTTP endpoint.
-    assert "404" in body
+    assert "probing `/mcp` still returns 404" in body
 
 
 def test_render_llms_txt_stamps_base_everywhere() -> None:
