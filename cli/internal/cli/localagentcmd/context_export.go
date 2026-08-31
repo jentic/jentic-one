@@ -39,33 +39,32 @@ import (
 // session the actor IS an agent, so fencing must hold there regardless of the
 // operator-side mode.
 func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount) error {
-	st := clictx.ActiveContext(ctx)
-	if st == nil {
-		fmt.Fprintln(a.Out, theme.Dim.Render(
-			"No active context to hand to the agent — its session starts without an identity "+
-				"(run `jentic register`, then relaunch)."))
-		return nil
+	return a.exportContextMaterial(ctx, acct.User, acct.HomeDir)
+}
+
+// exportContextMaterial is the shared export core for the LAUNCH path: it
+// writes the active context's minimal config + credentials into the XDG store
+// under homeDir and chowns them to user. This direct-write form works only
+// because CreateAccountCmds grants the operator an inherited ACL into the
+// agent home; the MCP isolation step's service accounts deliberately grant
+// the operator NOTHING, so that path renders to a staging dir and installs
+// root-side instead (exportContextMaterialRootSide).
+func (a *Cmd) exportContextMaterial(ctx context.Context, user, homeDir string) error {
+	mat, skip, err := a.buildExportMaterial(ctx)
+	if err != nil || skip {
+		return err
 	}
-	if st.InjectedBearerToken != "" {
-		// File-less orchestrator mode: there is no on-disk material to export,
-		// and the injected token belongs to THIS process's environment only.
-		fmt.Fprintln(a.Out, theme.Dim.Render(
-			"Running file-less (JENTIC_BASE_URL/JENTIC_BEARER_TOKEN) — nothing to export to the agent home."))
-		return nil
-	}
-	if acct.HomeDir == "" {
-		return errors.New("agent account has no recorded home directory")
+	if homeDir == "" {
+		return errors.New("target account has no recorded home directory")
 	}
 	// The home is about to receive files and a privileged recursive chown;
 	// guard the recorded path exactly as the reset teardown does.
-	if err := localagent.ValidateHomeDir(acct.HomeDir); err != nil {
+	if err := localagent.ValidateHomeDir(homeDir); err != nil {
 		return fmt.Errorf("refusing to export the context: %w", err)
 	}
 
-	cfgDir := filepath.Join(acct.HomeDir, ".config", "jentic")
-	stateDir := filepath.Join(acct.HomeDir, ".local", "state", "jentic")
-	keysDir := filepath.Join(cfgDir, "keys")
-	for _, d := range []string{cfgDir, stateDir, keysDir} {
+	for _, rel := range mat.relDirs {
+		d := filepath.Join(homeDir, rel)
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return fmt.Errorf("create agent config dir %s: %w", d, err)
 		}
@@ -83,6 +82,91 @@ func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount
 			fmt.Fprintln(a.Out, theme.Warnf("could not pin %s to 0700: %v", d, err))
 		}
 	}
+	if err := mat.renderInto(homeDir); err != nil {
+		return err
+	}
+
+	// Hand the files to the agent uid: they were created by the operator, but
+	// the agent must read its own 0600 key/tokens when it runs as itself.
+	// Best-effort, like the V1 hand-off: a chown failure is reported, not
+	// fatal (the launch may still work if a previous export already chowned).
+	for _, d := range []string{filepath.Join(homeDir, ".config"), filepath.Join(homeDir, ".local")} {
+		chown := localagent.ChownToAgentCmd(user, d)
+		chown.Stdout, chown.Stderr = a.Out, a.Err
+		if err := chown.Run(); err != nil {
+			fmt.Fprintln(a.Out, theme.Warnf("could not hand the agent its config (%s): %v", d, err))
+		}
+	}
+	fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
+		"Handed context %q (identity %q, environment %q) to the agent.", mat.ctxName, mat.identity, mat.environment)))
+	return nil
+}
+
+// exportMaterial is the rendered form of the active context's exportable
+// state: the minimal config bytes plus the credential files to copy, all
+// addressed by home-relative XDG paths so the same material can be written
+// directly into an agent home (launch path) or staged and installed
+// root-side (MCP isolation path).
+type exportMaterial struct {
+	ctxName     string
+	identity    string
+	environment string
+	configYAML  []byte
+	// copies maps an absolute source path to its home-relative destination.
+	// The signing key's presence is verified by buildExportMaterial; token/
+	// API-key sources may legitimately be absent (copied best-effort).
+	copies [][2]string
+	// relDirs are the home-relative dirs the material lands in, parent-first.
+	relDirs []string
+}
+
+// relFiles returns the home-relative paths of every file the render produces:
+// the config plus each credential copy whose source exists on disk.
+func (m *exportMaterial) relFiles() []string {
+	files := []string{filepath.Join(".config", "jentic", "config.yaml")}
+	for _, c := range m.copies {
+		if _, err := os.Lstat(c[0]); err == nil {
+			files = append(files, c[1])
+		}
+	}
+	return files
+}
+
+// renderInto writes the material under root (an agent home or a staging
+// dir), assuming root's relDirs already exist.
+func (m *exportMaterial) renderInto(root string) error {
+	if err := writeFile0600(filepath.Join(root, ".config", "jentic", "config.yaml"), m.configYAML); err != nil {
+		return err
+	}
+	for _, c := range m.copies {
+		if err := copyCredFile(c[0], filepath.Join(root, c[1])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// buildExportMaterial resolves the active context into exportable material.
+// skip=true (with a printed note and no error) when there is nothing to
+// export: no active context, or a file-less injected-token session. A context
+// whose signing KEY is missing on disk is an ERROR, not a silent skip — an
+// export that hands over a keyless config would leave the target account
+// unable to act as the context while looking provisioned.
+func (a *Cmd) buildExportMaterial(ctx context.Context) (*exportMaterial, bool, error) {
+	st := clictx.ActiveContext(ctx)
+	if st == nil {
+		fmt.Fprintln(a.Out, theme.Dim.Render(
+			"No active context to hand to the agent — its session starts without an identity "+
+				"(run `jentic register`, then relaunch)."))
+		return nil, true, nil
+	}
+	if st.InjectedBearerToken != "" {
+		// File-less orchestrator mode: there is no on-disk material to export,
+		// and the injected token belongs to THIS process's environment only.
+		fmt.Fprintln(a.Out, theme.Dim.Render(
+			"Running file-less (JENTIC_BASE_URL/JENTIC_BEARER_TOKEN) — nothing to export to the agent home."))
+		return nil, true, nil
+	}
 
 	// Minimal config: ONE environment/identity/context — the agent must not
 	// inherit the operator's other environments or identities. The context
@@ -91,7 +175,7 @@ func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount
 	// "agent".
 	opCfg, err := sdkconfig.Load()
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	ctxName := "agent"
 	if c, ok := opCfg.Contexts[opCfg.ActiveContext]; ok &&
@@ -124,53 +208,51 @@ func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount
 	}
 	data, err := yaml.Marshal(&minimal)
 	if err != nil {
-		return fmt.Errorf("encode agent config: %w", err)
-	}
-	if err := writeFile0600(filepath.Join(cfgDir, "config.yaml"), data); err != nil {
-		return err
+		return nil, false, fmt.Errorf("encode agent config: %w", err)
 	}
 
 	// Credential material: the env-scoped key (config/keys/<stem>.key) plus
-	// token/API-key state (<state>/<stem>*). Copied best-effort per file —
-	// e.g. a not-yet-exchanged identity has a key but no tokens.
+	// token/API-key state (<state>/<stem>*). The KEY must exist — a context
+	// with no key is not exportable material (the export would strand the
+	// target with a config it cannot authenticate as). Tokens/API keys are
+	// copied best-effort per file — e.g. a not-yet-exchanged identity has a
+	// key but no tokens.
 	ref := auth.IdentityRef{Identity: st.IdentityName, Environment: st.EnvironmentName}
 	stem, err := ref.Stem()
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	srcKey, err := auth.KeyPathForImport(ref)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
-	copies := [][2]string{{srcKey, filepath.Join(keysDir, stem+".key")}}
+	if _, err := os.Lstat(srcKey); err != nil {
+		return nil, false, fmt.Errorf(
+			"context %q has no signing key on disk (%s) — refusing to export keyless material: %w",
+			ctxName, prettyPath(srcKey), err)
+	}
+	copies := [][2]string{{srcKey, filepath.Join(".config", "jentic", "keys", stem+".key")}}
 	if srcState, serr := sdkconfig.StateDir(); serr == nil {
 		for _, suffix := range []string{"_tokens.json", ".apikey"} {
 			copies = append(copies, [2]string{
 				filepath.Join(srcState, stem+suffix),
-				filepath.Join(stateDir, stem+suffix),
+				filepath.Join(".local", "state", "jentic", stem+suffix),
 			})
 		}
 	}
-	for _, c := range copies {
-		if err := copyCredFile(c[0], c[1]); err != nil {
-			return err
-		}
-	}
 
-	// Hand the files to the agent uid: they were created by the operator, but
-	// the agent must read its own 0600 key/tokens when it runs as itself.
-	// Best-effort, like the V1 hand-off: a chown failure is reported, not
-	// fatal (the launch may still work if a previous export already chowned).
-	for _, d := range []string{filepath.Join(acct.HomeDir, ".config"), filepath.Join(acct.HomeDir, ".local")} {
-		chown := localagent.ChownToAgentCmd(acct.User, d)
-		chown.Stdout, chown.Stderr = a.Out, a.Err
-		if err := chown.Run(); err != nil {
-			fmt.Fprintln(a.Out, theme.Warnf("could not hand the agent its config (%s): %v", d, err))
-		}
-	}
-	fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
-		"Handed context %q (identity %q, environment %q) to the agent.", ctxName, st.IdentityName, st.EnvironmentName)))
-	return nil
+	return &exportMaterial{
+		ctxName:     ctxName,
+		identity:    st.IdentityName,
+		environment: st.EnvironmentName,
+		configYAML:  data,
+		copies:      copies,
+		relDirs: []string{
+			filepath.Join(".config", "jentic"),
+			filepath.Join(".config", "jentic", "keys"),
+			filepath.Join(".local", "state", "jentic"),
+		},
+	}, false, nil
 }
 
 // copyCredFile copies one credential file 0600, fsyncing before returning. A

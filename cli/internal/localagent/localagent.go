@@ -698,14 +698,23 @@ func SudoersRule(operator, agentUser string) string {
 // validation passes — so a bad edit can never lock the operator out of sudo. Runs
 // as root. Mirrors RemoveSudoersCmd, the teardown that `jentic reset` runs.
 func InstallSudoersCmd(operator, agentUser string) *exec.Cmd {
-	rule := shellQuote(SudoersRule(operator, agentUser))
+	return installSudoersRuleCmd(SudoersRule(operator, agentUser))
+}
+
+// installSudoersRuleCmd is the shared idempotent, visudo-validated sudoers
+// edit behind InstallSudoersCmd (launch-shell rule) and InstallSudoersRuleCmd
+// (argv-pinned MCP rule): build the new content in a temp file, add the exact
+// rule line only if absent, validate with `visudo -cf` BEFORE installing, and
+// only replace the 0440 drop-in when validation passes.
+func installSudoersRuleCmd(sudoersRule string) *exec.Cmd {
+	rule := shellQuote(sudoersRule)
 	f := shellQuote(sudoersPath)
 	script := `f=` + f + `; tmp="$(mktemp)"; ` +
 		`[ -f "$f" ] && cat "$f" > "$tmp"; ` +
 		`grep -qxF ` + rule + ` "$tmp" 2>/dev/null || echo ` + rule + ` >> "$tmp"; ` +
 		`if visudo -cf "$tmp" >/dev/null 2>&1; then install -m 0440 "$tmp" "$f"; fi; ` +
 		`rm -f "$tmp"`
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // operator/agentUser are shell-quoted; the script edits a fixed sudoers path via visudo validation.
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // the rule is built from validated inputs and shell-quoted; the script edits a fixed sudoers path via visudo validation.
 }
 
 // RemoveSudoersCmd drops the agent user's passwordless-launch lines from the

@@ -2334,6 +2334,26 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "reportMcpConfigRegistration",
+      "path": "/mcp/config-registrations",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Report MCP config registration",
+      "surface": "mcp",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
       "method": "GET",
       "operation_id": "getMe",
       "path": "/me",
@@ -4953,5 +4973,5 @@
     ],
     "total": 33
   },
-  "total": 168
+  "total": 169
 }

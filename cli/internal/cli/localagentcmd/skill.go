@@ -509,7 +509,7 @@ func scopeLabel(ad skillgen.Adapter, scope, def skillgen.Scope, env skillgen.Det
 	return label
 }
 
-func (a *Cmd) skillInit(_ *cobra.Command, opts *skillOptions) error {
+func (a *Cmd) skillInit(cmd *cobra.Command, opts *skillOptions) error {
 	reg := skillgen.DefaultRegistry()
 	env, err := a.detectEnv()
 	if err != nil {
@@ -531,7 +531,15 @@ func (a *Cmd) skillInit(_ *cobra.Command, opts *skillOptions) error {
 		return nil
 	}
 
-	return a.writeSkill(targets, env, opts)
+	if err := a.writeSkill(targets, env, opts); err != nil {
+		return err
+	}
+	// 2-E3: skills tell the agent *how* to use Jentic; the MCP entry is what
+	// lets it *reach* Jentic. Registering both from one command keeps a fresh
+	// runtime a single `jentic skill init` away from working. Best-effort —
+	// registration problems never fail the skill install that succeeded.
+	a.registerMCPEntries(cmd.Context(), targets, opts.dryRun)
+	return nil
 }
 
 // writeSkill renders each selected skill into each target and prints the

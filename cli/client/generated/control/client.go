@@ -441,6 +441,33 @@ func (e InviteState) Valid() bool {
 	}
 }
 
+// Defines values for McpConfigRuntime.
+const (
+	ClaudeCode    McpConfigRuntime = "claude_code"
+	ClaudeDesktop McpConfigRuntime = "claude_desktop"
+	Codex         McpConfigRuntime = "codex"
+	Cursor        McpConfigRuntime = "cursor"
+	Other         McpConfigRuntime = "other"
+)
+
+// Valid indicates whether the value is a known member of the McpConfigRuntime enum.
+func (e McpConfigRuntime) Valid() bool {
+	switch e {
+	case ClaudeCode:
+		return true
+	case ClaudeDesktop:
+		return true
+	case Codex:
+		return true
+	case Cursor:
+		return true
+	case Other:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MeAgentType.
 const (
 	MeAgentTypeAgent MeAgentType = "agent"
@@ -1809,6 +1836,31 @@ type LoginResponse struct {
 	MustChangePassword bool   `json:"must_change_password"`
 	TokenType          string `json:"token_type"`
 }
+
+// McpConfigRegistrationRequest Report that an MCP config entry was written for one agent runtime.
+//
+// Examples: {"runtime":"cursor"}
+type McpConfigRegistrationRequest struct {
+	// Runtime The agent runtime whose MCP config entry was written — a closed set; clients map anything unrecognised to `other`.
+	Runtime McpConfigRuntime `json:"runtime"`
+}
+
+// McpConfigRegistrationResponse Acknowledgement of a config-registration report.
+type McpConfigRegistrationResponse struct {
+	// Recorded Whether the report was recorded as an event. `false` means it was accepted but throttled (an identical (actor, runtime) report was already recorded within the last 24h).
+	Recorded bool `json:"recorded"`
+
+	// Runtime The runtime the report was recorded for.
+	Runtime McpConfigRuntime `json:"runtime"`
+}
+
+// McpConfigRuntime Closed-enum tag naming the agent runtime an MCP config entry targets.
+//
+// Attached only to “mcp_config_registered“ — one event per runtime whose
+// config file/entry “jentic setup“/“jentic skill init“ writes. A closed
+// set (never the raw runtime string) so the config-written → first-session →
+// first-execute funnel stays property-free on the wire.
+type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
 type MeAgent struct {
@@ -3408,6 +3460,9 @@ type ConnectCredentialJSONRequestBody = ConnectRequestBody
 
 // AcknowledgeEventJSONRequestBody defines body for AcknowledgeEvent for application/json ContentType.
 type AcknowledgeEventJSONRequestBody = EventAcknowledgeRequest
+
+// ReportMcpConfigRegistrationJSONRequestBody defines body for ReportMcpConfigRegistration for application/json ContentType.
+type ReportMcpConfigRegistrationJSONRequestBody = McpConfigRegistrationRequest
 
 // CreateNoteJSONRequestBody defines body for CreateNote for application/json ContentType.
 type CreateNoteJSONRequestBody = NoteCreateRequest
@@ -5386,6 +5441,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportMcpConfigRegistrationWithBody Report MCP config registration
+	//
+	// Record that an MCP server entry was written for an agent runtime.
+	//
+	// Called by `jentic setup` / `jentic skill init` once per runtime whose MCP
+	// config entry it wrote (best-effort on the CLI side — a failed report never
+	// blocks setup). Emits the `mcp.config_registered` internal event; when the
+	// operator opted into telemetry, the event is forwarded carrying at most the
+	// closed runtime tag. Reports are throttled per (actor, runtime) within a
+	// 24h in-process window — a throttled repeat is still a 202 with
+	// `recorded: false`, since the CLI treats the report as fire-and-forget.
+	// Any authenticated actor may report.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
+	ReportMcpConfigRegistrationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportMcpConfigRegistration Report MCP config registration
+	//
+	// Record that an MCP server entry was written for an agent runtime.
+	//
+	// Called by `jentic setup` / `jentic skill init` once per runtime whose MCP
+	// config entry it wrote (best-effort on the CLI side — a failed report never
+	// blocks setup). Emits the `mcp.config_registered` internal event; when the
+	// operator opted into telemetry, the event is forwarded carrying at most the
+	// closed runtime tag. Reports are throttled per (actor, runtime) within a
+	// 24h in-process window — a throttled repeat is still a 202 with
+	// `recorded: false`, since the CLI treats the report as fire-and-forget.
+	// Any authenticated actor may report.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
+	ReportMcpConfigRegistration(ctx context.Context, body ReportMcpConfigRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMe Get Me
 	//
@@ -8540,6 +8631,62 @@ func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...R
 // Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCancelJobRequest(c.Server, jobId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportMcpConfigRegistrationWithBody Report MCP config registration
+//
+// Record that an MCP server entry was written for an agent runtime.
+//
+// Called by `jentic setup` / `jentic skill init` once per runtime whose MCP
+// config entry it wrote (best-effort on the CLI side — a failed report never
+// blocks setup). Emits the `mcp.config_registered` internal event; when the
+// operator opted into telemetry, the event is forwarded carrying at most the
+// closed runtime tag. Reports are throttled per (actor, runtime) within a
+// 24h in-process window — a throttled repeat is still a 202 with
+// `recorded: false`, since the CLI treats the report as fire-and-forget.
+// Any authenticated actor may report.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
+func (c *Client) ReportMcpConfigRegistrationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportMcpConfigRegistrationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportMcpConfigRegistration Report MCP config registration
+//
+// Record that an MCP server entry was written for an agent runtime.
+//
+// Called by `jentic setup` / `jentic skill init` once per runtime whose MCP
+// config entry it wrote (best-effort on the CLI side — a failed report never
+// blocks setup). Emits the `mcp.config_registered` internal event; when the
+// operator opted into telemetry, the event is forwarded carrying at most the
+// closed runtime tag. Reports are throttled per (actor, runtime) within a
+// 24h in-process window — a throttled repeat is still a 202 with
+// `recorded: false`, since the CLI treats the report as fire-and-forget.
+// Any authenticated actor may report.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
+func (c *Client) ReportMcpConfigRegistration(ctx context.Context, body ReportMcpConfigRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportMcpConfigRegistrationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15545,6 +15692,46 @@ func NewCancelJobRequest(server string, jobId string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewReportMcpConfigRegistrationRequest calls the generic ReportMcpConfigRegistration builder with application/json body
+func NewReportMcpConfigRegistrationRequest(server string, body ReportMcpConfigRegistrationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportMcpConfigRegistrationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReportMcpConfigRegistrationRequestWithBody constructs an http.Request for the ReportMcpConfigRegistration method, with any body, and a specified content type
+func NewReportMcpConfigRegistrationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/mcp/config-registrations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetMeRequest constructs an http.Request for the GetMe method
 func NewGetMeRequest(server string) (*http.Request, error) {
 	var err error
@@ -19843,6 +20030,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJobWithResponse(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*CancelJobHTTPResp, error)
+
+	// ReportMcpConfigRegistrationWithBodyWithResponse Report MCP config registration
+	//
+	// Record that an MCP server entry was written for an agent runtime.
+	//
+	// Called by `jentic setup` / `jentic skill init` once per runtime whose MCP
+	// config entry it wrote (best-effort on the CLI side — a failed report never
+	// blocks setup). Emits the `mcp.config_registered` internal event; when the
+	// operator opted into telemetry, the event is forwarded carrying at most the
+	// closed runtime tag. Reports are throttled per (actor, runtime) within a
+	// 24h in-process window — a throttled repeat is still a 202 with
+	// `recorded: false`, since the CLI treats the report as fire-and-forget.
+	// Any authenticated actor may report.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
+	ReportMcpConfigRegistrationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportMcpConfigRegistrationHTTPResp, error)
+
+	// ReportMcpConfigRegistrationWithResponse Report MCP config registration
+	//
+	// Record that an MCP server entry was written for an agent runtime.
+	//
+	// Called by `jentic setup` / `jentic skill init` once per runtime whose MCP
+	// config entry it wrote (best-effort on the CLI side — a failed report never
+	// blocks setup). Emits the `mcp.config_registered` internal event; when the
+	// operator opted into telemetry, the event is forwarded carrying at most the
+	// closed runtime tag. Reports are throttled per (actor, runtime) within a
+	// 24h in-process window — a throttled repeat is still a 202 with
+	// `recorded: false`, since the CLI treats the report as fire-and-forget.
+	// Any authenticated actor may report.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
+	ReportMcpConfigRegistrationWithResponse(ctx context.Context, body ReportMcpConfigRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportMcpConfigRegistrationHTTPResp, error)
 
 	// GetMeWithResponse Get Me
 	//
@@ -28670,6 +28893,89 @@ func (r CancelJobHTTPResp) ContentType() string {
 	return ""
 }
 
+type ReportMcpConfigRegistrationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *McpConfigRegistrationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetJSON202() *McpConfigRegistrationResponse {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ReportMcpConfigRegistrationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportMcpConfigRegistrationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportMcpConfigRegistrationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReportMcpConfigRegistrationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetMeHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -35844,6 +36150,54 @@ func (c *ClientWithResponses) CancelJobWithResponse(ctx context.Context, jobId s
 		return nil, err
 	}
 	return ParseCancelJobHTTPResp(rsp)
+}
+
+// ReportMcpConfigRegistrationWithBodyWithResponse Report MCP config registration
+//
+// Record that an MCP server entry was written for an agent runtime.
+//
+// Called by `jentic setup` / `jentic skill init` once per runtime whose MCP
+// config entry it wrote (best-effort on the CLI side — a failed report never
+// blocks setup). Emits the `mcp.config_registered` internal event; when the
+// operator opted into telemetry, the event is forwarded carrying at most the
+// closed runtime tag. Reports are throttled per (actor, runtime) within a
+// 24h in-process window — a throttled repeat is still a 202 with
+// `recorded: false`, since the CLI treats the report as fire-and-forget.
+// Any authenticated actor may report.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
+func (c *ClientWithResponses) ReportMcpConfigRegistrationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportMcpConfigRegistrationHTTPResp, error) {
+	rsp, err := c.ReportMcpConfigRegistrationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportMcpConfigRegistrationHTTPResp(rsp)
+}
+
+// ReportMcpConfigRegistrationWithResponse Report MCP config registration
+//
+// Record that an MCP server entry was written for an agent runtime.
+//
+// Called by `jentic setup` / `jentic skill init` once per runtime whose MCP
+// config entry it wrote (best-effort on the CLI side — a failed report never
+// blocks setup). Emits the `mcp.config_registered` internal event; when the
+// operator opted into telemetry, the event is forwarded carrying at most the
+// closed runtime tag. Reports are throttled per (actor, runtime) within a
+// 24h in-process window — a throttled repeat is still a 202 with
+// `recorded: false`, since the CLI treats the report as fire-and-forget.
+// Any authenticated actor may report.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /mcp/config-registrations (the `ReportMcpConfigRegistration` operationId).
+func (c *ClientWithResponses) ReportMcpConfigRegistrationWithResponse(ctx context.Context, body ReportMcpConfigRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportMcpConfigRegistrationHTTPResp, error) {
+	rsp, err := c.ReportMcpConfigRegistration(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportMcpConfigRegistrationHTTPResp(rsp)
 }
 
 // GetMeWithResponse Get Me
@@ -43738,6 +44092,74 @@ func ParseCancelJobHTTPResp(rsp *http.Response) (*CancelJobHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportMcpConfigRegistrationHTTPResp parses an HTTP response from a ReportMcpConfigRegistrationWithResponse call
+func ParseReportMcpConfigRegistrationHTTPResp(rsp *http.Response) (*ReportMcpConfigRegistrationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportMcpConfigRegistrationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest McpConfigRegistrationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ProblemDetail
