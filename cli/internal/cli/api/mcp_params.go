@@ -75,6 +75,12 @@ func normalizeToolArgs(raw json.RawMessage, specs []paramSpec) (map[string]any, 
 			if err != nil {
 				return nil, fmt.Errorf("parameter %q: %w", name, err)
 			}
+			if coerced == nil {
+				// The value decoded to JSON null (a stringified "null" for an
+				// object parameter): same absence semantics as the literal
+				// null handled above — absent, never present-but-nil.
+				continue
+			}
 			if !found {
 				got, gotName, found = coerced, name, true
 				continue
@@ -109,7 +115,13 @@ func coerceParam(v any, kind paramKind) (any, error) {
 	case paramInt:
 		return coerceInt(v)
 	case paramObject:
-		return coerceObject(v)
+		m, err := coerceObject(v)
+		if err != nil || m == nil {
+			// An untyped nil (not a typed nil map) signals "decoded to JSON
+			// null" so normalizeToolArgs can treat it as absent.
+			return nil, err
+		}
+		return m, nil
 	default:
 		return nil, fmt.Errorf("unknown parameter kind %d", kind)
 	}
@@ -189,6 +201,9 @@ func coerceObject(v any) (map[string]any, error) {
 		if err := json.Unmarshal([]byte(t), &m); err != nil {
 			return nil, fmt.Errorf("expected a JSON object (a stringified object is accepted): %w", err)
 		}
+		// A stringified "null" unmarshals to a nil map with no error; return
+		// it as-is — coerceParam maps it to the absent sentinel so it never
+		// surfaces as a present-but-nil parameter.
 		return m, nil
 	default:
 		return nil, fmt.Errorf("expected a JSON object, got %T", v)

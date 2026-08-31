@@ -210,6 +210,31 @@ func TestMCPSession_DiscoveryRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMCPSession_MissingQueryIsProtocolError proves the invalid-params
+// contract over a real client session, not just a direct handler call: the
+// *jsonrpc.Error a handler returns must reach the CLIENT as a protocol error
+// (the SDK's error propagation), never be flattened into a tool result.
+func TestMCPSession_MissingQueryIsProtocolError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	s := newTestMCPServer(t, nil)
+	cs := connectTestClient(t, s)
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "search_apis",
+		Arguments: map[string]any{},
+	})
+	if err == nil {
+		t.Fatalf("want a protocol error at the client, got a result: %v", res)
+	}
+	// The invalid-params message must survive the round trip so the model can
+	// correct the call.
+	if !strings.Contains(err.Error(), "query") {
+		t.Errorf("client-side error %q must name the missing parameter", err.Error())
+	}
+}
+
 func TestMCPSession_GetStartedDiagnosesNoConfig(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

@@ -38,7 +38,11 @@ var searchAPIsParams = []paramSpec{
 	{name: "query", kind: paramString},
 	{name: "apis", aliases: []string{"api"}, kind: paramStringList},
 	{name: "limit", kind: paramInt},
-	{name: "cursor", kind: paramString},
+	// next_cursor is aliased because it's the single most predictable drift:
+	// a model copying the response key straight back as the argument name.
+	// Without the fold the key would be silently dropped and the tool would
+	// re-serve page 1 forever.
+	{name: "cursor", aliases: []string{"next_cursor"}, kind: paramString},
 }
 
 func (s *mcpServer) handleSearchAPIs(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -57,7 +61,7 @@ func (s *mcpServer) handleSearchAPIs(ctx context.Context, req *mcp.CallToolReque
 
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
-		s.logger.Warn("search_apis failed", "error", err)
+		s.logger.Warn("search_apis failed", "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
 
@@ -66,6 +70,13 @@ func (s *mcpServer) handleSearchAPIs(ctx context.Context, req *mcp.CallToolReque
 		body.Apis = &apis
 	}
 	if limit, ok := args["limit"].(int); ok && limit != 0 {
+		// The docstring promises 1-100 (the server's own bound); enforce it
+		// here so an out-of-range value is an invalid-params protocol error
+		// the model can correct, not a soft INTERNAL_ERROR round-tripped from
+		// the server's 422 (which mis-hints retryability).
+		if limit < 1 || limit > 100 {
+			return nil, invalidParams(fmt.Errorf("limit must be between 1 and 100, got %d", limit))
+		}
 		body.Limit = &limit
 	}
 	if cursor, ok := args["cursor"].(string); ok && cursor != "" {
@@ -80,7 +91,7 @@ func (s *mcpServer) handleSearchAPIs(ctx context.Context, req *mcp.CallToolReque
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotImplemented {
 			err = &ux.CodedError{Code: ux.CodeInternalError, Msg: errSearchUnsupported.Error()}
 		}
-		s.logger.Warn("search_apis failed", "error", err)
+		s.logger.Warn("search_apis failed", "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
 	if resp.JSON200 == nil {
@@ -97,11 +108,20 @@ func (s *mcpServer) handleSearchAPIs(ctx context.Context, req *mcp.CallToolReque
 	for _, h := range resp.JSON200.Data {
 		hits = append(hits, toSearchHit(h))
 	}
+	// Pagination mirrors ux.NewList's invariant: has_more is DERIVED from
+	// cursor presence and an empty next_cursor is omitted, so the
+	// inconsistent pair {has_more:true, next_cursor:""} — which the CLI list
+	// envelope cannot represent, and which would trap a docstring-following
+	// model in a page-1 loop (the handler drops an empty cursor argument) —
+	// is unrepresentable here too, whatever the server sends.
+	nextCursor := deref(resp.JSON200.NextCursor)
 	payload := map[string]any{
 		"schema_version": mcpSchemaVersion,
 		"data":           hits,
-		"has_more":       resp.JSON200.HasMore,
-		"next_cursor":    deref(resp.JSON200.NextCursor),
+		"has_more":       nextCursor != "",
+	}
+	if nextCursor != "" {
+		payload["next_cursor"] = nextCursor
 	}
 	return s.result(cctx, payload), nil
 }
@@ -132,7 +152,7 @@ func (s *mcpServer) handleInspectOperation(ctx context.Context, req *mcp.CallToo
 
 	ins, err := s.inspector(cctx)
 	if err != nil {
-		s.logger.Warn("inspect_operation failed", "error", err)
+		s.logger.Warn("inspect_operation failed", "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
 	body, err := ins.Inspect(cctx, target, revision, "json")
@@ -149,7 +169,7 @@ func (s *mcpServer) handleInspectOperation(ctx context.Context, req *mcp.CallToo
 					"then inspect the operation_id (or the METHOD:url) from one of its hits.",
 			}, "search_apis"), nil
 		}
-		s.logger.Warn("inspect_operation failed", "error", err)
+		s.logger.Warn("inspect_operation failed", "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
 

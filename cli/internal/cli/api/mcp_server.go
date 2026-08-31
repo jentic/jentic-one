@@ -150,9 +150,12 @@ var searchAPIsSchema = map[string]any{
 }
 
 // inspectOperationSchema declares no required list: operation_id may arrive
-// under its aliases (id, uuid), which a required constraint would reject
-// before the normalizer could fold them. The handler enforces presence with
-// a JSON-RPC invalid-params error naming all accepted spellings.
+// under its aliases (id, uuid), and a client-side schema validator would
+// reject those spellings before the call ever reached the normalizer. (The
+// server itself never validates — raw AddTool leaves that to the handler, as
+// noted above — so any `required` here, including search_apis' required
+// query, is advisory for clients; presence is enforced in the handler with
+// a JSON-RPC invalid-params error naming all accepted spellings.)
 var inspectOperationSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
@@ -314,6 +317,15 @@ func (s *mcpServer) result(ctx context.Context, payload map[string]any) *mcp.Cal
 // mcpSchemaVersion pins the machine-contract shape of the MCP tool payloads,
 // mirroring the CLI envelopes' schema_version (13 §2/§6).
 const mcpSchemaVersion = "1"
+
+// redactedErr funnels an error's message through the ux redaction backstop
+// before it is written to the MCP log file. The log is an output surface like
+// stderr — and HTTPError.Error() embeds the raw upstream response body — so
+// every failure-logging site must apply the same guarantee ReportError's
+// stderr path does, not write err verbatim.
+func redactedErr(err error) string {
+	return string(ux.RedactBytes([]byte(err.Error())))
+}
 
 // softError converts a failure into an isError tool result carrying the SAME
 // coded taxonomy as the CLI's agent envelope ({schema_version, error_code,

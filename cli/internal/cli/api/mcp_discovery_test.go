@@ -6,10 +6,13 @@ package api
 // search_apis recovery pointer, and the redaction funnel on inspect bodies.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -144,6 +147,118 @@ func TestMCPSearchAPIs_AliasAndStringCoercionReachTheWire(t *testing.T) {
 	}
 	if gotBody.Limit == nil || *gotBody.Limit != 3 {
 		t.Errorf("limit on the wire = %v, want the parsed 3", gotBody.Limit)
+	}
+}
+
+func TestMCPSearchAPIs_LimitOutOfRangeIsInvalidParams(t *testing.T) {
+	s := stampedTestMCPServer(t)
+	for _, limit := range []int{-5, 500} {
+		res, err := s.handleSearchAPIs(activeCtx("http://127.0.0.1:0"),
+			callToolRequest("search_apis", fmt.Sprintf(`{"query":"pets","limit":%d}`, limit)))
+		if res != nil {
+			t.Fatalf("limit=%d: want a protocol error, got a result: %v", limit, res)
+		}
+		var wireErr *jsonrpc.Error
+		if !errors.As(err, &wireErr) || wireErr.Code != jsonrpc.CodeInvalidParams {
+			t.Fatalf("limit=%d: err = %v, want a JSON-RPC invalid-params error", limit, err)
+		}
+		// The message must name the bound so the model can correct the call.
+		if !strings.Contains(wireErr.Message, "between 1 and 100") {
+			t.Errorf("limit=%d: message %q must name the 1-100 bound", limit, wireErr.Message)
+		}
+	}
+}
+
+// TestMCPSearchAPIs_InconsistentPaginationForcedConsistent pins the ux.NewList
+// derivation rule on the MCP envelope: a server responding has_more:true with
+// an empty cursor must NOT reach the model as that inconsistent pair (the
+// handler drops an empty cursor argument, so a docstring-following model would
+// loop on page 1 forever). has_more is derived from cursor presence and an
+// empty next_cursor is omitted, matching the CLI list envelope shape.
+func TestMCPSearchAPIs_InconsistentPaginationForcedConsistent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"has_more":true,"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleSearchAPIs(activeCtx(srv.URL), callToolRequest("search_apis", `{"query":"pets"}`))
+	if err != nil {
+		t.Fatalf("handleSearchAPIs: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected soft error: %v", res.Content)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["has_more"] != false {
+		t.Errorf("has_more = %v, want false derived from the empty cursor", payload["has_more"])
+	}
+	if cursor, present := payload["next_cursor"]; present {
+		t.Errorf("next_cursor = %v, want the empty cursor omitted (CLI envelope shape)", cursor)
+	}
+}
+
+// TestMCPSearchAPIs_501IsSoftSearchUnsupported pins the 501 mapping on the MCP
+// path itself: search disabled on this deployment is a deployment fact the
+// model should read as a soft error, with searchE's exact message.
+func TestMCPSearchAPIs_501IsSoftSearchUnsupported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotImplemented)
+		_, _ = w.Write([]byte(`{"detail":"search not implemented"}`))
+	}))
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleSearchAPIs(activeCtx(srv.URL), callToolRequest("search_apis", `{"query":"pets"}`))
+	if err != nil {
+		t.Fatalf("a deployment fact must be a soft error, not a protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeInternalError {
+		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeInternalError)
+	}
+	if msg, _ := payload["error"].(string); msg != errSearchUnsupported.Error() {
+		t.Errorf("error = %q, want %q", msg, errSearchUnsupported.Error())
+	}
+}
+
+// TestMCPSearchAPIs_FailureLogIsRedacted pins the redactedErr funnel on the
+// MCP log surface: HTTPError.Error() embeds the raw upstream body, so a
+// secret in a failure response must not reach the log file verbatim.
+func TestMCPSearchAPIs_FailureLogIsRedacted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		// A non-JSON body: Detail() falls back to the raw body, so Error()
+		// carries the embedded secret pair verbatim.
+		_, _ = w.Write([]byte(`upstream failure: {"api_key":"sk-logleak"}`))
+	}))
+	defer srv.Close()
+
+	var logBuf bytes.Buffer
+	s := stampedTestMCPServer(t)
+	s.logger = slog.New(slog.NewJSONHandler(&logBuf, nil))
+
+	res, err := s.handleSearchAPIs(activeCtx(srv.URL), callToolRequest("search_apis", `{"query":"pets"}`))
+	if err != nil {
+		t.Fatalf("handleSearchAPIs: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	logged := logBuf.String()
+	if logged == "" {
+		t.Fatalf("failure must be logged")
+	}
+	if strings.Contains(logged, "sk-logleak") {
+		t.Fatalf("secret leaked into the MCP log: %s", logged)
+	}
+	if !strings.Contains(logged, "[REDACTED]") {
+		t.Errorf("want the redaction marker in the log, got: %s", logged)
 	}
 }
 
@@ -292,6 +407,32 @@ func TestMCPInspectOperation_RedactsSecretsInBody(t *testing.T) {
 	text := res.Content[0].(*mcp.TextContent).Text
 	if strings.Contains(text, "sk-verysecret") {
 		t.Fatalf("secret leaked through the tool result: %s", text)
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Errorf("want the redaction marker in the result, got: %s", text)
+	}
+}
+
+// TestMCPInspectOperation_RedactsNonStringSecretValues pins the STRUCTURED
+// redaction pass through the MCP marshal path: a secret carried as a
+// non-string value (here an object) is exactly the shape the byte-level reKV
+// backstop cannot catch (round-3 P0), so this distinguishes "full funnel
+// wired" from "byte backstop only".
+func TestMCPInspectOperation_RedactsNonStringSecretValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"method":"GET","url":"https://api.acme.com/v1/pets","auth":{"client_secret":{"value":"sk-nested-object-secret"}}}`))
+	}))
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleInspectOperation(activeCtx(srv.URL), callToolRequest("inspect_operation", `{"operation_id":"op_abc"}`))
+	if err != nil {
+		t.Fatalf("handleInspectOperation: %v", err)
+	}
+	text := res.Content[0].(*mcp.TextContent).Text
+	if strings.Contains(text, "sk-nested-object-secret") {
+		t.Fatalf("non-string secret value leaked through the tool result: %s", text)
 	}
 	if !strings.Contains(text, "[REDACTED]") {
 		t.Errorf("want the redaction marker in the result, got: %s", text)

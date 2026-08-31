@@ -104,11 +104,11 @@ func (a *app) mcpE(cmd *cobra.Command, opts *mcpOptions) error {
 	case isClientDisconnect(err):
 		// The MCP client closed (or killed) the stdio pipe — the normal end of
 		// a stdio session, even when it arrives mid-flight. Not an error.
-		logger.Info("mcp client disconnected", "cause", err.Error())
+		logger.Info("mcp client disconnected", "cause", redactedErr(err))
 		err = nil
 	}
 	if err != nil {
-		logger.Error("mcp server exited", "error", err)
+		logger.Error("mcp server exited", "error", redactedErr(err))
 		return reportCoded(aud, err)
 	}
 	return nil

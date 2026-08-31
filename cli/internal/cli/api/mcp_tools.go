@@ -248,7 +248,7 @@ func (s *mcpServer) handleWhoami(ctx context.Context, req *mcp.CallToolRequest) 
 
 	me, err := s.app.getMe(cctx)
 	if err != nil {
-		s.logger.Warn("whoami failed", "error", err)
+		s.logger.Warn("whoami failed", "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
 	// Envelope passthrough: the same GET /me agent object `jentic access

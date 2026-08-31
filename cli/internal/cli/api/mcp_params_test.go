@@ -82,6 +82,14 @@ func TestNormalizeToolArgs_Table(t *testing.T) {
 			want:  map[string]any{"query": "q", "apis": []string{"acme/pets/v1"}},
 		},
 		{
+			// The response key copied straight back as the argument name —
+			// the pagination drift the alias exists to absorb.
+			name:  "next_cursor aliases cursor",
+			raw:   `{"query":"q","next_cursor":"page2"}`,
+			specs: searchSpecs,
+			want:  map[string]any{"query": "q", "cursor": "page2"},
+		},
+		{
 			name:  "one-element list unwraps to a string",
 			raw:   `{"operation_id":["op_abc"]}`,
 			specs: inspectSpecs,
@@ -110,6 +118,15 @@ func TestNormalizeToolArgs_Table(t *testing.T) {
 			raw:   `{"query":"q","cursor":null}`,
 			specs: searchSpecs,
 			want:  map[string]any{"query": "q"},
+		},
+		{
+			// json.Unmarshal decodes "null" to a nil map without error; that
+			// must mean absent (matching the literal-null rule above), never
+			// a present-but-nil object.
+			name:  "stringified null object is treated as absent",
+			raw:   `{"operation_id":"op_abc","inputs":"null"}`,
+			specs: inputsSpecs,
+			want:  map[string]any{"operation_id": "op_abc"},
 		},
 		{
 			name:    "conflicting alias values error",
