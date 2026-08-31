@@ -119,9 +119,63 @@ type mcpToolSpec struct {
 // must not lose the diagnosis get_started exists to deliver.
 var noArgsSchema = map[string]any{"type": "object", "properties": map[string]any{}}
 
-// toolSpecs declares the PR 1-A surface: exactly get_started and whoami
-// (discovery and execute tools land in 1-B/1-C). Docstrings encode the flow
-// (get_started first, whoami before requesting/executing) per §3.2.
+// The discovery tools' input schemas. Like noArgsSchema they stay permissive —
+// no additionalProperties:false, no alias properties — because the SDK's raw
+// AddTool leaves validation to the handler, where the shared normalizer
+// (mcp_params.go) resolves aliases and coerces shapes the schema alone would
+// have rejected. The declared types are the canonical shapes a well-behaved
+// model should send.
+var searchAPIsSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"query": map[string]any{
+			"type":        "string",
+			"description": "Natural-language description of the operation you need, e.g. \"create github issue\".",
+		},
+		"apis": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "Restrict to these APIs, as vendor/name/version slugs from earlier hits (a single string is also accepted).",
+		},
+		"limit": map[string]any{
+			"type":        "integer",
+			"description": "Max results per page (1-100, server default 10).",
+		},
+		"cursor": map[string]any{
+			"type":        "string",
+			"description": "next_cursor from the previous page, to fetch the next one.",
+		},
+	},
+	"required": []string{"query"},
+}
+
+// inspectOperationSchema declares no required list: operation_id may arrive
+// under its aliases (id, uuid), and a client-side schema validator would
+// reject those spellings before the call ever reached the normalizer. (The
+// server itself never validates — raw AddTool leaves that to the handler, as
+// noted above — so any `required` here, including search_apis' required
+// query, is advisory for clients; presence is enforced in the handler with
+// a JSON-RPC invalid-params error naming all accepted spellings.)
+var inspectOperationSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"operation_id": map[string]any{
+			"type": "string",
+			"description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a registry " +
+				"operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+		},
+		"revision": map[string]any{
+			"type":        "string",
+			"description": "Pin a specific revision ID for reproducibility (defaults to the current revision).",
+		},
+	},
+}
+
+// toolSpecs declares the served tool surface: the 1-A pre-auth pair
+// (get_started, whoami) plus the 1-B discovery pair (search_apis,
+// inspect_operation); the execute tools land in 1-C. Docstrings encode the
+// flow (get_started first, whoami before discovery, search → inspect →
+// execute) per §3.2, with concrete argument examples a model can copy.
 func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	return []mcpToolSpec{
@@ -150,11 +204,52 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				Description: "Show the calling agent's identity as the Jentic control plane sees it: " +
 					"id, status, scopes, and toolkit bindings with the APIs each one serves. " +
 					"Call after get_started reports ready, and before requesting access or " +
-					"executing operations. On an auth error, call get_started for the fix.",
+					"executing operations — never execute an operation just to probe whether " +
+					"you have access. On an auth error, call get_started for the fix.",
 				InputSchema: noArgsSchema,
 				Annotations: readOnly,
 			},
 			handler:  s.handleWhoami,
+			readOnly: true,
+		},
+		{
+			tool: &mcp.Tool{
+				Name:  "search_apis",
+				Title: "Search API operations",
+				Description: "Search the connected Jentic One registry for API operations by " +
+					"natural-language query. This is the first step of the discovery flow " +
+					"(whoami → search_apis → inspect_operation → execute): call it whenever " +
+					"you need an operation you don't already have the id of. " +
+					`Example: {"query": "create github issue", "limit": 5}. Returns one page ` +
+					"as {data, has_more, next_cursor}; each hit carries the operation_id to " +
+					"pass to inspect_operation. When has_more is true, pass next_cursor back " +
+					"as cursor for the next page. Optionally restrict to specific APIs with " +
+					`apis (vendor/name/version slugs from earlier hits), e.g. ` +
+					`{"query": "list pets", "apis": ["acme/pets/v1"]}. An empty data array ` +
+					"means nothing matching is imported into this instance's registry yet.",
+				InputSchema: searchAPIsSchema,
+				Annotations: readOnly,
+			},
+			handler:  s.handleSearchAPIs,
+			readOnly: true,
+		},
+		{
+			tool: &mcp.Tool{
+				Name:  "inspect_operation",
+				Title: "Inspect an operation's contract",
+				Description: "Fetch one operation's full contract before executing it: HTTP method, " +
+					"URL, parameters, request/response schemas, and security requirements. " +
+					"This is the read-contract step of the flow (whoami → search_apis → " +
+					"inspect_operation → execute) — always inspect before you execute. " +
+					`Example: {"operation_id": "op_abc123"} with an id from a search_apis ` +
+					`hit, or a METHOD:url pair like {"operation_id": ` +
+					`"GET:https://rest.coincap.io/v3/markets"}. Optionally pin a revision ` +
+					"for reproducibility. If the operation is not found, call search_apis " +
+					"to rediscover the right id.",
+				InputSchema: inspectOperationSchema,
+				Annotations: readOnly,
+			},
+			handler:  s.handleInspectOperation,
 			readOnly: true,
 		},
 	}
@@ -223,6 +318,15 @@ func (s *mcpServer) result(ctx context.Context, payload map[string]any) *mcp.Cal
 // mirroring the CLI envelopes' schema_version (13 §2/§6).
 const mcpSchemaVersion = "1"
 
+// redactedErr funnels an error's message through the ux redaction backstop
+// before it is written to the MCP log file. The log is an output surface like
+// stderr — and HTTPError.Error() embeds the raw upstream response body — so
+// every failure-logging site must apply the same guarantee ReportError's
+// stderr path does, not write err verbatim.
+func redactedErr(err error) string {
+	return string(ux.RedactBytes([]byte(err.Error())))
+}
+
 // softError converts a failure into an isError tool result carrying the SAME
 // coded taxonomy as the CLI's agent envelope ({schema_version, error_code,
 // error, actionable_step}) — plus the instance stamp (degraded when the
@@ -231,6 +335,15 @@ const mcpSchemaVersion = "1"
 // reach the model as data it can act on. Auth/config failures append the
 // get_started pointer so the model's next step is always discoverable.
 func (s *mcpServer) softError(ctx context.Context, err error) *mcp.CallToolResult {
+	return s.softErrorNext(ctx, err, "")
+}
+
+// softErrorNext is softError with an explicit next_tool override for handlers
+// that know a better recovery than the code-keyed default — e.g. an inspect
+// 404 is RESOLVE_FAILED, but the fix is search_apis (find the right id), not
+// get_started (the identity already resolved). An empty nextTool keeps the
+// default mapping.
+func (s *mcpServer) softErrorNext(ctx context.Context, err error, nextTool string) *mcp.CallToolResult {
 	coded := mcpCoded(err)
 	payload := map[string]any{
 		"schema_version": mcpSchemaVersion,
@@ -243,9 +356,14 @@ func (s *mcpServer) softError(ctx context.Context, err error) *mcp.CallToolResul
 	if len(coded.Details) > 0 {
 		payload["details"] = coded.Details
 	}
-	switch coded.Code {
-	case ux.CodeNotAuthenticated, ux.CodePendingApproval, ux.CodeResolveFailed:
-		payload["next_tool"] = "get_started"
+	if nextTool == "" {
+		switch coded.Code {
+		case ux.CodeNotAuthenticated, ux.CodePendingApproval, ux.CodeResolveFailed:
+			nextTool = "get_started"
+		}
+	}
+	if nextTool != "" {
+		payload["next_tool"] = nextTool
 	}
 	switch coded.Code {
 	case ux.CodeNotAuthenticated, ux.CodePendingApproval:

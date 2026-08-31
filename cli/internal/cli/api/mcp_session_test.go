@@ -27,20 +27,29 @@ import (
 // the live client session.
 func connectTestClient(t *testing.T, s *mcpServer) *mcp.ClientSession {
 	t.Helper()
-	return connectTestClientCtx(context.Background(), t, s)
+	return connectTestClientWithContext(context.Background(), t, s)
 }
 
 // connectTestClientCtx is connectTestClient with a caller-supplied SERVER
-// session context: the values on ctx (ActiveState, transport hook) are what
-// `jentic mcp` injects before srv.run — the tests pin that they survive the
-// SDK's jsonrpc2 plumbing into the tool-handler contexts.
+// session context — kept as an alias of connectTestClientWithContext so both
+// naming generations of the session tests share one implementation.
 func connectTestClientCtx(ctx context.Context, t *testing.T, s *mcpServer) *mcp.ClientSession {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	return connectTestClientWithContext(ctx, t, s)
+}
+
+// connectTestClientWithContext is connectTestClient with a caller-supplied
+// server-side context — the in-process stand-in for mcpE's run(ctx): values on
+// it (the interceptor's ActiveState, the transport hook) must reach the tool
+// handlers; the tests pin that they survive the SDK's jsonrpc2 plumbing into
+// the tool-handler contexts.
+func connectTestClientWithContext(serverCtx context.Context, t *testing.T, s *mcpServer) *mcp.ClientSession {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 
 	clientT, serverT := mcp.NewInMemoryTransports()
-	ss, err := s.server.Connect(ctx, serverT, nil)
+	ss, err := s.server.Connect(serverCtx, serverT, nil)
 	if err != nil {
 		t.Fatalf("server connect: %v", err)
 	}
@@ -91,7 +100,7 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = tool
 	}
-	for _, want := range []string{"get_started", "whoami"} {
+	for _, want := range []string{"get_started", "whoami", "search_apis", "inspect_operation"} {
 		tool, ok := names[want]
 		if !ok {
 			t.Fatalf("tools/list = %v, missing %q", keys(names), want)
@@ -100,8 +109,129 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 			t.Errorf("tool %q must carry readOnlyHint", want)
 		}
 	}
-	if len(names) != 2 {
-		t.Errorf("PR 1-A registers exactly get_started and whoami, got %v", keys(names))
+	if len(names) != 4 {
+		t.Errorf("PR 1-B serves exactly get_started, whoami, search_apis, and inspect_operation, got %v", keys(names))
+	}
+}
+
+// TestMCPSession_ReadOnlyServesDiscoveryTools pins the --read-only contract on
+// the 1-B surface: every discovery tool is annotated read-only, so the flag
+// must not withhold any of them (it starts biting with 1-C's execute).
+func TestMCPSession_ReadOnlyServesDiscoveryTools(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	s := newTestMCPServer(t, &mcpOptions{readOnly: true})
+	cs := connectTestClient(t, s)
+
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	if len(tools.Tools) != 4 {
+		names := make([]string, 0, len(tools.Tools))
+		for _, tool := range tools.Tools {
+			names = append(names, tool.Name)
+		}
+		t.Errorf("--read-only must serve all 4 read-only tools, got %v", names)
+	}
+}
+
+// TestMCPSession_DiscoveryRoundTrip drives search_apis → inspect_operation
+// through a real client session against an httptest control plane: the state
+// and pagination/alias tolerance must survive the full JSON-RPC round trip,
+// not just a direct handler call.
+func TestMCPSession_DiscoveryRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/search":
+			_, _ = w.Write([]byte(`{
+				"data": [{"type":"operation","api":{"vendor":"acme","name":"pets","version":"v1","host":"acme.com"},"operation_id":"op1","method":"GET","url":"/pets","name":"List Pets","relevance_score":0.9,"_links":{"inspect":"/inspect?id=GET%20/pets"}}],
+				"has_more": false,
+				"next_cursor": ""
+			}`))
+		case "/inspect":
+			_, _ = w.Write([]byte(`{"method":"GET","url":"https://acme.com/pets","parameters":[]}`))
+		case "/instance":
+			_, _ = w.Write([]byte(`{"backend":"local","host":"127.0.0.1:8000","instance_id":"digest-1"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	s := newTestMCPServer(t, nil)
+	s.instances.fetch = fetchInstance // the real GET /instance path, against the httptest plane
+	cs := connectTestClientWithContext(activeCtx(srv.URL), t, s)
+	ctx := context.Background()
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "search_apis",
+		Arguments: map[string]any{"query": "list pets"},
+	})
+	if err != nil {
+		t.Fatalf("search_apis: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("search_apis soft-errored: %v", res.Content)
+	}
+	payload := decodeToolJSON(t, res)
+	hits, ok := payload["data"].([]any)
+	if !ok || len(hits) != 1 {
+		t.Fatalf("data = %v, want one hit", payload["data"])
+	}
+	opID, _ := hits[0].(map[string]any)["operation_id"].(string)
+	if opID == "" {
+		t.Fatalf("hit carries no operation_id: %v", hits[0])
+	}
+	if stamp, ok := payload["instance"].(map[string]any); !ok || stamp["backend"] != "local" {
+		t.Errorf("instance stamp = %v, want the live identity", payload["instance"])
+	}
+
+	// Feed the hit's operation_id back — under the `id` alias, as a drifting
+	// model would.
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "inspect_operation",
+		Arguments: map[string]any{"id": opID},
+	})
+	if err != nil {
+		t.Fatalf("inspect_operation: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("inspect_operation soft-errored: %v", res.Content)
+	}
+	payload = decodeToolJSON(t, res)
+	if payload["method"] != "GET" || payload["url"] != "https://acme.com/pets" {
+		t.Errorf("inspect payload = %v, want the raw contract passed through", payload)
+	}
+}
+
+// TestMCPSession_MissingQueryIsProtocolError proves the invalid-params
+// contract over a real client session, not just a direct handler call: the
+// *jsonrpc.Error a handler returns must reach the CLIENT as a protocol error
+// (the SDK's error propagation), never be flattened into a tool result.
+func TestMCPSession_MissingQueryIsProtocolError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	s := newTestMCPServer(t, nil)
+	cs := connectTestClient(t, s)
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "search_apis",
+		Arguments: map[string]any{},
+	})
+	if err == nil {
+		t.Fatalf("want a protocol error at the client, got a result: %v", res)
+	}
+	// The invalid-params message must survive the round trip so the model can
+	// correct the call.
+	if !strings.Contains(err.Error(), "query") {
+		t.Errorf("client-side error %q must name the missing parameter", err.Error())
 	}
 }
 
@@ -155,8 +285,8 @@ func TestMCPSession_ExcludeToolsFilters(t *testing.T) {
 			t.Errorf("--exclude-tools=whoami must withhold the tool")
 		}
 	}
-	if len(tools.Tools) != 1 {
-		t.Errorf("tools = %d, want 1 after exclusion", len(tools.Tools))
+	if len(tools.Tools) != 3 {
+		t.Errorf("tools = %d, want 3 after exclusion", len(tools.Tools))
 	}
 }
 
