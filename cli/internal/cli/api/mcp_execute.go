@@ -157,7 +157,7 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	}
 	// Auth failures (not registered / pending / revoked) map to their coded
 	// soft errors with the default get_started pointer (§3.7 table).
-	_, token, err := s.app.contextSession(st)
+	_, token, err := s.app.contextSession(cctx, st)
 	if err != nil {
 		s.logger.Warn(toolName+" auth failed", "error", err)
 		return s.softError(cctx, err), nil

@@ -17,6 +17,17 @@ type Credentials struct {
 	IdentityName        string
 	EnvironmentName     string
 	InjectedBearerToken string // file-less / bring-your-own-token override
+
+	// HTTPClient, when set, is the client the RFC 7523 token exchange (the
+	// mint) rides — the seam that carries the environment's SEC-20 CA-pinned
+	// transport and the attribution hook (User-Agent / session headers) into
+	// the exchange, so a mint shares the exact transport posture of every
+	// other backend call (#1205). Nil falls back to the package's default
+	// exchange client (system roots, no attribution). Callers must supply the
+	// BASE plane client, never one wrapped in the SDK's retry policy: the
+	// mint is what the policy's 401 re-exchange arm invokes, so routing it
+	// back through that policy could recurse.
+	HTTPClient *http.Client
 }
 
 // IdentityRef extracts the (identity, environment) pair keys/tokens are stored

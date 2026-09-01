@@ -608,7 +608,11 @@ func (s *mcpServer) refreshTokenIfScopeGranted(ctx context.Context, st *clictx.A
 	if !requestGrantedScope(req) {
 		return
 	}
-	creds := credsFromState(st)
+	creds, err := credsFromState(ctx, st)
+	if err != nil {
+		s.logger.Warn("skipping token re-mint; mint transport unavailable", "error", redactedErr(err))
+		return
+	}
 	if creds.InjectedBearerToken != "" {
 		return // static credential: nothing mintable to refresh
 	}

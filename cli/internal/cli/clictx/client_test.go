@@ -2,7 +2,11 @@ package clictx
 
 import (
 	"context"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
@@ -105,5 +109,70 @@ func TestGetControlClient_BuildsWithState(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("nil control client")
+	}
+}
+
+// markerTransport tags a wrapped RoundTripper so tests can prove the hook
+// composed over (never displaced) the resolved base transport.
+type markerTransport struct{ base http.RoundTripper }
+
+func (m markerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.base.RoundTrip(req)
+}
+
+// TestAuthHTTPClient_PinnedAndHooked pins the #1205 mint-transport builder:
+// the client the RFC 7523 exchange rides must carry the SEC-20 CA-pinned
+// transport (fail closed on a broken bundle) with the context's TransportHook
+// composed over it — the same construction path every plane client uses.
+func TestAuthHTTPClient_PinnedAndHooked(t *testing.T) {
+	// A set-but-broken bundle fails closed (SEC-20), exactly like the
+	// generated clients.
+	if _, err := AuthHTTPClient(context.Background(), "/definitely/not/a/real/ca-bundle.pem"); err == nil {
+		t.Fatal("AuthHTTPClient must fail closed on an unreadable ca_cert_path (SEC-20)")
+	}
+
+	// A valid bundle yields a transport pinned to that pool.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	pemPath := filepath.Join(t.TempDir(), "ca.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if err := os.WriteFile(pemPath, pemBytes, 0o600); err != nil {
+		t.Fatalf("write ca bundle: %v", err)
+	}
+	hc, err := AuthHTTPClient(context.Background(), pemPath)
+	if err != nil {
+		t.Fatalf("AuthHTTPClient with a valid bundle: %v", err)
+	}
+	pinned, ok := hc.Transport.(*http.Transport)
+	if !ok || pinned.TLSClientConfig == nil || pinned.TLSClientConfig.RootCAs == nil {
+		t.Fatalf("transport = %T, want an *http.Transport pinned to the custom CA pool", hc.Transport)
+	}
+
+	// The context's TransportHook composes OVER the pinned transport: the hook
+	// receives the pinning decision as its base (wrap, never displace).
+	var hookBase http.RoundTripper
+	ctx := WithTransportHook(context.Background(), func(base http.RoundTripper) http.RoundTripper {
+		hookBase = base
+		return markerTransport{base: base}
+	})
+	hc, err = AuthHTTPClient(ctx, pemPath)
+	if err != nil {
+		t.Fatalf("AuthHTTPClient with hook: %v", err)
+	}
+	if _, ok := hc.Transport.(markerTransport); !ok {
+		t.Fatalf("transport = %T, want the hook's wrapper", hc.Transport)
+	}
+	base, ok := hookBase.(*http.Transport)
+	if !ok || base.TLSClientConfig == nil || base.TLSClientConfig.RootCAs == nil {
+		t.Errorf("hook base = %T, want the CA-pinned transport as the inner RoundTripper", hookBase)
+	}
+
+	// No bundle and no hook: a plain default client (system roots).
+	hc, err = AuthHTTPClient(context.Background(), "")
+	if err != nil {
+		t.Fatalf("AuthHTTPClient with no bundle: %v", err)
+	}
+	if hc.Transport != nil {
+		t.Errorf("transport = %T, want nil (default transport on system roots)", hc.Transport)
 	}
 }

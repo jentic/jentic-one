@@ -9,6 +9,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -105,6 +106,16 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 	a.presentClaimAffordance(ctx, baseURL, clientID, claimToken)
 
 	creds := auth.Credentials{BaseURL: baseURL, IdentityName: identity, EnvironmentName: envName}
+	// The approval wait proves approval by MINTING (the exact credential path
+	// every data command uses), so the mint must ride the same transport those
+	// commands will: the SEC-20 CA-pinned client when this environment declares
+	// ca_cert_path, fail closed on a broken bundle (#1205). cfg was loaded
+	// above; an env registered without a custom CA yields the default client.
+	hc, err := clictx.AuthHTTPClient(ctx, cfg.Environments[envName].CACertPath)
+	if err != nil {
+		return err
+	}
+	creds.HTTPClient = hc
 	if err := a.waitForApproval(ctx, creds, clientID, timeout, claimToken != ""); err != nil {
 		return err
 	}

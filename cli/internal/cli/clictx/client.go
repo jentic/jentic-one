@@ -119,18 +119,18 @@ func ControlHTTPClient(ctx context.Context) (*http.Client, error) {
 	return hookedPlaneHTTPClient(ctx)
 }
 
-// hookedPlaneHTTPClient is the shared constructor behind the raw plane
-// clients: the SEC-20 CA-pinned transport when the environment declares
-// ca_cert_path (fail closed on a broken bundle, exactly like the generated
-// clients), the default transport otherwise, with the context's TransportHook
-// composed over it (wrap, never displace — the pinning decision stays the
-// inner RoundTripper).
-func hookedPlaneHTTPClient(ctx context.Context) (*http.Client, error) {
-	state, err := stateForClient(FromContext(ctx))
-	if err != nil {
-		return nil, err
-	}
-	hc, err := caCertHTTPClient(state.CACertPath)
+// AuthHTTPClient builds the *http.Client backend auth calls made OUTSIDE a
+// generated plane client — the RFC 7523 token mint (auth.Credentials.HTTPClient)
+// — must ride for an environment whose custom CA bundle is caCertPath: the
+// SEC-20 CA-pinned transport when set (fail closed on a broken bundle, exactly
+// like the generated clients), the default transport otherwise, with the
+// context's TransportHook composed over it (wrap, never displace). This is the
+// same construction path every plane client goes through, extracted so the
+// direct BearerToken/RefreshBearerToken call sites (the session bridge, access
+// refresh, the register wait loop) mint through the identical transport
+// posture instead of the auth package's unpinned default (#1205).
+func AuthHTTPClient(ctx context.Context, caCertPath string) (*http.Client, error) {
+	hc, err := caCertHTTPClient(caCertPath)
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +145,20 @@ func hookedPlaneHTTPClient(ctx context.Context) (*http.Client, error) {
 		hc.Transport = hook(base)
 	}
 	return hc, nil
+}
+
+// hookedPlaneHTTPClient is the shared constructor behind the raw plane
+// clients: the SEC-20 CA-pinned transport when the environment declares
+// ca_cert_path (fail closed on a broken bundle, exactly like the generated
+// clients), the default transport otherwise, with the context's TransportHook
+// composed over it (wrap, never displace — the pinning decision stays the
+// inner RoundTripper).
+func hookedPlaneHTTPClient(ctx context.Context) (*http.Client, error) {
+	state, err := stateForClient(FromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return AuthHTTPClient(ctx, state.CACertPath)
 }
 
 // GetControlClient is the single constructor every Control Plane command uses. It
