@@ -19,6 +19,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -407,11 +408,17 @@ func (p *accessControlPlane) handler(t *testing.T) http.HandlerFunc {
 			p.mu.Lock()
 			p.fileBody = body
 			p.mu.Unlock()
-			if p.fileCode == http.StatusConflict {
+			switch p.fileCode {
+			case http.StatusConflict:
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(`{"title":"duplicate","detail":"a pending request exists","status":409,` +
 					`"existing_request_id":"acr_old","approve_url":"/console/access-requests/acr_old"}`))
+				return
+			case http.StatusForbidden:
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"detail":"agents of this class may not file access requests"}`))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -662,6 +669,204 @@ func TestMCPRequestAccess_NeverSelfApproves(t *testing.T) {
 	for _, call := range plane.seen {
 		if call != "POST /access-requests" && !strings.HasPrefix(call, "GET /access-requests/") {
 			t.Errorf("request_access made a call that is neither file nor read: %s", call)
+		}
+	}
+}
+
+// --- review-wave regressions ----------------------------------------------------
+
+// TestMCPImportAPI_JobPollFailureIsSoftErrorNotSuccess pins the MAJOR review
+// finding: a failing GET /jobs/{id} leaves the job's state UNKNOWN — reporting
+// it as a clean non-terminal success would send the model into a re-import
+// loop (the docstring says re-call on a non-terminal status, and the backend
+// does not de-duplicate in-flight imports).
+func TestMCPImportAPI_JobPollFailureIsSoftErrorNotSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, ":import"):
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"job_id":"job_9","status":"queued","_links":{"job":"/jobs/job_9"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/jobs/job_9":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"detail":"job store down"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	s := fastAccessServer(t)
+	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"googleapis.com/sheets"}`))
+	if err != nil {
+		t.Fatalf("handleImportAPI: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("a job-poll failure must be an isError result, never the still-running success shape: %v", res.Content)
+	}
+	payload := decodeToolJSON(t, res)
+	if code, _ := payload["error_code"].(string); code == "" {
+		t.Errorf("payload %v must carry a coded error", payload)
+	}
+	if payload["job_id"] != "job_9" {
+		t.Errorf("job_id = %v, want job_9 carried in extras so the model can keep watching this job", payload["job_id"])
+	}
+}
+
+// TestMCPImportAPI_TraversalAPIIDIsInvalidParams pins the syntactic guard in
+// front of the raw-path {api_id:path} route: traversal-shaped ids must never
+// reach the wire (rawPathEditor splices the value into the path VERBATIM).
+func TestMCPImportAPI_TraversalAPIIDIsInvalidParams(t *testing.T) {
+	s := fastAccessServer(t)
+	for _, bad := range []string{
+		"../access-requests",
+		"/catalog/x",
+		"a//b",
+		"a/./b",
+		"googleapis.com/sheets/..",
+		"googleapis.com/",
+	} {
+		res, err := s.handleImportAPI(activeCtx("http://127.0.0.1:0"),
+			callToolRequest("import_api", fmt.Sprintf(`{"api_id":%q}`, bad)))
+		if res != nil {
+			t.Fatalf("api_id %q: want a protocol error before the wire, got a result: %v", bad, res)
+		}
+		if err == nil || !strings.Contains(err.Error(), "search_catalog") {
+			t.Errorf("api_id %q: err %v must point back at search_catalog", bad, err)
+		}
+	}
+	// The legitimate umbrella shape (literal slash) must stay accepted.
+	if err := validateAPIID("googleapis.com/sheets"); err != nil {
+		t.Errorf("validateAPIID must accept a real umbrella api_id: %v", err)
+	}
+}
+
+// TestMCPSearchCatalog_403PointsAtRequestAccessForScope mirrors the import
+// mapping: a 403 on GET /catalog is the missing capabilities:read scope — an
+// access gap the agent can close itself — not a revoked identity.
+func TestMCPSearchCatalog_403PointsAtRequestAccessForScope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"detail":"requires one of: capabilities:read"}`))
+	}))
+	defer srv.Close()
+
+	s := fastAccessServer(t)
+	res, err := s.handleSearchCatalog(activeCtx(srv.URL), callToolRequest("search_catalog", `{"query":"x"}`))
+	if err != nil {
+		t.Fatalf("handleSearchCatalog: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeBrokerDenied {
+		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeBrokerDenied)
+	}
+	if payload["next_tool"] != "request_access" {
+		t.Errorf("next_tool = %v, want request_access", payload["next_tool"])
+	}
+	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "capabilities:read") {
+		t.Errorf("actionable_step %q must name the capabilities:read scope", step)
+	}
+}
+
+// TestMCPSearchCatalog_TransportFailureIsRetryable pins the shared
+// transportSoftError contract on the access loop: a dead control plane comes
+// back as a retryable TRANSPORT_ERROR with the get_started pointer, never as
+// INTERNAL_ERROR with no recovery.
+func TestMCPSearchCatalog_TransportFailureIsRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.Close() // the port is now provably closed: dial fails pre-send
+
+	s := fastAccessServer(t)
+	res, err := s.handleSearchCatalog(activeCtx(srv.URL), callToolRequest("search_catalog", `{"query":"x"}`))
+	if err != nil {
+		t.Fatalf("handleSearchCatalog: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeTransportError {
+		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeTransportError)
+	}
+	if payload["retryable"] != true {
+		t.Errorf("retryable = %v, want true (access-loop calls are reads or server-converging writes)", payload["retryable"])
+	}
+	if payload["next_tool"] != "get_started" {
+		t.Errorf("next_tool = %v, want get_started", payload["next_tool"])
+	}
+}
+
+// TestMCPRequestAccess_FilingForbiddenIsBrokerDenied: a 403 on the FILING
+// itself must not fall into the generic revoked-identity mapping — and must
+// not point at request_access either (an agent that may not file requests
+// cannot request the right to file them).
+func TestMCPRequestAccess_FilingForbiddenIsBrokerDenied(t *testing.T) {
+	plane := &accessControlPlane{fileCode: http.StatusForbidden}
+	srv := httptest.NewServer(plane.handler(t))
+	defer srv.Close()
+
+	s := fastAccessServer(t)
+	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"toolkits":["acme/pets"],"reason":"r"}`))
+	if err != nil {
+		t.Fatalf("handleRequestAccess: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeBrokerDenied {
+		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeBrokerDenied)
+	}
+	if payload["next_tool"] != "whoami" {
+		t.Errorf("next_tool = %v, want whoami (request_access would be circular here)", payload["next_tool"])
+	}
+	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "operator") {
+		t.Errorf("actionable_step %q must route to the human operator", step)
+	}
+}
+
+// TestMCPRequestAccess_PollArmRejectsStrayFilingParams pins the poll-arm
+// symmetry: request_id plus ANY filing parameter — a target, a stray reason,
+// or a malformed rules_json — is a confused call the handler must reject, not
+// silently drop.
+func TestMCPRequestAccess_PollArmRejectsStrayFilingParams(t *testing.T) {
+	s := fastAccessServer(t)
+	for name, argsJSON := range map[string]string{
+		"stray reason":        `{"request_id":"acr_1","reason":"please"}`,
+		"stray auth":          `{"request_id":"acr_1","auth":["bearer"]}`,
+		"stray rules_json":    `{"request_id":"acr_1","rules_json":[{"effect":"allow"}]}`,
+		"malformed rules":     `{"request_id":"acr_1","rules_json":42}`,
+		"target and poll mix": `{"request_id":"acr_1","toolkits":["acme/pets"]}`,
+	} {
+		res, err := s.handleRequestAccess(activeCtx("http://127.0.0.1:0"), callToolRequest("request_access", argsJSON))
+		if res != nil {
+			t.Fatalf("%s: want a protocol error, got a result: %v", name, res)
+		}
+		if err == nil {
+			t.Errorf("%s: want an invalid-params error", name)
+		}
+	}
+}
+
+// TestAbsolutizeApproveURL_SchemeRelativeCleared pins the shared helper's
+// link-hijack guard: a scheme-relative approve_url would resolve onto a
+// FOREIGN host, so it is cleared; genuine relative paths still absolutize and
+// absolute URLs pass through.
+func TestAbsolutizeApproveURL_SchemeRelativeCleared(t *testing.T) {
+	base := "https://control.example"
+	for _, tc := range []struct{ in, want string }{
+		{"//evil.example/console/x", ""},
+		{"/console/access-requests/acr_1", base + "/console/access-requests/acr_1"},
+		{"https://control.example/console/x", "https://control.example/console/x"},
+		{"", ""},
+	} {
+		req := &control.AccessRequestResponse{ApproveUrl: tc.in}
+		absolutizeApproveURL(base, req)
+		if req.ApproveUrl != tc.want {
+			t.Errorf("absolutizeApproveURL(%q) = %q, want %q", tc.in, req.ApproveUrl, tc.want)
 		}
 	}
 }

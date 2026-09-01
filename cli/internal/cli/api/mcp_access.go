@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -74,6 +75,27 @@ var requestAccessParams = []paramSpec{
 	{name: "reason", kind: paramString},
 }
 
+// transportSoftError is the access-loop twin of executeTransportError
+// (mcp_execute.go): a transport failure must reach the model as a retryable
+// TRANSPORT_ERROR with the get_started pointer — never as INTERNAL_ERROR
+// ("stop, CLI bug") with no recovery. Unlike execute, retryable is safe to
+// hint unconditionally here: every access-loop call is a read or a
+// server-converging write (a re-import of the same api_id converges, a
+// duplicate filing answers 409 — nothing double-executes). Non-transport
+// failures (completed *HTTPError, auth, no-config) fall through to the
+// shared code-keyed mapping, keeping any caller-supplied extras.
+func (s *mcpServer) transportSoftError(ctx context.Context, err error, extra map[string]any) *mcp.CallToolResult {
+	err = classifyTransportErr(err)
+	if asCoded(err).Code != ux.CodeTransportError {
+		return s.softErrorExtra(ctx, err, "", extra)
+	}
+	merged := map[string]any{"retryable": true}
+	for k, v := range extra {
+		merged[k] = v
+	}
+	return s.softErrorExtra(ctx, err, "get_started", merged)
+}
+
 // ── search_catalog ────────────────────────────────────────────────────────────
 
 func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -103,16 +125,31 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 	page, err := client.List(cctx, catalogListParams{Q: query, Cursor: cursor, Limit: limit})
 	if err != nil {
 		s.logger.Warn("search_catalog failed", "error", redactedErr(err))
-		// The same missing-route mapping catalogListErr makes: no catalog on
-		// this deployment is a deployment fact, not a malformed call.
 		var he *HTTPError
-		if errors.As(err, &he) && (he.StatusCode == http.StatusNotFound || he.StatusCode == http.StatusNotImplemented) {
-			return s.softError(cctx, &ux.CodedError{
-				Code: ux.CodeInternalError,
-				Msg:  fmt.Sprintf("catalog not available on this server (HTTP %d)", he.StatusCode),
-			}), nil
+		if errors.As(err, &he) {
+			switch he.StatusCode {
+			case http.StatusNotFound, http.StatusNotImplemented:
+				// The same missing-route mapping catalogListErr makes: no
+				// catalog on this deployment is a deployment fact, not a
+				// malformed call.
+				return s.softError(cctx, &ux.CodedError{
+					Code: ux.CodeInternalError,
+					Msg:  fmt.Sprintf("catalog not available on this server (HTTP %d)", he.StatusCode),
+				}), nil
+			case http.StatusForbidden:
+				// A 403 on THIS route is the missing capabilities:read scope,
+				// not a revoked identity — the generic NOT_AUTHENTICATED +
+				// get_started mapping would dead-end an agent that can fix
+				// this itself via request_access (mirrors importAPIError).
+				return s.softErrorNext(cctx, &ux.CodedError{
+					Code: ux.CodeBrokerDenied,
+					Msg:  fmt.Sprintf("reading the catalog requires the capabilities:read scope: %v", err),
+					Actionable: `Request the scope with request_access, e.g. {"scopes": ["capabilities:read"], ` +
+						`"reason": "search the catalog for the API needed for this task"}, wait for your operator's approval, then retry search_catalog.`,
+				}, "request_access"), nil
+			}
 		}
-		return s.softError(cctx, classifyTransportErr(err)), nil
+		return s.transportSoftError(cctx, err, nil), nil
 	}
 
 	// Envelope: the same entries + counters `jentic catalog search --json`
@@ -154,6 +191,9 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 		return nil, invalidParams(errors.New(`import_api requires "api_id" (aliases: "id", "api"): ` +
 			`a catalog entry id from a search_catalog hit, e.g. "googleapis.com/sheets"`))
 	}
+	if err := validateAPIID(apiID); err != nil {
+		return nil, invalidParams(err)
+	}
 
 	client, err := s.app.catalogSession(cctx)
 	if err != nil {
@@ -165,7 +205,15 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 		return s.importAPIError(cctx, apiID, err), nil
 	}
 
-	job, done := s.trackImportJob(cctx, client, jobID)
+	job, done, pollErr := s.trackImportJob(cctx, client, jobID)
+	if pollErr != nil {
+		// A failing GET /jobs/{id} is NOT "still running": reporting it as a
+		// clean non-terminal result would send the model into a re-import
+		// loop against a backend that de-duplicates nothing. Surface the
+		// failure with the job_id so the model can keep watching THIS job.
+		s.logger.Warn("import_api job poll failed", "api_id", apiID, "job_id", jobID, "error", redactedErr(pollErr))
+		return s.transportSoftError(cctx, pollErr, map[string]any{"job_id": jobID}), nil
+	}
 	if !done {
 		// Budget lapsed with the job still running: a normal result — the
 		// model converges by re-calling import_api (idempotent) or watches
@@ -193,7 +241,7 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 	result, err := client.JobResult(cctx, jobID)
 	if err != nil {
 		s.logger.Warn("import_api result fetch failed", "job_id", jobID, "error", redactedErr(err))
-		return s.softError(cctx, classifyTransportErr(err)), nil
+		return s.transportSoftError(cctx, err, map[string]any{"job_id": jobID}), nil
 	}
 	// Auto-promote the imported revisions to live, exactly like the CLI's
 	// default (`jentic catalog import` without --no-promote): unpromoted
@@ -209,11 +257,14 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 	}), nil
 }
 
-// trackImportJob polls the import job until it is terminal or the wait budget
-// (importWaitBudget, test-injectable) lapses. Returns the last-seen job and
-// whether it reached a terminal state. Poll cadence is the App's shared
-// schedule so tests shrink it without mutating globals.
-func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, jobID string) (*catalogJob, bool) {
+// trackImportJob polls the import job until it is terminal, the wait budget
+// (importWaitBudget, test-injectable) lapses, or a poll fails. The three
+// outcomes are DISTINCT: (job, true, nil) is terminal, (last, false, nil) is
+// a genuine budget/cancellation lapse with the job still running, and a
+// non-nil error means the job's state is UNKNOWN — the caller must surface
+// that as a failure, never as a clean "still running" result. Poll cadence is
+// the App's shared schedule so tests shrink it without mutating globals.
+func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, jobID string) (*catalogJob, bool, error) {
 	budget := s.importWaitBudget
 	if budget <= 0 {
 		budget = defaultImportWaitBudget
@@ -225,20 +276,19 @@ func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, j
 	for {
 		job, err := client.Job(ctx, jobID)
 		if err != nil {
-			s.logger.Warn("import_api job poll failed", "job_id", jobID, "error", redactedErr(err))
-			return last, false
+			return last, false, err
 		}
 		last = job
 		switch job.Status {
 		case catJobCompleted, catJobFailed, catJobCancelled, catJobDeadLetter:
-			return job, true
+			return job, true, nil
 		}
 		if time.Now().After(deadline) {
-			return last, false
+			return last, false, nil
 		}
 		select {
 		case <-ctx.Done():
-			return last, false
+			return last, false, nil
 		case <-time.After(delay):
 		}
 		if delay < pollMax {
@@ -272,7 +322,25 @@ func (s *mcpServer) importAPIError(ctx context.Context, apiID string, err error)
 			}, "request_access")
 		}
 	}
-	return s.softError(ctx, classifyTransportErr(err))
+	return s.transportSoftError(ctx, err, nil)
+}
+
+// validateAPIID syntactically guards the {api_id:path} route: the api_id is
+// spliced into the request path VERBATIM (catalog_client.go's rawPathEditor —
+// deliberately unescaped so umbrella ids keep their literal slash), which
+// means a traversal-shaped model-supplied value ("../access-requests", a
+// leading "/", empty or dot segments) would otherwise rewrite the route.
+// Reject those before the wire as a correctable protocol error.
+func validateAPIID(apiID string) error {
+	if strings.HasPrefix(apiID, "/") {
+		return fmt.Errorf("invalid api_id %q: a leading %q is not allowed — pass the api_id from a search_catalog hit verbatim", apiID, "/")
+	}
+	for _, seg := range strings.Split(apiID, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("invalid api_id %q: empty, %q, or %q path segments are not allowed — pass the api_id from a search_catalog hit verbatim", apiID, ".", "..")
+		}
+	}
+	return nil
 }
 
 // valueOr returns v, or fallback when v is empty (local twin of
@@ -313,11 +381,18 @@ func (s *mcpServer) handleRequestAccess(ctx context.Context, req *mcp.CallToolRe
 	}
 
 	// The poll arm: a request_id fetches the decision state and nothing else.
+	// Filing parameters riding along are a confused call, not noise to drop:
+	// a malformed rules_json or a stray reason silently ignored would teach
+	// the model its arguments were accepted.
 	if requestID, _ := args["request_id"].(string); requestID != "" {
 		opts, optsErr := requestAccessOptions(args)
-		if optsErr == nil && opts.targetCount() > 0 {
+		if optsErr != nil {
+			return nil, invalidParams(optsErr)
+		}
+		if opts.targetCount() > 0 || opts.reason != "" || len(opts.auths) > 0 || len(opts.rulesJSONs) > 0 {
 			return nil, invalidParams(errors.New(`pass EITHER "request_id" (to poll an existing request) ` +
-				`OR targets ("provision"/"toolkits"/"toolkit_ids"/"scopes") to file a new one, not both`))
+				`OR filing parameters ("provision"/"toolkits"/"toolkit_ids"/"scopes" with "auth"/"rules_json"/"reason") ` +
+				`to file a new one, not both`))
 		}
 		reqState, getErr := s.app.getAccessRequest(cctx, client, requestID)
 		if getErr != nil {
@@ -333,9 +408,9 @@ func (s *mcpServer) handleRequestAccess(ctx context.Context, req *mcp.CallToolRe
 				}, "request_access"), nil
 			}
 			s.logger.Warn("request_access poll failed", "request_id", requestID, "error", redactedErr(getErr))
-			return s.softError(cctx, classifyTransportErr(getErr)), nil
+			return s.transportSoftError(cctx, getErr, nil), nil
 		}
-		return s.accessRequestResult(cctx, st, reqState, nil), nil
+		return s.accessRequestResult(cctx, st, reqState, nil, true), nil
 	}
 
 	// The filing arm: compose the same item list `jentic access request`
@@ -364,7 +439,7 @@ func (s *mcpServer) handleRequestAccess(ctx context.Context, req *mcp.CallToolRe
 	})
 	if err != nil {
 		s.logger.Warn("request_access failed", "error", redactedErr(err))
-		return s.softError(cctx, classifyTransportErr(err)), nil
+		return s.transportSoftError(cctx, err, nil), nil
 	}
 	var reqState *control.AccessRequestResponse
 	var extra map[string]any
@@ -391,11 +466,23 @@ func (s *mcpServer) handleRequestAccess(ctx context.Context, req *mcp.CallToolRe
 		attached, getErr := s.app.getAccessRequest(cctx, client, dup.ExistingRequestId)
 		if getErr != nil {
 			s.logger.Warn("request_access attach failed", "request_id", dup.ExistingRequestId, "error", redactedErr(getErr))
-			return s.softError(cctx, classifyTransportErr(getErr)), nil
+			return s.transportSoftError(cctx, getErr, nil), nil
 		}
 		reqState = attached
 		extra = map[string]any{"attached_to_existing": true}
 	default:
+		if fileResp.StatusCode() == http.StatusForbidden {
+			// The control plane refused the FILING itself. Not the generic
+			// NOT_AUTHENTICATED + get_started mapping (the identity is fine)
+			// — and not a request_access pointer either: an agent that may
+			// not file requests cannot request the right to file them.
+			return s.softErrorNext(cctx, &ux.CodedError{
+				Code: ux.CodeBrokerDenied,
+				Msg:  fmt.Sprintf("the control plane refused to accept this access request (HTTP 403): %v", apiErrorFor(fileResp, nil)),
+				Actionable: "This agent is not permitted to file access requests; relay this error to your " +
+					"human operator — they can grant what you need directly in the dashboard.",
+			}, "whoami"), nil
+		}
 		if aerr := apiErrorFor(fileResp, nil); aerr != nil {
 			s.logger.Warn("request_access failed", "error", redactedErr(aerr))
 			return s.softError(cctx, aerr), nil
@@ -410,7 +497,7 @@ func (s *mcpServer) handleRequestAccess(ctx context.Context, req *mcp.CallToolRe
 		reqState = s.awaitAutoDecision(cctx, client, reqState)
 	}
 	s.logger.Info("request_access", "request_id", reqState.Id, "status", reqState.Status, "items", len(reqState.Items))
-	return s.accessRequestResult(cctx, st, reqState, extra), nil
+	return s.accessRequestResult(cctx, st, reqState, extra, false), nil
 }
 
 // awaitAutoDecision short-polls a just-filed request so a server-side
@@ -455,8 +542,10 @@ func (s *mcpServer) awaitAutoDecision(ctx context.Context, client *control.Clien
 // absolutized onto the environment's base URL) with schema_version and the
 // instance stamp joined. Terminal non-approved states map to the same coded
 // taxonomy the CLI's exit codes come from (terminalAccessError), phrased for
-// a model that polls tools instead of running shell commands.
-func (s *mcpServer) accessRequestResult(ctx context.Context, st *clictx.ActiveState, req *control.AccessRequestResponse, extra map[string]any) *mcp.CallToolResult {
+// a model that polls tools instead of running shell commands. viaPoll marks
+// the request_id arm, whose token re-mint is verify-gated (see
+// refreshTokenIfScopeGranted).
+func (s *mcpServer) accessRequestResult(ctx context.Context, st *clictx.ActiveState, req *control.AccessRequestResponse, extra map[string]any, viaPoll bool) *mcp.CallToolResult {
 	absolutizeApproveURL(st.BaseURL, req)
 	payload, err := structToMap(req)
 	if err != nil {
@@ -483,11 +572,11 @@ func (s *mcpServer) accessRequestResult(ctx context.Context, st *clictx.ActiveSt
 			Code:       ux.CodeBrokerDenied,
 			Msg:        fmt.Sprintf("request %s is %s, not approved; nothing was granted", req.Id, req.Status),
 			Actionable: "File a fresh request_access naming what you still need, with a clear reason.",
-		}, "", map[string]any{"request": payload})
+		}, "request_access", map[string]any{"request": payload})
 	case statusPartiallyApproved:
 		// A granted scope only takes effect once re-minted into the token —
 		// do it now, like the CLI, so the model needn't know about refresh.
-		s.refreshTokenIfScopeGranted(st, req)
+		s.refreshTokenIfScopeGranted(ctx, st, req, viaPoll)
 		return s.softErrorExtra(ctx, &ux.CodedError{
 			Code: ux.CodePartialApproval,
 			Msg:  "partially approved — not all requested items were granted",
@@ -495,7 +584,7 @@ func (s *mcpServer) accessRequestResult(ctx context.Context, st *clictx.ActiveSt
 				"assume the rest is available.",
 		}, "whoami", map[string]any{"request": payload})
 	case statusApproved:
-		s.refreshTokenIfScopeGranted(st, req)
+		s.refreshTokenIfScopeGranted(ctx, st, req, viaPoll)
 		return s.result(ctx, payload)
 	default: // pending
 		payload["instruction"] = pendingAccessInstruction
@@ -508,7 +597,14 @@ func (s *mcpServer) accessRequestResult(ctx context.Context, st *clictx.ActiveSt
 // tool call already carries it (the catalog:import loop depends on this).
 // Best-effort and silent to the wire — a mint failure only logs; bindings
 // take effect live server-side and need no re-mint.
-func (s *mcpServer) refreshTokenIfScopeGranted(st *clictx.ActiveState, req *control.AccessRequestResponse) {
+//
+// viaPoll gates the request_id arm: a model may poll an already-decided
+// request any number of times, and an unconditional re-mint per poll is pure
+// churn (InvalidateTokens + an assertion exchange each time). On that arm the
+// mint runs only when GET /me shows the granted scope actually missing from
+// the presented token (staleScopes); the filing arm — which observes the
+// decision exactly once — keeps the unconditional CLI behavior.
+func (s *mcpServer) refreshTokenIfScopeGranted(ctx context.Context, st *clictx.ActiveState, req *control.AccessRequestResponse, viaPoll bool) {
 	if !requestGrantedScope(req) {
 		return
 	}
@@ -519,9 +615,43 @@ func (s *mcpServer) refreshTokenIfScopeGranted(st *clictx.ActiveState, req *cont
 	if key, err := auth.ReadAPIKey(creds.IdentityRef()); err == nil && key != "" {
 		return
 	}
+	if viaPoll {
+		me, err := s.app.getMe(ctx)
+		if err != nil {
+			s.logger.Warn("skipping token re-mint; staleness check failed", "error", redactedErr(err))
+			return
+		}
+		if !grantedScopeStale(req, me) {
+			return // token already carries every granted scope — nothing to do
+		}
+	}
 	if _, err := auth.RefreshBearerToken(creds); err != nil {
 		s.logger.Warn("granted scope not yet on the token; re-mint failed", "error", redactedErr(err))
 	}
+}
+
+// grantedScopeStale reports whether any scope this request granted is missing
+// from the token the agent presents (per staleScopes' semantics: a server
+// that reports no token scopes at all makes staleness unknowable, which reads
+// as not-stale — skip the mint rather than churn).
+func grantedScopeStale(req *control.AccessRequestResponse, me *control.MeAgent) bool {
+	stale := staleScopes(me.Scopes, me.TokenScopes)
+	if len(stale) == 0 {
+		return false
+	}
+	staleSet := make(map[string]struct{}, len(stale))
+	for _, sc := range stale {
+		staleSet[sc] = struct{}{}
+	}
+	for _, it := range req.Items {
+		if it.ResourceType != "scope" || it.Action != "grant" || it.Status != "approved" || it.ResourceId == nil {
+			continue
+		}
+		if _, missing := staleSet[*it.ResourceId]; missing {
+			return true
+		}
+	}
+	return false
 }
 
 // requestAccessOptions folds the normalized arguments onto the CLI's
@@ -720,8 +850,7 @@ func (s *mcpServer) accessToolSpecs() []mcpToolSpec {
 				InputSchema: searchCatalogSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},
-			handler:  s.handleSearchCatalog,
-			readOnly: true,
+			handler: s.handleSearchCatalog,
 		},
 		{
 			tool: &mcp.Tool{
@@ -741,8 +870,7 @@ func (s *mcpServer) accessToolSpecs() []mcpToolSpec {
 				InputSchema: importAPISchema,
 				Annotations: &mcp.ToolAnnotations{IdempotentHint: true},
 			},
-			handler:  s.handleImportAPI,
-			readOnly: false,
+			handler: s.handleImportAPI,
 		},
 		{
 			tool: &mcp.Tool{
@@ -766,8 +894,7 @@ func (s *mcpServer) accessToolSpecs() []mcpToolSpec {
 				InputSchema: requestAccessSchema,
 				Annotations: &mcp.ToolAnnotations{},
 			},
-			handler:  s.handleRequestAccess,
-			readOnly: false,
+			handler: s.handleRequestAccess,
 		},
 	}
 }

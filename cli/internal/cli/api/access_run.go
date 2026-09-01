@@ -488,8 +488,15 @@ func (a *app) pollAccessRequest(ctx context.Context, client *control.ClientWithR
 // URL so the value the CLI prints (or emits as JSON) is directly openable, rather
 // than a path fragment the operator has to guess a host for (impl/5.0 §6b,
 // jentic-one#777). An already-absolute URL and an empty value are left untouched.
+// A scheme-relative value ("//evil.example/x") is refused outright: resolving it
+// would graft the base URL's scheme onto a FOREIGN host — a link-hijack shape no
+// legitimate backend emits — so it is cleared rather than absolutized.
 func absolutizeApproveURL(baseURL string, r *control.AccessRequestResponse) {
 	if r == nil || r.ApproveUrl == "" {
+		return
+	}
+	if strings.HasPrefix(r.ApproveUrl, "//") {
+		r.ApproveUrl = ""
 		return
 	}
 	if u, err := url.Parse(r.ApproveUrl); err == nil && u.IsAbs() {

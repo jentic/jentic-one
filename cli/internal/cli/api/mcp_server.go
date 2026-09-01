@@ -135,12 +135,12 @@ func (s *mcpServer) run(ctx context.Context) error {
 }
 
 // mcpToolSpec pairs a tool declaration with its handler for the registration
-// filters. readOnly mirrors the tool's ReadOnlyHint annotation: --read-only
-// serves only these (1-C's execute tool registers with readOnly=false).
+// filters. There is deliberately NO separate read-only flag: --read-only
+// filters on the tool's own ReadOnlyHint annotation, so the advertised
+// annotation and the serving filter can never drift apart.
 type mcpToolSpec struct {
-	tool     *mcp.Tool
-	handler  mcp.ToolHandler
-	readOnly bool
+	tool    *mcp.Tool
+	handler mcp.ToolHandler
 }
 
 // noArgsSchema is the input schema for the parameterless tools. Kept
@@ -229,8 +229,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				InputSchema: noArgsSchema,
 				Annotations: readOnly,
 			},
-			handler:  s.handleGetStarted,
-			readOnly: true,
+			handler: s.handleGetStarted,
 		},
 		{
 			tool: &mcp.Tool{
@@ -244,8 +243,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				InputSchema: noArgsSchema,
 				Annotations: readOnly,
 			},
-			handler:  s.handleWhoami,
-			readOnly: true,
+			handler: s.handleWhoami,
 		},
 		{
 			tool: &mcp.Tool{
@@ -265,8 +263,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				InputSchema: searchAPIsSchema,
 				Annotations: readOnly,
 			},
-			handler:  s.handleSearchAPIs,
-			readOnly: true,
+			handler: s.handleSearchAPIs,
 		},
 		{
 			tool: &mcp.Tool{
@@ -284,8 +281,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				InputSchema: inspectOperationSchema,
 				Annotations: readOnly,
 			},
-			handler:  s.handleInspectOperation,
-			readOnly: true,
+			handler: s.handleInspectOperation,
 		},
 	}...)
 	specs = append(specs, execSpecs...)
@@ -293,8 +289,9 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 }
 
 // registerTools applies the serving filters. --exclude-tools drops by name;
-// --read-only drops everything not annotated read-only — from 2-E1 on that is
-// exactly execute (1-C), import_api, and request_access (execute_read,
+// --read-only drops everything whose OWN ReadOnlyHint annotation is absent —
+// the advertised annotation is the single source of truth, so from 2-E1 on
+// that is exactly execute (1-C), import_api, and request_access (execute_read,
 // get_execution_result, and search_catalog stay).
 func (s *mcpServer) registerTools() {
 	for _, spec := range s.toolSpecs() {
@@ -302,7 +299,8 @@ func (s *mcpServer) registerTools() {
 			s.logger.Info("tool excluded by --exclude-tools", "tool", spec.tool.Name)
 			continue
 		}
-		if s.readOnly && !spec.readOnly {
+		annotatedReadOnly := spec.tool.Annotations != nil && spec.tool.Annotations.ReadOnlyHint
+		if s.readOnly && !annotatedReadOnly {
 			s.logger.Info("tool withheld by --read-only", "tool", spec.tool.Name)
 			continue
 		}
