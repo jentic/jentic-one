@@ -1325,6 +1325,52 @@ func (j *LoggingConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// “server.mcp“ sub-config (minimal 3a-2 seam; phase-3 item 2 extends it).
+type McpConfig struct {
+	// Oauth corresponds to the JSON schema field "oauth".
+	Oauth *McpOAuthConfig `json:"oauth,omitempty,omitzero" yaml:"oauth,omitempty" mapstructure:"oauth,omitempty"`
+}
+
+// Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).
+//
+// Minimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full
+// “server.mcp“ sub-config (“server.mcp.enabled“ etc.) and extends this
+// model in place — fields here must keep their names and defaults.
+type McpOAuthConfig struct {
+	// AutoApproveClients corresponds to the JSON schema field "auto_approve_clients".
+	AutoApproveClients bool `json:"auto_approve_clients,omitempty,omitzero" yaml:"auto_approve_clients,omitempty" mapstructure:"auto_approve_clients,omitempty"`
+
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// RegistrationGcDays corresponds to the JSON schema field "registration_gc_days".
+	RegistrationGcDays int `json:"registration_gc_days,omitempty,omitzero" yaml:"registration_gc_days,omitempty" mapstructure:"registration_gc_days,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain McpOAuthConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["auto_approve_clients"]; !ok || v == nil {
+		plain.AutoApproveClients = true
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["registration_gc_days"]; !ok || v == nil {
+		plain.RegistrationGcDays = 90
+	}
+	*j = McpOAuthConfig(plain)
+	return nil
+}
+
 // Metrics exporter configuration.
 type MetricsConfig struct {
 	// ExportIntervalSeconds corresponds to the JSON schema field
@@ -1892,6 +1938,9 @@ type ServerConfig struct {
 
 	// Host corresponds to the JSON schema field "host".
 	Host string `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
+
+	// Mcp corresponds to the JSON schema field "mcp".
+	Mcp *McpConfig `json:"mcp,omitempty,omitzero" yaml:"mcp,omitempty" mapstructure:"mcp,omitempty"`
 
 	// Port corresponds to the JSON schema field "port".
 	Port int `json:"port,omitempty,omitzero" yaml:"port,omitempty" mapstructure:"port,omitempty"`

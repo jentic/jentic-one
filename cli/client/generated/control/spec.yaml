@@ -3467,6 +3467,143 @@ components:
       - data
       title: OAuthClientListResponse
       type: object
+    OAuthClientRegistrationRequest:
+      description: POST /oauth-clients request body (RFC 7591 client metadata subset).
+      properties:
+        application_type:
+          anyOf:
+          - maxLength: 32
+            type: string
+          - type: 'null'
+          description: Accepted and echoed ('native' for desktop/CLI apps, per the 2026-07-28 MCP spec revision); localhost http redirect URIs are allowed regardless.
+          title: Application Type
+        client_name:
+          maxLength: 255
+          minLength: 1
+          title: Client Name
+          type: string
+        grant_types:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: Subset of ['authorization_code', 'refresh_token'].
+          title: Grant Types
+        redirect_uris:
+          items:
+            type: string
+          maxItems: 20
+          minItems: 1
+          title: Redirect Uris
+          type: array
+        response_types:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: Only ['code'] is supported.
+          title: Response Types
+        scope:
+          anyOf:
+          - maxLength: 6500
+            type: string
+          - type: 'null'
+          title: Scope
+        software_id:
+          anyOf:
+          - maxLength: 255
+            type: string
+          - type: 'null'
+          title: Software Id
+        software_version:
+          anyOf:
+          - maxLength: 255
+            type: string
+          - type: 'null'
+          title: Software Version
+        token_endpoint_auth_method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Must be 'none' if supplied — this endpoint only registers public (secret-less, PKCE-only) clients.
+          title: Token Endpoint Auth Method
+      required:
+      - client_name
+      - redirect_uris
+      title: OAuthClientRegistrationRequest
+      type: object
+    OAuthClientRegistrationResponse:
+      description: |-
+        POST /oauth-clients response (201 created, or 200 on a D8 dedupe hit).
+
+        RFC 7591-compatible: ``client_id`` plus the registered metadata. No
+        ``client_secret`` (public clients only) and no
+        ``registration_access_token`` (D12 — no RFC 7592 self-management surface;
+        clients retry ``/authorize``, they don't poll).
+      properties:
+        application_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Application Type
+        client_id:
+          title: Client Id
+          type: string
+        client_id_issued_at:
+          description: Seconds since the Unix epoch at which the client_id was issued.
+          title: Client Id Issued At
+          type: integer
+        client_name:
+          title: Client Name
+          type: string
+        grant_types:
+          default:
+          - authorization_code
+          - refresh_token
+          items:
+            type: string
+          title: Grant Types
+          type: array
+        redirect_uris:
+          items:
+            type: string
+          title: Redirect Uris
+          type: array
+        response_types:
+          default:
+          - code
+          items:
+            type: string
+          title: Response Types
+          type: array
+        scope:
+          description: Space-separated scope ceiling granted to the client (the request's scope capped to the MCP tool-scope set).
+          title: Scope
+          type: string
+        software_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Software Id
+        software_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Software Version
+        token_endpoint_auth_method:
+          default: none
+          title: Token Endpoint Auth Method
+          type: string
+      required:
+      - client_id
+      - client_id_issued_at
+      - client_name
+      - redirect_uris
+      - scope
+      title: OAuthClientRegistrationResponse
+      type: object
     OAuthClientResponse:
       description: An OAuth client in API responses.
       examples:
@@ -14668,6 +14805,52 @@ paths:
       summary: Update Note
       tags:
       - Notes
+  /oauth-clients:
+    post:
+      description: |-
+        Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+
+        Returns 201 with the new ``client_id``, or 200 with the **existing** row's
+        ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
+        (D8). No client_secret is ever issued here and no registration_access_token
+        is returned (D12). New rows await admin approval unless the deployment
+        auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+        lives on the route class — a disabled door 404s before this handler,
+        its body validation, or the rate limiter ever run.
+      operationId: registerOauthClientEndpoint
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthClientRegistrationRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthClientRegistrationResponse'
+          description: Successful Response
+        '400':
+          description: 'Invalid client metadata (RFC 7591 §3.2.2): `{"error": "invalid_client_metadata", "error_description": "..."}`.'
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Register OAuth client (anonymous DCR)
+      tags:
+      - OAuth Clients
   /oauth/callback:
     get:
       description: External IdP callback — exchanges upstream code and issues platform auth code.

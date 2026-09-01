@@ -16,8 +16,6 @@ from dataclasses import dataclass
 
 from jentic_one.shared.state.backend import RateLimitStore
 
-_KEY_PREFIX = "rl:caller:"
-
 
 @dataclass(frozen=True, slots=True)
 class RateLimitOutcome:
@@ -43,17 +41,25 @@ class RateLimitOutcome:
 class RateLimiter:
     """Token-bucket rate limiter keyed per caller, over a ``RateLimitStore``."""
 
-    def __init__(self, store: RateLimitStore, *, default_rpm: int, burst: int) -> None:
+    def __init__(
+        self, store: RateLimitStore, *, default_rpm: int, burst: int, namespace: str = "caller"
+    ) -> None:
         self._store = store
         # The backend bucket refills in tokens/second; rpm is the operator-facing
         # knob. burst is the bucket capacity (max instantaneous spend).
         self._rate_per_s = default_rpm / 60.0
         self._burst = burst
+        # Limiters sharing one store AND one namespace share buckets. The
+        # default keeps the historical `rl:caller:` keyspace; a limiter whose
+        # keys could collide with another limiter's (e.g. two bare-IP-keyed
+        # limiters with different rate params) must pass its own namespace so
+        # each route drains only its own quota.
+        self._key_prefix = f"rl:{namespace}:"
 
     async def acquire(self, actor_id: str, *, cost: int = 1) -> RateLimitOutcome:
         """Spend ``cost`` tokens for ``actor_id``; deny (with retry-after) if dry."""
         decision = await self._store.token_bucket(
-            f"{_KEY_PREFIX}{actor_id}",
+            f"{self._key_prefix}{actor_id}",
             rate=self._rate_per_s,
             burst=self._burst,
             cost=cost,

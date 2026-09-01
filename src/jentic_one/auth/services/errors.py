@@ -143,3 +143,18 @@ class RateLimitExceededError(AuthServiceError):
     def __init__(self, retry_after: int = 1) -> None:
         super().__init__("Too many requests")
         self.retry_after = retry_after
+
+
+class InvalidClientMetadataError(AuthServiceError):
+    """Raised when anonymous DCR client metadata is rejected (RFC 7591 §3.2.2).
+
+    Maps to 400 ``invalid_client_metadata`` — the RFC 7591 error code for a
+    registration request whose metadata is invalid or unsupported (e.g. a
+    confidential ``token_endpoint_auth_method``, an unsupported grant type, or
+    a malformed redirect URI). The DCR front door only mints public clients
+    (phase-3a design §4.2).
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason

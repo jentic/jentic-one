@@ -17,16 +17,16 @@ from jentic_one.shared.models.oauth_clients import (
 
 
 def redirect_uris_fingerprint(redirect_uris: list[str]) -> str:
-    """SHA-256 hex of the sorted, exact redirect-URI set (design §4.1).
+    """SHA-256 hex of the sorted, deduplicated redirect-URI set (design §4.1).
 
-    Order-insensitive (the set is sorted before hashing) and exact — any
-    added, removed, or altered URI changes the fingerprint. Together with
-    ``software_id`` this is the D8 dedupe key for DCR registrations (the
-    consumer lands in 3a-2; the column and its maintenance are part of the
-    3a-1 migration contract). URIs cannot contain raw newlines (they are
-    validated URLs), so the newline join is unambiguous.
+    Order-insensitive and duplicate-insensitive (the list is normalized to a
+    sorted set before hashing, matching the set comparison the DCR service's
+    dedupe re-verify performs) and exact — any added, removed, or altered URI
+    changes the fingerprint. Together with ``software_id`` this is the D8
+    dedupe key for DCR registrations. URIs cannot contain raw newlines (they
+    are validated URLs), so the newline join is unambiguous.
     """
-    return hashlib.sha256("\n".join(sorted(redirect_uris)).encode()).hexdigest()
+    return hashlib.sha256("\n".join(sorted(set(redirect_uris))).encode()).hexdigest()
 
 
 class OAuthClientRepository:
@@ -94,6 +94,36 @@ class OAuthClientRepository:
         stmt = select(OAuthClient).where(OAuthClient.client_id == client_id)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_dcr_by_dedupe_key(
+        session: AsyncSession, software_id: str, fingerprint: str
+    ) -> list[OAuthClient]:
+        """List DCR rows matching the D8 dedupe key, via its covering index.
+
+        Hits the non-unique ``(software_id, redirect_uris_fingerprint)`` index
+        (§4.1) instead of scanning every row claiming the ``software_id``.
+        Callers must still verify the exact redirect-URI set on the returned
+        rows — the fingerprint is a hash, so equality is necessary evidence,
+        not proof (collision guard).
+
+        Oldest first as a stable base ordering. The caller picks the dedupe
+        winner: the service prefers approved > pending > denied among exact
+        matches (a double-register race can leave several rows, and the admin
+        may have approved a newer one), falling back to the oldest row within
+        the same status.
+        """
+        stmt = (
+            select(OAuthClient)
+            .where(
+                OAuthClient.software_id == software_id,
+                OAuthClient.redirect_uris_fingerprint == fingerprint,
+                OAuthClient.registration_source == OAuthRegistrationSource.DCR.value,
+            )
+            .order_by(OAuthClient.created_at.asc(), OAuthClient.id.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
     @staticmethod
     async def list_all(

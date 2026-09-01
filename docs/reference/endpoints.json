@@ -2623,6 +2623,21 @@
       "authenticated": false,
       "group": "Public (unauthenticated)",
       "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "registerOauthClientEndpoint",
+      "path": "/oauth-clients",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Register OAuth client (anonymous DCR)",
+      "surface": "oauth-clients",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
       "method": "GET",
       "operation_id": "authorizeOauthCallback",
       "path": "/oauth/callback",
@@ -5025,5 +5040,5 @@
     ],
     "total": 33
   },
-  "total": 171
+  "total": 172
 }

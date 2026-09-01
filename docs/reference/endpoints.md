@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **171**._
+_Total endpoints: **172**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -374,7 +374,7 @@ _Total endpoints: **171**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (21)
+## Public (unauthenticated) (22)
 
 
 ### `.well-known`
@@ -442,6 +442,12 @@ _Total endpoints: **171**._
 | GET | `/oauth/consent` | _public — no auth_ | — | Consent Page |
 | POST | `/oauth/consent` | _public — no auth_ | — | Consent Submit |
 | POST | `/oauth/token` | _public — no auth_ | — | Token Endpoint |
+
+### `oauth-clients`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/oauth-clients` | _public — no auth_ | — | Register OAuth client (anonymous DCR) |
 
 ### `ready`
 

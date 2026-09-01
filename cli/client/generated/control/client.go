@@ -2146,6 +2146,50 @@ type OAuthClientListResponse struct {
 	Data []OAuthClientResponse `json:"data"`
 }
 
+// OAuthClientRegistrationRequest POST /oauth-clients request body (RFC 7591 client metadata subset).
+type OAuthClientRegistrationRequest struct {
+	// ApplicationType Accepted and echoed ('native' for desktop/CLI apps, per the 2026-07-28 MCP spec revision); localhost http redirect URIs are allowed regardless.
+	ApplicationType *string `json:"application_type,omitempty"`
+	ClientName      string  `json:"client_name"`
+
+	// GrantTypes Subset of ['authorization_code', 'refresh_token'].
+	GrantTypes   *[]string `json:"grant_types,omitempty"`
+	RedirectUris []string  `json:"redirect_uris"`
+
+	// ResponseTypes Only ['code'] is supported.
+	ResponseTypes   *[]string `json:"response_types,omitempty"`
+	Scope           *string   `json:"scope,omitempty"`
+	SoftwareId      *string   `json:"software_id,omitempty"`
+	SoftwareVersion *string   `json:"software_version,omitempty"`
+
+	// TokenEndpointAuthMethod Must be 'none' if supplied — this endpoint only registers public (secret-less, PKCE-only) clients.
+	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
+}
+
+// OAuthClientRegistrationResponse POST /oauth-clients response (201 created, or 200 on a D8 dedupe hit).
+//
+// RFC 7591-compatible: “client_id“ plus the registered metadata. No
+// “client_secret“ (public clients only) and no
+// “registration_access_token“ (D12 — no RFC 7592 self-management surface;
+// clients retry “/authorize“, they don't poll).
+type OAuthClientRegistrationResponse struct {
+	ApplicationType *string `json:"application_type,omitempty"`
+	ClientId        string  `json:"client_id"`
+
+	// ClientIdIssuedAt Seconds since the Unix epoch at which the client_id was issued.
+	ClientIdIssuedAt int       `json:"client_id_issued_at"`
+	ClientName       string    `json:"client_name"`
+	GrantTypes       *[]string `json:"grant_types,omitempty"`
+	RedirectUris     []string  `json:"redirect_uris"`
+	ResponseTypes    *[]string `json:"response_types,omitempty"`
+
+	// Scope Space-separated scope ceiling granted to the client (the request's scope capped to the MCP tool-scope set).
+	Scope                   string  `json:"scope"`
+	SoftwareId              *string `json:"software_id,omitempty"`
+	SoftwareVersion         *string `json:"software_version,omitempty"`
+	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
+}
+
 // OAuthClientResponse An OAuth client in API responses.
 //
 // Examples: {"active":true,"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"token_endpoint_auth_method":"client_secret_basic"}
@@ -3562,6 +3606,9 @@ type CreateNoteJSONRequestBody = NoteCreateRequest
 
 // UpdateNoteJSONRequestBody defines body for UpdateNote for application/json ContentType.
 type UpdateNoteJSONRequestBody = NoteUpdateRequest
+
+// RegisterOauthClientEndpointJSONRequestBody defines body for RegisterOauthClientEndpoint for application/json ContentType.
+type RegisterOauthClientEndpointJSONRequestBody = OAuthClientRegistrationRequest
 
 // ConsentSubmitFormdataRequestBody defines body for ConsentSubmit for application/x-www-form-urlencoded ContentType.
 type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
@@ -5680,6 +5727,40 @@ type ClientInterface interface {
 	//
 	// Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 	UpdateNote(ctx context.Context, noteId string, params *UpdateNoteParams, body UpdateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterOauthClientEndpointWithBody Register OAuth client (anonymous DCR)
+	//
+	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	//
+	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
+	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
+	// (D8). No client_secret is ever issued here and no registration_access_token
+	// is returned (D12). New rows await admin approval unless the deployment
+	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+	// lives on the route class — a disabled door 404s before this handler,
+	// its body validation, or the rate limiter ever run.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
+	RegisterOauthClientEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterOauthClientEndpoint Register OAuth client (anonymous DCR)
+	//
+	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	//
+	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
+	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
+	// (D8). No client_secret is ever issued here and no registration_access_token
+	// is returned (D12). New rows await admin approval unless the deployment
+	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+	// lives on the route class — a disabled door 404s before this handler,
+	// its body validation, or the rate limiter ever run.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
+	RegisterOauthClientEndpoint(ctx context.Context, body RegisterOauthClientEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizeOauthCallback Authorize Oauth Callback
 	//
@@ -9052,6 +9133,60 @@ func (c *Client) UpdateNoteWithBody(ctx context.Context, noteId string, params *
 // Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNoteParams, body UpdateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateNoteRequest(c.Server, noteId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterOauthClientEndpointWithBody Register OAuth client (anonymous DCR)
+//
+// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+//
+// Returns 201 with the new “client_id“, or 200 with the **existing** row's
+// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
+// (D8). No client_secret is ever issued here and no registration_access_token
+// is returned (D12). New rows await admin approval unless the deployment
+// auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
+// lives on the route class — a disabled door 404s before this handler,
+// its body validation, or the rate limiter ever run.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
+func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterOauthClientEndpointRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterOauthClientEndpoint Register OAuth client (anonymous DCR)
+//
+// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+//
+// Returns 201 with the new “client_id“, or 200 with the **existing** row's
+// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
+// (D8). No client_secret is ever issued here and no registration_access_token
+// is returned (D12). New rows await admin approval unless the deployment
+// auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
+// lives on the route class — a disabled door 404s before this handler,
+// its body validation, or the rate limiter ever run.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
+func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterOauthClientEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterOauthClientEndpointRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -16554,6 +16689,46 @@ func NewUpdateNoteRequestWithBody(server string, noteId string, params *UpdateNo
 	return req, nil
 }
 
+// NewRegisterOauthClientEndpointRequest calls the generic RegisterOauthClientEndpoint builder with application/json body
+func NewRegisterOauthClientEndpointRequest(server string, body RegisterOauthClientEndpointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterOauthClientEndpointRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterOauthClientEndpointRequestWithBody constructs an http.Request for the RegisterOauthClientEndpoint method, with any body, and a specified content type
+func NewRegisterOauthClientEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth-clients")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewAuthorizeOauthCallbackRequest constructs an http.Request for the AuthorizeOauthCallback method
 func NewAuthorizeOauthCallbackRequest(server string, params *AuthorizeOauthCallbackParams) (*http.Request, error) {
 	var err error
@@ -20470,6 +20645,40 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 	UpdateNoteWithResponse(ctx context.Context, noteId string, params *UpdateNoteParams, body UpdateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateNoteHTTPResp, error)
+
+	// RegisterOauthClientEndpointWithBodyWithResponse Register OAuth client (anonymous DCR)
+	//
+	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	//
+	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
+	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
+	// (D8). No client_secret is ever issued here and no registration_access_token
+	// is returned (D12). New rows await admin approval unless the deployment
+	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+	// lives on the route class — a disabled door 404s before this handler,
+	// its body validation, or the rate limiter ever run.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
+	RegisterOauthClientEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterOauthClientEndpointHTTPResp, error)
+
+	// RegisterOauthClientEndpointWithResponse Register OAuth client (anonymous DCR)
+	//
+	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	//
+	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
+	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
+	// (D8). No client_secret is ever issued here and no registration_access_token
+	// is returned (D12). New rows await admin approval unless the deployment
+	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+	// lives on the route class — a disabled door 404s before this handler,
+	// its body validation, or the rate limiter ever run.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
+	RegisterOauthClientEndpointWithResponse(ctx context.Context, body RegisterOauthClientEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterOauthClientEndpointHTTPResp, error)
 
 	// AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
 	//
@@ -30127,6 +30336,61 @@ func (r UpdateNoteHTTPResp) ContentType() string {
 	return ""
 }
 
+type RegisterOauthClientEndpointHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *OAuthClientRegistrationResponse
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterOauthClientEndpointHTTPResp) GetJSON201() *OAuthClientRegistrationResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterOauthClientEndpointHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterOauthClientEndpointHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterOauthClientEndpointHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterOauthClientEndpointHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type AuthorizeOauthCallbackHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -36894,6 +37158,52 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 		return nil, err
 	}
 	return ParseUpdateNoteHTTPResp(rsp)
+}
+
+// RegisterOauthClientEndpointWithBodyWithResponse Register OAuth client (anonymous DCR)
+//
+// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+//
+// Returns 201 with the new “client_id“, or 200 with the **existing** row's
+// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
+// (D8). No client_secret is ever issued here and no registration_access_token
+// is returned (D12). New rows await admin approval unless the deployment
+// auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
+// lives on the route class — a disabled door 404s before this handler,
+// its body validation, or the rate limiter ever run.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
+func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterOauthClientEndpointHTTPResp, error) {
+	rsp, err := c.RegisterOauthClientEndpointWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterOauthClientEndpointHTTPResp(rsp)
+}
+
+// RegisterOauthClientEndpointWithResponse Register OAuth client (anonymous DCR)
+//
+// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+//
+// Returns 201 with the new “client_id“, or 200 with the **existing** row's
+// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
+// (D8). No client_secret is ever issued here and no registration_access_token
+// is returned (D12). New rows await admin approval unless the deployment
+// auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
+// lives on the route class — a disabled door 404s before this handler,
+// its body validation, or the rate limiter ever run.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
+func (c *ClientWithResponses) RegisterOauthClientEndpointWithResponse(ctx context.Context, body RegisterOauthClientEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterOauthClientEndpointHTTPResp, error) {
+	rsp, err := c.RegisterOauthClientEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterOauthClientEndpointHTTPResp(rsp)
 }
 
 // AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
@@ -45424,6 +45734,49 @@ func ParseUpdateNoteHTTPResp(rsp *http.Response) (*UpdateNoteHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRegisterOauthClientEndpointHTTPResp parses an HTTP response from a RegisterOauthClientEndpointWithResponse call
+func ParseRegisterOauthClientEndpointHTTPResp(rsp *http.Response) (*RegisterOauthClientEndpointHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterOauthClientEndpointHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest OAuthClientRegistrationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail

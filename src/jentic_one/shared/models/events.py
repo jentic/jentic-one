@@ -107,6 +107,16 @@ class EventType:
     # lane-D plan): this constant + the tag enum land first.
     MCP_CONFIG_REGISTERED = "mcp.config_registered"
 
+    # --- Interactive OAuth for MCP clients (phase 3a, design §4.8) --------
+    # Emitted by the anonymous DCR front door (POST /oauth-clients) when a new
+    # client row lands in the registry. requires_action=True when the row lands
+    # `pending` (an admin must approve/deny it); auto-approved rows (D9) emit
+    # with requires_action=False. Internal-only: not on the telemetry allowlist.
+    OAUTH_CLIENT_REGISTERED = "oauth_client.registered"
+    # Emitted by the admin `:approve` verb (D7) — including re-approval of a
+    # previously denied client. Internal-only, like OAUTH_CLIENT_REGISTERED.
+    OAUTH_CLIENT_APPROVED = "oauth_client.approved"
+
     ALL: frozenset[str] = frozenset(
         {
             IMPORT_COMPLETED,
@@ -150,6 +160,8 @@ class EventType:
             TOOLKIT_BINDING_UNSERVED,
             MCP_SESSION_STARTED,
             MCP_CONFIG_REGISTERED,
+            OAUTH_CLIENT_REGISTERED,
+            OAUTH_CLIENT_APPROVED,
         }
     )
 

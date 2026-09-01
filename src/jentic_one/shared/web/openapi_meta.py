@@ -789,6 +789,10 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "tokenEndpoint",
         "authorizeEndpoint",
         "registerEndpoint",
+        # Anonymous OAuth-client DCR front door (phase-3a §4.2): flagship MCP
+        # clients register anonymously; the boundary is admin approval +
+        # consent, not registration. Rate limited and config-gated instead.
+        "registerOauthClientEndpoint",
         # OAuth redirect callbacks (bound by a signed state param, not a session).
         "oauthCallback",
         "authorizeOauthCallback",
@@ -821,6 +825,18 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
         # token. It still returns 401 on a missing/invalid/expired RAT
         # (RegistrationAccessDeniedError -> 401), so the 401 response stays.
         "pollStatusEndpoint",
+    }
+)
+
+
+#: Operations whose request-validation failures are reshaped at the router into
+#: RFC 7591 §3.2.2 ``400 {"error": "invalid_client_metadata"}`` responses (see
+#: ``_Rfc7591Route`` in ``auth/web/routers/oauth_client_registration.py``).
+#: They never emit the FastAPI 422, so the auto-generated 422 response is
+#: dropped from the spec (the 400 is documented on the route decorator).
+RFC7591_ERROR_OPERATION_IDS: frozenset[str] = frozenset(
+    {
+        "registerOauthClientEndpoint",
     }
 )
 
@@ -864,6 +880,8 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/auth/idp"), "Discovery"),
     (re.compile(r"^/audit"), "Audit"),
     (re.compile(r"^/admin/oauth-clients"), "OAuth Clients"),
+    # Anonymous DCR front door — before the broader ^/oauth rule below.
+    (re.compile(r"^/oauth-clients"), "OAuth Clients"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
     (re.compile(r"^/service-accounts"), "Service Accounts"),
@@ -1040,6 +1058,10 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     operation.get("responses", {}).pop("403", None)
                 else:
                     _stamp_scope_metadata(method, path, operation, operation_auth)
+                if op_id in RFC7591_ERROR_OPERATION_IDS:
+                    # Validation failures are reshaped to the RFC 7591 400 at
+                    # the router; the framework 422 can never be returned.
+                    operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
 
         app.openapi_schema = schema

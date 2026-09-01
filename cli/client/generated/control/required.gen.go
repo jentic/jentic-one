@@ -165,6 +165,12 @@ func (OAuthClientCreateResponse) RequiredFields() []string {
 	return []string{"active", "allowed_scopes", "approval_status", "client_id", "client_secret", "consent_model", "created_at", "created_by", "description", "id", "name", "redirect_uris", "registration_source", "require_consent", "software_id", "token_endpoint_auth_method", "updated_at"}
 }
 func (OAuthClientListResponse) RequiredFields() []string { return []string{"data"} }
+func (OAuthClientRegistrationRequest) RequiredFields() []string {
+	return []string{"client_name", "redirect_uris"}
+}
+func (OAuthClientRegistrationResponse) RequiredFields() []string {
+	return []string{"client_id", "client_id_issued_at", "client_name", "redirect_uris", "scope"}
+}
 func (OAuthClientResponse) RequiredFields() []string {
 	return []string{"active", "allowed_scopes", "approval_status", "client_id", "consent_model", "created_at", "created_by", "description", "id", "name", "redirect_uris", "registration_source", "require_consent", "software_id", "token_endpoint_auth_method", "updated_at"}
 }

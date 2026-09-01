@@ -49,6 +49,23 @@ def test_mcp_events_on_telemetry_allowlist() -> None:
     assert TelemetryEventName.MCP_CONFIG_REGISTERED.value == "mcp_config_registered"
 
 
+def test_oauth_client_event_types_registered() -> None:
+    """The 3a-2 OAuth-client lifecycle events (design §4.8) are in ALL."""
+    assert EventType.OAUTH_CLIENT_REGISTERED == "oauth_client.registered"
+    assert EventType.OAUTH_CLIENT_APPROVED == "oauth_client.approved"
+    assert EventType.OAUTH_CLIENT_REGISTERED in EventType.ALL
+    assert EventType.OAUTH_CLIENT_APPROVED in EventType.ALL
+
+
+def test_oauth_client_events_are_internal_only() -> None:
+    """The design assigns no telemetry wire names — these never leave the box,
+    and they carry no closed-enum tags."""
+    assert EventType.OAUTH_CLIENT_REGISTERED not in TELEMETRY_EVENTS
+    assert EventType.OAUTH_CLIENT_APPROVED not in TELEMETRY_EVENTS
+    assert EventType.OAUTH_CLIENT_REGISTERED not in EVENT_TAGS
+    assert EventType.OAUTH_CLIENT_APPROVED not in EVENT_TAGS
+
+
 def test_all_contains_every_class_constant() -> None:
     """Every string constant on EventType must be in ALL (no drift)."""
     constants = {v for k, v in vars(EventType).items() if not k.startswith("_") and k != "ALL"}

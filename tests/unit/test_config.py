@@ -459,6 +459,38 @@ def test_apps_env_comma_separated_with_spaces(config_file: Path):
     assert config.apps == ["registry", "admin", "control"]
 
 
+def test_mcp_oauth_config_defaults(config_file: Path):
+    """3a-2 seam (design §4.9/§8 E2): off by default, auto-approve on in OSS."""
+    config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is False
+    assert config.server.mcp.oauth.auto_approve_clients is True
+    assert config.server.mcp.oauth.registration_gc_days == 90
+
+
+def test_mcp_oauth_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__SERVER__MCP__OAUTH__ENABLED": "true",
+        "JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS": "false",
+        "JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS": "30",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is True
+    assert config.server.mcp.oauth.auto_approve_clients is False
+    assert config.server.mcp.oauth.registration_gc_days == 30
+
+
+def test_oauth_registration_rate_limit_knobs(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM": "3",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST": "2",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.registration_rpm == 3
+    assert config.auth.oauth_rate_limit.registration_burst == 2
+
+
 def test_encryption_config_defaults():
     cfg = EncryptionConfig()
     assert cfg.active_id == "v1"

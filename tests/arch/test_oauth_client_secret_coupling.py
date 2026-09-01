@@ -32,6 +32,11 @@ _ALLOWED_CALLERS = frozenset(
         "admin/services/oauth_client_service.py",
         # The repository module itself (definitions, not call sites).
         "admin/repos/oauth_client_repo.py",
+        # The 3a-2 anonymous DCR front door replicates the invariant by
+        # construction: it hardcodes client_secret_hash=None together with
+        # token_endpoint_auth_method='none' (public clients only — no caller
+        # can supply either value), so the none↔NULL coupling cannot break.
+        "auth/services/oauth_dcr_service.py",
     }
 )
 

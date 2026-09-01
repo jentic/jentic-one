@@ -7,6 +7,8 @@ import functools
 from functools import partial
 from urllib.parse import urlparse
 
+import structlog
+
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services._support.passwords import hash_password, verify_password
@@ -20,12 +22,16 @@ from jentic_one.admin.services.schemas.oauth_clients import OAuthClientCreateRes
 from jentic_one.shared.audit import record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.oauth_clients import (
     OAuthClientApprovalStatus,
     OAuthConsentModel,
     TokenEndpointAuthMethod,
 )
+
+logger = structlog.get_logger(__name__)
 
 _MAX_REDIRECT_URIS = 20
 _MAX_REDIRECT_URI_LENGTH = 2048
@@ -437,6 +443,36 @@ class OAuthClientService:
                 reason=reason,
                 origin=identity.origin.value,
             )
+            # Either decision settles the actionable oauth_client.registered
+            # alert the DCR front door emitted, so the review prompt doesn't
+            # stay live on the dashboard after the admin acted (best-effort:
+            # the decision must never roll back over a settle failure).
+            try:
+                async with session.begin_nested():
+                    await settle_actionable_events(
+                        session,
+                        event_type=EventType.OAUTH_CLIENT_REGISTERED,
+                        acknowledged_by=identity.sub,
+                        acknowledgement_note="registration decided",
+                        data_match={"oauth_client_id": id},
+                    )
+            except Exception:
+                logger.warning("oauth_client_registered_settle_failed", oauth_client_id=id)
+            if action is AuditAction.APPROVE:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.OAUTH_CLIENT_APPROVED,
+                    severity=EventSeverity.INFO,
+                    summary=f"OAuth client '{client.name}' approved",
+                    data={
+                        "oauth_client_id": client.id,
+                        "client_id": client.client_id,
+                        "client_name": client.name,
+                    },
+                    created_by=identity.sub,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type,
+                )
             return _to_view(client)
 
     async def rotate_secret(self, id: str, *, identity: Identity) -> str:

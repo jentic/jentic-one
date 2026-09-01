@@ -30,3 +30,12 @@ def test_fingerprint_is_exact_on_set_membership() -> None:
     assert redirect_uris_fingerprint(base) != redirect_uris_fingerprint(
         ["https://a.example.com/cb2"]
     )
+
+
+def test_fingerprint_is_duplicate_insensitive() -> None:
+    """["a", "a"] and ["a"] are one effective set — the fingerprint must match
+    the set comparison the DCR dedupe re-verify performs, or a duplicated URI
+    would bypass D8 dedupe and mint a second row for the same install."""
+    assert redirect_uris_fingerprint(
+        ["https://a.example.com/cb", "https://a.example.com/cb"]
+    ) == redirect_uris_fingerprint(["https://a.example.com/cb"])
