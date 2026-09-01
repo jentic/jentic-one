@@ -3,6 +3,7 @@ package clictx
 import (
 	"context"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -174,5 +175,13 @@ func TestAuthHTTPClient_PinnedAndHooked(t *testing.T) {
 	}
 	if hc.Transport != nil {
 		t.Errorf("transport = %T, want nil (default transport on system roots)", hc.Transport)
+	}
+	// #1207: every client this constructor hands out — the mint, the broker
+	// leg, the raw control fetches — refuses to follow redirects.
+	if hc.CheckRedirect == nil {
+		t.Fatal("AuthHTTPClient must refuse redirects (#1207)")
+	}
+	if rerr := hc.CheckRedirect(nil, nil); !errors.Is(rerr, http.ErrUseLastResponse) {
+		t.Errorf("CheckRedirect returned %v, want http.ErrUseLastResponse", rerr)
 	}
 }

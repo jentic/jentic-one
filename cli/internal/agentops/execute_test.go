@@ -127,6 +127,95 @@ func TestDo_DialClosedPortIsBareTransportError(t *testing.T) {
 	}
 }
 
+// TestDoWith_RefusesBrokerRedirect is the #1207 broker-leg regression: a
+// broker that answers with a redirect must NOT be followed — no second
+// request lands anywhere — and the surfaced 3xx maps to a coded
+// TRANSPORT_ERROR naming the redirect, never a confusing "HTTP 302" success.
+func TestDoWith_RefusesBrokerRedirect(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/internal-admin" {
+			_, _ = w.Write([]byte(`{"should":"never be seen"}`))
+			return
+		}
+		http.Redirect(w, r, "/internal-admin", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	req, err := BuildRequest(context.Background(), ExecuteRequest{
+		Method:       http.MethodGet,
+		Path:         "/v1/pets",
+		BrokerScheme: "http",
+		BrokerHost:   srv.Listener.Addr().String(),
+		Token:        "tok_abc",
+	})
+	if err != nil {
+		t.Fatalf("BuildRequest: %v", err)
+	}
+
+	_, err = Do(req)
+	if err == nil {
+		t.Fatal("a broker redirect must surface as an error, not be followed or pass as a result")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("Do returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeTransportError {
+		t.Errorf("code = %q, want %q", coded.Code, ux.CodeTransportError)
+	}
+	if !strings.Contains(coded.Msg, "redirect") || !strings.Contains(coded.Msg, "302") ||
+		!strings.Contains(coded.Msg, "/internal-admin") {
+		t.Errorf("msg %q should name the refused redirect, its status, and its Location", coded.Msg)
+	}
+	if !strings.Contains(coded.Actionable, "broker_url") {
+		t.Errorf("actionable %q should point at the broker_url configuration", coded.Actionable)
+	}
+	if len(paths) != 1 || paths[0] != "/v1/pets" {
+		t.Errorf("requested paths = %v, want only the broker path (the redirect target must never be fetched)", paths)
+	}
+}
+
+// TestDoWith_UpstreamRedirectPassesThrough pins the transparent-proxy carve-out
+// of the #1207 refusal: a 3xx the broker MIRRORED from the upstream
+// (Jentic-Error-Origin: upstream) is a successfully proxied response — the
+// caller's data, not a broker transport violation. It is still never
+// FOLLOWED (the Location may be internal to the upstream's own topology and
+// must be the agent's decision), but it flows through as a normal result.
+func TestDoWith_UpstreamRedirectPassesThrough(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("Jentic-Error-Origin", "upstream")
+		w.Header().Set("Location", "https://upstream.example/moved")
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	req, err := BuildRequest(context.Background(), ExecuteRequest{
+		Method:       http.MethodGet,
+		Path:         "/v1/pets",
+		BrokerScheme: "http",
+		BrokerHost:   srv.Listener.Addr().String(),
+		Token:        "tok_abc",
+	})
+	if err != nil {
+		t.Fatalf("BuildRequest: %v", err)
+	}
+
+	res, err := Do(req)
+	if err != nil {
+		t.Fatalf("a mirrored upstream 302 is the caller's data, not an error: %v", err)
+	}
+	if res.Status != http.StatusFound {
+		t.Errorf("status = %d, want the upstream's 302 surfaced verbatim", res.Status)
+	}
+	if hits != 1 {
+		t.Errorf("broker hits = %d, want 1 (the Location must never be fetched)", hits)
+	}
+}
+
 func TestTransportFailurePreSend(t *testing.T) {
 	cases := []struct {
 		name string

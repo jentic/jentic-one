@@ -235,6 +235,17 @@ func DoWith(hc *http.Client, req *http.Request) (*ExecuteResult, error) {
 	if base.Timeout == 0 {
 		base.Timeout = 60 * time.Second
 	}
+	// #1207: never follow a redirect on the broker leg. The CLI never
+	// legitimately expects the broker to redirect it, and following one would
+	// let a compromised/MITM'd broker 302 this request — bearer, correlation
+	// and attribution headers attached — at an arbitrary (possibly internal /
+	// link-local) address, the same SSRF primitive the hosted-skills fetch
+	// closed in #1192. The 3xx surfaces as the final response and is mapped to
+	// a coded error below (unless it is a mirrored UPSTREAM response — the
+	// transparent-proxy contract). Set here, at the single send choke point,
+	// so every execute surface (cobra, MCP, embedders, the nil-client default)
+	// carries the posture regardless of how its base client was built.
+	base.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	httpClient := sdkclient.BrokerTransport(sdkclient.Config{HTTPClient: &base})
 	// G704 (SSRF) is intentional, not a finding: dialing a caller-chosen broker
 	// target IS this function's contract. The URL is guarded upstream —
@@ -269,12 +280,46 @@ func DoWith(hc *http.Client, req *http.Request) (*ExecuteResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
-	return &ExecuteResult{
+	res := &ExecuteResult{
 		Status:      resp.StatusCode,
 		Headers:     resp.Header,
 		Body:        body,
 		ExecutionID: resp.Header.Get("Jentic-Execution-Id"),
-	}, nil
+	}
+	// #1207: a redirect the BROKER itself answered (CheckRedirect
+	// above surfaced it as the final response) must be a coded error, never a
+	// confusing "HTTP 302" success/pass-through the exit taxonomy reads as a
+	// non-denial response. A redirect the broker merely MIRRORED from the
+	// upstream (Jentic-Error-Origin: upstream) is a successfully proxied
+	// response and passes through untouched — the broker is a transparent
+	// forward proxy and the upstream's 3xx is the caller's data. Only the
+	// Location-following statuses count; a 304 conditional-read answer is not
+	// a redirect and keeps flowing as a normal result.
+	if brokerRedirect(res) {
+		return nil, &ux.CodedError{
+			Code: ux.CodeTransportError,
+			Msg: fmt.Sprintf("broker answered an unexpected redirect (HTTP %d to %q); redirects are never followed on the broker leg",
+				res.Status, res.Headers.Get("Location")),
+			Actionable: "The broker must answer directly. Verify the environment's broker_url points at the actual broker " +
+				"(no redirecting proxy in front): `jentic env add <env> --broker-url https://<broker-host>:<port> --force`.",
+		}
+	}
+	return res, nil
+}
+
+// brokerRedirect reports whether res is a Location-following redirect
+// (301/302/303/307/308) the broker itself emitted, as opposed to one it
+// mirrored from the upstream (Jentic-Error-Origin: upstream). A missing
+// origin header is treated as broker, matching IsBrokerDenial's fail-closed
+// disambiguation.
+func brokerRedirect(res *ExecuteResult) bool {
+	switch res.Status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return errorOrigin(res) != errorOriginUpstream
+	default:
+		return false
+	}
 }
 
 // Execute is the one-call UX-free core (ExecuteRequest → ExecuteResult):

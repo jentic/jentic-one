@@ -1289,6 +1289,55 @@ func TestExecuteCmdBrokerLegHonorsCAPin(t *testing.T) {
 	}
 }
 
+// TestExecuteCmdBrokerRedirectRefused is the cobra-path #1207 regression: a
+// broker answering with a 302 must not be followed (the redirect target never
+// receives a request) and must surface as a coded TRANSPORT_ERROR (exit 1)
+// naming the redirect — not as a confusing "HTTP 302" success envelope.
+func TestExecuteCmdBrokerRedirectRefused(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/internal-admin" {
+			_, _ = w.Write([]byte(`{"should":"never be seen"}`))
+			return
+		}
+		http.Redirect(w, r, "/internal-admin", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+	app.Out = new(bytes.Buffer)
+	app.Err = new(bytes.Buffer)
+	root := newAPIRootCmd(app.App)
+	root.SetOut(app.Out)
+	root.SetErr(app.Err)
+	root.SetArgs([]string{
+		"execute", "GET:/v1/pets",
+		"--json",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("a broker redirect returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeTransportError {
+		t.Errorf("code = %q, want %q", coded.Code, ux.CodeTransportError)
+	}
+	if coded.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1 (transport failure)", coded.ExitCode())
+	}
+	if !strings.Contains(coded.Msg, "redirect") {
+		t.Errorf("msg %q should name the refused redirect", coded.Msg)
+	}
+	if len(paths) != 1 || paths[0] != "/v1/pets" {
+		t.Errorf("requested paths = %v, want only the broker path (the redirect target must never be fetched)", paths)
+	}
+}
+
 // TestExecuteMalformedBrokerURLErrors pins M2 (review round-3 #3): a broker_url
 // that is SET but malformed (no scheme/host) must fail closed with a coded
 // RESOLVE_FAILED naming the bad value, not silently fall through to dialing the
