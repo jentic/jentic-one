@@ -137,6 +137,14 @@ func AuthHTTPClient(ctx context.Context, caCertPath string) (*http.Client, error
 	if hc == nil {
 		hc = &http.Client{}
 	}
+	// #1207: raw plane calls never follow redirects. Every consumer of this
+	// constructor — the token mint, the broker leg (BrokerHTTPClient), the raw
+	// control fetches (ControlHTTPClient) — talks to an endpoint that answers
+	// directly, so a 3xx is only ever a misconfigured/hostile middlebox trying
+	// to point the CLI (headers attached) somewhere else. Surface it as the
+	// final response; each call site classifies it (the mint's classifier, the
+	// broker leg's coded error, the skills fetch's bundled fallback).
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if hook := transportHookFrom(ctx); hook != nil {
 		base := hc.Transport
 		if base == nil {
