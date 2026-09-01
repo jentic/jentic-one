@@ -43,9 +43,14 @@ class InProcessTokenResolver:
         # oauth_client_approved is the D7 approval gate at the same layer: a
         # pending/denied row — even one force-set active — must fail closed
         # here too, matching the auth-surface resolver.
+        # oauth_grant_active is the phase-3a grant gate (§4.5-4.6): a
+        # grant-channel token (t.oauth_grant_id set) whose consent grant is
+        # missing or revoked fails closed — NULL (row gone) is as dead as
+        # status != 'active'. oauth_grant_scopes carries the consent-time
+        # scope set for the quadruple intersection below.
         stmt = text(
             "SELECT t.actor_id, t.actor_type, t.scopes, t.is_ephemeral,"
-            " t.expires_at, t.revoked_at, t.oauth_client_id,"
+            " t.expires_at, t.revoked_at, t.oauth_client_id, t.oauth_grant_id,"
             " CASE t.actor_type"
             "  WHEN 'agent' THEN"
             "   (SELECT a.status FROM agents a WHERE a.id = t.actor_id)"
@@ -61,10 +66,19 @@ class InProcessTokenResolver:
             " (SELECT c.approval_status = 'approved' FROM oauth_clients c"
             "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_approved,"
             " (SELECT c.allowed_scopes FROM oauth_clients c"
-            "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_allowed_scopes"
+            "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_allowed_scopes,"
+            " (SELECT g.status = 'active' FROM oauth_client_grants g"
+            "  WHERE g.id = t.oauth_grant_id) AS oauth_grant_active,"
+            " (SELECT g.scopes FROM oauth_client_grants g"
+            "  WHERE g.id = t.oauth_grant_id) AS oauth_grant_scopes"
             " FROM access_tokens t"
             " WHERE t.token_hash = :token_hash"
-        ).columns(is_ephemeral=Boolean, oauth_client_active=Boolean, oauth_client_approved=Boolean)
+        ).columns(
+            is_ephemeral=Boolean,
+            oauth_client_active=Boolean,
+            oauth_client_approved=Boolean,
+            oauth_grant_active=Boolean,
+        )
         async with self._admin_db.session() as session:
             result = await session.execute(stmt, {"token_hash": token_hash})
             row = result.one_or_none()
@@ -107,11 +121,18 @@ class InProcessTokenResolver:
             if row.oauth_client_allowed_scopes is not None:
                 permissions = [s for s in permissions if s in ceiling]
 
+        oauth_grant_id = row.oauth_grant_id
+        grant_active = oauth_grant_id is None or bool(row.oauth_grant_active)
+        if oauth_grant_id is not None and row.oauth_grant_scopes is not None:
+            grant_scopes = set(_as_scope_list(row.oauth_grant_scopes))
+            permissions = [s for s in permissions if s in grant_scopes]
+
         active = (
             revoked_at is None
             and expires_at > now
             and row.actor_status == "active"
             and client_active
+            and grant_active
         )
         return Identity(
             sub=row.actor_id,
@@ -120,6 +141,7 @@ class InProcessTokenResolver:
             expires_at=expires_at,
             active=active,
             oauth_client_id=oauth_client_id,
+            oauth_grant_id=oauth_grant_id,
         )
 
 

@@ -160,6 +160,7 @@ const (
 	AuditTargetTypeJob               AuditTargetType = "job"
 	AuditTargetTypeNote              AuditTargetType = "note"
 	AuditTargetTypeOauthClient       AuditTargetType = "oauth_client"
+	AuditTargetTypeOauthGrant        AuditTargetType = "oauth_grant"
 	AuditTargetTypeOrganisation      AuditTargetType = "organisation"
 	AuditTargetTypeOverlay           AuditTargetType = "overlay"
 	AuditTargetTypePermission        AuditTargetType = "permission"
@@ -197,6 +198,8 @@ func (e AuditTargetType) Valid() bool {
 	case AuditTargetTypeNote:
 		return true
 	case AuditTargetTypeOauthClient:
+		return true
+	case AuditTargetTypeOauthGrant:
 		return true
 	case AuditTargetTypeOrganisation:
 		return true
@@ -1341,8 +1344,9 @@ type BindingWarningSchema struct {
 
 // BodyConsentSubmit defines model for Body_consentSubmit.
 type BodyConsentSubmit struct {
-	Action       string `json:"action"`
-	ConsentToken string `json:"consent_token"`
+	Action       string  `json:"action"`
+	AgentId      *string `json:"agent_id,omitempty"`
+	ConsentToken string  `json:"consent_token"`
 }
 
 // CatalogEntryLinksResponse Hypermedia links for a catalog entry.
@@ -5762,6 +5766,19 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
 	RegisterOauthClientEndpoint(ctx context.Context, body RegisterOauthClientEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RevokeOauthGrant Revoke OAuth grant
+	//
+	// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+	//
+	// Allowed for the grant's owner (the consenting user) or an admin. Marks
+	// the grant ``revoked`` and revokes every outstanding access/refresh token
+	// minted under it in the same transaction; the live resolvers also re-check
+	// grant status on every verdict (belt + braces). The client's next token
+	// use or refresh fails closed. Idempotent on an already-revoked grant.
+	//
+	// Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
+	RevokeOauthGrant(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// AuthorizeOauthCallback Authorize Oauth Callback
 	//
 	// External IdP callback — exchanges upstream code and issues platform auth code.
@@ -5785,6 +5802,11 @@ type ClientInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
+	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// (``consent_model='agent'`` clients); it is validated and the scope math
+	// recomputed entirely server-side — the browser's selection is never
+	// trusted.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
@@ -5798,6 +5820,11 @@ type ClientInterface interface {
 	// leaves the state backend as anything more than an ID — the actual consent
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
+	//
+	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// (``consent_model='agent'`` clients); it is validated and the scope math
+	// recomputed entirely server-side — the browser's selection is never
+	// trusted.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
@@ -9197,6 +9224,29 @@ func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterO
 	return c.Client.Do(req)
 }
 
+// RevokeOauthGrant Revoke OAuth grant
+//
+// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+//
+// Allowed for the grant's owner (the consenting user) or an admin. Marks
+// the grant “revoked“ and revokes every outstanding access/refresh token
+// minted under it in the same transaction; the live resolvers also re-check
+// grant status on every verdict (belt + braces). The client's next token
+// use or refresh fails closed. Idempotent on an already-revoked grant.
+//
+// Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
+func (c *Client) RevokeOauthGrant(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeOauthGrantRequest(c.Server, grantId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // AuthorizeOauthCallback Authorize Oauth Callback
 //
 // External IdP callback — exchanges upstream code and issues platform auth code.
@@ -9240,6 +9290,11 @@ func (c *Client) ConsentPage(ctx context.Context, params *ConsentPageParams, req
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
+// “agent_id“ is posted only by the §4.4 agent-picker variant
+// (“consent_model='agent'“ clients); it is validated and the scope math
+// recomputed entirely server-side — the browser's selection is never
+// trusted.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
@@ -9263,6 +9318,11 @@ func (c *Client) ConsentSubmitWithBody(ctx context.Context, contentType string, 
 // leaves the state backend as anything more than an ID — the actual consent
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
+//
+// “agent_id“ is posted only by the §4.4 agent-picker variant
+// (“consent_model='agent'“ clients); it is validated and the scope math
+// recomputed entirely server-side — the browser's selection is never
+// trusted.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
@@ -16729,6 +16789,40 @@ func NewRegisterOauthClientEndpointRequestWithBody(server string, contentType st
 	return req, nil
 }
 
+// NewRevokeOauthGrantRequest constructs an http.Request for the RevokeOauthGrant method
+func NewRevokeOauthGrantRequest(server string, grantId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth-grants/%s:revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAuthorizeOauthCallbackRequest constructs an http.Request for the AuthorizeOauthCallback method
 func NewAuthorizeOauthCallbackRequest(server string, params *AuthorizeOauthCallbackParams) (*http.Request, error) {
 	var err error
@@ -20680,6 +20774,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth-clients (the `RegisterOauthClientEndpoint` operationId).
 	RegisterOauthClientEndpointWithResponse(ctx context.Context, body RegisterOauthClientEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterOauthClientEndpointHTTPResp, error)
 
+	// RevokeOauthGrantWithResponse Revoke OAuth grant
+	//
+	// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+	//
+	// Allowed for the grant's owner (the consenting user) or an admin. Marks
+	// the grant ``revoked`` and revokes every outstanding access/refresh token
+	// minted under it in the same transaction; the live resolvers also re-check
+	// grant status on every verdict (belt + braces). The client's next token
+	// use or refresh fails closed. Idempotent on an already-revoked grant.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
+	RevokeOauthGrantWithResponse(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*RevokeOauthGrantHTTPResp, error)
+
 	// AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
 	//
 	// External IdP callback — exchanges upstream code and issues platform auth code.
@@ -20707,6 +20816,11 @@ type ClientWithResponsesInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
+	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// (``consent_model='agent'`` clients); it is validated and the scope math
+	// recomputed entirely server-side — the browser's selection is never
+	// trusted.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
@@ -20720,6 +20834,11 @@ type ClientWithResponsesInterface interface {
 	// leaves the state backend as anything more than an ID — the actual consent
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
+	//
+	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// (``consent_model='agent'`` clients); it is validated and the scope math
+	// recomputed entirely server-side — the browser's selection is never
+	// trusted.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -30391,6 +30510,89 @@ func (r RegisterOauthClientEndpointHTTPResp) ContentType() string {
 	return ""
 }
 
+type RevokeOauthGrantHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeOauthGrantHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeOauthGrantHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeOauthGrantHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeOauthGrantHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type AuthorizeOauthCallbackHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -37206,6 +37408,27 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithResponse(ctx contex
 	return ParseRegisterOauthClientEndpointHTTPResp(rsp)
 }
 
+// RevokeOauthGrantWithResponse Revoke OAuth grant
+//
+// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+//
+// Allowed for the grant's owner (the consenting user) or an admin. Marks
+// the grant “revoked“ and revokes every outstanding access/refresh token
+// minted under it in the same transaction; the live resolvers also re-check
+// grant status on every verdict (belt + braces). The client's next token
+// use or refresh fails closed. Idempotent on an already-revoked grant.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
+func (c *ClientWithResponses) RevokeOauthGrantWithResponse(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*RevokeOauthGrantHTTPResp, error) {
+	rsp, err := c.RevokeOauthGrant(ctx, grantId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeOauthGrantHTTPResp(rsp)
+}
+
 // AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
 //
 // External IdP callback — exchanges upstream code and issues platform auth code.
@@ -37245,6 +37468,11 @@ func (c *ClientWithResponses) ConsentPageWithResponse(ctx context.Context, param
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
+// “agent_id“ is posted only by the §4.4 agent-picker variant
+// (“consent_model='agent'“ clients); it is validated and the scope math
+// recomputed entirely server-side — the browser's selection is never
+// trusted.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
@@ -37264,6 +37492,11 @@ func (c *ClientWithResponses) ConsentSubmitWithBodyWithResponse(ctx context.Cont
 // leaves the state backend as anything more than an ID — the actual consent
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
+//
+// “agent_id“ is posted only by the §4.4 agent-picker variant
+// (“consent_model='agent'“ clients); it is validated and the scope math
+// recomputed entirely server-side — the browser's selection is never
+// trusted.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45777,6 +46010,77 @@ func ParseRegisterOauthClientEndpointHTTPResp(rsp *http.Response) (*RegisterOaut
 
 	case rsp.StatusCode == 400:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeOauthGrantHTTPResp parses an HTTP response from a RevokeOauthGrantWithResponse call
+func ParseRevokeOauthGrantHTTPResp(rsp *http.Response) (*RevokeOauthGrantHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeOauthGrantHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail

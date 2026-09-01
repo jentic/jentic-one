@@ -6,14 +6,20 @@ import hashlib
 import hmac as hmac_mod
 import secrets
 from base64 import urlsafe_b64encode
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import structlog
 
 from jentic_one.admin.core.permissions import ALL_PERMISSIONS
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
+    ActorScopeGrantRepository,
+    AgentRepository,
     AuthorizationCodeRepository,
     ExternalIdentityRepository,
+    OAuthClientGrantRepository,
+    OAuthClientRepository,
     UserPermissionGrantRepository,
     UserRepository,
 )
@@ -32,7 +38,13 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
-from jentic_one.shared.models import ActorType, InviteState
+from jentic_one.shared.models import (
+    ActorStatus,
+    ActorType,
+    InviteState,
+    OAuthClientApprovalStatus,
+)
+from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
 
 def _hash_code(code: str) -> str:
@@ -60,6 +72,21 @@ def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
     digest = hashlib.sha256(code_verifier.encode()).digest()
     computed = urlsafe_b64encode(digest).rstrip(b"=").decode()
     return hmac_mod.compare_digest(computed, code_challenge)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentConsentOption:
+    """One row of the agent-picker consent page (phase-3a §4.4).
+
+    ``scopes`` is the agent's *live* scope set (its current
+    ``actor_scope_grants``) — the consent page intersects it with the request
+    per candidate, and the submit path recomputes server-side (the browser's
+    selection is never trusted for scope math).
+    """
+
+    id: str
+    name: str
+    scopes: frozenset[str]
 
 
 class AuthorizeService:
@@ -195,6 +222,65 @@ class AuthorizeService:
         """Resolve-or-create a local user from IdP claims. Returns the user_id."""
         return await self._resolve_or_create_user(claims)
 
+    async def resolve_existing_user_id(self, claims: IdpClaims) -> str | None:
+        """Read-only user resolution for the agent-picker consent page (§4.4).
+
+        The deferred-provisioning contract holds — rendering the consent page
+        must not create a user row — but the agent picker needs to know whose
+        agents to list. Resolution mirrors ``_resolve_or_create_user``'s
+        lookup arms without the create: external-identity link first, then
+        email match only when the IdP asserts ``email_verified`` (an
+        unverified email must not expose another account's agent list).
+        """
+        provider = self._auth_config.idp.provider
+        async with self._ctx.admin_db.session() as session:
+            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
+                session, provider, claims.external_subject
+            )
+            if ext_id is not None:
+                return ext_id.user_id
+            if claims.email_verified:
+                user = await UserRepository.get_by_email(session, claims.email)
+                if user is not None:
+                    return user.id
+        return None
+
+    async def list_consentable_agents(self, user_id: str) -> list[AgentConsentOption]:
+        """The consenting user's own ``status='active'`` agents + live scopes.
+
+        Only admin-approved (active) agents are bindable (§4.4); pending,
+        denied, disabled, and archived agents never appear on the picker.
+        """
+        async with self._ctx.admin_db.session() as session:
+            # limit=1000 (review A7): §4.4 specifies no picker ceiling, but the
+            # repo API is limit-shaped. The bound is explicit and generous —
+            # beyond it the newest-first (created_at DESC) order deterministically
+            # drops the *oldest* agents from both render and submit (the same
+            # call validates the selection, so there is no render/validate skew).
+            agents = await AgentRepository.list_by_owner(
+                session,
+                user_id,
+                limit=1000,
+                filters=[Agent.status == ActorStatus.ACTIVE.value],
+            )
+            # One batch query for every candidate's live scopes (review A7:
+            # avoids a per-agent actor_scope_grants round-trip, run twice
+            # because the submit path re-runs this predicate).
+            grants = await ActorScopeGrantRepository.list_for_actors(
+                session, [agent.id for agent in agents], actor_type=ActorType.AGENT.value
+            )
+            scopes_by_agent: dict[str, set[str]] = {}
+            for grant in grants:
+                scopes_by_agent.setdefault(grant.actor_id, set()).add(grant.scope)
+            return [
+                AgentConsentOption(
+                    id=agent.id,
+                    name=agent.name,
+                    scopes=frozenset(scopes_by_agent.get(agent.id, set())),
+                )
+                for agent in agents
+            ]
+
     async def issue_authorization_code(
         self,
         *,
@@ -204,6 +290,7 @@ class AuthorizeService:
         code_challenge: str,
         scopes: str = "openid",
         nonce: str | None = None,
+        grant_id: str | None = None,
     ) -> str:
         """Issue an authorization code for a locally-authenticated user."""
         return await self._issue_authorization_code(
@@ -213,6 +300,7 @@ class AuthorizeService:
             code_challenge=code_challenge,
             scopes=scopes,
             nonce=nonce,
+            grant_id=grant_id,
         )
 
     async def _issue_authorization_code(
@@ -224,6 +312,7 @@ class AuthorizeService:
         code_challenge: str,
         scopes: str,
         nonce: str | None,
+        grant_id: str | None = None,
     ) -> str:
         code_plain = secrets.token_urlsafe(32)
         code_hash = _hash_code(code_plain)
@@ -239,6 +328,7 @@ class AuthorizeService:
                 code_challenge=code_challenge,
                 scopes=scopes,
                 nonce=nonce,
+                grant_id=grant_id,
                 expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
                 created_by=user_id,
             )
@@ -311,13 +401,19 @@ class AuthorizeService:
         redirect_uri: str,
         client_id: str,
         oauth_client_id: str | None = None,
-    ) -> tuple[str, str, str]:
+    ) -> tuple[str, str, str | None]:
         """Exchange auth code + PKCE verifier for tokens.
 
-        Returns (access_token, refresh_token, id_token).
+        Returns (access_token, refresh_token, id_token). Grant-bearing codes
+        (phase-3a §4.5) mint actor=AGENT tokens bound to the consent grant and
+        return ``id_token=None`` (D11 — no OIDC identity on the agent
+        channel); plain codes keep the act-as-user path with an id_token.
         """
         code_hash = _hash_code(code)
         now = datetime.now(UTC)
+        grant_id: str | None = None
+        grant_agent_id: str | None = None
+        grant_scopes: list[str] = []
 
         async with self._ctx.admin_db.transaction() as session:
             auth_code = await AuthorizationCodeRepository.get_by_hash(
@@ -344,6 +440,29 @@ class AuthorizeService:
 
             await AuthorizationCodeRepository.consume(session, auth_code.id, now)
 
+            if auth_code.grant_id is not None:
+                # Grant-channel exchange (§4.5): every leg is re-checked at
+                # exchange time and fails closed with invalid_grant — the
+                # consent-time snapshot is not trusted across the code TTL.
+                grant = await OAuthClientGrantRepository.get_by_id(session, auth_code.grant_id)
+                if grant is None or grant.status != OAuthGrantStatus.ACTIVE.value:
+                    raise InvalidGrantError("consent grant is not active")
+                if grant.oauth_client_id != client_id:
+                    raise InvalidGrantError("consent grant client mismatch")
+                oauth_client = await OAuthClientRepository.get_by_client_id(session, client_id)
+                if (
+                    oauth_client is None
+                    or not oauth_client.active
+                    or oauth_client.approval_status != OAuthClientApprovalStatus.APPROVED.value
+                ):
+                    raise InvalidGrantError("issuing OAuth client is not active")
+                agent = await AgentRepository.get_by_id(session, grant.agent_id)
+                if agent is None or agent.status != ActorStatus.ACTIVE.value:
+                    raise InvalidGrantError("granted agent is not active")
+                grant_id = grant.id
+                grant_agent_id = grant.agent_id
+                grant_scopes = list(grant.scopes)
+
             user = await UserRepository.get_by_id(session, auth_code.user_id)
 
             if user is not None:
@@ -360,6 +479,27 @@ class AuthorizeService:
 
         if user is None:
             raise InvalidGrantError("user not found")
+
+        if grant_id is not None and grant_agent_id is not None:
+            # Actor = the grant's AGENT, scopes = the consent-time grant set
+            # (already the D2 triple intersection, OIDC-stripped). Both
+            # lineage columns are stamped so the kill switches reach these
+            # rows. No id_token (D11): the client asked to wire up an agent,
+            # not to learn who the consenting human is.
+            #
+            # Known benign race: the grant was checked in the exchange
+            # transaction above, but issue_pair mints in its own transaction —
+            # a :revoke landing between the two can leave freshly-minted rows
+            # that miss the revoke sweep. They never resolve (every resolver
+            # re-checks grant status live) and simply linger until expiry.
+            access_token, refresh_token = await self._token_svc.issue_pair(
+                grant_agent_id,
+                ActorType.AGENT,
+                grant_scopes,
+                oauth_client_id=oauth_client_id,
+                oauth_grant_id=grant_id,
+            )
+            return access_token, refresh_token, None
 
         scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
         access_token, refresh_token = await self._token_svc.issue_pair(

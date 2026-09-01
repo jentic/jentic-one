@@ -29,6 +29,7 @@ from jentic_one.shared.models.jobs import JobKind, JobStatus
 from jentic_one.shared.models.oauth_clients import (
     OAuthClientApprovalStatus,
     OAuthConsentModel,
+    OAuthGrantStatus,
     OAuthRegistrationSource,
     TokenEndpointAuthMethod,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "JobStatus",
     "OAuthClientApprovalStatus",
     "OAuthConsentModel",
+    "OAuthGrantStatus",
     "OAuthRegistrationSource",
     "Origin",
     "OverlayDeprecationReason",

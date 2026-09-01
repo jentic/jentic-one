@@ -50,3 +50,16 @@ class OAuthClientApprovalStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     DENIED = "denied"
+
+
+class OAuthGrantStatus(StrEnum):
+    """Lifecycle of an ``oauth_client_grants`` row (D3, §4.4).
+
+    ``active`` grants resolve; ``revoked`` grants fail every token verdict
+    closed (both resolvers re-check live, §4.5-4.6). Revoke is terminal —
+    re-consent mints a fresh row rather than re-arming an old one, so grant
+    history is preserved.
+    """
+
+    ACTIVE = "active"
+    REVOKED = "revoked"

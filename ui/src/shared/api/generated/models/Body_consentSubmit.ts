@@ -4,6 +4,7 @@
 /* eslint-disable */
 export type Body_consentSubmit = {
     action: string;
+    agent_id?: (string | null);
     consent_token: string;
 };
 

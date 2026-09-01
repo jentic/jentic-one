@@ -15,6 +15,7 @@ from jentic_one.admin.repos.invite_token_repo import InviteTokenRepository
 from jentic_one.admin.repos.job_repo import JobRepository
 from jentic_one.admin.repos.job_result_repo import JobResultRepository
 from jentic_one.admin.repos.monitoring_repo import MonitoringRepository
+from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.repos.provider_config_repo import ProviderConfigRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
@@ -42,6 +43,7 @@ __all__ = [
     "JobRepository",
     "JobResultRepository",
     "MonitoringRepository",
+    "OAuthClientGrantRepository",
     "OAuthClientRepository",
     "ProviderConfigRepository",
     "RefreshTokenRepository",

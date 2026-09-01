@@ -88,6 +88,40 @@ export class OAuthService {
         });
     }
     /**
+     * Revoke OAuth grant
+     * Revoke a consent→agent grant — one of the three §4.6 kill radii.
+     *
+     * Allowed for the grant's owner (the consenting user) or an admin. Marks
+     * the grant ``revoked`` and revokes every outstanding access/refresh token
+     * minted under it in the same transaction; the live resolvers also re-check
+     * grant status on every verdict (belt + braces). The client's next token
+     * use or refresh fails closed. Idempotent on an already-revoked grant.
+     * @returns void
+     * @throws ApiError
+     */
+    public static revokeOauthGrant({
+        grantId,
+    }: {
+        grantId: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth-grants/{grant_id}:revoke',
+            path: {
+                'grant_id': grantId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Authorize Oauth Callback
      * External IdP callback — exchanges upstream code and issues platform auth code.
      * @returns any Successful Response
@@ -151,6 +185,11 @@ export class OAuthService {
      * leaves the state backend as anything more than an ID — the actual consent
      * parameters (user_id, email, scopes, redirect_uri) live server-side and
      * can't be tampered with or captured from browser history/proxy logs.
+     *
+     * ``agent_id`` is posted only by the §4.4 agent-picker variant
+     * (``consent_model='agent'`` clients); it is validated and the scope math
+     * recomputed entirely server-side — the browser's selection is never
+     * trusted.
      * @returns any Successful Response
      * @throws ApiError
      */

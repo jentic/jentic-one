@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +53,23 @@ class ActorScopeGrantRepository:
             select(ActorScopeGrant)
             .where(ActorScopeGrant.actor_id == actor_id)
             .order_by(ActorScopeGrant.scope)
+        )
+        if actor_type is not None:
+            stmt = stmt.where(ActorScopeGrant.actor_type == actor_type)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def list_for_actors(
+        session: AsyncSession, actor_ids: Sequence[str], actor_type: str | None = None
+    ) -> list[ActorScopeGrant]:
+        """Batch variant of :meth:`list_for_actor`: one query for many actors."""
+        if not actor_ids:
+            return []
+        stmt = (
+            select(ActorScopeGrant)
+            .where(ActorScopeGrant.actor_id.in_(list(actor_ids)))
+            .order_by(ActorScopeGrant.actor_id, ActorScopeGrant.scope)
         )
         if actor_type is not None:
             stmt = stmt.where(ActorScopeGrant.actor_type == actor_type)
