@@ -378,7 +378,9 @@ describe('AgentsPage — agents lifecycle', () => {
 		// (raw POST /register needs an Ed25519 JWKS, so the CLI is the teachable path).
 		expect(screen.getByRole('button', { name: /Create one manually/ })).toBeInTheDocument();
 		expect(screen.getByText('Register an agent from the command line')).toBeInTheDocument();
-		expect(screen.getByText(/jentic register --base-url/)).toBeInTheDocument();
+		// Pin the real CLI flag: `jentic register` takes --url, not --base-url (#1204).
+		expect(screen.getByText(/jentic register --url /)).toBeInTheDocument();
+		expect(screen.queryByText(/--base-url/)).not.toBeInTheDocument();
 		expect(screen.getByText(/--name my-first-agent/)).toBeInTheDocument();
 	});
 

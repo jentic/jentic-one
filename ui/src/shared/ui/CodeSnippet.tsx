@@ -12,8 +12,7 @@ export interface CodeSnippetProps {
 /**
  * One copyable code block: a bordered mono `<pre>` with a corner CopyButton
  * and an optional eyebrow label. The shared chrome for CLI snippets and
- * client-config JSON (the MCP config card; DcrQuickstart renders the same
- * chrome and migrates here as a follow-up).
+ * client-config JSON (the MCP config card and DcrQuickstart).
  */
 export function CodeSnippet({ code, label, className }: CodeSnippetProps) {
 	return (
