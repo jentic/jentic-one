@@ -11,6 +11,10 @@ export type OAuthClientCreateRequest = {
      */
     allowed_scopes?: (Array<string> | null);
     /**
+     * What a user's consent grants for this client. ``user`` keeps today's act-as-user semantics; ``agent`` marks the client for agent-bound consent (the MCP path).
+     */
+    consent_model?: OAuthClientCreateRequest.consent_model;
+    /**
      * Optional description of the client.
      */
     description?: (string | null);
@@ -26,5 +30,25 @@ export type OAuthClientCreateRequest = {
      * Whether to show a consent screen during authorization. Set to false for trusted first-party integrations.
      */
     require_consent?: boolean;
+    /**
+     * Client authentication method at the token endpoint. ``client_secret_basic`` creates a confidential client with a generated secret; ``none`` creates a public (secret-less) client that relies on PKCE alone — no secret is generated or returned.
+     */
+    token_endpoint_auth_method?: OAuthClientCreateRequest.token_endpoint_auth_method;
 };
+export namespace OAuthClientCreateRequest {
+    /**
+     * What a user's consent grants for this client. ``user`` keeps today's act-as-user semantics; ``agent`` marks the client for agent-bound consent (the MCP path).
+     */
+    export enum consent_model {
+        USER = 'user',
+        AGENT = 'agent',
+    }
+    /**
+     * Client authentication method at the token endpoint. ``client_secret_basic`` creates a confidential client with a generated secret; ``none`` creates a public (secret-less) client that relies on PKCE alone — no secret is generated or returned.
+     */
+    export enum token_endpoint_auth_method {
+        CLIENT_SECRET_BASIC = 'client_secret_basic',
+        NONE = 'none',
+    }
+}
 

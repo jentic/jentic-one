@@ -22,7 +22,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.models import ActorStatus, ActorType
+from jentic_one.shared.models import ActorStatus, ActorType, OAuthClientApprovalStatus
 
 ACCESS_TOKEN_PREFIX = "at_"
 REFRESH_TOKEN_PREFIX = "rt_"
@@ -42,14 +42,22 @@ async def _resolve_client_gate(
     """Look up an issuing OAuth client and return (active, scope_ceiling).
 
     ``active`` is True when the token has no issuing client OR the client is
-    active. ``scope_ceiling`` is the client's ``allowed_scopes`` if set (used
-    to filter the token's scopes at introspection time), else None. Kept as a
-    module-level helper so the introspect + resolve paths share one shape.
+    active AND approved. The D7 approval gate fails closed here too: the live
+    resolvers are the design's safety net, so a pending/denied row — even one
+    force-set ``active`` (e.g. by a direct DB edit) — must stop its
+    outstanding tokens from resolving. ``scope_ceiling`` is the client's
+    ``allowed_scopes`` if set (used to filter the token's scopes at
+    introspection time), else None. Kept as a module-level helper so the
+    introspect + resolve paths share one shape.
     """
     if oauth_client_id is None:
         return True, None
     client = await OAuthClientRepository.get_by_client_id(session, oauth_client_id)
-    if client is None or not client.active:
+    if (
+        client is None
+        or not client.active
+        or client.approval_status != OAuthClientApprovalStatus.APPROVED.value
+    ):
         return False, None
     ceiling = frozenset(client.allowed_scopes) if client.allowed_scopes is not None else None
     return True, ceiling
@@ -230,7 +238,14 @@ class TokenService:
                 oauth_client = await OAuthClientRepository.get_by_client_id(
                     session, rt.oauth_client_id
                 )
-                if oauth_client is None or not oauth_client.active:
+                if (
+                    oauth_client is None
+                    or not oauth_client.active
+                    or oauth_client.approval_status != OAuthClientApprovalStatus.APPROVED.value
+                ):
+                    # The D7 approval gate fails closed here too: deny flips
+                    # active off, but a pending row force-set active must
+                    # still never mint tokens.
                     raise InvalidGrantError("issuing OAuth client has been deactivated")
                 if client_id is None:
                     raise InvalidGrantError("client authentication required")
@@ -449,7 +464,14 @@ class TokenService:
                 oauth_client = await OAuthClientRepository.get_by_client_id(
                     session, at.oauth_client_id
                 )
-                if oauth_client is None or not oauth_client.active:
+                if (
+                    oauth_client is None
+                    or not oauth_client.active
+                    or oauth_client.approval_status != OAuthClientApprovalStatus.APPROVED.value
+                ):
+                    # The D7 approval gate fails closed at the live resolver —
+                    # a denied/pending row force-set active must not keep its
+                    # outstanding tokens resolving (mirrors the refresh gate).
                     return None
                 if oauth_client.allowed_scopes is not None:
                     client_scope_ceiling = frozenset(oauth_client.allowed_scopes)

@@ -18,12 +18,21 @@ class OAuthClientView(BaseModel):
     allowed_scopes: list[str] | None
     active: bool
     require_consent: bool
+    token_endpoint_auth_method: str
+    consent_model: str
+    registration_source: str
+    software_id: str | None
+    approval_status: str
     created_at: datetime
     updated_at: datetime | None
     created_by: str | None
 
 
 class OAuthClientCreateResult(OAuthClientView):
-    """Returned on creation — includes the one-time plaintext client secret."""
+    """Returned on creation — includes the one-time plaintext client secret.
 
-    client_secret: str
+    ``client_secret`` is None for public clients (``token_endpoint_auth_method
+    = none``), which have no secret at all.
+    """
+
+    client_secret: str | None

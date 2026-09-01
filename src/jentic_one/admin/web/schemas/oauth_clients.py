@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,6 +44,19 @@ class OAuthClientCreateRequest(BaseModel):
         "An empty list denies all non-OIDC scopes. Null means unrestricted "
         "(all scopes permitted).",
     )
+    token_endpoint_auth_method: Literal["client_secret_basic", "none"] = Field(
+        default="client_secret_basic",
+        description="Client authentication method at the token endpoint. "
+        "``client_secret_basic`` creates a confidential client with a generated "
+        "secret; ``none`` creates a public (secret-less) client that relies on "
+        "PKCE alone — no secret is generated or returned.",
+    )
+    consent_model: Literal["user", "agent"] = Field(
+        default="user",
+        description="What a user's consent grants for this client. ``user`` "
+        "keeps today's act-as-user semantics; ``agent`` marks the client for "
+        "agent-bound consent (the MCP path).",
+    )
 
 
 class OAuthClientUpdateRequest(BaseModel):
@@ -78,6 +91,11 @@ class OAuthClientResponse(BaseModel):
                     "redirect_uris": ["https://app.example.com/auth/callback"],
                     "active": True,
                     "require_consent": True,
+                    "token_endpoint_auth_method": "client_secret_basic",
+                    "consent_model": "user",
+                    "registration_source": "admin",
+                    "software_id": None,
+                    "approval_status": "approved",
                     "created_at": "2026-08-18T12:00:00Z",
                     "updated_at": None,
                     "created_by": "usr_abc123",
@@ -98,6 +116,24 @@ class OAuthClientResponse(BaseModel):
     require_consent: bool = Field(
         description="Whether a consent screen is shown during authorization."
     )
+    token_endpoint_auth_method: str = Field(
+        description="Client authentication method at the token endpoint: "
+        "``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only)."
+    )
+    consent_model: str = Field(
+        description="What a user's consent grants for this client: ``user`` or ``agent``."
+    )
+    registration_source: str = Field(
+        description="How the client entered the registry: ``admin`` or ``dcr``."
+    )
+    software_id: str | None = Field(
+        description="RFC 7591 software identifier claimed at registration, if any."
+    )
+    approval_status: str = Field(
+        description="Admin approval lifecycle: ``pending``, ``approved``, or ``denied``. "
+        "Only approved clients may enter OAuth flows; ``active`` remains the "
+        "independent kill switch."
+    )
     created_at: datetime
     updated_at: datetime | None
     created_by: str | None
@@ -106,9 +142,20 @@ class OAuthClientResponse(BaseModel):
 class OAuthClientCreateResponse(OAuthClientResponse):
     """Returned on creation — includes the one-time plaintext client secret."""
 
-    client_secret: str = Field(
-        description="The client secret. Shown only once at creation — store it securely.",
+    client_secret: str | None = Field(
+        description="The client secret. Shown only once at creation — store it "
+        "securely. Null for public (secret-less) clients.",
         json_schema_extra=SENSITIVE,
+    )
+
+
+class OAuthClientDenyRequest(BaseModel):
+    """Request body for denying an OAuth client."""
+
+    reason: str | None = Field(
+        default=None,
+        max_length=1024,
+        description="Optional reason recorded in the audit trail.",
     )
 
 

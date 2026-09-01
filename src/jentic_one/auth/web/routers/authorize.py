@@ -43,6 +43,7 @@ from jentic_one.shared.auth.permission_catalog import (
     compute_implies_transitive,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
@@ -134,6 +135,16 @@ async def _get_cached_oauth_client(
     return cache[client_id]
 
 
+def _client_gate_passes(client: OAuthClientView) -> bool:
+    """The D7 client gate: only ``active`` AND ``approved`` rows may proceed.
+
+    Checked at /authorize entry and *re-checked* mid-flow (IdP callback,
+    consent submit) so a client denied or deactivated inside the signed-state
+    window cannot walk the rest of the flow to a minted code.
+    """
+    return client.active and client.approval_status == OAuthClientApprovalStatus.APPROVED.value
+
+
 async def _is_allowed_redirect_uri(
     request: Request, redirect_uri: str, client_id: str, ctx: Context
 ) -> bool:
@@ -141,12 +152,14 @@ async def _is_allowed_redirect_uri(
 
     Platform clients are validated against their configured redirect_uris.
     Third-party clients are looked up in the oauth_clients registry.
-    Unknown client_ids are rejected.
+    Unknown client_ids are rejected, and so are unapproved (pending/denied)
+    rows — the D7 approval gate fails closed on the existing error path.
+    (The human "awaiting approval" page is 3a-2 scope.)
     """
     if _is_platform_client(client_id, ctx):
         return _platform_client_allows_redirect(redirect_uri, client_id, ctx)
     client = await _get_cached_oauth_client(request, client_id, ctx)
-    if client is None or not client.active:
+    if client is None or not _client_gate_passes(client):
         return False
     return redirect_uri in client.redirect_uris
 
@@ -565,6 +578,14 @@ async def oauth_callback(
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
 
     oauth_client = await _get_cached_oauth_client(request, client_id or "", ctx)
+    if oauth_client is not None and not _client_gate_passes(oauth_client):
+        # Mid-flow D7 re-check: the gate at /authorize entry only covers the
+        # start of the signed-state window — a client denied or deactivated
+        # while the user is at the IdP must not reach consent or mint a code.
+        # Browser-facing human error, never an OAuth redirect to the client
+        # (D7: clients can't observe browser-side rejections).
+        logger.warning("oauth_client_gate_failed_midflow", client_id=client_id, stage="callback")
+        return RedirectResponse(url="/error?error=access_denied", status_code=302)
     # Third-party clients always require consent regardless of the client's
     # require_consent flag: consent-skip is a first-party trust decision that
     # only platform clients (configured operator-side, not admin-registered)
@@ -781,6 +802,18 @@ async def consent_submit(
     original_state = str(raw_state) if raw_state else None
     client_id = str(params.get("client_id") or "")
     scope = str(params.get("scope") or "openid")
+
+    if not _is_platform_client(client_id, ctx):
+        # Mid-flow D7 re-check (see oauth_callback): a client denied between
+        # the consent page render and this submit must not provision a user
+        # row or mint a code — even on the Deny arm we return the human error
+        # rather than an OAuth redirect the denied client could observe.
+        oauth_client = await _get_cached_oauth_client(request, client_id, ctx)
+        if oauth_client is None or not _client_gate_passes(oauth_client):
+            logger.warning(
+                "oauth_client_gate_failed_midflow", client_id=client_id, stage="consent_submit"
+            )
+            return RedirectResponse(url="/error?error=access_denied", status_code=302)
 
     if action == "deny":
         # No user_id yet because provisioning is deferred to approve; audit

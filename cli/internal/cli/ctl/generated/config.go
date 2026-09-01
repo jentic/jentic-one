@@ -1402,6 +1402,12 @@ type OAuthRateLimitConfig struct {
 	// ExchangeRpm corresponds to the JSON schema field "exchange_rpm".
 	ExchangeRpm int `json:"exchange_rpm,omitempty,omitzero" yaml:"exchange_rpm,omitempty" mapstructure:"exchange_rpm,omitempty"`
 
+	// RegistrationBurst corresponds to the JSON schema field "registration_burst".
+	RegistrationBurst int `json:"registration_burst,omitempty,omitzero" yaml:"registration_burst,omitempty" mapstructure:"registration_burst,omitempty"`
+
+	// RegistrationRpm corresponds to the JSON schema field "registration_rpm".
+	RegistrationRpm int `json:"registration_rpm,omitempty,omitzero" yaml:"registration_rpm,omitempty" mapstructure:"registration_rpm,omitempty"`
+
 	// TrustedProxies corresponds to the JSON schema field "trusted_proxies".
 	TrustedProxies []string `json:"trusted_proxies,omitempty,omitzero" yaml:"trusted_proxies,omitempty" mapstructure:"trusted_proxies,omitempty"`
 }
@@ -1428,6 +1434,12 @@ func (j *OAuthRateLimitConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["exchange_rpm"]; !ok || v == nil {
 		plain.ExchangeRpm = 60
+	}
+	if v, ok := raw["registration_burst"]; !ok || v == nil {
+		plain.RegistrationBurst = 5
+	}
+	if v, ok := raw["registration_rpm"]; !ok || v == nil {
+		plain.RegistrationRpm = 10
 	}
 	*j = OAuthRateLimitConfig(plain)
 	return nil

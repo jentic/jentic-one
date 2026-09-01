@@ -162,11 +162,11 @@ func (OAuth2CreateRequest) RequiredFields() []string      { return []string{"api
 func (OAuth2UpdateRequest) RequiredFields() []string      { return []string{"type"} }
 func (OAuthClientCreateRequest) RequiredFields() []string { return []string{"name", "redirect_uris"} }
 func (OAuthClientCreateResponse) RequiredFields() []string {
-	return []string{"active", "allowed_scopes", "client_id", "client_secret", "created_at", "created_by", "description", "id", "name", "redirect_uris", "require_consent", "updated_at"}
+	return []string{"active", "allowed_scopes", "approval_status", "client_id", "client_secret", "consent_model", "created_at", "created_by", "description", "id", "name", "redirect_uris", "registration_source", "require_consent", "software_id", "token_endpoint_auth_method", "updated_at"}
 }
 func (OAuthClientListResponse) RequiredFields() []string { return []string{"data"} }
 func (OAuthClientResponse) RequiredFields() []string {
-	return []string{"active", "allowed_scopes", "client_id", "created_at", "created_by", "description", "id", "name", "redirect_uris", "require_consent", "updated_at"}
+	return []string{"active", "allowed_scopes", "approval_status", "client_id", "consent_model", "created_at", "created_by", "description", "id", "name", "redirect_uris", "registration_source", "require_consent", "software_id", "token_endpoint_auth_method", "updated_at"}
 }
 func (OAuthClientRotateSecretResponse) RequiredFields() []string { return []string{"client_secret"} }
 func (OperationPreviewListResponse) RequiredFields() []string {

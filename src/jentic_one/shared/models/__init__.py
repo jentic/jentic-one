@@ -26,6 +26,12 @@ from jentic_one.shared.models.credentials import (
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.executions import ExecutionStatus
 from jentic_one.shared.models.jobs import JobKind, JobStatus
+from jentic_one.shared.models.oauth_clients import (
+    OAuthClientApprovalStatus,
+    OAuthConsentModel,
+    OAuthRegistrationSource,
+    TokenEndpointAuthMethod,
+)
 from jentic_one.shared.models.registry import (
     ORIGIN_CATALOG,
     ORIGIN_OVERLAY,
@@ -61,11 +67,15 @@ __all__ = [
     "InviteState",
     "JobKind",
     "JobStatus",
+    "OAuthClientApprovalStatus",
+    "OAuthConsentModel",
+    "OAuthRegistrationSource",
     "Origin",
     "OverlayDeprecationReason",
     "OverlayStatus",
     "RevisionOrigin",
     "StoredCredentialType",
+    "TokenEndpointAuthMethod",
     "actor_type_from_id",
     "canonical_credential_scope",
     "credential_coverage_where",

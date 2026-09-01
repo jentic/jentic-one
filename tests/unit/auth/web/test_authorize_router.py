@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
 import pytest
 from fastapi import Request
 
+from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.web.routers.authorize import (
     STATE_MAX_AGE_SECONDS,
     _callback_uri,
+    _is_allowed_redirect_uri,
     _sign_payload,
     _verify_payload,
 )
@@ -128,6 +133,81 @@ def test_callback_uri_keeps_resolved_path() -> None:
     request = _FakeRequest("http://internal-host/oauth/callback")
     result = _callback_uri(cast("Request", request), "https://app.example.com/")
     assert result == "https://app.example.com/oauth/callback"
+
+
+# ---------- /authorize client validation: the D7 approval gate ----------
+
+
+def _client_view(*, active: bool = True, approval_status: str = "approved") -> OAuthClientView:
+    return OAuthClientView(
+        id="oac_1",
+        client_id="oc_1",
+        name="app",
+        description=None,
+        redirect_uris=["https://app.example.com/cb"],
+        allowed_scopes=None,
+        active=active,
+        require_consent=True,
+        token_endpoint_auth_method="none",
+        consent_model="agent",
+        registration_source="dcr",
+        software_id=None,
+        approval_status=approval_status,
+        created_at=datetime.now(UTC),
+        updated_at=None,
+        created_by=None,
+    )
+
+
+class _StateRequest:
+    """Request stand-in exposing only ``.state`` (the per-request client cache)."""
+
+    def __init__(self) -> None:
+        self.state = SimpleNamespace()
+
+
+def _ctx_without_platform_clients() -> MagicMock:
+    ctx = MagicMock()
+    ctx.config.auth.platform_clients = []
+    return ctx
+
+
+@pytest.mark.parametrize(
+    ("active", "approval_status", "expected"),
+    [
+        (True, "approved", True),
+        (True, "pending", False),
+        (True, "denied", False),
+        (False, "approved", False),
+    ],
+)
+async def test_authorize_validation_approval_gate(
+    active: bool, approval_status: str, expected: bool
+) -> None:
+    """Pending/denied clients fail /authorize validation on the existing error
+    path even when active and the redirect_uri matches (D7 fails closed)."""
+    view = _client_view(active=active, approval_status=approval_status)
+    with patch("jentic_one.auth.web.routers.authorize.OAuthClientService") as mock_svc_cls:
+        mock_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=view)
+        result = await _is_allowed_redirect_uri(
+            cast("Request", _StateRequest()),
+            "https://app.example.com/cb",
+            "oc_1",
+            _ctx_without_platform_clients(),
+        )
+    assert result is expected
+
+
+async def test_authorize_validation_unknown_client_rejected() -> None:
+    with patch("jentic_one.auth.web.routers.authorize.OAuthClientService") as mock_svc_cls:
+        mock_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=None)
+        result = await _is_allowed_redirect_uri(
+            cast("Request", _StateRequest()),
+            "https://app.example.com/cb",
+            "oc_missing",
+            _ctx_without_platform_clients(),
+        )
+    assert result is False
 
 
 def test_callback_uri_without_canonical_falls_back_to_request() -> None:

@@ -955,6 +955,16 @@
           "title": "Exchange Rpm",
           "type": "integer"
         },
+        "registration_burst": {
+          "default": 5,
+          "title": "Registration Burst",
+          "type": "integer"
+        },
+        "registration_rpm": {
+          "default": 10,
+          "title": "Registration Rpm",
+          "type": "integer"
+        },
         "trusted_proxies": {
           "items": {
             "type": "string"

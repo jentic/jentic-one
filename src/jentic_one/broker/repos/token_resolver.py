@@ -40,6 +40,9 @@ class InProcessTokenResolver:
         # oauth_client_active mirrors that guarantee for third-party clients
         # (kill-switch on deactivate must reach broker traffic, not just auth
         # surface). NULL indicates no issuing client, treated as active.
+        # oauth_client_approved is the D7 approval gate at the same layer: a
+        # pending/denied row — even one force-set active — must fail closed
+        # here too, matching the auth-surface resolver.
         stmt = text(
             "SELECT t.actor_id, t.actor_type, t.scopes, t.is_ephemeral,"
             " t.expires_at, t.revoked_at, t.oauth_client_id,"
@@ -55,11 +58,13 @@ class InProcessTokenResolver:
             " END AS actor_status,"
             " (SELECT c.active FROM oauth_clients c"
             "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_active,"
+            " (SELECT c.approval_status = 'approved' FROM oauth_clients c"
+            "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_approved,"
             " (SELECT c.allowed_scopes FROM oauth_clients c"
             "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_allowed_scopes"
             " FROM access_tokens t"
             " WHERE t.token_hash = :token_hash"
-        ).columns(is_ephemeral=Boolean, oauth_client_active=Boolean)
+        ).columns(is_ephemeral=Boolean, oauth_client_active=Boolean, oauth_client_approved=Boolean)
         async with self._admin_db.session() as session:
             result = await session.execute(stmt, {"token_hash": token_hash})
             row = result.one_or_none()
@@ -94,7 +99,9 @@ class InProcessTokenResolver:
         revoked_at = _as_aware_datetime(row.revoked_at) if row.revoked_at is not None else None
 
         oauth_client_id = row.oauth_client_id
-        client_active = oauth_client_id is None or bool(row.oauth_client_active)
+        client_active = oauth_client_id is None or (
+            bool(row.oauth_client_active) and bool(row.oauth_client_approved)
+        )
         if oauth_client_id is not None:
             ceiling = _as_scope_list(row.oauth_client_allowed_scopes)
             if row.oauth_client_allowed_scopes is not None:

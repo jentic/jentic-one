@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OAuthClientCreateRequest } from '../models/OAuthClientCreateRequest';
 import type { OAuthClientCreateResponse } from '../models/OAuthClientCreateResponse';
+import type { OAuthClientDenyRequest } from '../models/OAuthClientDenyRequest';
 import type { OAuthClientListResponse } from '../models/OAuthClientListResponse';
 import type { OAuthClientResponse } from '../models/OAuthClientResponse';
 import type { OAuthClientRotateSecretResponse } from '../models/OAuthClientRotateSecretResponse';
@@ -14,20 +15,26 @@ import { request as __request } from '../core/request';
 export class OAuthClientsService {
     /**
      * List OAuth clients
-     * List all registered OAuth clients.
+     * List all registered OAuth clients, optionally filtered by approval status.
      * @returns OAuthClientListResponse Successful Response
      * @throws ApiError
      */
     public static listOauthClients({
         includeInactive = false,
+        approvalStatus,
     }: {
         includeInactive?: boolean,
+        /**
+         * Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.
+         */
+        approvalStatus?: (string | null),
     }): CancelablePromise<OAuthClientListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/admin/oauth-clients',
             query: {
                 'include_inactive': includeInactive,
+                'approval_status': approvalStatus,
             },
             errors: {
                 400: `Bad Request`,
@@ -177,6 +184,71 @@ export class OAuthClientsService {
             path: {
                 'id': id,
             },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Approve OAuth client
+     * Approve an OAuth client — sets approval_status=approved and active=true.
+     *
+     * Also re-approves a previously denied client (deny is reversible; rows are
+     * never deleted, so the client's cached client_id becomes valid again).
+     * @returns OAuthClientResponse Successful Response
+     * @throws ApiError
+     */
+    public static approveOauthClient({
+        id,
+    }: {
+        id: string,
+    }): CancelablePromise<OAuthClientResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/oauth-clients/{id}:approve',
+            path: {
+                'id': id,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Deny OAuth client
+     * Deny an OAuth client — sets approval_status=denied and active=false.
+     *
+     * The row is retained so a later approve can reverse the decision.
+     * @returns OAuthClientResponse Successful Response
+     * @throws ApiError
+     */
+    public static denyOauthClient({
+        id,
+        requestBody,
+    }: {
+        id: string,
+        requestBody?: (OAuthClientDenyRequest | null),
+    }): CancelablePromise<OAuthClientResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/oauth-clients/{id}:deny',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
