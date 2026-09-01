@@ -145,6 +145,27 @@ class RateLimitExceededError(AuthServiceError):
         self.retry_after = retry_after
 
 
+class OAuthGrantNotFoundError(AuthServiceError):
+    """Raised when an oauth_client_grants row does not exist."""
+
+    def __init__(self, grant_id: str) -> None:
+        super().__init__(f"OAuth grant '{grant_id}' not found")
+        self.grant_id = grant_id
+
+
+class OAuthGrantAccessDeniedError(AuthServiceError):
+    """Raised when a caller may not operate on an OAuth grant.
+
+    Grant ``:revoke`` is owner-or-admin (design §4.8): the consenting user
+    owns the grant; anyone else needs the admin permission. 403, not 404 —
+    the grant id is a ksuid, not a secret.
+    """
+
+    def __init__(self, grant_id: str) -> None:
+        super().__init__(f"Not permitted to operate on OAuth grant '{grant_id}'")
+        self.grant_id = grant_id
+
+
 class InvalidClientMetadataError(AuthServiceError):
     """Raised when anonymous DCR client metadata is rejected (RFC 7591 §3.2.2).
 

@@ -18,6 +18,7 @@ from jentic_one.auth.web.routers import (
     identity,
     oauth,
     oauth_client_registration,
+    oauth_grants,
     registration,
     service_accounts,
 )
@@ -53,6 +54,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (service_accounts.router, "", []),
         (oauth.router, "", []),
         (oauth_client_registration.router, "", []),
+        (oauth_grants.router, "", []),
         (registration.router, "", []),
     ]
 
@@ -155,6 +157,7 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 actor_type=resolved.actor_type,
                 parent_actor_id=resolved.parent_actor_id,
                 oauth_client_id=resolved.oauth_client_id,
+                oauth_grant_id=resolved.oauth_grant_id,
             )
         return await verify_token(
             token, secret=ctx.config.admin.auth.jwt_secret.get_secret_value(), ctx=ctx

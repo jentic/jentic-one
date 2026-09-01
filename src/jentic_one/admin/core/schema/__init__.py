@@ -16,6 +16,7 @@ from jentic_one.admin.core.schema.instance_identity import InstanceIdentity
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.provider_configs import ProviderConfigRecord
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
@@ -43,6 +44,7 @@ __all__ = [
     "Job",
     "JobResult",
     "OAuthClient",
+    "OAuthClientGrant",
     "ProviderConfigRecord",
     "RefreshToken",
     "ServiceAccount",

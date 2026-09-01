@@ -26,6 +26,7 @@ class AccessTokenRepository:
         created_by: str,
         is_ephemeral: bool = False,
         oauth_client_id: str | None = None,
+        oauth_grant_id: str | None = None,
     ) -> AccessToken:
         token = AccessToken(
             token_hash=token_hash,
@@ -37,6 +38,7 @@ class AccessTokenRepository:
             created_by=created_by,
             is_ephemeral=is_ephemeral,
             oauth_client_id=oauth_client_id,
+            oauth_grant_id=oauth_grant_id,
         )
         session.add(token)
         await session.flush()
@@ -68,6 +70,23 @@ class AccessTokenRepository:
         )
         await session.execute(stmt)
         await session.flush()
+
+    @staticmethod
+    async def revoke_by_grant(session: AsyncSession, oauth_grant_id: str) -> int:
+        """Revoke every live token minted under one consent grant (§4.6).
+
+        The grant ``:revoke`` sweep — belt to the resolvers' live grant-gate
+        braces. Returns the number of rows revoked.
+        """
+        stmt = (
+            update(AccessToken)
+            .where(AccessToken.oauth_grant_id == oauth_grant_id)
+            .where(AccessToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def delete_expired(session: AsyncSession, before: datetime) -> int:

@@ -2633,6 +2633,26 @@
       "typical_caller": null
     },
     {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "revokeOauthGrant",
+      "path": "/oauth-grants/{grant_id}:revoke",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Revoke OAuth grant",
+      "surface": "oauth-grants",
+      "typical_caller": "any"
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,
@@ -5040,5 +5060,5 @@
     ],
     "total": 33
   },
-  "total": 172
+  "total": 173
 }

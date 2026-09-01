@@ -16,7 +16,7 @@ import json
 import secrets
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 import structlog
@@ -26,12 +26,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.core.idp import IdpClaims
-from jentic_one.auth.services.authorize_service import AuthorizeService
+from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import (
     InvalidGrantError,
     RateLimitExceededError,
     UserNotAdmittedError,
 )
+from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
@@ -44,7 +45,7 @@ from jentic_one.shared.auth.permission_catalog import (
     compute_implies_transitive,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
+from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus, OAuthConsentModel
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state.backend import SharedStateBackend
@@ -173,6 +174,10 @@ def _callback_uri(request: Request, canonical_base_url: str) -> str:
 
 def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
     return AuthorizeService(ctx)
+
+
+def get_oauth_grant_service(ctx: Context = Depends(get_ctx)) -> OAuthGrantService:
+    return OAuthGrantService(ctx)
 
 
 STATE_MAX_AGE_SECONDS = 600
@@ -473,6 +478,305 @@ _AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
         <p class="description">
             Ask your Jentic One admin to approve it under
             Settings &rarr; OAuth clients, then retry the connection
+            from your application.
+        </p>
+    </div>
+</body>
+</html>
+"""
+
+
+# The §4.4 agent-picker consent variant (consent_model='agent' clients only —
+# the 'user' template above stays byte-identical). Differences: the
+# redirect-URI origin is rendered prominently (client-claimed names are
+# untrusted — phishing counter), and the permission list is replaced by an
+# agent picker whose per-agent scope lists show the D2 intersection: scopes
+# the agent lacks render greyed-out so the user sees the ceiling, and the
+# invariant (granted ≤ agent's live scopes) holds by construction.
+_AGENT_CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Authorize {app_name} | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f5f7f7;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .card {{
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
+            max-width: 440px;
+            width: 100%;
+            padding: 32px;
+        }}
+        .logo {{ text-align: center; margin-bottom: 24px; }}
+        .logo-text {{
+            font-family: 'Sora', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #0E1A1D;
+            letter-spacing: -0.5px;
+        }}
+        .logo-text span {{ color: #689296; }}
+        h1 {{
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: #0E1A1D;
+            text-align: center;
+            line-height: 1.4;
+        }}
+        .app-name {{ color: #305256; font-weight: 700; }}
+        .origin {{
+            text-align: center;
+            font-size: 13px;
+            font-weight: 700;
+            color: #0E1A1D;
+            background: #EDF3F2;
+            border-radius: 6px;
+            padding: 6px 10px;
+            margin: 8px auto 12px;
+            display: table;
+            max-width: 100%;
+            word-break: break-all;
+        }}
+        .description {{
+            color: #689296;
+            font-size: 14px;
+            margin-bottom: 16px;
+            line-height: 1.5;
+            text-align: center;
+        }}
+        .user-info {{
+            text-align: center;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: #f5f7f7;
+            border-radius: 8px;
+        }}
+        .user-info .label {{
+            font-size: 11px;
+            color: #689296;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }}
+        .user-info .email {{
+            font-size: 14px;
+            color: #0E1A1D;
+            font-weight: 600;
+        }}
+        .agents {{ margin-bottom: 20px; }}
+        .agents h2 {{
+            font-size: 12px;
+            font-weight: 600;
+            color: #305256;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        .agent {{
+            display: block;
+            border: 1px solid #E4EAEB;
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }}
+        .agent:has(input:checked) {{
+            border-color: #305256;
+            background: #f5f7f7;
+        }}
+        .agent-header {{ display: flex; align-items: center; gap: 10px; }}
+        .agent-name {{
+            font-size: 14px;
+            font-weight: 700;
+            color: #0E1A1D;
+        }}
+        .agent-scopes {{
+            list-style: none;
+            margin-top: 8px;
+            font-size: 13px;
+            color: #305256;
+        }}
+        .agent-scopes li {{ padding: 3px 0; }}
+        .agent-scopes li.granted::before {{
+            content: "";
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            background: #5EDEB9;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: -2px;
+            background-image: url("{check_svg}");
+            background-size: 10px;
+            background-repeat: no-repeat;
+            background-position: center;
+        }}
+        .agent-scopes li.lacking {{
+            color: #A9BCBE;
+        }}
+        .agent-scopes li.lacking::before {{
+            content: "";
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            background: #E4EAEB;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: -2px;
+        }}
+        .buttons {{ display: flex; gap: 12px; }}
+        button {{
+            flex: 1;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }}
+        .deny {{
+            background: #f5f7f7;
+            color: #305256;
+            border: 1px solid #E4EAEB;
+        }}
+        .deny:hover {{ background: #E4EAEB; }}
+        .approve {{ background: #305256; color: white; }}
+        .approve:hover {{ background: #193238; }}
+        .footer {{
+            text-align: center;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #689296;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <div class="logo-text">Jentic<span>One</span></div>
+        </div>
+        <div class="user-info">
+            <div class="label">Signed in as</div>
+            <div class="email">{user_email}</div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> wants to connect to one of your agents</h1>
+        <div class="origin">{redirect_origin}</div>
+        <p class="description">{app_description}</p>
+        <form method="post" action="/oauth/consent">
+            <div class="agents">
+                <h2>Choose the agent this application may act through:</h2>
+                {agent_options}
+            </div>
+            <input type="hidden" name="consent_token" value="{consent_token}">
+            <div class="buttons">
+                <button type="submit" name="action" value="deny"
+                        class="deny" formnovalidate>Deny</button>
+                <button type="submit" name="action" value="approve"
+                        class="approve">Authorize</button>
+            </div>
+        </form>
+        <div class="footer">
+            The application will act only through the selected agent,
+            limited to the permissions shown.
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+_AGENT_OPTION_TEMPLATE = """<label class="agent">
+    <span class="agent-header">
+        <input type="radio" name="agent_id" value="{agent_id}" required{checked}>
+        <span class="agent-name">{agent_name}</span>
+    </span>
+    <ul class="agent-scopes">
+        {scope_items}
+    </ul>
+</label>"""
+
+# Zero active agents → an empty-state page, HTTP 200, no code minted (§4.4).
+_NO_AGENTS_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>No agents available | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f5f7f7;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .card {{
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
+            max-width: 400px;
+            width: 100%;
+            padding: 32px;
+        }}
+        .logo {{ text-align: center; margin-bottom: 24px; }}
+        .logo-text {{
+            font-family: 'Sora', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #0E1A1D;
+            letter-spacing: -0.5px;
+        }}
+        .logo-text span {{ color: #689296; }}
+        h1 {{
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #0E1A1D;
+            text-align: center;
+            line-height: 1.4;
+        }}
+        .app-name {{ color: #305256; font-weight: 700; }}
+        .description {{
+            color: #689296;
+            font-size: 14px;
+            line-height: 1.5;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <div class="logo-text">Jentic<span>One</span></div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> connects through an agent
+            &mdash; you don't have one yet</h1>
+        <p class="description">
+            This application acts through one of your approved agents.
+            Register an agent (see the Jentic One agent-registration docs),
+            have an administrator approve it, then retry the connection
             from your application.
         </p>
     </div>
@@ -808,6 +1112,86 @@ async def _consume_consent_handle(ch: str, request: Request) -> bool:
     )
 
 
+def _redirect_origin(redirect_uri: str) -> str:
+    """The redirect-URI origin, rendered prominently on the agent consent page.
+
+    Client-claimed names are untrusted (§4.2 phishing counter) — the origin is
+    the one client-controlled string the user can actually verify.
+    """
+    parts = urlsplit(redirect_uri)
+    if parts.scheme and parts.netloc:
+        return f"{parts.scheme}://{parts.netloc}"
+    return redirect_uri
+
+
+def _claims_from_params(params: dict[str, object]) -> IdpClaims | None:
+    """Re-hydrate the IdP claims stored on the consent handle."""
+    claims_data = params.get("claims")
+    if not isinstance(claims_data, dict):
+        return None
+    return IdpClaims(
+        external_subject=str(claims_data.get("external_subject") or ""),
+        email=str(claims_data.get("email") or ""),
+        email_verified=bool(claims_data.get("email_verified") or False),
+        first_name=str(claims_data.get("first_name") or ""),
+        last_name=str(claims_data.get("last_name") or ""),
+    )
+
+
+def _effective_agent_scopes(
+    requested: list[str],
+    allowlist: frozenset[str] | None,
+    agent_scopes: frozenset[str],
+) -> list[str]:
+    """The D2 grant-scope intersection: requested ∩ client allowlist ∩ agent live scopes.
+
+    ``openid``/OIDC passthrough scopes are stripped first (D11): agent-bound
+    grants carry no OIDC identity, so they must never enter the granted set.
+    Order follows the request so the consent page and the grant row agree.
+    """
+    effective = [s for s in requested if s not in OIDC_PASSTHROUGH_SCOPES]
+    if allowlist is not None:
+        effective = [s for s in effective if s in allowlist]
+    return [s for s in effective if s in agent_scopes]
+
+
+def _render_agent_options(
+    agents: list[AgentConsentOption],
+    candidate_scopes: list[str],
+) -> str:
+    """Render the §4.4 agent picker: one radio per active agent.
+
+    Each agent shows the candidate scope set (requested ∩ client allowlist,
+    OIDC stripped) marked granted/lacking against its live scopes — the user
+    sees the ceiling; the submit path recomputes the math server-side.
+    """
+    blocks: list[str] = []
+    for idx, agent in enumerate(agents):
+        items: list[str] = []
+        for scope_name in candidate_scopes:
+            desc = _scope_to_permission_description(scope_name)
+            if desc is None:
+                continue
+            if scope_name in agent.scopes:
+                items.append(f'<li class="granted">{html_mod.escape(desc)}</li>')
+            else:
+                items.append(
+                    f'<li class="lacking">{html_mod.escape(desc)}'
+                    " &mdash; not granted (agent lacks this scope)</li>"
+                )
+        if not items:
+            items.append('<li class="lacking">No requested permissions available</li>')
+        blocks.append(
+            _AGENT_OPTION_TEMPLATE.format(
+                agent_id=html_mod.escape(agent.id),
+                agent_name=html_mod.escape(agent.name),
+                scope_items="\n        ".join(items),
+                checked=" checked" if idx == 0 and len(agents) == 1 else "",
+            )
+        )
+    return "\n".join(blocks)
+
+
 @router.get(
     "/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(_check_rate_limit)]
 )
@@ -815,6 +1199,7 @@ async def consent_page(
     request: Request,
     ch: str = Query(..., description="Opaque consent-flow handle"),
     ctx: Context = Depends(get_ctx),
+    authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> HTMLResponse:
     """Display the OAuth consent screen."""
     params = await _load_consent_handle(ch, request)
@@ -829,6 +1214,18 @@ async def consent_page(
     app_description = str(params.get("client_description") or "This application")
     user_email = str(params.get("user_email") or "unknown")
     scope = str(params.get("scope") or "openid")
+
+    client_id = str(params.get("client_id") or "")
+    oauth_client: OAuthClientView | None = None
+    if client_id and not _is_platform_client(client_id, ctx):
+        oauth_client = await _get_cached_oauth_client(request, client_id, ctx)
+    if oauth_client is not None and oauth_client.consent_model == OAuthConsentModel.AGENT.value:
+        return await _render_agent_consent_page(
+            params,
+            oauth_client=oauth_client,
+            consent_token=ch,
+            authorize_svc=authorize_svc,
+        )
 
     scopes = [s.strip() for s in scope.split() if s.strip()]
     implied_by_others: set[str] = set()
@@ -853,13 +1250,70 @@ async def consent_page(
     return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
 
 
+async def _render_agent_consent_page(
+    params: dict[str, object],
+    *,
+    oauth_client: OAuthClientView,
+    consent_token: str,
+    authorize_svc: AuthorizeService,
+) -> HTMLResponse:
+    """The §4.4 agent-picker consent variant for ``consent_model='agent'`` clients.
+
+    Lists only the consenting user's own ``status='active'`` agents; zero
+    agents (or an unresolvable user — deferred provisioning means the row may
+    not exist yet) renders the empty-state page with no code minted. The
+    user identity is resolved read-only: rendering consent must not create a
+    user row (the Deny contract).
+    """
+    app_name = str(params.get("client_name") or "Unknown Application")
+    app_description = str(params.get("client_description") or "This application")
+    user_email = str(params.get("user_email") or "unknown")
+    scope = str(params.get("scope") or "")
+    redirect_uri = str(params.get("redirect_uri") or "")
+
+    claims = _claims_from_params(params)
+    user_id = await authorize_svc.resolve_existing_user_id(claims) if claims else None
+    agents = await authorize_svc.list_consentable_agents(user_id) if user_id else []
+    if not agents:
+        html = _NO_AGENTS_PAGE_TEMPLATE.format(
+            app_name=html_mod.escape(app_name),
+            fonts_url=_FONTS_URL,
+        )
+        return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
+
+    requested = [s.strip() for s in scope.split() if s.strip()]
+    allowlist = (
+        frozenset(oauth_client.allowed_scopes) if oauth_client.allowed_scopes is not None else None
+    )
+    # The candidate set shown per agent: requested ∩ allowlist, OIDC stripped
+    # (D11). Granted/lacking marking against each agent's live scopes happens
+    # in _render_agent_options.
+    candidates = [s for s in requested if s not in OIDC_PASSTHROUGH_SCOPES]
+    if allowlist is not None:
+        candidates = [s for s in candidates if s in allowlist]
+
+    html = _AGENT_CONSENT_PAGE_TEMPLATE.format(
+        app_name=html_mod.escape(app_name),
+        app_description=html_mod.escape(app_description),
+        user_email=html_mod.escape(user_email),
+        redirect_origin=html_mod.escape(_redirect_origin(redirect_uri)),
+        agent_options=_render_agent_options(agents, candidates),
+        consent_token=html_mod.escape(consent_token),
+        fonts_url=_FONTS_URL,
+        check_svg=_CHECK_SVG,
+    )
+    return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
+
+
 @router.post("/oauth/consent", dependencies=[Depends(_check_rate_limit)])
 async def consent_submit(
     request: Request,
     consent_token: str = Form(..., json_schema_extra=SENSITIVE),
     action: str = Form(...),
+    agent_id: str | None = Form(default=None),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
+    grant_svc: OAuthGrantService = Depends(get_oauth_grant_service),
 ) -> RedirectResponse:
     """Process the consent form submission. Mints the auth code only on approval.
 
@@ -867,6 +1321,11 @@ async def consent_submit(
     leaves the state backend as anything more than an ID — the actual consent
     parameters (user_id, email, scopes, redirect_uri) live server-side and
     can't be tampered with or captured from browser history/proxy logs.
+
+    ``agent_id`` is posted only by the §4.4 agent-picker variant
+    (``consent_model='agent'`` clients); it is validated and the scope math
+    recomputed entirely server-side — the browser's selection is never
+    trusted.
     """
     params = await _load_consent_handle(consent_token, request)
     if params is None:
@@ -883,6 +1342,7 @@ async def consent_submit(
     client_id = str(params.get("client_id") or "")
     scope = str(params.get("scope") or "openid")
 
+    oauth_client: OAuthClientView | None = None
     if not _is_platform_client(client_id, ctx):
         # Mid-flow D7 re-check (see oauth_callback): a client denied between
         # the consent page render and this submit must not provision a user
@@ -923,26 +1383,56 @@ async def consent_submit(
         logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
         return RedirectResponse(url="/error?error=server_error", status_code=302)
 
-    if not _is_platform_client(client_id, ctx):
-        await authorize_svc.record_consent_decision(
-            user_id=user_id,
-            oauth_client_id=client_id,
-            approved=True,
-            scopes=scope,
-        )
-
     code_challenge = str(params.get("code_challenge") or "")
     raw_nonce = params.get("nonce")
     nonce = str(raw_nonce) if raw_nonce else None
 
-    platform_code = await authorize_svc.issue_authorization_code(
-        user_id=user_id,
-        client_id=client_id,
-        redirect_uri=redirect_uri,
-        code_challenge=code_challenge,
-        scopes=scope,
-        nonce=nonce,
-    )
+    if oauth_client is not None and oauth_client.consent_model == OAuthConsentModel.AGENT.value:
+        # §4.4 consent→agent binding: validate the posted agent server-side
+        # (exists + active + owned by the consenting user — the picker's
+        # option list IS that predicate), recompute the D2 scope
+        # intersection, mint the grant row (+ audit + oauth_grant.created),
+        # and stamp grant_id on the code. Validation failures render the
+        # human error page — never an OAuth redirect with a code.
+        grant_result = await _approve_agent_consent(
+            authorize_svc,
+            grant_svc,
+            oauth_client=oauth_client,
+            user_id=user_id,
+            client_id=client_id,
+            agent_id=agent_id,
+            scope=scope,
+        )
+        if isinstance(grant_result, RedirectResponse):
+            return grant_result
+        grant_id_value, effective_scopes = grant_result
+
+        platform_code = await authorize_svc.issue_authorization_code(
+            user_id=user_id,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            scopes=" ".join(effective_scopes),
+            nonce=nonce,
+            grant_id=grant_id_value,
+        )
+    else:
+        if not _is_platform_client(client_id, ctx):
+            await authorize_svc.record_consent_decision(
+                user_id=user_id,
+                oauth_client_id=client_id,
+                approved=True,
+                scopes=scope,
+            )
+
+        platform_code = await authorize_svc.issue_authorization_code(
+            user_id=user_id,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            scopes=scope,
+            nonce=nonce,
+        )
 
     logger.info("oauth_consent_approved", client_id=client_id)
     redirect_params: dict[str, str] = {"code": platform_code}
@@ -953,6 +1443,48 @@ async def consent_submit(
     return RedirectResponse(
         url=f"{redirect_uri}{separator}{urlencode(redirect_params)}", status_code=302
     )
+
+
+async def _approve_agent_consent(
+    authorize_svc: AuthorizeService,
+    grant_svc: OAuthGrantService,
+    *,
+    oauth_client: OAuthClientView,
+    user_id: str,
+    client_id: str,
+    agent_id: str | None,
+    scope: str,
+) -> RedirectResponse | tuple[str, list[str]]:
+    """Validate the picked agent and mint the grant. Returns (grant_id, scopes)."""
+    if not agent_id:
+        logger.warning("oauth_consent_agent_missing", client_id=client_id)
+        return RedirectResponse(url="/error?error=invalid_agent_selection", status_code=302)
+
+    options = await authorize_svc.list_consentable_agents(user_id)
+    selected = next((o for o in options if o.id == agent_id), None)
+    if selected is None:
+        # Not the user's own active agent — covers unknown ids, other users'
+        # agents, and pending/disabled/archived agents in one predicate.
+        logger.warning("oauth_consent_agent_invalid", client_id=client_id)
+        return RedirectResponse(url="/error?error=invalid_agent_selection", status_code=302)
+
+    requested = [s.strip() for s in scope.split() if s.strip()]
+    allowlist = (
+        frozenset(oauth_client.allowed_scopes) if oauth_client.allowed_scopes is not None else None
+    )
+    effective = _effective_agent_scopes(requested, allowlist, selected.scopes)
+    if not effective:
+        logger.warning("oauth_consent_no_grantable_scopes", client_id=client_id, agent_id=agent_id)
+        return RedirectResponse(url="/error?error=no_grantable_scopes", status_code=302)
+
+    grant_id_value = await grant_svc.create_grant(
+        user_id=user_id,
+        oauth_client_id=client_id,
+        agent_id=selected.id,
+        scopes=effective,
+        client_name=oauth_client.name,
+    )
+    return grant_id_value, effective
 
 
 def _error_redirect(

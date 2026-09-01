@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **172**._
+_Total endpoints: **173**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -222,7 +222,7 @@ _Total endpoints: **172**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (69)
+## Any authenticated actor (70)
 
 
 ### `access-requests`
@@ -318,6 +318,12 @@ _Total endpoints: **172**._
 |---|---|---|---|---|
 | POST | `/oauth/introspect` | _any authenticated_ | any | Introspect Endpoint |
 | POST | `/oauth/revoke` | _any authenticated_ | any | Revoke Endpoint |
+
+### `oauth-grants`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/oauth-grants/{grant_id}:revoke` | _any authenticated_ | any | Revoke OAuth grant |
 
 ### `permissions`
 
