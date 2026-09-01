@@ -9,11 +9,11 @@
  * plan).
  */
 import { Terminal } from 'lucide-react';
-import { Card, CardBody, CopyButton } from '@/shared/ui';
+import { Card, CardBody, CodeSnippet } from '@/shared/ui';
 
 /** The command the operator can paste — targets the current origin's API. */
 function snippet(): string {
-	return `jentic register --base-url "${window.location.origin}" --name my-first-agent`;
+	return `jentic register --url "${window.location.origin}" --name my-first-agent`;
 }
 
 export function DcrQuickstart() {
@@ -32,14 +32,7 @@ export function DcrQuickstart() {
 					<strong>pending</strong> for you to approve. The CLI generates the agent's
 					Ed25519 keypair and registers it in one step.
 				</p>
-				<div className="bg-muted/60 border-border/60 relative rounded-lg border p-3">
-					<pre className="text-foreground/90 overflow-x-auto pr-8 font-mono text-xs leading-relaxed">
-						{code}
-					</pre>
-					<div className="absolute top-2 right-2">
-						<CopyButton value={code} />
-					</div>
-				</div>
+				<CodeSnippet code={code} />
 			</CardBody>
 		</Card>
 	);
