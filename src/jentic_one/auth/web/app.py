@@ -17,6 +17,7 @@ from jentic_one.auth.web.routers import (
     discovery,
     identity,
     oauth,
+    oauth_client_registration,
     registration,
     service_accounts,
 )
@@ -51,6 +52,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (agents.router, "", []),
         (service_accounts.router, "", []),
         (oauth.router, "", []),
+        (oauth_client_registration.router, "", []),
         (registration.router, "", []),
     ]
 

@@ -789,6 +789,10 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "tokenEndpoint",
         "authorizeEndpoint",
         "registerEndpoint",
+        # Anonymous OAuth-client DCR front door (phase-3a §4.2): flagship MCP
+        # clients register anonymously; the boundary is admin approval +
+        # consent, not registration. Rate limited and config-gated instead.
+        "registerOauthClientEndpoint",
         # OAuth redirect callbacks (bound by a signed state param, not a session).
         "oauthCallback",
         "authorizeOauthCallback",
@@ -864,6 +868,8 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/auth/idp"), "Discovery"),
     (re.compile(r"^/audit"), "Audit"),
     (re.compile(r"^/admin/oauth-clients"), "OAuth Clients"),
+    # Anonymous DCR front door — before the broader ^/oauth rule below.
+    (re.compile(r"^/oauth-clients"), "OAuth Clients"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
     (re.compile(r"^/service-accounts"), "Service Accounts"),

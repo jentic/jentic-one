@@ -424,6 +424,85 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+_AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Awaiting approval | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f5f7f7;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .card {{
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
+            max-width: 400px;
+            width: 100%;
+            padding: 32px;
+        }}
+        .logo {{
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+        .logo-text {{
+            font-family: 'Sora', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #0E1A1D;
+            letter-spacing: -0.5px;
+        }}
+        .logo-text span {{
+            color: #689296;
+        }}
+        h1 {{
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #0E1A1D;
+            text-align: center;
+            line-height: 1.4;
+        }}
+        .app-name {{
+            color: #305256;
+            font-weight: 700;
+        }}
+        .description {{
+            color: #689296;
+            font-size: 14px;
+            line-height: 1.5;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <div class="logo-text">Jentic<span>One</span></div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> is awaiting administrator approval</h1>
+        <p class="description">
+            Ask your Jentic One admin to approve it under
+            Settings &rarr; OAuth clients, then retry the connection
+            from your application.
+        </p>
+    </div>
+</body>
+</html>
+"""
+
+
 def _derive_key(master_secret: str, purpose: str) -> str:
     """Derive a purpose-specific signing key from the master secret via HMAC."""
     return hmac.HMAC(
@@ -465,7 +544,7 @@ def _get_consent_backend(request: Request) -> SharedStateBackend:
     return _get_auth_backend(request)
 
 
-@router.get("/authorize", dependencies=[Depends(_check_rate_limit)])
+@router.get("/authorize", dependencies=[Depends(_check_rate_limit)], response_model=None)
 async def authorize_endpoint(
     request: Request,
     response_type: str = Query(...),
@@ -478,12 +557,35 @@ async def authorize_endpoint(
     nonce: str | None = Query(default=None),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
-) -> RedirectResponse:
+) -> RedirectResponse | HTMLResponse:
     """RFC 6749 Authorization endpoint with PKCE (S256 only).
 
     If an external IdP is configured, redirects to the upstream provider.
     Otherwise returns an error (direct login requires a separate credential exchange).
     """
+    # D7 approval gate (§4.3): a registered-but-unapproved client renders a
+    # human page — NEVER an OAuth error redirect (clients can't observe
+    # browser-side rejections; a hard authorize-time rejection bricks Claude
+    # Code permanently). This branch runs BEFORE redirect-URI failure handling
+    # and deliberately does not distinguish pending from denied (deny is
+    # reversible and silent; the admin communicates out of band).
+    if not _is_platform_client(client_id, ctx):
+        unapproved = await _get_cached_oauth_client(request, client_id, ctx)
+        if (
+            unapproved is not None
+            and unapproved.approval_status != OAuthClientApprovalStatus.APPROVED.value
+        ):
+            logger.info(
+                "oauth_client_awaiting_approval_page",
+                client_id=client_id,
+                approval_status=unapproved.approval_status,
+            )
+            html = _AWAITING_APPROVAL_PAGE_TEMPLATE.format(
+                app_name=html_mod.escape(unapproved.name),
+                fonts_url=_FONTS_URL,
+            )
+            return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
+
     if not await _is_allowed_redirect_uri(request, redirect_uri, client_id, ctx):
         logger.warning(
             "oauth_invalid_redirect_uri",

@@ -881,6 +881,35 @@ class CatalogConfig(BaseModel):
     update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
+class McpOAuthConfig(BaseModel):
+    """Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).
+
+    Minimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full
+    ``server.mcp`` sub-config (``server.mcp.enabled`` etc.) and extends this
+    model in place — fields here must keep their names and defaults.
+    """
+
+    enabled: bool = False
+    """Master switch for the interactive-OAuth surface. Off (the default) the
+    anonymous DCR front door ``POST /oauth-clients`` returns a plain 404,
+    indistinguishable from not-shipped (§4.2)."""
+    auto_approve_clients: bool = True
+    """D9: auto-approve DCR registrations (``approval_status='approved'`` +
+    ``active=true`` at registration). Default **true** in OSS — self-hosted
+    single-user installs would otherwise approve their own registrations twice;
+    the enterprise overlay pins the default to ``false`` (admin queue)."""
+    registration_gc_days: int = 90
+    """Long-TTL GC policy for never-consented DCR rows (§4.2): rows are
+    GC-eligible only after this many days, and rows with any grant history are
+    never GC'd. Policy knob only — the sweep itself is not part of 3a-2."""
+
+
+class McpConfig(BaseModel):
+    """``server.mcp`` sub-config (minimal 3a-2 seam; phase-3 item 2 extends it)."""
+
+    oauth: McpOAuthConfig = Field(default_factory=McpOAuthConfig)
+
+
 class ServerConfig(BaseModel):
     """HTTP server settings."""
 
@@ -893,6 +922,7 @@ class ServerConfig(BaseModel):
     hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
     which backend they reached — not an authorization signal. Defaults to
     ``local``; the hosted platform sets ``remote`` in its own config."""
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
 
 class TelemetryConfig(BaseModel):

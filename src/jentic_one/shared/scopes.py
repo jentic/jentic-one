@@ -57,3 +57,13 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
 GRANTABLE_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES) | {"apis:write"}
 
 OIDC_PASSTHROUGH_SCOPES: frozenset[str] = frozenset({"openid", "email", "profile"})
+
+# Server-side cap for the `scope` a client claims at the anonymous DCR front
+# door (POST /oauth-clients, phase-3a design §4.2): a DCR-registered client's
+# `allowed_scopes` ceiling is always ⊆ this set — never unrestricted. It is the
+# master-plan §3.2 MCP tool surface expressed as scopes, which is exactly the
+# default agent baseline: DCR clients are `consent_model='agent'` (D6), so a
+# grant's effective scopes are further intersected with the bound agent's live
+# scopes at consent (3a-3). The 3a-4 discovery documents (`scopes_supported`)
+# must advertise this same set.
+MCP_TOOL_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES)

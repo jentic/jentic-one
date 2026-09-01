@@ -96,6 +96,34 @@ class OAuthClientRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def list_dcr_by_dedupe_key(
+        session: AsyncSession, software_id: str, fingerprint: str
+    ) -> list[OAuthClient]:
+        """List DCR rows matching the D8 dedupe key, via its covering index.
+
+        Hits the non-unique ``(software_id, redirect_uris_fingerprint)`` index
+        (§4.1) instead of scanning every row claiming the ``software_id``.
+        Callers must still verify the exact redirect-URI set on the returned
+        rows — the fingerprint is a hash, so equality is necessary evidence,
+        not proof (collision guard).
+
+        Oldest first so the dedupe winner is deterministic: the earliest
+        registration (the row an admin may already have approved) is returned
+        for every subsequent exact match.
+        """
+        stmt = (
+            select(OAuthClient)
+            .where(
+                OAuthClient.software_id == software_id,
+                OAuthClient.redirect_uris_fingerprint == fingerprint,
+                OAuthClient.registration_source == OAuthRegistrationSource.DCR.value,
+            )
+            .order_by(OAuthClient.created_at.asc(), OAuthClient.id.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_all(
         session: AsyncSession,
         *,

@@ -195,6 +195,12 @@ def _check_router_has_auth(filepath: Path) -> list[str]:
     """
     if "health" in filepath.name or "discovery" in filepath.name or "authorize" in filepath.name:
         return []
+    # The anonymous OAuth-client DCR front door (RFC 7591, phase-3a §4.2/D1):
+    # deliberately unauthenticated — flagship MCP clients register anonymously;
+    # the boundary is admin approval + consent. Gated by config + per-IP rate
+    # limiting instead of an identity dependency.
+    if filepath.name == "oauth_client_registration.py":
+        return []
 
     source = filepath.read_text(encoding="utf-8")
 

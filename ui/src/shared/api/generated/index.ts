@@ -124,6 +124,8 @@ export { OAuthClientCreateRequest } from './models/OAuthClientCreateRequest';
 export type { OAuthClientCreateResponse } from './models/OAuthClientCreateResponse';
 export type { OAuthClientDenyRequest } from './models/OAuthClientDenyRequest';
 export type { OAuthClientListResponse } from './models/OAuthClientListResponse';
+export type { OAuthClientRegistrationRequest } from './models/OAuthClientRegistrationRequest';
+export type { OAuthClientRegistrationResponse } from './models/OAuthClientRegistrationResponse';
 export type { OAuthClientResponse } from './models/OAuthClientResponse';
 export type { OAuthClientRotateSecretResponse } from './models/OAuthClientRotateSecretResponse';
 export type { OAuthClientUpdateRequest } from './models/OAuthClientUpdateRequest';

@@ -6,6 +6,8 @@ import type { OAuthClientCreateRequest } from '../models/OAuthClientCreateReques
 import type { OAuthClientCreateResponse } from '../models/OAuthClientCreateResponse';
 import type { OAuthClientDenyRequest } from '../models/OAuthClientDenyRequest';
 import type { OAuthClientListResponse } from '../models/OAuthClientListResponse';
+import type { OAuthClientRegistrationRequest } from '../models/OAuthClientRegistrationRequest';
+import type { OAuthClientRegistrationResponse } from '../models/OAuthClientRegistrationResponse';
 import type { OAuthClientResponse } from '../models/OAuthClientResponse';
 import type { OAuthClientRotateSecretResponse } from '../models/OAuthClientRotateSecretResponse';
 import type { OAuthClientUpdateRequest } from '../models/OAuthClientUpdateRequest';
@@ -254,6 +256,36 @@ export class OAuthClientsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Register OAuth client (anonymous DCR)
+     * Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+     *
+     * Returns 201 with the new ``client_id``, or 200 with the **existing** row's
+     * ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
+     * (D8). No client_secret is ever issued here and no registration_access_token
+     * is returned (D12). New rows await admin approval unless the deployment
+     * auto-approves registrations (D9).
+     * @returns OAuthClientRegistrationResponse Successful Response
+     * @throws ApiError
+     */
+    public static registerOauthClientEndpoint({
+        requestBody,
+    }: {
+        requestBody: OAuthClientRegistrationRequest,
+    }): CancelablePromise<OAuthClientRegistrationResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth-clients',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

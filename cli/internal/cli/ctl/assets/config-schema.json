@@ -910,6 +910,38 @@
       "title": "LoggingConfig",
       "type": "object"
     },
+    "McpConfig": {
+      "description": "``server.mcp`` sub-config (minimal 3a-2 seam; phase-3 item 2 extends it).",
+      "properties": {
+        "oauth": {
+          "$ref": "#/$defs/McpOAuthConfig"
+        }
+      },
+      "title": "McpConfig",
+      "type": "object"
+    },
+    "McpOAuthConfig": {
+      "description": "Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).\n\nMinimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full\n``server.mcp`` sub-config (``server.mcp.enabled`` etc.) and extends this\nmodel in place — fields here must keep their names and defaults.",
+      "properties": {
+        "auto_approve_clients": {
+          "default": true,
+          "title": "Auto Approve Clients",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "registration_gc_days": {
+          "default": 90,
+          "title": "Registration Gc Days",
+          "type": "integer"
+        }
+      },
+      "title": "McpOAuthConfig",
+      "type": "object"
+    },
     "MetricsConfig": {
       "description": "Metrics exporter configuration.",
       "properties": {
@@ -1244,6 +1276,9 @@
           "default": "0.0.0.0",
           "title": "Host",
           "type": "string"
+        },
+        "mcp": {
+          "$ref": "#/$defs/McpConfig"
         },
         "port": {
           "default": 8000,
