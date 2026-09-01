@@ -624,6 +624,42 @@ func (e OAuth2UpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for OAuthClientCreateRequestConsentModel.
+const (
+	OAuthClientCreateRequestConsentModelAgent OAuthClientCreateRequestConsentModel = "agent"
+	OAuthClientCreateRequestConsentModelUser  OAuthClientCreateRequestConsentModel = "user"
+)
+
+// Valid indicates whether the value is a known member of the OAuthClientCreateRequestConsentModel enum.
+func (e OAuthClientCreateRequestConsentModel) Valid() bool {
+	switch e {
+	case OAuthClientCreateRequestConsentModelAgent:
+		return true
+	case OAuthClientCreateRequestConsentModelUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthClientCreateRequestTokenEndpointAuthMethod.
+const (
+	ClientSecretBasic OAuthClientCreateRequestTokenEndpointAuthMethod = "client_secret_basic"
+	None              OAuthClientCreateRequestTokenEndpointAuthMethod = "none"
+)
+
+// Valid indicates whether the value is a known member of the OAuthClientCreateRequestTokenEndpointAuthMethod enum.
+func (e OAuthClientCreateRequestTokenEndpointAuthMethod) Valid() bool {
+	switch e {
+	case ClientSecretBasic:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OperationResultResponseType.
 const (
 	Operation OperationResultResponseType = "operation"
@@ -2031,6 +2067,9 @@ type OAuthClientCreateRequest struct {
 	// AllowedScopes If set, restricts which scopes this client may request. An empty list denies all non-OIDC scopes. Null means unrestricted (all scopes permitted).
 	AllowedScopes *[]string `json:"allowed_scopes,omitempty"`
 
+	// ConsentModel What a user's consent grants for this client. ``user`` keeps today's act-as-user semantics; ``agent`` marks the client for agent-bound consent (the MCP path).
+	ConsentModel *OAuthClientCreateRequestConsentModel `json:"consent_model,omitempty"`
+
 	// Description Optional description of the client.
 	Description *string `json:"description,omitempty"`
 
@@ -2042,22 +2081,37 @@ type OAuthClientCreateRequest struct {
 
 	// RequireConsent Whether to show a consent screen during authorization. Set to false for trusted first-party integrations.
 	RequireConsent *bool `json:"require_consent,omitempty"`
+
+	// TokenEndpointAuthMethod Client authentication method at the token endpoint. ``client_secret_basic`` creates a confidential client with a generated secret; ``none`` creates a public (secret-less) client that relies on PKCE alone — no secret is generated or returned.
+	TokenEndpointAuthMethod *OAuthClientCreateRequestTokenEndpointAuthMethod `json:"token_endpoint_auth_method,omitempty"`
 }
+
+// OAuthClientCreateRequestConsentModel What a user's consent grants for this client. “user“ keeps today's act-as-user semantics; “agent“ marks the client for agent-bound consent (the MCP path).
+type OAuthClientCreateRequestConsentModel string
+
+// OAuthClientCreateRequestTokenEndpointAuthMethod Client authentication method at the token endpoint. “client_secret_basic“ creates a confidential client with a generated secret; “none“ creates a public (secret-less) client that relies on PKCE alone — no secret is generated or returned.
+type OAuthClientCreateRequestTokenEndpointAuthMethod string
 
 // OAuthClientCreateResponse Returned on creation — includes the one-time plaintext client secret.
 //
-// Examples: {"active":true,"client_id":"oc_abc123...","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
+// Examples: {"active":true,"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"token_endpoint_auth_method":"client_secret_basic"}
 type OAuthClientCreateResponse struct {
 	Active bool `json:"active"`
 
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
 	AllowedScopes *[]string `json:"allowed_scopes"`
 
+	// ApprovalStatus Admin approval lifecycle: ``pending``, ``approved``, or ``denied``. Only approved clients may enter OAuth flows; ``active`` remains the independent kill switch.
+	ApprovalStatus string `json:"approval_status"`
+
 	// ClientId Public client identifier used in OAuth flows.
 	ClientId string `json:"client_id"`
 
-	// ClientSecret The client secret. Shown only once at creation — store it securely.
-	ClientSecret string    `json:"client_secret"`
+	// ClientSecret The client secret. Shown only once at creation — store it securely. Null for public (secret-less) clients.
+	ClientSecret *string `json:"client_secret"`
+
+	// ConsentModel What a user's consent grants for this client: ``user`` or ``agent``.
+	ConsentModel string    `json:"consent_model"`
 	CreatedAt    time.Time `json:"created_at"`
 	CreatedBy    *string   `json:"created_by"`
 	Description  *string   `json:"description"`
@@ -2067,9 +2121,24 @@ type OAuthClientCreateResponse struct {
 	Name         string   `json:"name"`
 	RedirectUris []string `json:"redirect_uris"`
 
+	// RegistrationSource How the client entered the registry: ``admin`` or ``dcr``.
+	RegistrationSource string `json:"registration_source"`
+
 	// RequireConsent Whether a consent screen is shown during authorization.
-	RequireConsent bool       `json:"require_consent"`
-	UpdatedAt      *time.Time `json:"updated_at"`
+	RequireConsent bool `json:"require_consent"`
+
+	// SoftwareId RFC 7591 software identifier claimed at registration, if any.
+	SoftwareId *string `json:"software_id"`
+
+	// TokenEndpointAuthMethod Client authentication method at the token endpoint: ``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only).
+	TokenEndpointAuthMethod string     `json:"token_endpoint_auth_method"`
+	UpdatedAt               *time.Time `json:"updated_at"`
+}
+
+// OAuthClientDenyRequest Request body for denying an OAuth client.
+type OAuthClientDenyRequest struct {
+	// Reason Optional reason recorded in the audit trail.
+	Reason *string `json:"reason,omitempty"`
 }
 
 // OAuthClientListResponse A list of OAuth clients.
@@ -2079,27 +2148,42 @@ type OAuthClientListResponse struct {
 
 // OAuthClientResponse An OAuth client in API responses.
 //
-// Examples: {"active":true,"client_id":"oc_abc123...","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
+// Examples: {"active":true,"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"token_endpoint_auth_method":"client_secret_basic"}
 type OAuthClientResponse struct {
 	Active bool `json:"active"`
 
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
 	AllowedScopes *[]string `json:"allowed_scopes"`
 
+	// ApprovalStatus Admin approval lifecycle: ``pending``, ``approved``, or ``denied``. Only approved clients may enter OAuth flows; ``active`` remains the independent kill switch.
+	ApprovalStatus string `json:"approval_status"`
+
 	// ClientId Public client identifier used in OAuth flows.
-	ClientId    string    `json:"client_id"`
-	CreatedAt   time.Time `json:"created_at"`
-	CreatedBy   *string   `json:"created_by"`
-	Description *string   `json:"description"`
+	ClientId string `json:"client_id"`
+
+	// ConsentModel What a user's consent grants for this client: ``user`` or ``agent``.
+	ConsentModel string    `json:"consent_model"`
+	CreatedAt    time.Time `json:"created_at"`
+	CreatedBy    *string   `json:"created_by"`
+	Description  *string   `json:"description"`
 
 	// Id Internal ID (ksuid).
 	Id           string   `json:"id"`
 	Name         string   `json:"name"`
 	RedirectUris []string `json:"redirect_uris"`
 
+	// RegistrationSource How the client entered the registry: ``admin`` or ``dcr``.
+	RegistrationSource string `json:"registration_source"`
+
 	// RequireConsent Whether a consent screen is shown during authorization.
-	RequireConsent bool       `json:"require_consent"`
-	UpdatedAt      *time.Time `json:"updated_at"`
+	RequireConsent bool `json:"require_consent"`
+
+	// SoftwareId RFC 7591 software identifier claimed at registration, if any.
+	SoftwareId *string `json:"software_id"`
+
+	// TokenEndpointAuthMethod Client authentication method at the token endpoint: ``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only).
+	TokenEndpointAuthMethod string     `json:"token_endpoint_auth_method"`
+	UpdatedAt               *time.Time `json:"updated_at"`
 }
 
 // OAuthClientRotateSecretResponse Returned on secret rotation — the new one-time plaintext secret.
@@ -3074,7 +3158,13 @@ type ListActorsParams struct {
 // ListOauthClientsParams defines parameters for ListOauthClients.
 type ListOauthClientsParams struct {
 	IncludeInactive *bool `form:"include_inactive,omitempty" json:"include_inactive,omitempty"`
+
+	// ApprovalStatus Filter by approval lifecycle state: pending, approved, or denied.
+	ApprovalStatus *string `form:"approval_status,omitempty" json:"approval_status,omitempty"`
 }
+
+// DenyOauthClientJSONBody defines parameters for DenyOauthClient.
+type DenyOauthClientJSONBody = OAuthClientDenyRequest
 
 // ListAgentsParams defines parameters for ListAgents.
 type ListAgentsParams struct {
@@ -3406,6 +3496,9 @@ type CreateOauthClientJSONRequestBody = OAuthClientCreateRequest
 
 // UpdateOauthClientJSONRequestBody defines body for UpdateOauthClient for application/json ContentType.
 type UpdateOauthClientJSONRequestBody = OAuthClientUpdateRequest
+
+// DenyOauthClientJSONRequestBody defines body for DenyOauthClient for application/json ContentType.
+type DenyOauthClientJSONRequestBody = DenyOauthClientJSONBody
 
 // CreateAgentJSONRequestBody defines body for CreateAgent for application/json ContentType.
 type CreateAgentJSONRequestBody = AgentCreateRequest
@@ -4458,7 +4551,7 @@ type ClientInterface interface {
 
 	// ListOauthClients List OAuth clients
 	//
-	// List all registered OAuth clients.
+	// List all registered OAuth clients, optionally filtered by approval status.
 	//
 	// Corresponds with GET /admin/oauth-clients (the `ListOauthClients` operationId).
 	ListOauthClients(ctx context.Context, params *ListOauthClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4529,6 +4622,38 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /admin/oauth-clients/{id}/rotate-secret (the `RotateOauthClientSecret` operationId).
 	RotateOauthClientSecret(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveOauthClient Approve OAuth client
+	//
+	// Approve an OAuth client — sets approval_status=approved and active=true.
+	//
+	// Also re-approves a previously denied client (deny is reversible; rows are
+	// never deleted, so the client's cached client_id becomes valid again).
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
+	ApproveOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DenyOauthClientWithBody Deny OAuth client
+	//
+	// Deny an OAuth client — sets approval_status=denied and active=false.
+	//
+	// The row is retained so a later approve can reverse the decision.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
+	DenyOauthClientWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DenyOauthClient Deny OAuth client
+	//
+	// Deny an OAuth client — sets approval_status=denied and active=false.
+	//
+	// The row is retained so a later approve can reverse the decision.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
+	DenyOauthClient(ctx context.Context, id string, body DenyOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAgents List Agents
 	//
@@ -6607,7 +6732,7 @@ func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*ht
 
 // ListOauthClients List OAuth clients
 //
-// List all registered OAuth clients.
+// List all registered OAuth clients, optionally filtered by approval status.
 //
 // Corresponds with GET /admin/oauth-clients (the `ListOauthClients` operationId).
 func (c *Client) ListOauthClients(ctx context.Context, params *ListOauthClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6749,6 +6874,68 @@ func (c *Client) UpdateOauthClient(ctx context.Context, id string, body UpdateOa
 // Corresponds with POST /admin/oauth-clients/{id}/rotate-secret (the `RotateOauthClientSecret` operationId).
 func (c *Client) RotateOauthClientSecret(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRotateOauthClientSecretRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApproveOauthClient Approve OAuth client
+//
+// Approve an OAuth client — sets approval_status=approved and active=true.
+//
+// Also re-approves a previously denied client (deny is reversible; rows are
+// never deleted, so the client's cached client_id becomes valid again).
+//
+// Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
+func (c *Client) ApproveOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveOauthClientRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DenyOauthClientWithBody Deny OAuth client
+//
+// Deny an OAuth client — sets approval_status=denied and active=false.
+//
+// The row is retained so a later approve can reverse the decision.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
+func (c *Client) DenyOauthClientWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDenyOauthClientRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DenyOauthClient Deny OAuth client
+//
+// Deny an OAuth client — sets approval_status=denied and active=false.
+//
+// The row is retained so a later approve can reverse the decision.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
+func (c *Client) DenyOauthClient(ctx context.Context, id string, body DenyOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDenyOauthClientRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11005,6 +11192,18 @@ func NewListOauthClientsRequest(server string, params *ListOauthClientsParams) (
 
 		}
 
+		if params.ApprovalStatus != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "approval_status", *params.ApprovalStatus, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -11204,6 +11403,87 @@ func NewRotateOauthClientSecretRequest(server string, id string) (*http.Request,
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewApproveOauthClientRequest constructs an http.Request for the ApproveOauthClient method
+func NewApproveOauthClientRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients/%s:approve", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDenyOauthClientRequest calls the generic DenyOauthClient builder with application/json body
+func NewDenyOauthClientRequest(server string, id string, body DenyOauthClientJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDenyOauthClientRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewDenyOauthClientRequestWithBody constructs an http.Request for the DenyOauthClient method, with any body, and a specified content type
+func NewDenyOauthClientRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients/%s:deny", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -18917,7 +19197,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListOauthClientsWithResponse List OAuth clients
 	//
-	// List all registered OAuth clients.
+	// List all registered OAuth clients, optionally filtered by approval status.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18996,6 +19276,40 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /admin/oauth-clients/{id}/rotate-secret (the `RotateOauthClientSecret` operationId).
 	RotateOauthClientSecretWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RotateOauthClientSecretHTTPResp, error)
+
+	// ApproveOauthClientWithResponse Approve OAuth client
+	//
+	// Approve an OAuth client — sets approval_status=approved and active=true.
+	//
+	// Also re-approves a previously denied client (deny is reversible; rows are
+	// never deleted, so the client's cached client_id becomes valid again).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
+	ApproveOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ApproveOauthClientHTTPResp, error)
+
+	// DenyOauthClientWithBodyWithResponse Deny OAuth client
+	//
+	// Deny an OAuth client — sets approval_status=denied and active=false.
+	//
+	// The row is retained so a later approve can reverse the decision.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
+	DenyOauthClientWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DenyOauthClientHTTPResp, error)
+
+	// DenyOauthClientWithResponse Deny OAuth client
+	//
+	// Deny an OAuth client — sets approval_status=denied and active=false.
+	//
+	// The row is retained so a later approve can reverse the decision.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
+	DenyOauthClientWithResponse(ctx context.Context, id string, body DenyOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*DenyOauthClientHTTPResp, error)
 
 	// ListAgentsWithResponse List Agents
 	//
@@ -22547,6 +22861,186 @@ func (r RotateOauthClientSecretHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RotateOauthClientSecretHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApproveOauthClientHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthClientResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApproveOauthClientHTTPResp) GetJSON200() *OAuthClientResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ApproveOauthClientHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApproveOauthClientHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApproveOauthClientHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApproveOauthClientHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DenyOauthClientHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthClientResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DenyOauthClientHTTPResp) GetJSON200() *OAuthClientResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DenyOauthClientHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DenyOauthClientHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DenyOauthClientHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DenyOauthClientHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -34408,7 +34902,7 @@ func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, reqEditors
 
 // ListOauthClientsWithResponse List OAuth clients
 //
-// List all registered OAuth clients.
+// List all registered OAuth clients, optionally filtered by approval status.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -34534,6 +35028,58 @@ func (c *ClientWithResponses) RotateOauthClientSecretWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseRotateOauthClientSecretHTTPResp(rsp)
+}
+
+// ApproveOauthClientWithResponse Approve OAuth client
+//
+// Approve an OAuth client — sets approval_status=approved and active=true.
+//
+// Also re-approves a previously denied client (deny is reversible; rows are
+// never deleted, so the client's cached client_id becomes valid again).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
+func (c *ClientWithResponses) ApproveOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ApproveOauthClientHTTPResp, error) {
+	rsp, err := c.ApproveOauthClient(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveOauthClientHTTPResp(rsp)
+}
+
+// DenyOauthClientWithBodyWithResponse Deny OAuth client
+//
+// Deny an OAuth client — sets approval_status=denied and active=false.
+//
+// The row is retained so a later approve can reverse the decision.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
+func (c *ClientWithResponses) DenyOauthClientWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DenyOauthClientHTTPResp, error) {
+	rsp, err := c.DenyOauthClientWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDenyOauthClientHTTPResp(rsp)
+}
+
+// DenyOauthClientWithResponse Deny OAuth client
+//
+// Deny an OAuth client — sets approval_status=denied and active=false.
+//
+// The row is retained so a later approve can reverse the decision.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
+func (c *ClientWithResponses) DenyOauthClientWithResponse(ctx context.Context, id string, body DenyOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*DenyOauthClientHTTPResp, error) {
+	rsp, err := c.DenyOauthClient(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDenyOauthClientHTTPResp(rsp)
 }
 
 // ListAgentsWithResponse List Agents
@@ -38890,6 +39436,156 @@ func ParseRotateOauthClientSecretHTTPResp(rsp *http.Response) (*RotateOauthClien
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest OAuthClientRotateSecretResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApproveOauthClientHTTPResp parses an HTTP response from a ApproveOauthClientWithResponse call
+func ParseApproveOauthClientHTTPResp(rsp *http.Response) (*ApproveOauthClientHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApproveOauthClientHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthClientResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDenyOauthClientHTTPResp parses an HTTP response from a DenyOauthClientWithResponse call
+func ParseDenyOauthClientHTTPResp(rsp *http.Response) (*DenyOauthClientHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DenyOauthClientHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthClientResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
