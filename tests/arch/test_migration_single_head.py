@@ -31,9 +31,7 @@ MIGRATIONS_ROOT = SRC_ROOT / "migrations"
 
 
 def _migration_trees() -> list[Path]:
-    return sorted(
-        child for child in MIGRATIONS_ROOT.iterdir() if (child / "versions").is_dir()
-    )
+    return sorted(child for child in MIGRATIONS_ROOT.iterdir() if (child / "versions").is_dir())
 
 
 def test_migration_trees_discovered() -> None:
