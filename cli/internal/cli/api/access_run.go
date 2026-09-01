@@ -272,7 +272,12 @@ func (a *app) refreshIfScopeGranted(cmd *cobra.Command, req *control.AccessReque
 	if st == nil {
 		return
 	}
-	creds := credsFromState(st)
+	creds, err := credsFromState(cmd.Context(), st)
+	if err != nil {
+		// Best-effort: a broken CA bundle already fails the command's real
+		// calls with an actionable error; don't duplicate it here.
+		return
+	}
 	// Static credentials (injected token, jak_* API key) have no mintable
 	// token — nothing to refresh.
 	if creds.InjectedBearerToken != "" {
@@ -420,7 +425,10 @@ func (a *app) accessRefreshE(cmd *cobra.Command, jsonFlag bool) error {
 // token carries the current scope grants, then confirm with /me. Same
 // fresh-mint-not-refresh-token semantics as the legacy arm (issue #673).
 func (a *app) accessRefreshContextE(cmd *cobra.Command, st *clictx.ActiveState, jsonFlag bool) error {
-	creds := credsFromState(st)
+	creds, err := credsFromState(cmd.Context(), st)
+	if err != nil {
+		return err
+	}
 	if creds.InjectedBearerToken != "" {
 		return errors.New("this session uses an injected bearer token ($JENTIC_BEARER_TOKEN), which the CLI cannot re-mint; " +
 			"obtain a fresh token from your orchestrator")

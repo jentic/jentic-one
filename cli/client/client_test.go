@@ -169,3 +169,25 @@ func TestSessionEditor_AbsentWhenUnset(t *testing.T) {
 		t.Errorf("X-Jentic-Session-Id = %q, want empty", got)
 	}
 }
+
+// TestConfigCredentials_ThreadsHTTPClient is the SDK half of the #1205
+// regression: the caller-supplied base client (the SEC-20 CA-pinned,
+// attribution-hooked transport clictx builds) must ride into the projected
+// auth.Credentials, so the RFC 7523 token exchange shares the transport
+// posture of every other call on this config instead of the auth package's
+// unpinned default.
+func TestConfigCredentials_ThreadsHTTPClient(t *testing.T) {
+	hc := &http.Client{}
+	creds := Config{
+		ControlBaseURL: "https://ctl.example",
+		IdentityName:   "ci",
+		HTTPClient:     hc,
+	}.credentials()
+	if creds.HTTPClient != hc {
+		t.Error("Config.credentials() must thread the base HTTPClient into the mint seam (#1205)")
+	}
+
+	if creds := (Config{ControlBaseURL: "https://ctl.example"}).credentials(); creds.HTTPClient != nil {
+		t.Error("a nil Config.HTTPClient must stay nil (auth falls back to its default exchange client)")
+	}
+}

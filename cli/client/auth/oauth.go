@@ -26,9 +26,36 @@ import (
 // while still tolerating real-world skew (the shipped CLI used 120s; impl/4.2 §4).
 const assertionTTL = 270 * time.Second
 
-// httpClient is the exchange's dedicated client: explicit timeout, never the
-// zero-timeout http.DefaultClient (rules/05).
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+// exchangeTimeout bounds a single token exchange. It is also stamped onto a
+// copy of a caller-supplied Credentials.HTTPClient that has no timeout of its
+// own, so the mint never rides a zero-timeout client (rules/05).
+const exchangeTimeout = 30 * time.Second
+
+// httpClient is the exchange's fallback client when Credentials carries no
+// environment-specific one: explicit timeout, never the zero-timeout
+// http.DefaultClient (rules/05).
+var httpClient = &http.Client{Timeout: exchangeTimeout}
+
+// exchangeClient resolves the *http.Client a token exchange for creds goes
+// through. Credentials.HTTPClient wins when set — that is how the
+// environment's SEC-20 CA-pinned transport and the attribution hook
+// (User-Agent / session headers) reach the mint, which previously always went
+// out on the package default and so bypassed both (#1205). A caller client
+// with no Timeout of its own gets exchangeTimeout applied on a COPY (the
+// caller's client is shared with the plane clients and must not be mutated;
+// a zero-timeout mint could hang a whole command).
+func exchangeClient(creds Credentials) *http.Client {
+	hc := creds.HTTPClient
+	if hc == nil {
+		return httpClient
+	}
+	if hc.Timeout > 0 {
+		return hc
+	}
+	cp := *hc
+	cp.Timeout = exchangeTimeout
+	return &cp
+}
 
 // PendingError indicates the agent is registered but not yet approved: the token
 // endpoint returns 400 invalid_grant while approval is pending. Callers can
@@ -210,7 +237,7 @@ func performOAuthExchange(creds Credentials) (*TokenSet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encoding token request: %w", err)
 	}
-	resp, err := httpClient.Post(endpoint, "application/json", bytes.NewReader(reqBody))
+	resp, err := exchangeClient(creds).Post(endpoint, "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request failed: %w", err)
 	}

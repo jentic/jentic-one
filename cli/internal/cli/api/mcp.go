@@ -85,15 +85,11 @@ func (a *app) mcpE(cmd *cobra.Command, opts *mcpOptions) error {
 	srv := newMCPServer(a, version, opts, logger)
 	// Every control-plane client built during this session composes the
 	// server's attribution RoundTripper (User-Agent + session-id fallback)
-	// over the SEC-20 resolved transport.
-	//
-	// KNOWN GAP (predates this command; follow-up tracked): the RFC 7523
-	// token-mint exchange uses the package-global client in
-	// client/auth/oauth.go, which is built outside clictx — mints go out
-	// without these attribution headers AND without the SEC-20 CA-pinned
-	// transport (a pinned-CA environment's mints fail closed through the
-	// untrusted-roots path). Fixing it belongs to the oauth client / DoWith
-	// seam work, not here.
+	// over the SEC-20 resolved transport. The RFC 7523 token-mint exchange
+	// rides the same pinned+hooked client: it is threaded into
+	// auth.Credentials.HTTPClient by the SDK constructors and the clictx
+	// credential builders (#1205), so mints carry these attribution headers
+	// and honor a pinned-CA environment's bundle like every other call.
 	ctx := clictx.WithTransportHook(cmd.Context(), srv.transportHook())
 
 	logger.Info("mcp server starting", "version", version, "read_only", opts.readOnly, "exclude_tools", opts.excludeTools)
