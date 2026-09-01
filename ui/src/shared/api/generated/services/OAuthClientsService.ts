@@ -270,7 +270,9 @@ export class OAuthClientsService {
      * ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
      * (D8). No client_secret is ever issued here and no registration_access_token
      * is returned (D12). New rows await admin approval unless the deployment
-     * auto-approves registrations (D9).
+     * auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+     * lives on the route class — a disabled door 404s before this handler,
+     * its body validation, or the rate limiter ever run.
      * @returns OAuthClientRegistrationResponse Successful Response
      * @throws ApiError
      */
@@ -285,8 +287,7 @@ export class OAuthClientsService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad Request`,
-                422: `Unprocessable Entity`,
+                400: `Invalid client metadata (RFC 7591 §3.2.2): \`{"error": "invalid_client_metadata", "error_description": "..."}\`.`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

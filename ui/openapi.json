@@ -27421,7 +27421,7 @@
     },
     "/oauth-clients": {
       "post": {
-        "description": "Register a public OAuth client anonymously (RFC 7591 subset, §4.2).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match\n(D8). No client_secret is ever issued here and no registration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9).",
+        "description": "Register a public OAuth client anonymously (RFC 7591 subset, §4.2).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match\n(D8). No client_secret is ever issued here and no registration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
         "operationId": "registerOauthClientEndpoint",
         "requestBody": {
           "content": {
@@ -27445,44 +27445,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "The request was malformed or failed a precondition.",
-                  "instance": "/example/path",
-                  "status": 400,
-                  "title": "Bad Request",
-                  "type": "bad_request"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "422": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "Request validation failed; see errors[] for details.",
-                  "errors": [
-                    {
-                      "detail": "Field 'name' must not be blank.",
-                      "pointer": "#/name"
-                    }
-                  ],
-                  "instance": "/example/path",
-                  "status": 422,
-                  "title": "Unprocessable Entity",
-                  "type": "validation_error"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Unprocessable Entity"
+            "description": "Invalid client metadata (RFC 7591 §3.2.2): `{\"error\": \"invalid_client_metadata\", \"error_description\": \"...\"}`."
           },
           "500": {
             "content": {

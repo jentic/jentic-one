@@ -17,7 +17,11 @@ from sqlalchemy import delete, select
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
-from jentic_one.admin.repos.oauth_client_repo import redirect_uris_fingerprint
+from jentic_one.admin.repos.oauth_client_repo import (
+    OAuthClientRepository,
+    redirect_uris_fingerprint,
+)
+from jentic_one.admin.services._support.tokens import generate_client_id
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.auth.services.errors import InvalidClientMetadataError
 from jentic_one.auth.services.oauth_dcr_service import OAuthDcrService
@@ -154,6 +158,24 @@ async def test_register_no_scope_claim_caps_to_mcp_tool_scopes(
     result = await svc.register(client_name="no-scope", redirect_uris=_REDIRECT_URIS)
     row = await _row_by_client_id(dcr_context, result.client_id)
     assert row.allowed_scopes == sorted(MCP_TOOL_SCOPES)
+
+
+async def test_register_zero_overlap_scope_rejected_no_row(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """A scope claim with no MCP-tool-scope overlap is rejected outright: an
+    empty ceiling ``[]`` would collapse to the ``None`` "no allowlist"
+    sentinel in the admin view and skip the /authorize scope check entirely —
+    an *unrestricted* client, the opposite of §4.2. No row is written."""
+    svc = OAuthDcrService(dcr_context)
+    with pytest.raises(InvalidClientMetadataError, match="no overlap"):
+        await svc.register(
+            client_name="privileged-only",
+            redirect_uris=_REDIRECT_URIS,
+            scope="org:admin agents:write",
+        )
+    async with dcr_context.admin_db.session() as session:
+        assert (await session.execute(select(OAuthClient))).scalars().first() is None
 
 
 async def test_auto_approve_policy_activates_row_at_registration(
@@ -294,3 +316,152 @@ async def test_deny_verb_settles_alert_without_approved_event(
     assert await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_APPROVED) == []
     registered_events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)
     assert registered_events[0].acknowledged is True
+
+
+async def test_dedupe_denied_row_returns_same_client_id_and_stays_denied(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """D7 arm of the dedupe: an exact re-registration against a *denied* row
+    returns the same client_id (200-shaped, created=False) and does not mint
+    a fresh pending row or a second chance — recovery is admin-actioned only."""
+    dcr_svc = OAuthDcrService(dcr_context)
+    first = await dcr_svc.register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
+    )
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    await OAuthClientService(dcr_context).deny(row.id, reason="not vetted", identity=_ADMIN)
+
+    second = await dcr_svc.register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
+    )
+
+    assert second.created is False
+    assert second.client_id == first.client_id
+    refreshed = await _row_by_client_id(dcr_context, first.client_id)
+    assert refreshed.approval_status == OAuthClientApprovalStatus.DENIED.value
+    assert refreshed.active is False
+    async with dcr_context.admin_db.session() as session:
+        rows = (await session.execute(select(OAuthClient))).scalars().all()
+    assert len(rows) == 1
+    # No second registered event for the dedupe hit.
+    assert len(await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)) == 1
+
+
+async def test_denied_then_approved_recovery_emits_approved_event(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """§9 denied → approved recovery: deny is reversible; a later :approve
+    re-arms the row and fires oauth_client.approved (the events.py "including
+    re-approval of a previously denied client" arm)."""
+    dcr_svc = OAuthDcrService(dcr_context)
+    result = await dcr_svc.register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
+    )
+    row = await _row_by_client_id(dcr_context, result.client_id)
+
+    client_svc = OAuthClientService(dcr_context)
+    await client_svc.deny(row.id, reason="not vetted", identity=_ADMIN)
+    recovered = await client_svc.approve(row.id, identity=_ADMIN)
+
+    assert recovered.approval_status == OAuthClientApprovalStatus.APPROVED.value
+    assert recovered.active is True
+    approved_events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_APPROVED)
+    assert len(approved_events) == 1
+    assert approved_events[0].data["oauth_client_id"] == row.id
+    # The cached client_id is usable again after recovery.
+    second = await dcr_svc.register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
+    )
+    assert second.created is False
+    assert second.client_id == result.client_id
+
+
+async def test_dedupe_prefers_approved_row_over_older_unapproved(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """F6: when a double-register race left multiple rows for one dedupe key
+    and the admin approved the *newer* one, re-registers must surface the
+    approved row — not keep returning the older pending/denied client_id."""
+    async with dcr_context.admin_db.transaction() as session:
+        older = await OAuthClientRepository.create(
+            session,
+            client_id=generate_client_id(),
+            name="Cursor (lost race)",
+            redirect_uris=_REDIRECT_URIS,
+            client_secret_hash=None,
+            allowed_scopes=sorted(MCP_TOOL_SCOPES),
+            token_endpoint_auth_method="none",
+            consent_model="agent",
+            registration_source="dcr",
+            software_id="com.cursor.ide",
+            approval_status=OAuthClientApprovalStatus.PENDING.value,
+            active=False,
+            created_by="dcr",
+        )
+        newer = await OAuthClientRepository.create(
+            session,
+            client_id=generate_client_id(),
+            name="Cursor (approved)",
+            redirect_uris=_REDIRECT_URIS,
+            client_secret_hash=None,
+            allowed_scopes=sorted(MCP_TOOL_SCOPES),
+            token_endpoint_auth_method="none",
+            consent_model="agent",
+            registration_source="dcr",
+            software_id="com.cursor.ide",
+            approval_status=OAuthClientApprovalStatus.APPROVED.value,
+            active=True,
+            created_by="dcr",
+        )
+        older_client_id, newer_client_id = older.client_id, newer.client_id
+
+    result = await OAuthDcrService(dcr_context).register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
+    )
+
+    assert result.created is False
+    assert result.client_id == newer_client_id
+    assert result.client_id != older_client_id
+
+
+async def test_dedupe_response_echoes_request_metadata_not_stored_row(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """F5 minimization: a dedupe 200 reflects the *request's* validated
+    metadata — admin-side edits to the stored row (rename, scope changes)
+    never leak to an anonymous re-registrant. Only client_id (+ issued_at)
+    comes from the row."""
+    dcr_svc = OAuthDcrService(dcr_context)
+    first = await dcr_svc.register(
+        client_name="Cursor",
+        redirect_uris=_REDIRECT_URIS,
+        scope="apis:read capabilities:execute",
+        software_id="com.cursor.ide",
+    )
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    await OAuthClientService(dcr_context).update(
+        row.id, name="Admin Renamed", allowed_scopes=["apis:read"], identity=_ADMIN
+    )
+
+    second = await dcr_svc.register(
+        client_name="Cursor v2",
+        redirect_uris=_REDIRECT_URIS,
+        grant_types=["authorization_code"],
+        scope="capabilities:execute",
+        software_id="com.cursor.ide",
+        software_version="2.0.0",
+        application_type="native",
+    )
+
+    assert second.created is False
+    assert second.client_id == first.client_id
+    # Echoes of the caller's own submission — not the admin-edited row state.
+    assert second.client_name == "Cursor v2"
+    assert second.scope == "capabilities:execute"
+    assert second.grant_types == ["authorization_code"]
+    assert second.software_version == "2.0.0"
+    assert second.application_type == "native"
+    # The stored row keeps its admin-edited state.
+    refreshed = await _row_by_client_id(dcr_context, first.client_id)
+    assert refreshed.name == "Admin Renamed"
+    assert refreshed.allowed_scopes == ["apis:read"]

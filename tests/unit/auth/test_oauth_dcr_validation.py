@@ -81,6 +81,9 @@ def test_unsupported_response_types_rejected() -> None:
         ["https://app.example.com/cb#fragment"],
         ["http://evil.example.com/cb"],
         ["not-a-url"],
+        # Duplicates are rejected: the D8 dedupe key is the exact redirect-URI
+        # *set*, and ["a", "a"] vs ["a"] must not mint two rows for one set.
+        ["https://app.example.com/cb", "https://app.example.com/cb"],
     ],
 )
 def test_invalid_redirect_uris_rejected_as_client_metadata(uris: list[str]) -> None:
@@ -124,5 +127,15 @@ def test_privileged_and_unknown_scopes_dropped() -> None:
     assert _cap_scopes("org:admin agents:write made:up apis:read") == ["apis:read"]
 
 
-def test_all_scopes_outside_cap_yields_empty_ceiling() -> None:
-    assert _cap_scopes("org:admin") == []
+def test_all_scopes_outside_cap_rejected() -> None:
+    """Zero overlap with the MCP tool-scope set is rejected, never stored.
+
+    An empty ceiling ``[]`` is falsy and the admin view layer collapses it to
+    ``None`` — the "no allowlist" sentinel — so storing it would make the
+    client *unrestricted* at /authorize (the opposite of §4.2's "never
+    unrestricted").
+    """
+    with pytest.raises(InvalidClientMetadataError, match="no overlap"):
+        _cap_scopes("org:admin")
+    with pytest.raises(InvalidClientMetadataError, match="no overlap"):
+        _cap_scopes("made:up user")

@@ -61,8 +61,10 @@ class DcrRegisterResult:
     """Result of an anonymous OAuth-client registration.
 
     ``created`` is False when the D8 dedupe key (``software_id`` + exact
-    redirect-URI set) matched an existing row, whose metadata is returned
-    instead — the router answers 200 rather than 201.
+    redirect-URI set) matched an existing row — the router answers 200 rather
+    than 201. Metadata fields echo the *request's* validated values, never
+    the stored row's live (possibly admin-edited) state; only ``client_id``
+    and ``client_id_issued_at`` come from the row.
     """
 
     client_id: str
@@ -84,11 +86,23 @@ def _cap_scopes(scope: str | None) -> list[str]:
     ``scope`` claim means the full MCP tool-scope set, and a claim is
     intersected with it (unknown/privileged scopes are silently dropped, per
     RFC 7591's ignore-don't-reject posture for metadata the server curtails).
+
+    A claim with **zero** overlap is rejected rather than stored: an empty
+    ceiling ``[]`` is falsy, and the admin view layer collapses it to ``None``
+    — the platform-client "no allowlist" sentinel — which would skip the
+    /authorize scope check entirely and make the client *unrestricted*, the
+    exact opposite of the §4.2 ceiling. Never store ``[]``.
     """
     if scope is None or not scope.strip():
         return sorted(MCP_TOOL_SCOPES)
     requested = {s for s in scope.split() if s}
-    return sorted(requested & MCP_TOOL_SCOPES)
+    capped = sorted(requested & MCP_TOOL_SCOPES)
+    if not capped:
+        raise InvalidClientMetadataError(
+            "scope has no overlap with the scopes this server grants to "
+            f"OAuth clients (supported: {' '.join(sorted(MCP_TOOL_SCOPES))})"
+        )
+    return capped
 
 
 def _validate_metadata(
@@ -127,27 +141,57 @@ def _validate_metadata(
         # The canonical validator is admin-tier; translate to the auth taxonomy
         # so the auth surface's error handler maps it (invalid_client_metadata).
         raise InvalidClientMetadataError(str(exc)) from exc
+    if len(set(redirect_uris)) != len(redirect_uris):
+        # The D8 dedupe key is the exact redirect-URI *set*; a duplicated
+        # entry makes the claimed set ambiguous (and would let ["a","a"] vs
+        # ["a"] mint two rows for one effective set), so it is malformed
+        # metadata, not something to silently normalize.
+        raise InvalidClientMetadataError("redirect_uris must not contain duplicates")
 
 
 def _to_result(
     client: OAuthClient,
     *,
     created: bool,
-    software_version: str | None = None,
-    application_type: str | None = None,
+    client_name: str,
+    redirect_uris: list[str],
+    grant_types: list[str] | None,
+    allowed_scopes: list[str],
+    software_id: str | None,
+    software_version: str | None,
+    application_type: str | None,
 ) -> DcrRegisterResult:
+    """Build the RFC 7591 response from the *request's* validated metadata.
+
+    Only ``client_id`` and ``client_id_issued_at`` come from the stored row.
+    On a D8 dedupe hit the row may have been admin-edited since (renamed,
+    scopes narrowed) — echoing its live state would leak those admin-side
+    changes to any anonymous re-registrant, so the response discloses nothing
+    beyond the ``client_id`` that the caller didn't already send.
+    """
     return DcrRegisterResult(
         client_id=client.client_id,
-        client_name=client.name,
-        redirect_uris=list(client.redirect_uris),
-        grant_types=sorted(_ALLOWED_GRANT_TYPES),
-        scope=" ".join(client.allowed_scopes or []),
-        software_id=client.software_id,
+        client_name=client_name,
+        redirect_uris=list(redirect_uris),
+        grant_types=sorted(set(grant_types)) if grant_types else sorted(_ALLOWED_GRANT_TYPES),
+        scope=" ".join(allowed_scopes),
+        software_id=software_id,
         software_version=software_version,
         application_type=application_type,
         client_id_issued_at=int(client.created_at.timestamp()),
         created=created,
     )
+
+
+#: F6 dedupe-winner preference: a concurrent double-register (no unique
+#: constraint on the D8 key) can leave multiple rows for one exact set, and
+#: the admin may have approved the newer one. Prefer the row the client can
+#: actually use; ties break oldest-first (the repo's stable ordering).
+_APPROVAL_PREFERENCE: dict[str, int] = {
+    OAuthClientApprovalStatus.APPROVED.value: 0,
+    OAuthClientApprovalStatus.PENDING.value: 1,
+    OAuthClientApprovalStatus.DENIED.value: 2,
+}
 
 
 class OAuthDcrService:
@@ -194,12 +238,25 @@ class OAuthDcrService:
             if software_id:
                 # D8 dedupe via the (software_id, redirect_uris_fingerprint)
                 # index (§4.1); the fetched rows' exact URI sets are re-checked
-                # because the fingerprint is a hash (collision guard).
-                for candidate in await OAuthClientRepository.list_dcr_by_dedupe_key(
-                    session, software_id, fingerprint
-                ):
-                    if set(candidate.redirect_uris) == requested_set:
-                        return candidate, False
+                # because the fingerprint is a hash (collision guard). Among
+                # multiple exact matches (double-register race) prefer
+                # approved > pending > denied, then oldest — `min` is stable
+                # and the repo returns rows oldest-first.
+                matches = [
+                    candidate
+                    for candidate in await OAuthClientRepository.list_dcr_by_dedupe_key(
+                        session, software_id, fingerprint
+                    )
+                    if set(candidate.redirect_uris) == requested_set
+                ]
+                if matches:
+                    winner = min(
+                        matches,
+                        key=lambda c: _APPROVAL_PREFERENCE.get(
+                            c.approval_status, len(_APPROVAL_PREFERENCE)
+                        ),
+                    )
+                    return winner, False
 
             approved = auto_approve
             client = await OAuthClientRepository.create(
@@ -274,12 +331,14 @@ class OAuthDcrService:
         # on the admin DB with worker polls and token mints — retry transient
         # SQLite write-locks instead of surfacing a 500 on first contention.
         client, created = await self._ctx.admin_db.run_in_transaction(_write)
-        # software_version/application_type are accepted (RFC 7591 native-app
-        # fix, §2) but not persisted — echo them back only on a fresh create;
-        # a dedupe hit returns the stored row's metadata.
         return _to_result(
             client,
             created=created,
-            software_version=software_version if created else None,
-            application_type=application_type if created else None,
+            client_name=client_name.strip(),
+            redirect_uris=redirect_uris,
+            grant_types=grant_types,
+            allowed_scopes=allowed_scopes,
+            software_id=software_id,
+            software_version=software_version,
+            application_type=application_type,
         )

@@ -5736,7 +5736,9 @@ type ClientInterface interface {
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
 	// (D8). No client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
-	// auto-approves registrations (D9).
+	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+	// lives on the route class — a disabled door 404s before this handler,
+	// its body validation, or the rate limiter ever run.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5751,7 +5753,9 @@ type ClientInterface interface {
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
 	// (D8). No client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
-	// auto-approves registrations (D9).
+	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+	// lives on the route class — a disabled door 404s before this handler,
+	// its body validation, or the rate limiter ever run.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -9147,7 +9151,9 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
 // (D8). No client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
-// auto-approves registrations (D9).
+// auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
+// lives on the route class — a disabled door 404s before this handler,
+// its body validation, or the rate limiter ever run.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9172,7 +9178,9 @@ func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, conten
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
 // (D8). No client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
-// auto-approves registrations (D9).
+// auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
+// lives on the route class — a disabled door 404s before this handler,
+// its body validation, or the rate limiter ever run.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -20646,7 +20654,9 @@ type ClientWithResponsesInterface interface {
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
 	// (D8). No client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
-	// auto-approves registrations (D9).
+	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+	// lives on the route class — a disabled door 404s before this handler,
+	// its body validation, or the rate limiter ever run.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20661,7 +20671,9 @@ type ClientWithResponsesInterface interface {
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
 	// (D8). No client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
-	// auto-approves registrations (D9).
+	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+	// lives on the route class — a disabled door 404s before this handler,
+	// its body validation, or the rate limiter ever run.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -30329,10 +30341,6 @@ type RegisterOauthClientEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *OAuthClientRegistrationResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -30342,16 +30350,6 @@ type RegisterOauthClientEndpointHTTPResp struct {
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
 func (r RegisterOauthClientEndpointHTTPResp) GetJSON201() *OAuthClientRegistrationResponse {
 	return r.JSON201
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -37170,7 +37168,9 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
 // (D8). No client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
-// auto-approves registrations (D9).
+// auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
+// lives on the route class — a disabled door 404s before this handler,
+// its body validation, or the rate limiter ever run.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -37191,7 +37191,9 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ct
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
 // (D8). No client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
-// auto-approves registrations (D9).
+// auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
+// lives on the route class — a disabled door 404s before this handler,
+// its body validation, or the rate limiter ever run.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45773,19 +45775,8 @@ func ParseRegisterOauthClientEndpointHTTPResp(rsp *http.Response) (*RegisterOaut
 		}
 		response.JSON201 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
+	case rsp.StatusCode == 400:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail

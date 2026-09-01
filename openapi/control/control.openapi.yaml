@@ -14814,7 +14814,9 @@ paths:
         ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
         (D8). No client_secret is ever issued here and no registration_access_token
         is returned (D12). New rows await admin approval unless the deployment
-        auto-approves registrations (D9).
+        auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
+        lives on the route class — a disabled door 404s before this handler,
+        its body validation, or the rate limiter ever run.
       operationId: registerOauthClientEndpoint
       requestBody:
         content:
@@ -14830,19 +14832,7 @@ paths:
                 $ref: '#/components/schemas/OAuthClientRegistrationResponse'
           description: Successful Response
         '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
+          description: 'Invalid client metadata (RFC 7591 §3.2.2): `{"error": "invalid_client_metadata", "error_description": "..."}`.'
         '500':
           content:
             application/problem+json:

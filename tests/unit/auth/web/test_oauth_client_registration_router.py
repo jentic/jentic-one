@@ -96,7 +96,8 @@ def test_dedupe_hit_returns_200_with_existing_client_id(mock_svc_cls: MagicMock)
 
 
 @patch("jentic_one.auth.web.routers.oauth_client_registration.OAuthDcrService")
-def test_invalid_metadata_maps_to_400(mock_svc_cls: MagicMock) -> None:
+def test_invalid_metadata_maps_to_rfc7591_400(mock_svc_cls: MagicMock) -> None:
+    """Service-level rejections carry the RFC 7591 §3.2.2 top-level `error`."""
     mock_svc_cls.return_value.register = AsyncMock(
         side_effect=InvalidClientMetadataError("token_endpoint_auth_method must be 'none'")
     )
@@ -107,13 +108,41 @@ def test_invalid_metadata_maps_to_400(mock_svc_cls: MagicMock) -> None:
     )
 
     assert resp.status_code == 400
-    assert resp.json()["type"] == "invalid_client_metadata"
+    data = resp.json()
+    assert data["error"] == "invalid_client_metadata"
+    assert "token_endpoint_auth_method" in data["error_description"]
 
 
-def test_missing_required_metadata_is_422() -> None:
+def test_missing_required_metadata_is_rfc7591_400() -> None:
+    """Schema-level rejections are reshaped from FastAPI's 422 into the
+    RFC 7591 400 invalid_client_metadata (F3)."""
     client = _make_client()
     resp = client.post("/oauth-clients", json={"client_name": "no-redirects"})
-    assert resp.status_code == 422
+    assert resp.status_code == 400
+    data = resp.json()
+    assert data["error"] == "invalid_client_metadata"
+    assert "redirect_uris" in data["error_description"]
+
+
+def test_malformed_json_is_rfc7591_400() -> None:
+    client = _make_client()
+    resp = client.post(
+        "/oauth-clients", content=b"{not json", headers={"Content-Type": "application/json"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid_client_metadata"
+
+
+def test_oversized_body_is_413() -> None:
+    """Declared-length bodies beyond the raw cap are refused before parsing."""
+    client = _make_client()
+    resp = client.post(
+        "/oauth-clients",
+        content=b'{"client_name": "' + b"a" * (65 * 1024) + b'"}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 413
+    assert resp.json()["error"] == "invalid_client_metadata"
 
 
 @patch("jentic_one.auth.web.routers.oauth_client_registration.OAuthDcrService")
@@ -132,24 +161,39 @@ def test_registration_rate_limit_enforced_per_ip(mock_svc_cls: MagicMock) -> Non
 
 
 @patch("jentic_one.auth.web.routers.oauth_client_registration.OAuthDcrService")
-def test_rate_limit_applies_even_when_disabled(mock_svc_cls: MagicMock) -> None:
-    """The limiter is a dependency, so a disabled door is still rate limited
-    (no free probe amplification)."""
+def test_disabled_is_404_even_over_quota(mock_svc_cls: MagicMock) -> None:
+    """F2: the enabled gate runs before the rate-limit dependency, so a
+    disabled door never answers 429 — every probe gets the same 404 a build
+    without the route would return (no quota is spent either)."""
     mock_svc_cls.return_value.register = AsyncMock(return_value=_result(created=True))
     client = _make_client(
         oauth_enabled=False,
         rate_limit=OAuthRateLimitConfig(registration_rpm=1, registration_burst=1),
     )
 
-    first = client.post("/oauth-clients", json=_BODY)
-    second = client.post("/oauth-clients", json=_BODY)
+    for _ in range(3):
+        resp = client.post("/oauth-clients", json=_BODY)
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Not Found"}
 
-    assert first.status_code == 404
-    assert second.status_code == 429
+
+def test_disabled_is_404_for_malformed_body() -> None:
+    """F2: body validation must not reveal a disabled endpoint (a 422/400
+    where a missing route would 404 is a feature-presence oracle)."""
+    client = _make_client(oauth_enabled=False)
+    missing_fields = client.post("/oauth-clients", json={"client_name": "no-redirects"})
+    malformed = client.post(
+        "/oauth-clients", content=b"{not json", headers={"Content-Type": "application/json"}
+    )
+    assert missing_fields.status_code == 404
+    assert missing_fields.json() == {"detail": "Not Found"}
+    assert malformed.status_code == 404
+    assert malformed.json() == {"detail": "Not Found"}
 
 
 @pytest.mark.parametrize("scope", ["a" * 65, " ".join(f"s{i}" for i in range(101))])
 def test_oversized_scope_rejected_at_schema(scope: str) -> None:
     client = _make_client()
     resp = client.post("/oauth-clients", json={**_BODY, "scope": scope})
-    assert resp.status_code == 422
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid_client_metadata"

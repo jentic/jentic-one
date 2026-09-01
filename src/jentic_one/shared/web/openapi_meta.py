@@ -829,6 +829,18 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
 )
 
 
+#: Operations whose request-validation failures are reshaped at the router into
+#: RFC 7591 §3.2.2 ``400 {"error": "invalid_client_metadata"}`` responses (see
+#: ``_Rfc7591Route`` in ``auth/web/routers/oauth_client_registration.py``).
+#: They never emit the FastAPI 422, so the auto-generated 422 response is
+#: dropped from the spec (the 400 is documented on the route decorator).
+RFC7591_ERROR_OPERATION_IDS: frozenset[str] = frozenset(
+    {
+        "registerOauthClientEndpoint",
+    }
+)
+
+
 # Ordered (regex, tag) rules mapping a request path to its fine-grained tag.
 # First match wins, so more specific patterns precede broader ones. This is the
 # single source of operation tagging: it overwrites whatever coarse tags the
@@ -1046,6 +1058,10 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     operation.get("responses", {}).pop("403", None)
                 else:
                     _stamp_scope_metadata(method, path, operation, operation_auth)
+                if op_id in RFC7591_ERROR_OPERATION_IDS:
+                    # Validation failures are reshaped to the RFC 7591 400 at
+                    # the router; the framework 422 can never be returned.
+                    operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
 
         app.openapi_schema = schema

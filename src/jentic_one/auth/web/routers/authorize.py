@@ -32,6 +32,7 @@ from jentic_one.auth.services.errors import (
     RateLimitExceededError,
     UserNotAdmittedError,
 )
+from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
     AGENTS_WRITE,
@@ -46,7 +47,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
-from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
+from jentic_one.shared.state.backend import SharedStateBackend
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.sensitive import SENSITIVE
 
@@ -55,35 +56,12 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-def _get_auth_backend(request: Request) -> SharedStateBackend:
-    backend: object = getattr(request.app.state, "auth_state_backend", None)
-    if isinstance(backend, SharedStateBackend):
-        return backend
-    logger.warning("auth_state_backend missing from app.state, using in-memory fallback")
-    return MemoryStateBackend()
-
-
-def _client_ip(request: Request, trusted_proxies: frozenset[str]) -> str:
-    """Extract the real client IP, honoring XFF only from trusted reverse proxies."""
-    socket_ip = request.client.host if request.client else "unknown"
-    if not trusted_proxies or socket_ip not in trusted_proxies:
-        return socket_ip
-    forwarded = request.headers.get("x-forwarded-for")
-    if not forwarded:
-        return socket_ip
-    hops = [h.strip() for h in forwarded.split(",")]
-    for hop in reversed(hops):
-        if hop not in trusted_proxies:
-            return hop
-    return socket_ip
-
-
 def _get_authorize_limiter(request: Request, ctx: Context) -> RateLimiter:
     limiter: RateLimiter | None = getattr(request.app.state, "_authorize_limiter", None)
     if limiter is not None:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
-    backend = _get_auth_backend(request)
+    backend = get_auth_backend(request)
     limiter = RateLimiter(backend, default_rpm=cfg.authorize_rpm, burst=cfg.authorize_burst)
     request.app.state._authorize_limiter = limiter
     return limiter
@@ -93,7 +71,7 @@ async def _check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -
     """Per-client+IP rate limiter for unauthenticated authorization endpoints."""
     trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
     client_id = request.query_params.get("client_id")
-    ip = _client_ip(request, trusted)
+    ip = client_ip(request, trusted)
     key = f"{client_id}:{ip}" if client_id else ip
     limiter = _get_authorize_limiter(request, ctx)
     outcome = await limiter.acquire(key)
@@ -541,7 +519,7 @@ def _verify_payload(
 
 
 def _get_consent_backend(request: Request) -> SharedStateBackend:
-    return _get_auth_backend(request)
+    return get_auth_backend(request)
 
 
 @router.get("/authorize", dependencies=[Depends(_check_rate_limit)], response_model=None)
