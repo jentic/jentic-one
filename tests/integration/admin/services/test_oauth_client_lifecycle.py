@@ -303,25 +303,27 @@ async def test_pre_3a_row_reads_migration_defaults(
     ctx = integration_context
     async with ctx.admin_db.transaction() as session:
         dialect = session.get_bind().dialect.name
+        params: dict[str, object] = {
+            "id": "oac_pre3a_row_000000000000",
+            "client_id": "oc_pre3a_client",
+            "secret_hash": "x" * 32,
+            "name": "pre-3a-app",
+        }
         if dialect == "postgresql":
-            uris_expr = "CAST(:uris AS varchar[])"
-            uris_value = "{https://client.test.local/callback}"
+            # Inline the array literal: asyncpg binds a varchar[] parameter
+            # only from a Python list, and text() gives it no type info to
+            # coerce a string — a constant literal sidesteps the codec.
+            uris_expr = "CAST('{\"https://client.test.local/callback\"}' AS varchar[])"
         else:
             uris_expr = ":uris"
-            uris_value = '["https://client.test.local/callback"]'
+            params["uris"] = '["https://client.test.local/callback"]'
         await session.execute(
             text(
                 "INSERT INTO oauth_clients"
                 " (id, client_id, client_secret_hash, name, redirect_uris)"
                 f" VALUES (:id, :client_id, :secret_hash, :name, {uris_expr})"
             ),
-            {
-                "id": "oac_pre3a_row_000000000000",
-                "client_id": "oc_pre3a_client",
-                "secret_hash": "x" * 32,
-                "name": "pre-3a-app",
-                "uris": uris_value,
-            },
+            params,
         )
 
     async with ctx.admin_db.session() as session:
