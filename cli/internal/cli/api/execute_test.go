@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1216,6 +1219,73 @@ func TestExecuteRemoteBrokerGuardHonoursExplicitLoopback(t *testing.T) {
 	if errors.As(err, &coded) && coded.Code == ux.CodeResolveFailed &&
 		strings.Contains(coded.Msg, "no broker is configured") {
 		t.Errorf("explicit loopback broker must be honoured, not refused by the guard: %v", err)
+	}
+}
+
+// TestExecuteCmdBrokerLegHonorsCAPin is the #1206 regression, modeled on
+// TestMCPExecute_BrokerLegHonorsCAPinAndHook (§3.7.2): the COBRA execute
+// path's broker leg must ride clictx's SEC-20 CA-pinned client — previously it
+// fell through agentops.Do's default, un-pinned client, silently ignoring the
+// environment's ca_cert_path. The broker here serves a cert only the
+// environment's bundle trusts, so success proves the pinned client carried the
+// request; the un-pinned default would fail TLS verification.
+func TestExecuteCmdBrokerLegHonorsCAPin(t *testing.T) {
+	var brokerHits int
+	broker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		brokerHits++
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer broker.Close()
+
+	// Write the test server's own CA cert as the environment's bundle.
+	pemPath := filepath.Join(t.TempDir(), "ca.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: broker.Certificate().Raw})
+	if err := os.WriteFile(pemPath, pemBytes, 0o600); err != nil {
+		t.Fatalf("write ca bundle: %v", err)
+	}
+
+	state := &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "test-agent",
+			EnvironmentName:     "test",
+			BaseURL:             "https://127.0.0.1:8000", // loopback so the remote-broker guard stays quiet
+			BrokerURL:           broker.URL,
+			CACertPath:          pemPath,
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	}
+
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	cmd.SetContext(clictx.WithActiveState(context.Background(), state))
+
+	// Default broker flags: the environment's broker_url (the TLS server) wins.
+	opts := &executeOptions{
+		brokerHost:   config.DefaultBrokerHost,
+		brokerScheme: config.DefaultBrokerScheme,
+		json:         true,
+	}
+	if err := app.executeE(cmd, opts, "GET:/v1/pets"); err != nil {
+		t.Fatalf("CA-pinned broker call must succeed against the pinned cert: %v", err)
+	}
+	if brokerHits != 1 {
+		t.Fatalf("broker hits = %d, want 1", brokerHits)
+	}
+
+	// SEC-20 fail-closed: a set-but-broken bundle is an error, never a silent
+	// fallback to system roots (which is exactly what the un-pinned default
+	// client used to do).
+	state.CACertPath = filepath.Join(t.TempDir(), "missing.pem")
+	err := app.executeE(cmd, opts, "GET:/v1/pets")
+	if err == nil {
+		t.Fatal("a broken ca_cert_path must fail closed on the cobra execute broker leg")
+	}
+	if !strings.Contains(err.Error(), "ca_cert_path") {
+		t.Errorf("error %q must name the broken ca_cert_path", err)
+	}
+	if brokerHits != 1 {
+		t.Errorf("broker hits = %d after fail-closed error, want still 1 (no un-pinned fallback request)", brokerHits)
 	}
 }
 
