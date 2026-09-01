@@ -23,6 +23,7 @@ from jentic_one.auth.services.errors import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OAUTH_CLIENTS_WRITE, ORG_ADMIN
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorType
@@ -31,8 +32,11 @@ from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
 logger = structlog.get_logger(__name__)
 
-#: Permissions that make a non-owner an admin for grant operations.
-_ADMIN_PERMISSIONS: frozenset[str] = frozenset({"org:admin", "oauth-clients:write"})
+#: Permissions that make a non-owner an admin for grant operations. Broader
+#: than the usual ``ORG_ADMIN``-only idiom on purpose: ``oauth-clients:write``
+#: holders administer the client lifecycle (the same permission gating the
+#: admin oauth-clients router), and a grant is part of that lifecycle.
+_ADMIN_PERMISSIONS: frozenset[str] = frozenset({ORG_ADMIN, OAUTH_CLIENTS_WRITE})
 
 
 class OAuthGrantService:

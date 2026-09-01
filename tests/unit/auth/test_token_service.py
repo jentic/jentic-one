@@ -1054,6 +1054,75 @@ async def test_introspect_folds_grant_gate_into_active(
     assert result["active"] is False
 
 
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.OAuthClientGrantRepository")
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+async def test_introspect_folds_grant_gate_into_active_for_refresh_token(
+    mock_rt_repo: MagicMock,
+    mock_client_repo: MagicMock,
+    mock_grant_repo: MagicMock,
+    mock_user_repo: MagicMock,
+) -> None:
+    """The grant gate applies to refresh-token introspection too (review F-4)."""
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row()
+    rt_row.oauth_client_id = "oc_grant_app"
+    rt_row.oauth_grant_id = "ocg_test123"
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.approval_status = "approved"
+    client_row.allowed_scopes = None
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+    mock_grant_repo.get_by_id = AsyncMock(return_value=_make_grant_row(status="revoked"))
+
+    svc = TokenService(ctx)
+    result = await svc.introspect("rt_grant_introspect")
+    assert result["active"] is False
+
+
+@patch("jentic_one.auth.services.token_service.record_audit")
+@patch("jentic_one.auth.services.token_service.OAuthClientGrantRepository")
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_refresh_reuse_detection_wins_over_revoked_grant(
+    mock_at_repo: MagicMock,
+    mock_rt_repo: MagicMock,
+    mock_client_repo: MagicMock,
+    mock_grant_repo: MagicMock,
+    mock_record_audit: AsyncMock,
+) -> None:
+    """Review A8: a replayed consumed RT under a revoked grant still triggers
+    the family sweep and the "reuse detected" audit row — the grant gate must
+    not short-circuit the reuse telemetry."""
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row(consumed_at=datetime.now(UTC))
+    rt_row.oauth_client_id = "oc_grant_app"
+    rt_row.oauth_grant_id = "ocg_test123"
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_rt_repo.revoke_family = AsyncMock()
+    mock_at_repo.revoke_family = AsyncMock()
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.approval_status = "approved"
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+    mock_grant_repo.get_by_id = AsyncMock(return_value=_make_grant_row(status="revoked"))
+
+    svc = TokenService(ctx)
+    with pytest.raises(InvalidGrantError, match="reuse detected"):
+        await svc.refresh("rt_replayed_revoked_grant", client_id="oc_grant_app")
+
+    mock_rt_repo.revoke_family.assert_called_once()
+    mock_at_repo.revoke_family.assert_called_once()
+    audit_reasons = [call.kwargs.get("reason") for call in mock_record_audit.await_args_list]
+    assert "refresh token reuse detected" in audit_reasons
+
+
 @patch("jentic_one.auth.services.token_service.OAuthClientGrantRepository")
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")

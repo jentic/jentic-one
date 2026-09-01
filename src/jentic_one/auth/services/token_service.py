@@ -295,16 +295,14 @@ class TokenService:
                         origin=None,
                     )
 
-            if not client_mismatch and rt.oauth_grant_id is not None:
-                # Grant re-check on every rotation (phase-3a §4.5): a revoked
-                # consent grant must fail refresh closed even if the family's
-                # token rows were somehow missed by the revoke sweep.
-                grant = await OAuthClientGrantRepository.get_by_id(session, rt.oauth_grant_id)
-                if grant is None or grant.status != OAuthGrantStatus.ACTIVE.value:
-                    raise InvalidGrantError("consent grant has been revoked")
-
             if not client_mismatch:
                 if rt.consumed_at is not None:
+                    # Reuse detection runs BEFORE the grant re-check: a
+                    # replayed, already-consumed token must always trigger the
+                    # family sweep and the "reuse detected" audit row — that
+                    # telemetry must not be lost just because the consent
+                    # grant was revoked in the meantime (review A8). The grant
+                    # gate below still fails rotation closed either way.
                     await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
                     await AccessTokenRepository.revoke_family(session, rt.token_family_id)
                     reuse_detected = True
@@ -319,6 +317,17 @@ class TokenService:
                         origin=None,
                     )
                 else:
+                    if rt.oauth_grant_id is not None:
+                        # Grant re-check on every rotation (phase-3a §4.5): a
+                        # revoked consent grant must fail refresh closed even
+                        # if the family's token rows were somehow missed by
+                        # the revoke sweep.
+                        grant = await OAuthClientGrantRepository.get_by_id(
+                            session, rt.oauth_grant_id
+                        )
+                        if grant is None or grant.status != OAuthGrantStatus.ACTIVE.value:
+                            raise InvalidGrantError("consent grant has been revoked")
+
                     if not await _actor_is_active(session, rt.actor_id, rt.actor_type):
                         raise InvalidGrantError("actor is not active")
 

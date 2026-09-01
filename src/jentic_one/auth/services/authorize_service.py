@@ -252,25 +252,34 @@ class AuthorizeService:
         denied, disabled, and archived agents never appear on the picker.
         """
         async with self._ctx.admin_db.session() as session:
+            # limit=1000 (review A7): §4.4 specifies no picker ceiling, but the
+            # repo API is limit-shaped. The bound is explicit and generous —
+            # beyond it the newest-first (created_at DESC) order deterministically
+            # drops the *oldest* agents from both render and submit (the same
+            # call validates the selection, so there is no render/validate skew).
             agents = await AgentRepository.list_by_owner(
                 session,
                 user_id,
-                limit=200,
+                limit=1000,
                 filters=[Agent.status == ActorStatus.ACTIVE.value],
             )
-            options: list[AgentConsentOption] = []
-            for agent in agents:
-                grants = await ActorScopeGrantRepository.list_for_actor(
-                    session, agent.id, actor_type=ActorType.AGENT.value
+            # One batch query for every candidate's live scopes (review A7:
+            # avoids a per-agent actor_scope_grants round-trip, run twice
+            # because the submit path re-runs this predicate).
+            grants = await ActorScopeGrantRepository.list_for_actors(
+                session, [agent.id for agent in agents], actor_type=ActorType.AGENT.value
+            )
+            scopes_by_agent: dict[str, set[str]] = {}
+            for grant in grants:
+                scopes_by_agent.setdefault(grant.actor_id, set()).add(grant.scope)
+            return [
+                AgentConsentOption(
+                    id=agent.id,
+                    name=agent.name,
+                    scopes=frozenset(scopes_by_agent.get(agent.id, set())),
                 )
-                options.append(
-                    AgentConsentOption(
-                        id=agent.id,
-                        name=agent.name,
-                        scopes=frozenset(g.scope for g in grants),
-                    )
-                )
-        return options
+                for agent in agents
+            ]
 
     async def issue_authorization_code(
         self,
@@ -477,6 +486,12 @@ class AuthorizeService:
             # lineage columns are stamped so the kill switches reach these
             # rows. No id_token (D11): the client asked to wire up an agent,
             # not to learn who the consenting human is.
+            #
+            # Known benign race: the grant was checked in the exchange
+            # transaction above, but issue_pair mints in its own transaction —
+            # a :revoke landing between the two can leave freshly-minted rows
+            # that miss the revoke sweep. They never resolve (every resolver
+            # re-checks grant status live) and simply linger until expiry.
             access_token, refresh_token = await self._token_svc.issue_pair(
                 grant_agent_id,
                 ActorType.AGENT,

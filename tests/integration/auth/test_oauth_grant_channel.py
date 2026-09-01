@@ -6,32 +6,28 @@ actor=AGENT with both lineage columns and no id_token (D11), the quadruple
 scope intersection at resolution, refresh-rotation grant re-checks, and all
 three kill radii (grant revoke / client deactivate / agent disable) on BOTH
 resolvers (auth-surface TokenService + broker raw-SQL resolver).
+
+Seed helpers and the ``clean_grants`` fixture are shared with the web-level
+consent tests (``test_oauth_consent_web.py``) via
+:mod:`tests.integration.auth.seeds` and this package's ``conftest.py``.
 """
 
 from __future__ import annotations
 
-import hashlib
-from base64 import urlsafe_b64encode
-from collections.abc import AsyncGenerator
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select, update
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
-from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
-from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
-from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
     AgentRepository,
     OAuthClientGrantRepository,
     OAuthClientRepository,
-    UserRepository,
 )
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import (
@@ -45,104 +41,18 @@ from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
+from tests.integration.auth import seeds
 
 pytestmark = pytest.mark.integration
 
-_SEED_MARKER = "usr_grant_seed"
-_CLIENT_ID = "oc_grant_channel_test"
-_REDIRECT_URI = "https://mcpapp.example.com/cb"
-_CODE_VERIFIER = "grant-channel-verifier-0123456789abcdef0123456789abcdef"
-
-
-def _code_challenge(verifier: str) -> str:
-    digest = hashlib.sha256(verifier.encode()).digest()
-    return urlsafe_b64encode(digest).rstrip(b"=").decode()
-
-
-@pytest.fixture()
-async def clean_grants(integration_context: Context) -> AsyncGenerator[None, None]:
-    async def _truncate() -> None:
-        async with integration_context.admin_db.session() as session:
-            await session.execute(delete(AccessToken))
-            await session.execute(delete(RefreshToken))
-            await session.execute(delete(AuthorizationCode))
-            await session.execute(delete(OAuthClientGrant))
-            await session.execute(delete(ActorScopeGrant))
-            await session.execute(delete(OAuthClient).where(OAuthClient.created_by == _SEED_MARKER))
-            await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
-            await session.execute(delete(User).where(User.created_by == _SEED_MARKER))
-            await session.commit()
-
-    await _truncate()
-    yield
-    await _truncate()
-
-
-async def _seed_user(ctx: Context, user_id: str) -> str:
-    async with ctx.admin_db.session() as session:
-        user = await UserRepository.create(
-            session,
-            id=user_id,
-            email=f"{user_id}@grants.test",
-            first_name="Grant",
-            last_name="Test",
-            active=True,
-            created_by=_SEED_MARKER,
-        )
-        await session.commit()
-        return user.id
-
-
-async def _seed_agent(
-    ctx: Context,
-    *,
-    owner_id: str,
-    scopes: list[str],
-    status: ActorStatus = ActorStatus.ACTIVE,
-) -> str:
-    async with ctx.admin_db.session() as session:
-        agent = await AgentRepository.create(
-            session,
-            name="grant-test-agent",
-            owner_id=owner_id,
-            registered_by=owner_id,
-            created_by=_SEED_MARKER,
-            status=status,
-        )
-        for scope in scopes:
-            await ActorScopeGrantRepository.grant(
-                session,
-                actor_id=agent.id,
-                actor_type=ActorType.AGENT,
-                scope=scope,
-                granted_by=owner_id,
-                created_by=_SEED_MARKER,
-            )
-        await session.commit()
-        return agent.id
-
-
-async def _seed_client(
-    ctx: Context,
-    *,
-    allowed_scopes: list[str] | None,
-    client_id: str = _CLIENT_ID,
-) -> str:
-    async with ctx.admin_db.session() as session:
-        client = await OAuthClientRepository.create(
-            session,
-            client_id=client_id,
-            name="Grant Channel App",
-            redirect_uris=[_REDIRECT_URI],
-            client_secret_hash=None,
-            allowed_scopes=allowed_scopes,
-            token_endpoint_auth_method="none",
-            consent_model="agent",
-            registration_source="dcr",
-            created_by=_SEED_MARKER,
-        )
-        await session.commit()
-        return client.client_id
+_CLIENT_ID = seeds.CLIENT_ID
+_REDIRECT_URI = seeds.REDIRECT_URI
+_CODE_VERIFIER = seeds.CODE_VERIFIER
+_SEED_MARKER = seeds.SEED_MARKER
+_code_challenge = seeds.code_challenge
+_seed_user = seeds.seed_user
+_seed_agent = seeds.seed_agent
+_seed_client = seeds.seed_client
 
 
 async def _mint_grant_channel_tokens(
@@ -458,8 +368,34 @@ async def test_kill_radius_grant_revoke(integration_context: Context, clean_gran
     broker_resolved = await broker.resolve_access_token(access)
     assert broker_resolved is not None and broker_resolved.active is False
     assert (await token_svc.introspect(access))["active"] is False
+    # The grant gate folds into refresh-token introspection too (review F-4).
+    assert (await token_svc.introspect(refresh))["active"] is False
     with pytest.raises(InvalidGrantError):
         await token_svc.refresh(refresh, client_id=_CLIENT_ID)
+
+
+async def test_missing_grant_row_fails_closed_on_both_resolvers(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """Review F-3: a grant-channel token whose grant row is GONE (hard-deleted,
+    not revoked) fails closed on the broker raw-SQL resolver — its scalar
+    subquery returns NULL for a missing row, which must read as inactive —
+    and on TokenService."""
+    user_id = await _seed_user(integration_context, "usr_g_rowgone")
+    agent_id = await _seed_agent(integration_context, owner_id=user_id, scopes=["apis:read"])
+    await _seed_client(integration_context, allowed_scopes=["apis:read"])
+    grant_id, access, _refresh, _ = await _mint_grant_channel_tokens(
+        integration_context, user_id=user_id, agent_id=agent_id, grant_scopes=["apis:read"]
+    )
+
+    async with integration_context.admin_db.session() as session:
+        await session.execute(delete(OAuthClientGrant).where(OAuthClientGrant.id == grant_id))
+        await session.commit()
+
+    broker = InProcessTokenResolver(integration_context.admin_db)
+    broker_resolved = await broker.resolve_access_token(access)
+    assert broker_resolved is not None and broker_resolved.active is False
+    assert await TokenService(integration_context).resolve_access_token(access) is None
 
 
 async def test_kill_radius_client_deactivate(
@@ -541,11 +477,52 @@ async def test_refresh_rotation_recheck_and_lineage_propagation(
         await OAuthClientGrantRepository.revoke(session, grant_id)
         await session.commit()
     async with integration_context.admin_db.session() as session:
-        await session.execute(RefreshToken.__table__.update().values(revoked_at=None))
+        # sqlalchemy.update(RefreshToken), not RefreshToken.__table__.update():
+        # the latter is typed FromClause and fails mypy.
+        await session.execute(update(RefreshToken).values(revoked_at=None))
         await session.commit()
 
     with pytest.raises(InvalidGrantError, match="revoked"):
         await token_svc.refresh(refresh2, client_id=_CLIENT_ID)
+
+
+async def test_replayed_refresh_under_revoked_grant_keeps_reuse_telemetry(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """Review A8: replaying an already-consumed refresh token still runs reuse
+    detection — family sweep + the "reuse detected" audit row — even when the
+    consent grant has been revoked in the meantime."""
+    user_id = await _seed_user(integration_context, "usr_g_replay")
+    agent_id = await _seed_agent(integration_context, owner_id=user_id, scopes=["apis:read"])
+    await _seed_client(integration_context, allowed_scopes=["apis:read"])
+    grant_id, _access, refresh, _ = await _mint_grant_channel_tokens(
+        integration_context, user_id=user_id, agent_id=agent_id, grant_scopes=["apis:read"]
+    )
+
+    token_svc = TokenService(integration_context)
+    await token_svc.refresh(refresh, client_id=_CLIENT_ID)  # consumes `refresh`
+
+    # Revoke ONLY the grant row (no token sweep) so the replayed token is
+    # consumed-but-live and the ordering of reuse detection vs the grant
+    # gate is what decides the outcome.
+    async with integration_context.admin_db.session() as session:
+        await OAuthClientGrantRepository.revoke(session, grant_id)
+        await session.commit()
+
+    reuse_audits = select(AuditEntry).where(AuditEntry.reason == "refresh token reuse detected")
+    async with integration_context.admin_db.session() as session:
+        audits_before = len((await session.execute(reuse_audits)).scalars().all())
+
+    with pytest.raises(InvalidGrantError, match="reuse detected"):
+        await token_svc.refresh(refresh, client_id=_CLIENT_ID)
+
+    # The family sweep ran and the reuse-detection audit row was written.
+    # (Audit rows are append-only and survive clean_grants, so compare counts.)
+    async with integration_context.admin_db.session() as session:
+        rt_rows = (await session.execute(RefreshToken.__table__.select())).all()
+        audits_after = len((await session.execute(reuse_audits)).scalars().all())
+    assert all(r.revoked_at is not None for r in rt_rows)
+    assert audits_after == audits_before + 1
 
 
 async def test_revoke_grant_owner_admin_and_stranger(
