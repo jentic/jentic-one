@@ -37,6 +37,13 @@ class OAuthClient(AuditableMixin, AdminBase):
         Index("ix_oauth_clients_client_id", "client_id", unique=True),
         Index("ix_oauth_clients_active", "active"),
         Index("ix_oauth_clients_approval_status", "approval_status"),
+        # Non-unique — the D8 dedupe key lookup (§4.1): exact
+        # (software_id, redirect-URI-set fingerprint) match on DCR registration.
+        Index(
+            "ix_oauth_clients_software_id_redirect_uris_fingerprint",
+            "software_id",
+            "redirect_uris_fingerprint",
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -80,6 +87,12 @@ class OAuthClient(AuditableMixin, AdminBase):
         server_default=OAuthRegistrationSource.ADMIN.value,
     )
     software_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # SHA-256 hex of the sorted, exact redirect-URI set (§4.1) — with
+    # software_id it forms the D8 dedupe key. Maintained by the repository on
+    # every create and redirect_uris update; NULL only on pre-3a rows whose
+    # redirect_uris have not been written since the upgrade (they carry no
+    # software_id either, so they never participate in dedupe).
+    redirect_uris_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # server_default 'approved' is deliberate back-compat: every pre-3a row was
     # admin-created and live, so upgraded rows keep working (§4.1).
     approval_status: Mapped[str] = mapped_column(

@@ -76,7 +76,11 @@ async def list_oauth_clients(
     include_inactive: bool = False,
     approval_status: str | None = Query(
         default=None,
-        description="Filter by approval lifecycle state: pending, approved, or denied.",
+        description=(
+            "Filter by approval lifecycle state: pending, approved, or denied. "
+            "Filtering on pending or denied implies include_inactive=true — "
+            "those rows are always inactive until approved."
+        ),
     ),
 ) -> OAuthClientListResponse:
     """List all registered OAuth clients, optionally filtered by approval status."""

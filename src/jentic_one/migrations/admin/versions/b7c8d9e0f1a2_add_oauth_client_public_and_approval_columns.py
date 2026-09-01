@@ -9,11 +9,20 @@ admin approval lifecycle.
 - ``consent_model`` (``user``|``agent``, default ``user``).
 - ``registration_source`` (``admin``|``dcr``, default ``admin``).
 - ``software_id`` (nullable) — RFC 7591 software identity, dedupe key input.
+- ``redirect_uris_fingerprint`` (nullable, SHA-256 hex of the sorted
+  redirect-URI set) + a non-unique index on
+  (``software_id``, ``redirect_uris_fingerprint``) — the D8 dedupe key.
+  Nullable because existing rows cannot be fingerprinted in portable DDL;
+  the repository backfills on the next redirect_uris write, and pre-3a rows
+  carry no ``software_id`` so they never participate in dedupe.
 - ``approval_status`` (``pending``|``approved``|``denied``) — server default
   ``approved`` so every existing (admin-created) row stays live on upgrade.
 
 Additive only; batch_alter_table so the nullability change also works on the
 SQLite integration backend.
+
+Amended pre-merge (same revision id, PR #1218 review): the fingerprint
+column + dedupe index specified by §4.1 were initially omitted.
 
 Revision ID: b7c8d9e0f1a2
 Revises: f2a3b4c5d6e7
@@ -50,19 +59,29 @@ def upgrade() -> None:
             sa.Column("registration_source", sa.String(8), nullable=False, server_default="admin")
         )
         batch_op.add_column(sa.Column("software_id", sa.String(255), nullable=True))
+        batch_op.add_column(sa.Column("redirect_uris_fingerprint", sa.String(64), nullable=True))
         batch_op.add_column(
             sa.Column("approval_status", sa.String(8), nullable=False, server_default="approved")
         )
     op.create_index("ix_oauth_clients_approval_status", "oauth_clients", ["approval_status"])
+    op.create_index(
+        "ix_oauth_clients_software_id_redirect_uris_fingerprint",
+        "oauth_clients",
+        ["software_id", "redirect_uris_fingerprint"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_oauth_clients_software_id_redirect_uris_fingerprint", table_name="oauth_clients"
+    )
     op.drop_index("ix_oauth_clients_approval_status", table_name="oauth_clients")
     # Public (secret-less) rows cannot exist under the NOT NULL secret schema;
     # dropping them mirrors the destructive-downgrade precedent of aa6b7c8d9e0f.
     op.execute("DELETE FROM oauth_clients WHERE client_secret_hash IS NULL")
     with op.batch_alter_table("oauth_clients") as batch_op:
         batch_op.drop_column("approval_status")
+        batch_op.drop_column("redirect_uris_fingerprint")
         batch_op.drop_column("software_id")
         batch_op.drop_column("registration_source")
         batch_op.drop_column("consent_model")

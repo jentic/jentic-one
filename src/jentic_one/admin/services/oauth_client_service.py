@@ -11,7 +11,11 @@ from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services._support.passwords import hash_password, verify_password
 from jentic_one.admin.services._support.tokens import generate_client_id, generate_client_secret
-from jentic_one.admin.services.errors import InvalidInputError, OAuthClientNotFoundError
+from jentic_one.admin.services.errors import (
+    ConflictError,
+    InvalidInputError,
+    OAuthClientNotFoundError,
+)
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientCreateResult, OAuthClientView
 from jentic_one.shared.audit import record_audit
 from jentic_one.shared.auth.identity import Identity
@@ -29,6 +33,16 @@ _MAX_REDIRECT_URI_LENGTH = 2048
 
 @functools.cache
 def _dummy_argon2_hash() -> str:
+    """A cached argon2id hash used as the timing-equalizer verify target.
+
+    The first call computes a real argon2id hash (~64 MiB / tens of ms)
+    synchronously on the event-loop thread; every later call returns the
+    cached string. This is a deliberate trade-off: the cost is paid once per
+    process, only when a rejection path first needs the equalizer, and
+    keeping the computation lazy avoids taxing startup (and every test
+    session) with an argon2 run. Callers verify *against* this hash via
+    ``_verify_password_async``, which does run in the executor.
+    """
     return hash_password("dummy-timing-equalizer")
 
 
@@ -213,13 +227,24 @@ class OAuthClientService:
         include_inactive: bool = False,
         approval_status: str | None = None,
     ) -> list[OAuthClientView]:
-        """List all OAuth clients, optionally filtered by approval status."""
+        """List all OAuth clients, optionally filtered by approval status.
+
+        Filtering on ``pending`` or ``denied`` implies ``include_inactive``:
+        those rows are ``active=false`` by construction (D7), so composing the
+        default active-only filter with the approval-queue query would
+        silently return ``[]``.
+        """
         if approval_status is not None and approval_status not in (
             OAuthClientApprovalStatus.PENDING.value,
             OAuthClientApprovalStatus.APPROVED.value,
             OAuthClientApprovalStatus.DENIED.value,
         ):
             raise InvalidInputError(f"unsupported approval_status filter: {approval_status}")
+        if approval_status in (
+            OAuthClientApprovalStatus.PENDING.value,
+            OAuthClientApprovalStatus.DENIED.value,
+        ):
+            include_inactive = True
         async with self._ctx.admin_db.session() as session:
             clients = await OAuthClientRepository.list_all(
                 session,
@@ -245,6 +270,12 @@ class OAuthClientService:
         ``allowed_scopes=["*"]`` is the reset sentinel — it clears the column
         to NULL (unrestricted). ``allowed_scopes=None`` means no change;
         ``allowed_scopes=[]`` denies all non-OIDC scopes.
+
+        ``active=true`` is rejected on a row whose ``approval_status`` is not
+        ``approved`` (D7): the ``:approve``/``:deny`` verbs are the only way
+        to change approval state, and PATCH must not manufacture a
+        ``denied+active`` (or ``pending+active``) row the state machine does
+        not contain. ``active=false`` is always allowed (fail-closed).
         """
         if redirect_uris is not None:
             _validate_redirect_uris(redirect_uris)
@@ -256,6 +287,12 @@ class OAuthClientService:
             existing = await OAuthClientRepository.get_by_id(session, id)
             if existing is None:
                 raise OAuthClientNotFoundError(id)
+
+            if active is True and not _is_approved(existing):
+                raise ConflictError(
+                    f"OAuth client '{id}' cannot be activated while its approval_status "
+                    f"is '{existing.approval_status}' — use the :approve verb"
+                )
 
             before_snapshot = _snapshot(existing)
 
@@ -332,6 +369,12 @@ class OAuthClientService:
 
         Also the recovery path for a denied client — deny is reversible and
         rows are never deleted, so a cached client_id becomes valid again.
+
+        Note that ``:approve`` unconditionally re-arms ``active`` (D7's
+        ":approve sets both"): approving an already-approved but deactivated
+        client re-enables it. Don't use ``:approve`` as an idempotent no-op on
+        a client that was deliberately killed via ``PATCH active=false`` /
+        DELETE — that would flip the kill switch back on.
         """
         return await self._set_approval(
             id,
@@ -482,6 +525,10 @@ class OAuthClientService:
           secret is required — and none is accepted: a supplied secret on a
           public client is a loud misconfiguration → invalid_client.
         - Unknown, inactive, or unapproved (D7) clients fail closed.
+        - Rows violating the none↔NULL-hash coupling invariant (§4.1) fail
+          closed: a confidential-method row with a NULL hash must not be
+          treated as a public client, and a ``none`` row carrying a stray
+          hash must not authenticate either way.
 
         Whenever a secret is supplied, failure paths run the argon2 dummy
         verify so unknown/public/unapproved rows match the wrong-secret
@@ -495,14 +542,21 @@ class OAuthClientService:
                 await _verify_password_async(client_secret, _dummy_argon2_hash())
             return False
 
-        if (
-            client.token_endpoint_auth_method == TokenEndpointAuthMethod.NONE.value
-            or client.client_secret_hash is None
-        ):
+        is_public = client.token_endpoint_auth_method == TokenEndpointAuthMethod.NONE.value
+        if is_public and client.client_secret_hash is None:
             if client_secret:
                 await _verify_password_async(client_secret, _dummy_argon2_hash())
                 return False
             return True
+
+        if is_public or client.client_secret_hash is None:
+            # Invariant-violating row: 'none' and a NULL hash must always
+            # travel together (enforced by this service's write paths). If a
+            # row disagrees with itself, fail closed on both arms rather than
+            # falling open into the no-secret path.
+            if client_secret:
+                await _verify_password_async(client_secret, _dummy_argon2_hash())
+            return False
 
         if not client_secret:
             return False

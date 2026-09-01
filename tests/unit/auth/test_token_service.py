@@ -744,6 +744,7 @@ async def test_resolve_intersects_scopes_with_client_allowlist(
 
     client_row = MagicMock()
     client_row.active = True
+    client_row.approval_status = "approved"
     client_row.allowed_scopes = ["agents:read", "openid"]
     mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
 
@@ -768,6 +769,7 @@ async def test_resolve_empty_allowed_scopes_denies_all(
 
     client_row = MagicMock()
     client_row.active = True
+    client_row.approval_status = "approved"
     client_row.allowed_scopes = []
     mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
 
@@ -792,6 +794,7 @@ async def test_resolve_null_allowed_scopes_is_unrestricted(
 
     client_row = MagicMock()
     client_row.active = True
+    client_row.approval_status = "approved"
     client_row.allowed_scopes = None
     mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
 
@@ -800,3 +803,117 @@ async def test_resolve_null_allowed_scopes_is_unrestricted(
 
     assert resolved is not None
     assert set(resolved.permissions) == {"agents:read", "agents:write"}
+
+
+# ---------- D7 approval gate at the live resolvers (MAJOR-1, PR #1218 review) ----------
+
+
+@pytest.mark.parametrize("approval_status", ["pending", "denied"])
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_unapproved_client_fails_closed_even_if_active(
+    mock_at_repo: MagicMock,
+    mock_client_repo: MagicMock,
+    approval_status: str,
+) -> None:
+    """A token minted while the client was approved must stop resolving once
+    the row is denied/pending — even if ``active`` is somehow force-set true
+    (the deny→PATCH-active pincer from the #1218 review)."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row()
+    at_row.oauth_client_id = "oc_gated"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.approval_status = approval_status
+    client_row.allowed_scopes = None
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_gated")
+
+    assert resolved is None
+
+
+@pytest.mark.parametrize("approval_status", ["pending", "denied"])
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_introspect_unapproved_client_access_token_inactive(
+    mock_at_repo: MagicMock,
+    mock_client_repo: MagicMock,
+    mock_user_repo: MagicMock,
+    approval_status: str,
+) -> None:
+    """Introspection shares the resolver's D7 verdict via _resolve_client_gate."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row()
+    at_row.oauth_client_id = "oc_gated"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.approval_status = approval_status
+    client_row.allowed_scopes = None
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+
+    svc = TokenService(ctx)
+    result = await svc.introspect("at_gated")
+
+    assert result["active"] is False
+
+
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+async def test_introspect_unapproved_client_refresh_token_inactive(
+    mock_rt_repo: MagicMock,
+    mock_client_repo: MagicMock,
+    mock_user_repo: MagicMock,
+) -> None:
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row()
+    rt_row.oauth_client_id = "oc_gated"
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.approval_status = "denied"
+    client_row.allowed_scopes = None
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+
+    svc = TokenService(ctx)
+    result = await svc.introspect("rt_gated")
+
+    assert result["active"] is False
+
+
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_approved_active_client_still_resolves(
+    mock_at_repo: MagicMock,
+    mock_client_repo: MagicMock,
+    mock_user_repo: MagicMock,
+) -> None:
+    """The gate change must not break the approved+active happy path."""
+    ctx = _make_ctx()
+    at_row = _make_access_token_row()
+    at_row.oauth_client_id = "oc_ok"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
+
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.approval_status = "approved"
+    client_row.allowed_scopes = None
+    mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_ok")
+
+    assert resolved is not None
+    assert resolved.active is True

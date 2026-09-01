@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,19 @@ from jentic_one.shared.models.oauth_clients import (
     OAuthRegistrationSource,
     TokenEndpointAuthMethod,
 )
+
+
+def redirect_uris_fingerprint(redirect_uris: list[str]) -> str:
+    """SHA-256 hex of the sorted, exact redirect-URI set (design §4.1).
+
+    Order-insensitive (the set is sorted before hashing) and exact — any
+    added, removed, or altered URI changes the fingerprint. Together with
+    ``software_id`` this is the D8 dedupe key for DCR registrations (the
+    consumer lands in 3a-2; the column and its maintenance are part of the
+    3a-1 migration contract). URIs cannot contain raw newlines (they are
+    validated URLs), so the newline join is unambiguous.
+    """
+    return hashlib.sha256("\n".join(sorted(redirect_uris)).encode()).hexdigest()
 
 
 class OAuthClientRepository:
@@ -43,6 +58,7 @@ class OAuthClientRepository:
             name=name,
             description=description,
             redirect_uris=redirect_uris,
+            redirect_uris_fingerprint=redirect_uris_fingerprint(redirect_uris),
             require_consent=require_consent,
             allowed_scopes=allowed_scopes,
             token_endpoint_auth_method=token_endpoint_auth_method,
@@ -138,6 +154,7 @@ class OAuthClientRepository:
             client.description = description
         if redirect_uris is not None:
             client.redirect_uris = redirect_uris
+            client.redirect_uris_fingerprint = redirect_uris_fingerprint(redirect_uris)
         if active is not None:
             client.active = active
         if require_consent is not None:

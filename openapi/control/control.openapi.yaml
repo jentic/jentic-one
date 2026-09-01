@@ -7250,7 +7250,7 @@ paths:
           default: false
           title: Include Inactive
           type: boolean
-      - description: 'Filter by approval lifecycle state: pending, approved, or denied.'
+      - description: 'Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.'
         in: query
         name: approval_status
         required: false
@@ -7258,7 +7258,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 'Filter by approval lifecycle state: pending, approved, or denied.'
+          description: 'Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.'
           title: Approval Status
       responses:
         '200':

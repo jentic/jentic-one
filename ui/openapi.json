@@ -11489,7 +11489,7 @@
             }
           },
           {
-            "description": "Filter by approval lifecycle state: pending, approved, or denied.",
+            "description": "Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.",
             "in": "query",
             "name": "approval_status",
             "required": false,
@@ -11502,7 +11502,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by approval lifecycle state: pending, approved, or denied.",
+              "description": "Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.",
               "title": "Approval Status"
             }
           }

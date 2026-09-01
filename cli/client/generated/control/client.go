@@ -3159,7 +3159,7 @@ type ListActorsParams struct {
 type ListOauthClientsParams struct {
 	IncludeInactive *bool `form:"include_inactive,omitempty" json:"include_inactive,omitempty"`
 
-	// ApprovalStatus Filter by approval lifecycle state: pending, approved, or denied.
+	// ApprovalStatus Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.
 	ApprovalStatus *string `form:"approval_status,omitempty" json:"approval_status,omitempty"`
 }
 

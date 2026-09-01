@@ -25,7 +25,7 @@ export class OAuthClientsService {
     }: {
         includeInactive?: boolean,
         /**
-         * Filter by approval lifecycle state: pending, approved, or denied.
+         * Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.
          */
         approvalStatus?: (string | null),
     }): CancelablePromise<OAuthClientListResponse> {
