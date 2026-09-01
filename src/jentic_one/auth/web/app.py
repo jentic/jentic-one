@@ -48,6 +48,10 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
     return [
         (make_health_router("auth"), "/auth", []),
         (discovery.router, "", []),
+        # /mcp-scoped OAuth discovery (phase-3a §4.7): RFC 8414 + RFC 9728 docs,
+        # the root protected-resource alias, and the /mcp 401 challenge. All
+        # gated by server.mcp.oauth.enabled (404 when off).
+        (discovery.mcp_router, "", []),
         (authorize.router, "", []),
         (identity.router, "", []),
         (agents.router, "", []),

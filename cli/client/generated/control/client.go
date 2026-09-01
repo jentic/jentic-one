@@ -4469,6 +4469,44 @@ type ClientInterface interface {
 	// Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
 	OauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// McpOauthAuthorizationServer OAuth authorization server metadata for the MCP resource
+	//
+	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+	//
+	// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
+	// the issuer `{base}/mcp` named by the protected-resource document. It
+	// advertises the anonymous OAuth-client registration door (`/oauth-clients`)
+	// and the public-client profile (`none` + PKCE S256) — the root document is a
+	// separate, unchanged surface whose `registration_endpoint` remains the agent
+	// `/register`.
+	//
+	// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
+	McpOauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// OauthProtectedResource OAuth protected resource metadata (root alias)
+	//
+	// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+	//
+	// Compatibility fallback for clients that probe the root
+	// `/.well-known/oauth-protected-resource` instead of following the 401's
+	// `resource_metadata` pointer (the documented Claude Code behaviour). Safe
+	// because this deployment has exactly one OAuth-protected resource, so the
+	// root and path-scoped documents are the same body.
+	//
+	// Corresponds with GET /.well-known/oauth-protected-resource (the `OauthProtectedResource` operationId).
+	OauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
+	//
+	// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+	//
+	// Names the /mcp-scoped authorization server and the MCP tool scopes. The
+	// same body is also served at the root well-known path for clients that
+	// ignore the 401's `resource_metadata` pointer.
+	//
+	// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
+	McpOauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListAccessRequests List access requests
 	//
 	// List access requests with cursor-based pagination.
@@ -6547,6 +6585,74 @@ func (c *Client) Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http
 // Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
 func (c *Client) OauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewOauthAuthorizationServerRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// McpOauthAuthorizationServer OAuth authorization server metadata for the MCP resource
+//
+// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+//
+// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
+// the issuer `{base}/mcp` named by the protected-resource document. It
+// advertises the anonymous OAuth-client registration door (`/oauth-clients`)
+// and the public-client profile (`none` + PKCE S256) — the root document is a
+// separate, unchanged surface whose `registration_endpoint` remains the agent
+// `/register`.
+//
+// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
+func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMcpOauthAuthorizationServerRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// OauthProtectedResource OAuth protected resource metadata (root alias)
+//
+// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+//
+// Compatibility fallback for clients that probe the root
+// `/.well-known/oauth-protected-resource` instead of following the 401's
+// `resource_metadata` pointer (the documented Claude Code behaviour). Safe
+// because this deployment has exactly one OAuth-protected resource, so the
+// root and path-scoped documents are the same body.
+//
+// Corresponds with GET /.well-known/oauth-protected-resource (the `OauthProtectedResource` operationId).
+func (c *Client) OauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewOauthProtectedResourceRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
+//
+// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+//
+// Names the /mcp-scoped authorization server and the MCP tool scopes. The
+// same body is also served at the root well-known path for clients that
+// ignore the 401's `resource_metadata` pointer.
+//
+// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
+func (c *Client) McpOauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMcpOauthProtectedResourceRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -10837,6 +10943,87 @@ func NewOauthAuthorizationServerRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/.well-known/oauth-authorization-server")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMcpOauthAuthorizationServerRequest constructs an http.Request for the McpOauthAuthorizationServer method
+func NewMcpOauthAuthorizationServerRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/.well-known/oauth-authorization-server/mcp")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewOauthProtectedResourceRequest constructs an http.Request for the OauthProtectedResource method
+func NewOauthProtectedResourceRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/.well-known/oauth-protected-resource")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMcpOauthProtectedResourceRequest constructs an http.Request for the McpOauthProtectedResource method
+func NewMcpOauthProtectedResourceRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/.well-known/oauth-protected-resource/mcp")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -19319,6 +19506,50 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
 	OauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OauthAuthorizationServerHTTPResp, error)
 
+	// McpOauthAuthorizationServerWithResponse OAuth authorization server metadata for the MCP resource
+	//
+	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+	//
+	// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
+	// the issuer `{base}/mcp` named by the protected-resource document. It
+	// advertises the anonymous OAuth-client registration door (`/oauth-clients`)
+	// and the public-client profile (`none` + PKCE S256) — the root document is a
+	// separate, unchanged surface whose `registration_endpoint` remains the agent
+	// `/register`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
+	McpOauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthAuthorizationServerHTTPResp, error)
+
+	// OauthProtectedResourceWithResponse OAuth protected resource metadata (root alias)
+	//
+	// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+	//
+	// Compatibility fallback for clients that probe the root
+	// `/.well-known/oauth-protected-resource` instead of following the 401's
+	// `resource_metadata` pointer (the documented Claude Code behaviour). Safe
+	// because this deployment has exactly one OAuth-protected resource, so the
+	// root and path-scoped documents are the same body.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /.well-known/oauth-protected-resource (the `OauthProtectedResource` operationId).
+	OauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OauthProtectedResourceHTTPResp, error)
+
+	// McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
+	//
+	// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+	//
+	// Names the /mcp-scoped authorization server and the MCP tool scopes. The
+	// same body is also served at the root well-known path for clients that
+	// ignore the 401's `resource_metadata` pointer.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
+	McpOauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceHTTPResp, error)
+
 	// ListAccessRequestsWithResponse List access requests
 	//
 	// List access requests with cursor-based pagination.
@@ -21729,6 +21960,213 @@ func (r OauthAuthorizationServerHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r OauthAuthorizationServerHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type McpOauthAuthorizationServerHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r McpOauthAuthorizationServerHTTPResp) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r McpOauthAuthorizationServerHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r McpOauthAuthorizationServerHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r McpOauthAuthorizationServerHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r McpOauthAuthorizationServerHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type OauthProtectedResourceHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r OauthProtectedResourceHTTPResp) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r OauthProtectedResourceHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r OauthProtectedResourceHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r OauthProtectedResourceHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r OauthProtectedResourceHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r OauthProtectedResourceHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r OauthProtectedResourceHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r OauthProtectedResourceHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r OauthProtectedResourceHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type McpOauthProtectedResourceHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r McpOauthProtectedResourceHTTPResp) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r McpOauthProtectedResourceHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r McpOauthProtectedResourceHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r McpOauthProtectedResourceHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r McpOauthProtectedResourceHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -35131,6 +35569,68 @@ func (c *ClientWithResponses) OauthAuthorizationServerWithResponse(ctx context.C
 	return ParseOauthAuthorizationServerHTTPResp(rsp)
 }
 
+// McpOauthAuthorizationServerWithResponse OAuth authorization server metadata for the MCP resource
+//
+// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+//
+// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
+// the issuer `{base}/mcp` named by the protected-resource document. It
+// advertises the anonymous OAuth-client registration door (`/oauth-clients`)
+// and the public-client profile (`none` + PKCE S256) — the root document is a
+// separate, unchanged surface whose `registration_endpoint` remains the agent
+// `/register`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
+func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthAuthorizationServerHTTPResp, error) {
+	rsp, err := c.McpOauthAuthorizationServer(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMcpOauthAuthorizationServerHTTPResp(rsp)
+}
+
+// OauthProtectedResourceWithResponse OAuth protected resource metadata (root alias)
+//
+// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+//
+// Compatibility fallback for clients that probe the root
+// `/.well-known/oauth-protected-resource` instead of following the 401's
+// `resource_metadata` pointer (the documented Claude Code behaviour). Safe
+// because this deployment has exactly one OAuth-protected resource, so the
+// root and path-scoped documents are the same body.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /.well-known/oauth-protected-resource (the `OauthProtectedResource` operationId).
+func (c *ClientWithResponses) OauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OauthProtectedResourceHTTPResp, error) {
+	rsp, err := c.OauthProtectedResource(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseOauthProtectedResourceHTTPResp(rsp)
+}
+
+// McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
+//
+// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+//
+// Names the /mcp-scoped authorization server and the MCP tool scopes. The
+// same body is also served at the root well-known path for clients that
+// ignore the 401's `resource_metadata` pointer.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
+func (c *ClientWithResponses) McpOauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceHTTPResp, error) {
+	rsp, err := c.McpOauthProtectedResource(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMcpOauthProtectedResourceHTTPResp(rsp)
+}
+
 // ListAccessRequestsWithResponse List access requests
 //
 // List access requests with cursor-based pagination.
@@ -38803,6 +39303,177 @@ func ParseOauthAuthorizationServerHTTPResp(rsp *http.Response) (*OauthAuthorizat
 			return nil, err
 		}
 		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMcpOauthAuthorizationServerHTTPResp parses an HTTP response from a McpOauthAuthorizationServerWithResponse call
+func ParseMcpOauthAuthorizationServerHTTPResp(rsp *http.Response) (*McpOauthAuthorizationServerHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &McpOauthAuthorizationServerHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseOauthProtectedResourceHTTPResp parses an HTTP response from a OauthProtectedResourceWithResponse call
+func ParseOauthProtectedResourceHTTPResp(rsp *http.Response) (*OauthProtectedResourceHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &OauthProtectedResourceHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMcpOauthProtectedResourceHTTPResp parses an HTTP response from a McpOauthProtectedResourceWithResponse call
+func ParseMcpOauthProtectedResourceHTTPResp(rsp *http.Response) (*McpOauthProtectedResourceHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &McpOauthProtectedResourceHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case rsp.StatusCode == 404:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
