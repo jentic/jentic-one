@@ -43,6 +43,7 @@ from jentic_one.shared.auth.permission_catalog import (
     compute_implies_transitive,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
@@ -141,12 +142,18 @@ async def _is_allowed_redirect_uri(
 
     Platform clients are validated against their configured redirect_uris.
     Third-party clients are looked up in the oauth_clients registry.
-    Unknown client_ids are rejected.
+    Unknown client_ids are rejected, and so are unapproved (pending/denied)
+    rows — the D7 approval gate fails closed on the existing error path.
+    (The human "awaiting approval" page is 3a-2 scope.)
     """
     if _is_platform_client(client_id, ctx):
         return _platform_client_allows_redirect(redirect_uri, client_id, ctx)
     client = await _get_cached_oauth_client(request, client_id, ctx)
-    if client is None or not client.active:
+    if (
+        client is None
+        or not client.active
+        or client.approval_status != OAuthClientApprovalStatus.APPROVED.value
+    ):
         return False
     return redirect_uri in client.redirect_uris
 

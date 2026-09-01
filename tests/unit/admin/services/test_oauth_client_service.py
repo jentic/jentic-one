@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -12,6 +12,7 @@ from jentic_one.admin.services.oauth_client_service import (
     OAuthClientService,
     _validate_redirect_uris,
 )
+from jentic_one.shared.models.audit import AuditAction
 
 
 def test_accepts_valid_https_uris() -> None:
@@ -96,6 +97,7 @@ async def test_verify_client_secret_rejects_inactive_client(
     ctx = _make_ctx()
     client_row = MagicMock()
     client_row.active = False
+    client_row.approval_status = "approved"
     client_row.client_secret_hash = "hash"
     mock_repo.get_by_client_id = AsyncMock(return_value=client_row)
 
@@ -116,6 +118,7 @@ async def test_verify_client_secret_accepts_active_client(
     ctx = _make_ctx()
     client_row = MagicMock()
     client_row.active = True
+    client_row.approval_status = "approved"
     client_row.client_secret_hash = "hash"
     mock_repo.get_by_client_id = AsyncMock(return_value=client_row)
     mock_verify.return_value = True
@@ -124,6 +127,234 @@ async def test_verify_client_secret_accepts_active_client(
     result = await svc.verify_client_secret("oc_test", "secret")
 
     assert result is True
+
+
+@pytest.mark.parametrize("approval_status", ["pending", "denied"])
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_verify_client_secret_rejects_unapproved_client(
+    mock_repo: MagicMock,
+    mock_verify: MagicMock,
+    approval_status: str,
+) -> None:
+    """The D7 gate: pending/denied clients fail even with the correct secret,
+    and the dummy verify still runs (timing-uniform)."""
+    ctx = _make_ctx()
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.approval_status = approval_status
+    client_row.client_secret_hash = "hash"
+    mock_repo.get_by_client_id = AsyncMock(return_value=client_row)
+    mock_verify.return_value = True
+
+    svc = OAuthClientService(ctx)
+    result = await svc.verify_client_secret("oc_test", "secret")
+
+    assert result is False
+    mock_verify.assert_awaited_once()
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_verify_client_secret_null_hash_short_circuits_to_equalizer(
+    mock_repo: MagicMock,
+    mock_verify: MagicMock,
+) -> None:
+    """A public (NULL-hash) row hits the dummy-hash equalizer and fails —
+    'public' must not be distinguishable from wrong-secret by timing (D5)."""
+    ctx = _make_ctx()
+    client_row = MagicMock()
+    client_row.active = True
+    client_row.approval_status = "approved"
+    client_row.client_secret_hash = None
+    mock_repo.get_by_client_id = AsyncMock(return_value=client_row)
+    mock_verify.return_value = True
+
+    svc = OAuthClientService(ctx)
+    result = await svc.verify_client_secret("oc_public", "any-secret")
+
+    assert result is False
+    mock_verify.assert_awaited_once()
+
+
+# ---------- authenticate_for_token_endpoint ----------
+
+
+def _client_row(
+    *,
+    active: bool = True,
+    approval_status: str = "approved",
+    auth_method: str = "client_secret_basic",
+    secret_hash: str | None = "hash",
+) -> MagicMock:
+    row = MagicMock()
+    row.active = active
+    row.approval_status = approval_status
+    row.token_endpoint_auth_method = auth_method
+    row.client_secret_hash = secret_hash
+    return row
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_token_auth_public_client_without_secret_passes(
+    mock_repo: MagicMock, mock_verify: MagicMock
+) -> None:
+    """Public client (auth method 'none'), no secret supplied → authenticated (D5)."""
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(
+        return_value=_client_row(auth_method="none", secret_hash=None)
+    )
+
+    svc = OAuthClientService(ctx)
+    assert await svc.authenticate_for_token_endpoint("oc_public", None) is True
+    mock_verify.assert_not_awaited()
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_token_auth_public_client_with_secret_is_rejected_loudly(
+    mock_repo: MagicMock, mock_verify: MagicMock
+) -> None:
+    """A supplied secret on a public client is a loud misconfiguration →
+    rejected, and the dummy verify runs (timing-uniform)."""
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(
+        return_value=_client_row(auth_method="none", secret_hash=None)
+    )
+
+    svc = OAuthClientService(ctx)
+    assert await svc.authenticate_for_token_endpoint("oc_public", "stray-secret") is False
+    mock_verify.assert_awaited_once()
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_token_auth_confidential_client_requires_and_verifies_secret(
+    mock_repo: MagicMock, mock_verify: MagicMock
+) -> None:
+    """Confidential path unchanged: secret required, argon2-verified against the row."""
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(return_value=_client_row())
+    mock_verify.return_value = True
+
+    svc = OAuthClientService(ctx)
+    assert await svc.authenticate_for_token_endpoint("oc_conf", "good-secret") is True
+    mock_verify.assert_awaited_once_with("good-secret", "hash")
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_token_auth_confidential_client_without_secret_is_rejected(
+    mock_repo: MagicMock, mock_verify: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(return_value=_client_row())
+
+    svc = OAuthClientService(ctx)
+    assert await svc.authenticate_for_token_endpoint("oc_conf", None) is False
+    mock_verify.assert_not_awaited()
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_token_auth_wrong_secret_is_rejected(
+    mock_repo: MagicMock, mock_verify: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(return_value=_client_row())
+    mock_verify.return_value = False
+
+    svc = OAuthClientService(ctx)
+    assert await svc.authenticate_for_token_endpoint("oc_conf", "wrong") is False
+
+
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_token_auth_unknown_client_with_secret_hits_equalizer(
+    mock_repo: MagicMock, mock_verify: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(return_value=None)
+
+    svc = OAuthClientService(ctx)
+    assert await svc.authenticate_for_token_endpoint("oc_missing", "secret") is False
+    mock_verify.assert_awaited_once()
+
+
+@pytest.mark.parametrize("approval_status", ["pending", "denied"])
+@pytest.mark.parametrize(
+    ("auth_method", "secret_hash", "supplied_secret"),
+    [
+        ("client_secret_basic", "hash", "good-secret"),
+        ("none", None, None),
+    ],
+)
+@patch("jentic_one.admin.services.oauth_client_service._verify_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_token_auth_unapproved_client_fails_closed(
+    mock_repo: MagicMock,
+    mock_verify: MagicMock,
+    auth_method: str,
+    secret_hash: str | None,
+    supplied_secret: str | None,
+    approval_status: str,
+) -> None:
+    """Pending/denied clients cannot authenticate — public or confidential (D7)."""
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(
+        return_value=_client_row(
+            approval_status=approval_status,
+            auth_method=auth_method,
+            secret_hash=secret_hash,
+        )
+    )
+    mock_verify.return_value = True
+
+    svc = OAuthClientService(ctx)
+    result = await svc.authenticate_for_token_endpoint("oc_gated", supplied_secret)
+    assert result is False
+
+
+# ---------- is_public_client ----------
+
+
+@pytest.mark.parametrize(
+    ("active", "approval_status", "auth_method", "expected"),
+    [
+        (True, "approved", "none", True),
+        (True, "approved", "client_secret_basic", False),
+        (False, "approved", "none", False),
+        (True, "pending", "none", False),
+        (True, "denied", "none", False),
+    ],
+)
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_is_public_client_matrix(
+    mock_repo: MagicMock,
+    active: bool,
+    approval_status: str,
+    auth_method: str,
+    expected: bool,
+) -> None:
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(
+        return_value=_client_row(
+            active=active, approval_status=approval_status, auth_method=auth_method
+        )
+    )
+
+    svc = OAuthClientService(ctx)
+    assert await svc.is_public_client("oc_x") is expected
+
+
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_is_public_client_unknown_id_is_false(mock_repo: MagicMock) -> None:
+    ctx = _make_ctx()
+    mock_repo.get_by_client_id = AsyncMock(return_value=None)
+
+    svc = OAuthClientService(ctx)
+    assert await svc.is_public_client("oc_missing") is False
 
 
 # ---------- rotate_secret ----------
@@ -155,6 +386,7 @@ async def test_rotate_secret_returns_new_plaintext_and_audits(
 ) -> None:
     ctx = _make_transactional_ctx()
     mock_hash.return_value = "new_hash"
+    mock_repo.get_by_id = AsyncMock(return_value=_client_row())
     mock_repo.update_secret_hash = AsyncMock(return_value=MagicMock(id="oac_1"))
 
     svc = OAuthClientService(ctx)
@@ -174,11 +406,25 @@ async def test_rotate_secret_returns_new_plaintext_and_audits(
 @patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
 async def test_rotate_secret_raises_when_not_found(mock_repo: MagicMock) -> None:
     ctx = _make_transactional_ctx()
+    mock_repo.get_by_id = AsyncMock(return_value=None)
     mock_repo.update_secret_hash = AsyncMock(return_value=None)
 
     svc = OAuthClientService(ctx)
     with pytest.raises(OAuthClientNotFoundError):
         await svc.rotate_secret("oac_missing", identity=_make_identity())
+
+
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_rotate_secret_rejected_for_public_client(mock_repo: MagicMock) -> None:
+    """A public (secret-less) client has nothing to rotate."""
+    ctx = _make_transactional_ctx()
+    mock_repo.get_by_id = AsyncMock(return_value=_client_row(auth_method="none", secret_hash=None))
+    mock_repo.update_secret_hash = AsyncMock()
+
+    svc = OAuthClientService(ctx)
+    with pytest.raises(InvalidInputError, match="public clients have no secret"):
+        await svc.rotate_secret("oac_public", identity=_make_identity())
+    mock_repo.update_secret_hash.assert_not_awaited()
 
 
 # ---------- deactivate ----------
@@ -245,6 +491,11 @@ async def test_update_wildcard_scope_triggers_reset(
     updated.active = True
     updated.require_consent = True
     updated.allowed_scopes = None
+    updated.token_endpoint_auth_method = "client_secret_basic"
+    updated.consent_model = "user"
+    updated.registration_source = "admin"
+    updated.software_id = None
+    updated.approval_status = "approved"
     updated.id = "oac_1"
     updated.client_id = "oc_1"
     updated.created_at = datetime.now(UTC)
@@ -276,6 +527,11 @@ async def test_update_empty_scopes_is_deny_all(
     existing.redirect_uris = ["https://x.example.com/cb"]
     existing.active = True
     existing.require_consent = True
+    existing.token_endpoint_auth_method = "client_secret_basic"
+    existing.consent_model = "user"
+    existing.registration_source = "admin"
+    existing.software_id = None
+    existing.approval_status = "approved"
     existing.id = "oac_1"
     existing.client_id = "oc_1"
     existing.created_at = datetime.now(UTC)
@@ -291,3 +547,205 @@ async def test_update_empty_scopes_is_deny_all(
     kwargs = mock_repo.update.await_args.kwargs
     assert kwargs["reset_allowed_scopes"] is False
     assert kwargs["allowed_scopes"] == []
+
+
+# ---------- create: public vs confidential ----------
+
+
+def _full_row(**overrides: object) -> MagicMock:
+    """A MagicMock OAuthClient row carrying every field ``_to_view`` reads."""
+    row = MagicMock()
+    row.id = "oac_1"
+    row.client_id = "oc_1"
+    row.name = "app"
+    row.description = None
+    row.redirect_uris = ["https://x.example.com/cb"]
+    row.allowed_scopes = None
+    row.active = True
+    row.require_consent = True
+    row.token_endpoint_auth_method = "client_secret_basic"
+    row.consent_model = "user"
+    row.registration_source = "admin"
+    row.software_id = None
+    row.approval_status = "approved"
+    row.created_at = datetime.now(UTC)
+    row.updated_at = None
+    row.created_by = "usr_admin"
+    for key, value in overrides.items():
+        setattr(row, key, value)
+    return row
+
+
+@patch("jentic_one.admin.services.oauth_client_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.admin.services.oauth_client_service._hash_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_create_public_client_stores_no_secret(
+    mock_repo: MagicMock, mock_hash: MagicMock, _mock_audit: AsyncMock
+) -> None:
+    """token_endpoint_auth_method='none' → no secret generated, hashed, or returned."""
+    ctx = _make_transactional_ctx()
+    mock_repo.create = AsyncMock(return_value=_full_row(token_endpoint_auth_method="none"))
+
+    svc = OAuthClientService(ctx)
+    result = await svc.create(
+        name="public-app",
+        redirect_uris=["https://x.example.com/cb"],
+        token_endpoint_auth_method="none",
+        identity=_make_identity(),
+    )
+
+    assert result.client_secret is None
+    mock_hash.assert_not_called()
+    assert mock_repo.create.await_args is not None
+    kwargs = mock_repo.create.await_args.kwargs
+    assert kwargs["client_secret_hash"] is None
+    assert kwargs["token_endpoint_auth_method"] == "none"
+
+
+@patch("jentic_one.admin.services.oauth_client_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.admin.services.oauth_client_service._hash_password_async")
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_create_confidential_client_keeps_secret_behavior(
+    mock_repo: MagicMock, mock_hash: MagicMock, _mock_audit: AsyncMock
+) -> None:
+    """Default create is unchanged: secret generated, hashed, and returned once."""
+    ctx = _make_transactional_ctx()
+    mock_hash.return_value = "hashed"
+    mock_repo.create = AsyncMock(return_value=_full_row())
+
+    svc = OAuthClientService(ctx)
+    result = await svc.create(
+        name="conf-app",
+        redirect_uris=["https://x.example.com/cb"],
+        identity=_make_identity(),
+    )
+
+    assert isinstance(result.client_secret, str) and len(result.client_secret) > 0
+    mock_hash.assert_called_once()
+    assert mock_repo.create.await_args is not None
+    kwargs = mock_repo.create.await_args.kwargs
+    assert kwargs["client_secret_hash"] == "hashed"
+
+
+async def test_create_rejects_unknown_auth_method() -> None:
+    svc = OAuthClientService(_make_transactional_ctx())
+    with pytest.raises(InvalidInputError, match="token_endpoint_auth_method"):
+        await svc.create(
+            name="x",
+            redirect_uris=["https://x.example.com/cb"],
+            token_endpoint_auth_method="private_key_jwt",
+            identity=_make_identity(),
+        )
+
+
+async def test_create_rejects_unknown_consent_model() -> None:
+    svc = OAuthClientService(_make_transactional_ctx())
+    with pytest.raises(InvalidInputError, match="consent_model"):
+        await svc.create(
+            name="x",
+            redirect_uris=["https://x.example.com/cb"],
+            consent_model="org",
+            identity=_make_identity(),
+        )
+
+
+# ---------- approve / deny lifecycle (D7) ----------
+
+
+@patch("jentic_one.admin.services.oauth_client_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_approve_sets_status_and_active_and_audits(
+    mock_repo: MagicMock, mock_audit: AsyncMock
+) -> None:
+    ctx = _make_transactional_ctx()
+    mock_repo.get_by_id = AsyncMock(return_value=_full_row(approval_status="pending", active=False))
+    mock_repo.set_approval_status = AsyncMock(return_value=_full_row())
+
+    svc = OAuthClientService(ctx)
+    view = await svc.approve("oac_1", identity=_make_identity())
+
+    assert view.approval_status == "approved"
+    assert view.active is True
+    mock_repo.set_approval_status.assert_awaited_once_with(
+        ANY, "oac_1", approval_status="approved", active=True
+    )
+    assert mock_audit.await_args is not None
+    kwargs = mock_audit.await_args.kwargs
+    assert kwargs["action"] == AuditAction.APPROVE
+    assert kwargs["before"]["approval_status"] == "pending"
+    assert kwargs["after"] == {"approval_status": "approved", "active": True}
+
+
+@patch("jentic_one.admin.services.oauth_client_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_deny_sets_status_inactive_and_audits_reason(
+    mock_repo: MagicMock, mock_audit: AsyncMock
+) -> None:
+    ctx = _make_transactional_ctx()
+    mock_repo.get_by_id = AsyncMock(return_value=_full_row(approval_status="pending"))
+    mock_repo.set_approval_status = AsyncMock(
+        return_value=_full_row(approval_status="denied", active=False)
+    )
+
+    svc = OAuthClientService(ctx)
+    view = await svc.deny("oac_1", reason="untrusted vendor", identity=_make_identity())
+
+    assert view.approval_status == "denied"
+    assert view.active is False
+    mock_repo.set_approval_status.assert_awaited_once_with(
+        ANY, "oac_1", approval_status="denied", active=False
+    )
+    assert mock_audit.await_args is not None
+    kwargs = mock_audit.await_args.kwargs
+    assert kwargs["action"] == AuditAction.DENY
+    assert kwargs["reason"] == "untrusted vendor"
+    assert kwargs["after"] == {"approval_status": "denied", "active": False}
+
+
+@patch("jentic_one.admin.services.oauth_client_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_deny_then_approve_is_reversible(
+    mock_repo: MagicMock, _mock_audit: AsyncMock
+) -> None:
+    """Deny keeps the row; a later approve restores approved+active (D7)."""
+    ctx = _make_transactional_ctx()
+    mock_repo.get_by_id = AsyncMock(return_value=_full_row(approval_status="denied", active=False))
+    mock_repo.set_approval_status = AsyncMock(return_value=_full_row())
+
+    svc = OAuthClientService(ctx)
+    view = await svc.approve("oac_1", identity=_make_identity())
+
+    assert view.approval_status == "approved"
+    assert view.active is True
+
+
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_approve_missing_client_raises(mock_repo: MagicMock) -> None:
+    ctx = _make_transactional_ctx()
+    mock_repo.get_by_id = AsyncMock(return_value=None)
+
+    svc = OAuthClientService(ctx)
+    with pytest.raises(OAuthClientNotFoundError):
+        await svc.approve("oac_missing", identity=_make_identity())
+
+
+# ---------- list_all approval_status filter ----------
+
+
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_list_all_passes_approval_status_filter(mock_repo: MagicMock) -> None:
+    ctx = _make_ctx()
+    mock_repo.list_all = AsyncMock(return_value=[])
+
+    svc = OAuthClientService(ctx)
+    await svc.list_all(include_inactive=True, approval_status="pending")
+
+    mock_repo.list_all.assert_awaited_once_with(
+        ANY, include_inactive=True, approval_status="pending"
+    )
+
+
+async def test_list_all_rejects_unknown_approval_status() -> None:
+    svc = OAuthClientService(_make_ctx())
+    with pytest.raises(InvalidInputError, match="approval_status"):
+        await svc.list_all(approval_status="bogus")

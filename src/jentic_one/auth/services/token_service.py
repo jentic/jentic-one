@@ -22,7 +22,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.models import ActorStatus, ActorType
+from jentic_one.shared.models import ActorStatus, ActorType, OAuthClientApprovalStatus
 
 ACCESS_TOKEN_PREFIX = "at_"
 REFRESH_TOKEN_PREFIX = "rt_"
@@ -230,7 +230,14 @@ class TokenService:
                 oauth_client = await OAuthClientRepository.get_by_client_id(
                     session, rt.oauth_client_id
                 )
-                if oauth_client is None or not oauth_client.active:
+                if (
+                    oauth_client is None
+                    or not oauth_client.active
+                    or oauth_client.approval_status != OAuthClientApprovalStatus.APPROVED.value
+                ):
+                    # The D7 approval gate fails closed here too: deny flips
+                    # active off, but a pending row force-set active must
+                    # still never mint tokens.
                     raise InvalidGrantError("issuing OAuth client has been deactivated")
                 if client_id is None:
                     raise InvalidGrantError("client authentication required")

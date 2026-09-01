@@ -5131,6 +5131,16 @@
             "description": "If set, restricts which scopes this client may request. An empty list denies all non-OIDC scopes. Null means unrestricted (all scopes permitted).",
             "title": "Allowed Scopes"
           },
+          "consent_model": {
+            "default": "user",
+            "description": "What a user's consent grants for this client. ``user`` keeps today's act-as-user semantics; ``agent`` marks the client for agent-bound consent (the MCP path).",
+            "enum": [
+              "user",
+              "agent"
+            ],
+            "title": "Consent Model",
+            "type": "string"
+          },
           "description": {
             "anyOf": [
               {
@@ -5165,6 +5175,16 @@
             "description": "Whether to show a consent screen during authorization. Set to false for trusted first-party integrations.",
             "title": "Require Consent",
             "type": "boolean"
+          },
+          "token_endpoint_auth_method": {
+            "default": "client_secret_basic",
+            "description": "Client authentication method at the token endpoint. ``client_secret_basic`` creates a confidential client with a generated secret; ``none`` creates a public (secret-less) client that relies on PKCE alone — no secret is generated or returned.",
+            "enum": [
+              "client_secret_basic",
+              "none"
+            ],
+            "title": "Token Endpoint Auth Method",
+            "type": "string"
           }
         },
         "required": [
@@ -5179,7 +5199,9 @@
         "examples": [
           {
             "active": true,
+            "approval_status": "approved",
             "client_id": "oc_abc123...",
+            "consent_model": "user",
             "created_at": "2026-08-18T12:00:00Z",
             "created_by": "usr_abc123",
             "description": "My application production deployment",
@@ -5188,7 +5210,9 @@
             "redirect_uris": [
               "https://app.example.com/auth/callback"
             ],
-            "require_consent": true
+            "registration_source": "admin",
+            "require_consent": true,
+            "token_endpoint_auth_method": "client_secret_basic"
           }
         ],
         "properties": {
@@ -5211,16 +5235,33 @@
             "description": "Scopes this client may request. Null means unrestricted.",
             "title": "Allowed Scopes"
           },
+          "approval_status": {
+            "description": "Admin approval lifecycle: ``pending``, ``approved``, or ``denied``. Only approved clients may enter OAuth flows; ``active`` remains the independent kill switch.",
+            "title": "Approval Status",
+            "type": "string"
+          },
           "client_id": {
             "description": "Public client identifier used in OAuth flows.",
             "title": "Client Id",
             "type": "string"
           },
           "client_secret": {
-            "description": "The client secret. Shown only once at creation — store it securely.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The client secret. Shown only once at creation — store it securely. Null for public (secret-less) clients.",
             "title": "Client Secret",
-            "type": "string",
             "x-sensitive": true
+          },
+          "consent_model": {
+            "description": "What a user's consent grants for this client: ``user`` or ``agent``.",
+            "title": "Consent Model",
+            "type": "string"
           },
           "created_at": {
             "format": "date-time",
@@ -5265,10 +5306,32 @@
             "title": "Redirect Uris",
             "type": "array"
           },
+          "registration_source": {
+            "description": "How the client entered the registry: ``admin`` or ``dcr``.",
+            "title": "Registration Source",
+            "type": "string"
+          },
           "require_consent": {
             "description": "Whether a consent screen is shown during authorization.",
             "title": "Require Consent",
             "type": "boolean"
+          },
+          "software_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "RFC 7591 software identifier claimed at registration, if any.",
+            "title": "Software Id"
+          },
+          "token_endpoint_auth_method": {
+            "description": "Client authentication method at the token endpoint: ``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only).",
+            "title": "Token Endpoint Auth Method",
+            "type": "string"
           },
           "updated_at": {
             "anyOf": [
@@ -5292,12 +5355,37 @@
           "allowed_scopes",
           "active",
           "require_consent",
+          "token_endpoint_auth_method",
+          "consent_model",
+          "registration_source",
+          "software_id",
+          "approval_status",
           "created_at",
           "updated_at",
           "created_by",
           "client_secret"
         ],
         "title": "OAuthClientCreateResponse",
+        "type": "object"
+      },
+      "OAuthClientDenyRequest": {
+        "description": "Request body for denying an OAuth client.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional reason recorded in the audit trail.",
+            "title": "Reason"
+          }
+        },
+        "title": "OAuthClientDenyRequest",
         "type": "object"
       },
       "OAuthClientListResponse": {
@@ -5322,7 +5410,9 @@
         "examples": [
           {
             "active": true,
+            "approval_status": "approved",
             "client_id": "oc_abc123...",
+            "consent_model": "user",
             "created_at": "2026-08-18T12:00:00Z",
             "created_by": "usr_abc123",
             "description": "My application production deployment",
@@ -5331,7 +5421,9 @@
             "redirect_uris": [
               "https://app.example.com/auth/callback"
             ],
-            "require_consent": true
+            "registration_source": "admin",
+            "require_consent": true,
+            "token_endpoint_auth_method": "client_secret_basic"
           }
         ],
         "properties": {
@@ -5354,9 +5446,19 @@
             "description": "Scopes this client may request. Null means unrestricted.",
             "title": "Allowed Scopes"
           },
+          "approval_status": {
+            "description": "Admin approval lifecycle: ``pending``, ``approved``, or ``denied``. Only approved clients may enter OAuth flows; ``active`` remains the independent kill switch.",
+            "title": "Approval Status",
+            "type": "string"
+          },
           "client_id": {
             "description": "Public client identifier used in OAuth flows.",
             "title": "Client Id",
+            "type": "string"
+          },
+          "consent_model": {
+            "description": "What a user's consent grants for this client: ``user`` or ``agent``.",
+            "title": "Consent Model",
             "type": "string"
           },
           "created_at": {
@@ -5402,10 +5504,32 @@
             "title": "Redirect Uris",
             "type": "array"
           },
+          "registration_source": {
+            "description": "How the client entered the registry: ``admin`` or ``dcr``.",
+            "title": "Registration Source",
+            "type": "string"
+          },
           "require_consent": {
             "description": "Whether a consent screen is shown during authorization.",
             "title": "Require Consent",
             "type": "boolean"
+          },
+          "software_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "RFC 7591 software identifier claimed at registration, if any.",
+            "title": "Software Id"
+          },
+          "token_endpoint_auth_method": {
+            "description": "Client authentication method at the token endpoint: ``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only).",
+            "title": "Token Endpoint Auth Method",
+            "type": "string"
           },
           "updated_at": {
             "anyOf": [
@@ -5429,6 +5553,11 @@
           "allowed_scopes",
           "active",
           "require_consent",
+          "token_endpoint_auth_method",
+          "consent_model",
+          "registration_source",
+          "software_id",
+          "approval_status",
           "created_at",
           "updated_at",
           "created_by"
@@ -11346,7 +11475,7 @@
     },
     "/admin/oauth-clients": {
       "get": {
-        "description": "List all registered OAuth clients.",
+        "description": "List all registered OAuth clients, optionally filtered by approval status.",
         "operationId": "listOauthClients",
         "parameters": [
           {
@@ -11357,6 +11486,24 @@
               "default": false,
               "title": "Include Inactive",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Filter by approval lifecycle state: pending, approved, or denied.",
+            "in": "query",
+            "name": "approval_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by approval lifecycle state: pending, approved, or denied.",
+              "title": "Approval Status"
             }
           }
         ],
@@ -12280,6 +12427,349 @@
           }
         ],
         "summary": "Rotate client secret",
+        "tags": [
+          "OAuth Clients"
+        ]
+      }
+    },
+    "/admin/oauth-clients/{id}:approve": {
+      "post": {
+        "description": "Approve an OAuth client — sets approval_status=approved and active=true.\n\nAlso re-approves a previously denied client (deny is reversible; rows are\nnever deleted, so the client's cached client_id becomes valid again).",
+        "operationId": "approveOauthClient",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClientResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Approve OAuth client",
+        "tags": [
+          "OAuth Clients"
+        ]
+      }
+    },
+    "/admin/oauth-clients/{id}:deny": {
+      "post": {
+        "description": "Deny an OAuth client — sets approval_status=denied and active=false.\n\nThe row is retained so a later approve can reverse the decision.",
+        "operationId": "denyOauthClient",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/OAuthClientDenyRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClientResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Deny OAuth client",
         "tags": [
           "OAuth Clients"
         ]

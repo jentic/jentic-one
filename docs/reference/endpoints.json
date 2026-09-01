@@ -431,6 +431,58 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "approveOauthClient",
+      "path": "/admin/oauth-clients/{id}:approve",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Approve OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "denyOauthClient",
+      "path": "/admin/oauth-clients/{id}:deny",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Deny OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
         "agents:read": []
@@ -4973,5 +5025,5 @@
     ],
     "total": 33
   },
-  "total": 169
+  "total": 171
 }

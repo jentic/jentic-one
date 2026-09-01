@@ -303,6 +303,10 @@ class OAuthRateLimitConfig(BaseModel):
     authorize_burst: int = 30
     exchange_rpm: int = 60
     exchange_burst: int = 60
+    # Anonymous dynamic client registration (POST /oauth-clients). Knobs land
+    # in 3a-1; the DCR endpoint that consumes them ships in 3a-2 (§4.2).
+    registration_rpm: int = 10
+    registration_burst: int = 5
     trusted_proxies: list[str] = Field(default_factory=list)
 
 

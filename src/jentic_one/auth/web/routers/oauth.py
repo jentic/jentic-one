@@ -217,9 +217,14 @@ async def token_endpoint(
         is_platform = any(pc.client_id == body.client_id for pc in ctx.config.auth.platform_clients)
         third_party_client_id: str | None = None
         if not is_platform:
-            if not body.client_secret:
-                raise InvalidGrantError("invalid_client")
-            if not await oauth_client_svc.verify_client_secret(body.client_id, body.client_secret):
+            # Confidential clients must present the correct secret; public
+            # (token_endpoint_auth_method='none') clients must present NO
+            # secret and rely on PKCE alone (D5). Unapproved rows fail closed
+            # (D7). PKCE stays mandatory for both — enforced above and in
+            # exchange_code.
+            if not await oauth_client_svc.authenticate_for_token_endpoint(
+                body.client_id, body.client_secret
+            ):
                 raise InvalidGrantError("invalid_client")
             third_party_client_id = body.client_id
         access_token, refresh_token, id_token = await authorize_svc.exchange_code(
@@ -271,6 +276,12 @@ async def token_endpoint(
     if body.client_id and body.client_secret:
         if not await oauth_client_svc.verify_client_secret(body.client_id, body.client_secret):
             raise InvalidGrantError("invalid_client")
+        verified_client_id = body.client_id
+    elif body.client_id and await oauth_client_svc.is_public_client(body.client_id):
+        # Public clients can't authenticate — RFC 6749 §6 still requires the
+        # client_id to match the token's issuing client, which token_svc
+        # enforces below (a supplied secret on a public client is rejected by
+        # verify_client_secret above: NULL-hash rows short-circuit to False).
         verified_client_id = body.client_id
 
     access_token, refresh_token = await token_svc.refresh(
