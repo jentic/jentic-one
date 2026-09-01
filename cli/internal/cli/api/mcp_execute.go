@@ -704,8 +704,7 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 				InputSchema: executeInputSchema(true),
 				Annotations: &mcp.ToolAnnotations{DestructiveHint: &destructive, OpenWorldHint: &openWorld},
 			},
-			handler:  s.handleExecute,
-			readOnly: false,
+			handler: s.handleExecute,
 		},
 		{
 			tool: &mcp.Tool{
@@ -719,8 +718,7 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 				InputSchema: executeInputSchema(false),
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 			},
-			handler:  s.handleExecuteRead,
-			readOnly: true,
+			handler: s.handleExecuteRead,
 		},
 		{
 			tool: &mcp.Tool{
@@ -735,8 +733,7 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 				InputSchema: getExecutionResultSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},
-			handler:  s.handleGetExecutionResult,
-			readOnly: true,
+			handler: s.handleGetExecutionResult,
 		},
 	}
 }

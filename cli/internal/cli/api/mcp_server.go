@@ -56,6 +56,12 @@ type mcpServer struct {
 	// (mcp_resources.go); zero means the hostedSkillFetchTimeout default.
 	// It exists as a field only so tests can inject a short budget.
 	hostedFetchTimeout time.Duration
+	// importWaitBudget / accessPollBudget override the access-loop tools'
+	// bounded waits (mcp_access.go: import-job tracking, the post-file
+	// auto-decision poll); zero means the defaults. Fields only so tests can
+	// inject short budgets.
+	importWaitBudget time.Duration
+	accessPollBudget time.Duration
 
 	// sessionID is the per-process UUID fallback for X-Jentic-Session-Id. The
 	// RoundTripper stamps it ONLY when the header is absent, so an env-set
@@ -129,12 +135,12 @@ func (s *mcpServer) run(ctx context.Context) error {
 }
 
 // mcpToolSpec pairs a tool declaration with its handler for the registration
-// filters. readOnly mirrors the tool's ReadOnlyHint annotation: --read-only
-// serves only these (1-C's execute tool registers with readOnly=false).
+// filters. There is deliberately NO separate read-only flag: --read-only
+// filters on the tool's own ReadOnlyHint annotation, so the advertised
+// annotation and the serving filter can never drift apart.
 type mcpToolSpec struct {
-	tool     *mcp.Tool
-	handler  mcp.ToolHandler
-	readOnly bool
+	tool    *mcp.Tool
+	handler mcp.ToolHandler
 }
 
 // noArgsSchema is the input schema for the parameterless tools. Kept
@@ -196,14 +202,17 @@ var inspectOperationSchema = map[string]any{
 
 // toolSpecs declares the served tool surface: the 1-A pre-auth pair
 // (get_started, whoami), the 1-B discovery pair (search_apis,
-// inspect_operation), and the 1-C execute surface (execute, execute_read,
-// get_execution_result — mcp_execute.go). Docstrings encode the flow
-// (get_started first, whoami before discovery, search → inspect → execute)
+// inspect_operation), the 1-C execute surface (execute, execute_read,
+// get_execution_result — mcp_execute.go), and the 2-E1 access-loop tools
+// (search_catalog, import_api, request_access — mcp_access.go). Docstrings
+// encode the flow (get_started first, whoami before discovery, search →
+// inspect → execute, request access via a human — never probe by executing)
 // per §3.2, with concrete argument examples a model can copy.
 func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	execSpecs := s.executeToolSpecs()
-	specs := make([]mcpToolSpec, 0, 4+len(execSpecs))
+	accessSpecs := s.accessToolSpecs()
+	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(accessSpecs))
 	specs = append(specs, []mcpToolSpec{
 		{
 			tool: &mcp.Tool{
@@ -220,8 +229,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				InputSchema: noArgsSchema,
 				Annotations: readOnly,
 			},
-			handler:  s.handleGetStarted,
-			readOnly: true,
+			handler: s.handleGetStarted,
 		},
 		{
 			tool: &mcp.Tool{
@@ -235,8 +243,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				InputSchema: noArgsSchema,
 				Annotations: readOnly,
 			},
-			handler:  s.handleWhoami,
-			readOnly: true,
+			handler: s.handleWhoami,
 		},
 		{
 			tool: &mcp.Tool{
@@ -256,8 +263,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				InputSchema: searchAPIsSchema,
 				Annotations: readOnly,
 			},
-			handler:  s.handleSearchAPIs,
-			readOnly: true,
+			handler: s.handleSearchAPIs,
 		},
 		{
 			tool: &mcp.Tool{
@@ -275,23 +281,26 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				InputSchema: inspectOperationSchema,
 				Annotations: readOnly,
 			},
-			handler:  s.handleInspectOperation,
-			readOnly: true,
+			handler: s.handleInspectOperation,
 		},
 	}...)
-	return append(specs, execSpecs...)
+	specs = append(specs, execSpecs...)
+	return append(specs, accessSpecs...)
 }
 
 // registerTools applies the serving filters. --exclude-tools drops by name;
-// --read-only drops everything not annotated read-only — from 1-C on that is
-// exactly the `execute` tool (execute_read and get_execution_result stay).
+// --read-only drops everything whose OWN ReadOnlyHint annotation is absent —
+// the advertised annotation is the single source of truth, so from 2-E1 on
+// that is exactly execute (1-C), import_api, and request_access (execute_read,
+// get_execution_result, and search_catalog stay).
 func (s *mcpServer) registerTools() {
 	for _, spec := range s.toolSpecs() {
 		if s.excluded[spec.tool.Name] {
 			s.logger.Info("tool excluded by --exclude-tools", "tool", spec.tool.Name)
 			continue
 		}
-		if s.readOnly && !spec.readOnly {
+		annotatedReadOnly := spec.tool.Annotations != nil && spec.tool.Annotations.ReadOnlyHint
+		if s.readOnly && !annotatedReadOnly {
 			s.logger.Info("tool withheld by --read-only", "tool", spec.tool.Name)
 			continue
 		}

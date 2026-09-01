@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,7 +102,7 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = tool
 	}
-	for _, want := range []string{"get_started", "whoami", "search_apis", "inspect_operation", "execute_read", "get_execution_result"} {
+	for _, want := range []string{"get_started", "whoami", "search_apis", "inspect_operation", "execute_read", "get_execution_result", "search_catalog"} {
 		tool, ok := names[want]
 		if !ok {
 			t.Fatalf("tools/list = %v, missing %q", keys(names), want)
@@ -130,16 +131,38 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 			t.Errorf("tool %q must not carry destructiveHint (execute alone does)", name)
 		}
 	}
-	if len(names) != 7 {
-		t.Errorf("PR 1-C serves exactly the 7 phase-1 tools, got %v", keys(names))
+	// The 2-E1 annotations (master §3.2): import_api is idempotent-not-read-
+	// only; request_access is additive — neither read-only nor destructive.
+	importTool, ok := names["import_api"]
+	if !ok {
+		t.Fatalf("tools/list = %v, missing import_api", keys(names))
+	}
+	if importTool.Annotations == nil || importTool.Annotations.ReadOnlyHint {
+		t.Errorf("import_api must not carry readOnlyHint")
+	}
+	if importTool.Annotations == nil || !importTool.Annotations.IdempotentHint {
+		t.Errorf("import_api must carry idempotentHint (re-import of the same api_id converges)")
+	}
+	requestTool, ok := names["request_access"]
+	if !ok {
+		t.Fatalf("tools/list = %v, missing request_access", keys(names))
+	}
+	if requestTool.Annotations == nil || requestTool.Annotations.ReadOnlyHint {
+		t.Errorf("request_access must not carry readOnlyHint")
+	}
+	if requestTool.Annotations != nil && requestTool.Annotations.IdempotentHint {
+		t.Errorf("request_access must not carry idempotentHint (each filing pages a human)")
+	}
+	if len(names) != 10 {
+		t.Errorf("2-E1 serves exactly the 10 phase-1/2 tools, got %v", keys(names))
 	}
 }
 
-// TestMCPSession_ReadOnlyWithholdsExactlyExecute pins the --read-only contract
-// on the 1-C surface: every tool except `execute` is annotated read-only, so
-// the flag withholds exactly that one (execute_read and get_execution_result
-// stay servable).
-func TestMCPSession_ReadOnlyWithholdsExactlyExecute(t *testing.T) {
+// TestMCPSession_ReadOnlyWithholdsMutatingTools pins the --read-only contract
+// on the 2-E1 surface: exactly execute, import_api, and request_access lack
+// the read-only annotation, so the flag withholds exactly those three
+// (execute_read, get_execution_result, and search_catalog stay servable).
+func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -150,15 +173,23 @@ func TestMCPSession_ReadOnlyWithholdsExactlyExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
+	withheld := map[string]bool{"execute": true, "import_api": true, "request_access": true}
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
-		if tool.Name == "execute" {
-			t.Errorf("--read-only must withhold the execute tool")
+		if withheld[tool.Name] {
+			t.Errorf("--read-only must withhold the %s tool", tool.Name)
 		}
 	}
-	if len(tools.Tools) != 6 {
-		t.Errorf("--read-only must serve the 6 read-only tools, got %v", names)
+	served := make(map[string]bool, len(names))
+	for _, n := range names {
+		served[n] = true
+	}
+	if !served["search_catalog"] {
+		t.Errorf("--read-only must still serve search_catalog (readOnlyHint), got %v", names)
+	}
+	if len(tools.Tools) != 7 {
+		t.Errorf("--read-only must serve the 7 read-only tools, got %v", names)
 	}
 }
 
@@ -387,8 +418,8 @@ func TestMCPSession_ExcludeToolsFilters(t *testing.T) {
 			t.Errorf("--exclude-tools=whoami must withhold the tool")
 		}
 	}
-	if len(tools.Tools) != 6 {
-		t.Errorf("tools = %d, want 6 after exclusion", len(tools.Tools))
+	if len(tools.Tools) != 9 {
+		t.Errorf("tools = %d, want 9 after exclusion", len(tools.Tools))
 	}
 }
 
@@ -601,5 +632,191 @@ func TestMCPSession_RevokedIdentity401MapsToNotAuthenticated(t *testing.T) {
 	msg, _ := payload["error"].(string)
 	if !strings.Contains(msg, "identity revoked") {
 		t.Errorf("error %q should carry the control plane's detail", msg)
+	}
+}
+
+// TestMCPSession_AccessLoopDeniedToApprovedRetry drives the full phase-2
+// acceptance loop (master §5 item 3) over a real client session: a denied
+// execute → request_access files and returns approve_url + pending → the
+// HUMAN approves server-side (faked by flipping the doubles — the tool never
+// approves) → the request_id poll reports approved → the retried execute
+// succeeds.
+func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	var approved atomic.Bool
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !approved.Load() {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.Header().Set("Jentic-Error-Origin", "broker")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"detail":"no toolkit binding","agent_directive":{"strategy":"prompt_human",` +
+				`"parameters":{"suggested_command":"jentic access request --toolkit acme/pets --wait"},` +
+				`"human_readable_instruction":"Ask your operator to bind this agent to acme/pets."}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Jentic-Execution-Id", "exec_ok")
+		_, _ = w.Write([]byte(`{"pets":[{"id":1}]}`))
+	}))
+	defer broker.Close()
+
+	requestBody := func(status string) string {
+		return `{"id":"acr_1","status":"` + status + `","actor_id":"agent_1","created_by":"agent_1",` +
+			`"requested_by":"agent_1","approve_url":"/console/access-requests/acr_1",` +
+			`"filed_at":"2026-08-31T12:00:00Z","expires_at":"2026-09-07T12:00:00Z",` +
+			`"items":[{"id":"item_1","resource_type":"toolkit","action":"bind","status":"` + status + `"}]}`
+	}
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/access-requests":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(requestBody(statusPending)))
+		case r.Method == http.MethodGet && r.URL.Path == "/access-requests/acr_1":
+			status := statusPending
+			if approved.Load() {
+				status = statusApproved
+			}
+			_, _ = w.Write([]byte(requestBody(status)))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer control.Close()
+
+	s := newTestMCPServer(t, nil)
+	s.app.SetPollCadence(time.Millisecond, 2*time.Millisecond, time.Millisecond)
+	s.accessPollBudget = 10 * time.Millisecond
+	cs := connectTestClientWithContext(activeCtxWithBroker(control.URL, broker.URL), t, s)
+	ctx := context.Background()
+
+	// 1. The execute is DENIED: soft BROKER_DENIED with the verbatim directive.
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "execute",
+		Arguments: map[string]any{"operation_id": "GET:/v1/pets"},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("the first execute must be denied")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeBrokerDenied {
+		t.Fatalf("error_code = %v, want %q", payload["error_code"], ux.CodeBrokerDenied)
+	}
+	if _, ok := payload["agent_directive"].(map[string]any); !ok {
+		t.Fatalf("denial must relay the agent_directive: %v", payload)
+	}
+
+	// 2. request_access files the bind and returns approve_url + pending.
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "request_access",
+		Arguments: map[string]any{"toolkits": []string{"acme/pets"}, "reason": "list pets for the demo"},
+	})
+	if err != nil {
+		t.Fatalf("request_access: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("a pending filing is a normal result: %v", res.Content)
+	}
+	payload = decodeToolJSON(t, res)
+	if payload["status"] != statusPending || payload["id"] != "acr_1" {
+		t.Fatalf("filed request = %v, want pending acr_1", payload)
+	}
+	approveURL, _ := payload["approve_url"].(string)
+	if approveURL != control.URL+"/console/access-requests/acr_1" {
+		t.Errorf("approve_url = %q, want the absolutized dashboard link for the human", approveURL)
+	}
+	if instruction, _ := payload["instruction"].(string); !strings.Contains(instruction, "never approves") {
+		t.Errorf("pending instruction %q must state the tool never approves", instruction)
+	}
+
+	// 3. The HUMAN approves in the dashboard — faked server-side. The tool
+	// surface has no approval affordance to call.
+	approved.Store(true)
+
+	// 4. The request_id poll reports the decision.
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "request_access",
+		Arguments: map[string]any{"request_id": "acr_1"},
+	})
+	if err != nil {
+		t.Fatalf("request_access poll: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("approved poll soft-errored: %v", res.Content)
+	}
+	payload = decodeToolJSON(t, res)
+	if payload["status"] != statusApproved {
+		t.Fatalf("polled status = %v, want approved", payload["status"])
+	}
+
+	// 5. The retried execute succeeds — the loop is closed.
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "execute",
+		Arguments: map[string]any{"operation_id": "GET:/v1/pets"},
+	})
+	if err != nil {
+		t.Fatalf("execute retry: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("the retried execute must succeed after approval: %v", res.Content)
+	}
+	payload = decodeToolJSON(t, res)
+	if payload["status"] != float64(200) || payload["execution_id"] != "exec_ok" {
+		t.Errorf("retry envelope = %v, want status 200 + execution_id", payload)
+	}
+}
+
+// TestMCPSession_KillSwitchDisabledAgentExecuteDenied re-verifies the phase-2
+// acceptance kill-switch item on the MCP transport: the broker-side fail-
+// closed re-check is already tested on main (PR #1137) — here the broker
+// double answers as it does for a DISABLED agent's token (401, origin
+// broker), and the MCP surface must relay that as the coded denial envelope
+// (isError, BROKER_DENIED, retryable false), never as success or an opaque
+// internal error.
+func TestMCPSession_KillSwitchDisabledAgentExecuteDenied(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The shape the broker's fail-closed token resolver produces once the
+		// verdict cache lapses for a disabled actor.
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"detail":"actor disabled or unknown"}`))
+	}))
+	defer broker.Close()
+
+	s := newTestMCPServer(t, nil)
+	cs := connectTestClientWithContext(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL), t, s)
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "execute",
+		Arguments: map[string]any{"operation_id": "GET:/v1/pets"},
+	})
+	if err != nil {
+		t.Fatalf("a kill-switched execute must soft-error, not protocol-error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("a disabled agent's execute must surface as an isError denial")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeBrokerDenied {
+		t.Errorf("error_code = %v, want %q (the denial envelope must survive the MCP transport)", payload["error_code"], ux.CodeBrokerDenied)
+	}
+	if payload["retryable"] != false {
+		t.Errorf("retryable = %v, want false (re-sending cannot succeed while disabled)", payload["retryable"])
+	}
+	details, _ := payload["details"].(map[string]any)
+	if details["http_status"] != float64(http.StatusUnauthorized) {
+		t.Errorf("details = %v, want the denying http_status relayed", payload["details"])
+	}
+	if step, _ := payload["actionable_step"].(string); step == "" {
+		t.Errorf("the denial must carry a recovery step for the model to relay")
 	}
 }
