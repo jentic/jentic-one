@@ -32,7 +32,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 - [Installer reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install-README.md): every environment variable, including `JENTIC_REF` to build a specific release and `JENTIC_NO_INSTALL=1` to stop after the binaries.
 - [CLI reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/cli/README.md): what `jenticctl` and `jentic` each own, the full command groups, and the agent loop of `search`, `inspect`, `execute`.
 - [Deployment guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/deploy/README.md): Docker, Helm, Kubernetes and Terraform layouts for running it somewhere other than a laptop.
-- [AWS Marketplace install](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/aws-marketplace.md): running the listed product on EKS — storage and IRSA prerequisites, the zero-touch Helm install, upgrades, and how the runtime license check behaves.
+- [AWS Marketplace install](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/aws-marketplace.md): running the listed product on EKS — storage and IRSA prerequisites, the zero-touch Helm install, upgrades, and how the runtime license check behaves.
 - [Local development setup](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/local-setup.md): running from source with `make install`, `make dev` and `make check`.
 
 ## Security

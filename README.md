@@ -205,7 +205,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | [Security hardening](docs/security/hardening.md) | Deployment-tier ladder and production checklist. Read before using real credentials. |
 | [Build & deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, kind, observability |
 | [Self-hosted containers + external Postgres](deploy/README.md#self-hosted-containers--external-postgres) | Production-shaped deployment without Kubernetes |
-| [AWS Marketplace install](docs/aws-marketplace.md) | Buying and running the listed product on EKS — prerequisites, zero-touch install, license-check behaviour |
+| [AWS Marketplace install](docs/installation/aws-marketplace.md) | Buying and running the listed product on EKS — prerequisites, zero-touch install, license-check behaviour |
 | [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, how MCP works against each, and how to run both (or migrate) without silent cross-talk |
 
 **Reference**

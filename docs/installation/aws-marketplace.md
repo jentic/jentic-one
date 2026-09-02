@@ -12,7 +12,7 @@ on every upgrade. A bundled PostgreSQL runs in-cluster by default; an
 external database such as RDS is supported.
 
 For self-hosted installs outside AWS Marketplace, use the
-[quickstart](quickstart.md) instead.
+[quickstart](../quickstart.md) instead.
 
 ## Prerequisites
 
@@ -118,7 +118,7 @@ jentic register --url <app URL> --broker-url <broker URL>
 
 Expose the broker Service (port 8000 in-cluster) alongside the app — it is
 the data plane every agent call goes through. See the
-[quickstart](quickstart.md) for the first brokered call.
+[quickstart](../quickstart.md) for the first brokered call.
 
 ## External database
 
