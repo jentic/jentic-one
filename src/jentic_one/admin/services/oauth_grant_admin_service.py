@@ -33,12 +33,12 @@ def viewer_can_revoke(grant_user_id: str, identity: Identity) -> bool:
 
     THE single definition — ``OAuthGrantService.revoke_grant`` enforces it and
     the listing surfaces surface it per item as ``can_revoke``, so the two can
-    never drift. Note the deliberate divergence from the LIST predicate (gap
-    G10): listing keys on the agent's CURRENT owner, revoke on the grant's
-    consenting user — after an agent ownership transfer the new owner can see
-    the grant but not revoke it. That policy decision is still pending; until
-    it lands, ``can_revoke`` makes the divergence explicit instead of letting
-    the UI advertise a revoke that would 403.
+    never drift. Note the deliberate divergence from the LIST predicate:
+    listing keys on the agent's CURRENT owner, revoke on the grant's
+    consenting user. Since G10 (#1222) an agent ownership transfer revokes
+    all active grants in the transfer transaction, so the divergence can no
+    longer strand a LIVE grant with an unrevokable consenter — it persists
+    only on revoked history rows, where ``can_revoke`` keeps the UI honest.
     """
     return grant_user_id == identity.sub or bool(
         GRANT_REVOKE_ADMIN_PERMISSIONS & set(identity.permissions)

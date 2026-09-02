@@ -4,13 +4,14 @@
  * per-agent, in the GitHub/Google "authorized apps" grammar.
  *
  * Each row shows the client (name + redirect-URI origin), the granted scopes,
- * WHO consented (`userId` via `ActorLabel` — deliberately surfaced: after an
- * agent ownership transfer the grant stays with the original consenter, gap
- * G10, so admins can spot stranded grants), created / last-used timestamps,
+ * WHO consented (`userId` via `ActorLabel` — deliberately surfaced: revoked
+ * history rows keep the original consenter, and since G10/#1222 an agent
+ * ownership transfer auto-revokes all active grants, so a stale consenter
+ * only ever appears on revoked rows), created / last-used timestamps,
  * and the per-grant Revoke kill switch (§4.6). Revoke honours the server's
  * per-item `canRevoke` capability: the revoke predicate (consenting user or
  * write-set admin) is deliberately NARROWER than the list predicate (agent's
- * current owner or read-set admin — the G10 divergence), so a viewer who can
+ * current owner or read-set admin), so a viewer who can
  * see a grant may not be able to revoke it; the button disables with an
  * explanatory tooltip instead of offering a 403. A status filter mirrors the
  * access-requests card so revoked history is reachable on demand, and the

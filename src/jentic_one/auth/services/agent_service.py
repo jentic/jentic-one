@@ -29,6 +29,7 @@ from jentic_one.auth.services.errors import (
     ToolkitBindingConflictError,
     ToolkitBindingNotFoundError,
 )
+from jentic_one.auth.services.oauth_grant_service import revoke_active_grants_for_agent
 from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
@@ -529,6 +530,17 @@ class AgentService:
         update_data: dict[str, str | None],
         identity: Identity,
     ) -> AgentView:
+        """Partially update an agent; an ``owner_id`` change is a transfer.
+
+        Ownership transfer revokes every active OAuth client grant bound to
+        the agent in the SAME transaction (G10, #1222): a grant keys its
+        ``:revoke`` predicate on the consenting user, so leaving the old
+        owner's consent live would strand a grant the new owner cannot revoke
+        self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
+        back; the new owner re-consents through the normal flow if the
+        connection is still wanted. The agent's key channel (API key, scopes,
+        toolkit bindings) is deliberately untouched.
+        """
         try:
             async with self._ctx.admin_db.transaction() as session:
                 agent = await AgentRepository.get_by_id_for_update(session, agent_id)
@@ -537,8 +549,13 @@ class AgentService:
                 if agent.status == ActorStatus.ARCHIVED:
                     raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "update")
                 before = {k: getattr(agent, k) for k in update_data}
+                owner_transferred = (
+                    "owner_id" in update_data and update_data["owner_id"] != agent.owner_id
+                )
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
                 after = {k: getattr(agent, k) for k in update_data}
+                if owner_transferred:
+                    await revoke_active_grants_for_agent(session, agent_id, identity=identity)
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
