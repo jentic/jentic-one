@@ -1054,6 +1054,8 @@ keep the old entry until all rows are re-encrypted.
 
 Only relevant when deploying the AWS Marketplace container listing (values
 overlay: [`deploy/helm/values/aws-marketplace.yaml`](helm/values/aws-marketplace.yaml)).
+This section is the **seller/maintainer** view — buyers should read
+[`docs/installation/aws-marketplace.md`](../docs/installation/aws-marketplace.md) instead.
 **Not a Marketplace customer? Leave `entitlement.enabled` unset — nothing
 activates**, no AWS call is ever made, and the app is byte-identical to a
 build without the gate.
