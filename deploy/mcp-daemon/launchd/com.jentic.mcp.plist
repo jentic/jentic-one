@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchDaemon for the Jentic MCP daemon (macOS): launchd owns the socket
+  and spawns the daemon on the first connection in inetd WAIT mode; the
+  daemon adopts the listening socket on fd 0 (hence the "from-launchd"
+  flag), serves until its idle-timeout fires, and exits; launchd resumes
+  holding the socket. One daemon = one context's keys, under the
+  _jentic-mcp role account. See deploy/mcp-daemon/README.md.
+
+  EDIT before loading:
+    - the jentic binary path in ProgramArguments,
+    - JENTIC_CONTEXT,
+    - the "allow-uid" value(s): the desktop uid(s) allowed to connect.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jentic.mcp</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/jentic</string>
+		<string>mcp</string>
+		<string>--http</string>
+		<string>--from-launchd</string>
+		<string>--idle-timeout</string>
+		<string>15m</string>
+		<string>--allow-uid</string>
+		<string>501</string>
+	</array>
+
+	<key>UserName</key>
+	<string>_jentic-mcp</string>
+	<key>GroupName</key>
+	<string>_jentic-mcp</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>XDG_CONFIG_HOME</key>
+		<string>/var/lib/jentic-mcp/config</string>
+		<key>XDG_STATE_HOME</key>
+		<string>/var/lib/jentic-mcp/state</string>
+		<key>JENTIC_CONTEXT</key>
+		<string>main</string>
+	</dict>
+
+	<key>Sockets</key>
+	<dict>
+		<key>Listener</key>
+		<dict>
+			<key>SockPathName</key>
+			<string>/var/run/jentic-mcp.sock</string>
+			<key>SockPathMode</key>
+			<integer>432</integer><!-- 0660: group-connectable; peer-uid check still applies -->
+		</dict>
+	</dict>
+
+	<!-- inetd WAIT mode: the LISTENING socket is handed to the daemon on
+	     fd 0, and launchd waits for the process to exit before touching the
+	     socket again — exactly the adopt/serve/idle-exit loop. -->
+	<key>inetdCompatibility</key>
+	<dict>
+		<key>Wait</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
