@@ -886,6 +886,8 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/auth/idp"), "Discovery"),
     (re.compile(r"^/audit"), "Audit"),
     (re.compile(r"^/admin/oauth-clients"), "OAuth Clients"),
+    # Grant listings/revoke share the OAuth tag with the grant kill switch.
+    (re.compile(r"^/admin/oauth-grants"), "OAuth"),
     # Anonymous DCR front door — before the broader ^/oauth rule below.
     (re.compile(r"^/oauth-clients"), "OAuth Clients"),
     # Platform-actor surfaces (superset, not in the original reference).

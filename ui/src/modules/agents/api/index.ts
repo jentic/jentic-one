@@ -37,6 +37,8 @@ export {
 	useServiceAccountScopes,
 	useReplaceServiceAccountScopes,
 	useActorAccessRequests,
+	useAgentOauthGrants,
+	useRevokeOauthGrant,
 	useActorsUsage,
 	useActorUsageDetail,
 	useActorExecutions,
@@ -48,6 +50,8 @@ export {
 	useInstanceIdentity,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
+	agentOauthGrantsKey,
+	agentOauthGrantsRootKey,
 } from '@/modules/agents/api/hooks';
 
 export { AgentsApiError } from '@/modules/agents/api/client';
@@ -83,6 +87,7 @@ export type {
 	LinkableToolkit,
 	McpLastSeen,
 	McpSessionEntity,
+	OAuthGrantEntity,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,

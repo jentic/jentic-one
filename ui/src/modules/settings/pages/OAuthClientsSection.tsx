@@ -1,6 +1,18 @@
-import { useState } from 'react';
-import { Plus, Trash2, Pencil, KeyRound, RotateCcw, ShieldAlert, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import {
+	Plus,
+	Trash2,
+	Pencil,
+	KeyRound,
+	RotateCcw,
+	ShieldAlert,
+	ShieldQuestion,
+	CheckCircle2,
+	X,
+} from 'lucide-react';
+import {
+	Badge,
 	Button,
 	CopyButton,
 	Dialog,
@@ -9,10 +21,17 @@ import {
 	Label,
 	LoadingState,
 	PageHelp,
+	SegmentedToggle,
+	TabNav,
 	toast,
+	type SegmentedToggleOption,
+	type TabNavOption,
 } from '@/shared/ui';
 import {
 	useOAuthClients,
+	useOAuthClientQueue,
+	useApproveOAuthClient,
+	useDenyOAuthClient,
 	useCreateOAuthClient,
 	useUpdateOAuthClient,
 	useDeactivateOAuthClient,
@@ -387,7 +406,286 @@ function RotateConfirmDialog({
 	);
 }
 
+/**
+ * Row badges shared by the clients list and the approval queue: `Public`
+ * (secret-less PKCE client, D5), `DCR` (front-door registration, D8), and the
+ * approval state when it isn't plain `approved` (D7).
+ */
+function ClientBadges({ client }: { client: OAuthClient }) {
+	return (
+		<>
+			{client.token_endpoint_auth_method === 'none' && (
+				<Badge variant="default">Public</Badge>
+			)}
+			{client.registration_source === 'dcr' && <Badge variant="default">DCR</Badge>}
+			{client.approval_status === 'pending' && <Badge variant="pending">Pending</Badge>}
+			{client.approval_status === 'denied' && <Badge variant="danger">Denied</Badge>}
+		</>
+	);
+}
+
+interface DenyClientDialogProps {
+	/** The client under decision; null only before the first Deny click. */
+	client: OAuthClient | null;
+	open: boolean;
+	onClose: () => void;
+	onConfirm: (reason: string) => void;
+	isPending: boolean;
+}
+
+/**
+ * Deny confirmation with an optional reason draft. Mounted once and toggled
+ * via `open` (dialog-state rule: persist between dismissals, reset on
+ * successful commit) — a casual Esc/backdrop dismiss keeps the half-typed
+ * reason. The draft resets when the TARGET changes (a different client's
+ * denial is a different draft), which also covers the success path: the
+ * parent clears the target after a committed deny.
+ */
+function DenyClientDialog({ client, open, onClose, onConfirm, isPending }: DenyClientDialogProps) {
+	const [reason, setReason] = useState('');
+	const lastIdRef = useRef(client?.id);
+	useEffect(() => {
+		if (lastIdRef.current !== client?.id) {
+			lastIdRef.current = client?.id;
+			setReason('');
+		}
+	}, [client?.id]);
+	return (
+		<Dialog
+			open={open && client != null}
+			onClose={onClose}
+			title="Deny OAuth Client?"
+			footer={
+				<>
+					<Button variant="outline" onClick={onClose}>
+						Cancel
+					</Button>
+					<Button
+						variant="danger"
+						onClick={(): void => onConfirm(reason.trim())}
+						disabled={isPending}
+					>
+						{isPending ? 'Denying...' : 'Deny'}
+					</Button>
+				</>
+			}
+		>
+			<div className="space-y-3">
+				<p className="text-muted-foreground">
+					<strong>{client?.name}</strong> will not be able to start authorization flows.
+					The registration is kept, so you can approve it later to reverse this.
+				</p>
+				<div>
+					<Label htmlFor="deny-reason">Reason (optional)</Label>
+					<Input
+						id="deny-reason"
+						value={reason}
+						onChange={(e): void => setReason(e.target.value)}
+						placeholder="e.g., unknown redirect URIs"
+					/>
+				</div>
+			</div>
+		</Dialog>
+	);
+}
+
+type QueueFilter = 'pending' | 'denied';
+
+const QUEUE_FILTER_OPTIONS: SegmentedToggleOption<QueueFilter>[] = [
+	{ value: 'pending', label: 'Pending' },
+	{ value: 'denied', label: 'Denied' },
+];
+
+/**
+ * The DCR approval queue (phase-3a §4.8, D7): registrations land `pending` +
+ * inactive; Approve activates them, Deny keeps the row (reversible — the
+ * Denied filter re-offers Approve as the recovery path). With auto-approve on
+ * (D9, the OSS default) the queue is normally empty — it is chiefly a manual
+ * / enterprise-mode surface.
+ */
+function ApprovalQueueTab() {
+	const [filter, setFilter] = useState<QueueFilter>('pending');
+	const { data: clients, isLoading, error } = useOAuthClientQueue(filter);
+	const approveMutation = useApproveOAuthClient();
+	const denyMutation = useDenyOAuthClient();
+	// Target + open are separate so a casual dismiss keeps the target (and the
+	// dialog's reason draft — dialog-state rule); only a committed deny clears it.
+	const [denyTarget, setDenyTarget] = useState<OAuthClient | null>(null);
+	const [denyOpen, setDenyOpen] = useState(false);
+
+	const handleApprove = async (client: OAuthClient): Promise<void> => {
+		try {
+			await approveMutation.mutateAsync(client.id);
+			toast({ title: `${client.name} approved`, variant: 'success' });
+		} catch (err) {
+			toast({
+				title: 'Failed to approve client',
+				description: err instanceof Error ? err.message : undefined,
+				variant: 'error',
+			});
+		}
+	};
+
+	const handleDeny = async (reason: string): Promise<void> => {
+		if (!denyTarget) return;
+		try {
+			await denyMutation.mutateAsync({
+				id: denyTarget.id,
+				reason: reason || undefined,
+			});
+			toast({ title: `${denyTarget.name} denied`, variant: 'success' });
+			setDenyOpen(false);
+			// Clearing the target resets the dialog's reason draft (commit path).
+			setDenyTarget(null);
+		} catch (err) {
+			toast({
+				title: 'Failed to deny client',
+				description: err instanceof Error ? err.message : undefined,
+				variant: 'error',
+			});
+		}
+	};
+
+	return (
+		<div className="space-y-4">
+			<SegmentedToggle options={QUEUE_FILTER_OPTIONS} value={filter} onChange={setFilter} />
+
+			{isLoading ? (
+				<LoadingState message="Loading approval queue..." />
+			) : error ? (
+				<p className="text-destructive">Failed to load the approval queue</p>
+			) : !clients?.length ? (
+				<EmptyState
+					icon={<CheckCircle2 className="h-6 w-6" />}
+					title={filter === 'pending' ? 'No pending registrations' : 'No denied clients'}
+					description={
+						filter === 'pending'
+							? 'Client registrations awaiting approval will appear here.'
+							: 'Denied registrations are kept here — approving one reverses the decision.'
+					}
+				/>
+			) : (
+				<div className="space-y-4">
+					{clients.map((client) => (
+						<div key={client.id} className="border-border rounded-lg border p-4">
+							<div className="flex items-start justify-between gap-3">
+								<div className="min-w-0">
+									<h3 className="text-foreground flex flex-wrap items-center gap-2 font-medium">
+										{client.name}
+										<ClientBadges client={client} />
+									</h3>
+									{client.description && (
+										<p className="text-muted-foreground text-sm">
+											{client.description}
+										</p>
+									)}
+								</div>
+								<div className="flex shrink-0 gap-2">
+									<Button
+										size="sm"
+										onClick={(): void => void handleApprove(client)}
+										disabled={approveMutation.isPending}
+									>
+										Approve
+									</Button>
+									{client.approval_status !== 'denied' && (
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={(): void => {
+												setDenyTarget(client);
+												setDenyOpen(true);
+											}}
+											disabled={denyMutation.isPending}
+										>
+											Deny
+										</Button>
+									)}
+								</div>
+							</div>
+							<div className="mt-3 space-y-2 text-sm">
+								<div>
+									<span className="text-muted-foreground">Client ID: </span>
+									<code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+										{client.client_id}
+									</code>
+								</div>
+								{client.software_id && (
+									<div>
+										<span className="text-muted-foreground">Software ID: </span>
+										<code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+											{client.software_id}
+										</code>
+									</div>
+								)}
+								<div>
+									<span className="text-muted-foreground">Redirect URIs: </span>
+									<ul className="text-foreground mt-1 list-inside list-disc pl-1">
+										{client.redirect_uris.map((uri) => (
+											<li key={uri} className="truncate font-mono text-xs">
+												{uri}
+											</li>
+										))}
+									</ul>
+								</div>
+							</div>
+						</div>
+					))}
+				</div>
+			)}
+
+			{/* Mounted persistently (not `{target && …}`) so a casual dismiss
+			    keeps the reason draft — see DenyClientDialog. */}
+			<DenyClientDialog
+				client={denyTarget}
+				open={denyOpen}
+				onClose={(): void => setDenyOpen(false)}
+				onConfirm={(reason): void => void handleDeny(reason)}
+				isPending={denyMutation.isPending}
+			/>
+		</div>
+	);
+}
+
+const SECTION_TABS = ['clients', 'queue'] as const;
+type SectionTab = (typeof SECTION_TABS)[number];
+
+function isSectionTab(value: string | null): value is SectionTab {
+	return SECTION_TABS.includes(value as SectionTab);
+}
+
 export function OAuthClientsSection() {
+	// Tab lives in `?tab=` so the rail's "Review" action on an
+	// `oauth_client.registered` alert can deep-link straight to the queue.
+	const [searchParams, setSearchParams] = useSearchParams();
+	const tabParam = searchParams.get('tab');
+	const activeTab: SectionTab = isSectionTab(tabParam) ? tabParam : 'clients';
+	// Fetched at section level so the queue tab label can carry the pending
+	// count even while the clients tab is active.
+	const { data: pendingClients } = useOAuthClientQueue('pending');
+
+	const setTab = (tab: SectionTab): void => {
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				if (tab === 'clients') next.delete('tab');
+				else next.set('tab', tab);
+				return next;
+			},
+			{ replace: false },
+		);
+	};
+
+	const tabOptions: TabNavOption<SectionTab>[] = [
+		{ value: 'clients', label: 'Clients', icon: <KeyRound className="h-4 w-4" /> },
+		{
+			value: 'queue',
+			label: 'Approval queue',
+			icon: <ShieldQuestion className="h-4 w-4" />,
+			count: pendingClients?.length || undefined,
+		},
+	];
+
 	const [createOpen, setCreateOpen] = useState(false);
 	const [editClient, setEditClient] = useState<OAuthClient | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<OAuthClient | null>(null);
@@ -491,147 +789,182 @@ export function OAuthClientsSection() {
 				</div>
 			</div>
 
-			<div className="mb-4 flex items-center justify-between">
-				<div className="flex items-center gap-2">
-					<input
-						type="checkbox"
-						id="show-inactive"
-						checked={showInactive}
-						onChange={(e): void => setShowInactive(e.target.checked)}
-						className="h-4 w-4"
-					/>
-					<Label htmlFor="show-inactive" className="text-sm">
-						Show inactive
-					</Label>
-				</div>
-				<Button variant="ghost" size="sm" onClick={(): void => void refetch()}>
-					Refresh
-				</Button>
-			</div>
+			<TabNav<SectionTab>
+				options={tabOptions}
+				value={activeTab}
+				onChange={setTab}
+				ariaLabel="OAuth client sections"
+				className="mb-4"
+			/>
 
-			{isLoading ? (
-				<LoadingState message="Loading OAuth clients..." />
-			) : error ? (
-				<p className="text-destructive">Failed to load OAuth clients</p>
-			) : !clients?.length ? (
-				<EmptyState
-					icon={<KeyRound className="h-6 w-6" />}
-					title="No OAuth clients"
-					description="Register an OAuth client to allow third-party applications to authenticate with Jentic One."
-					action={
-						<Button onClick={(): void => setCreateOpen(true)}>
-							<Plus className="mr-2 h-4 w-4" />
-							Create your first client
-						</Button>
-					}
-				/>
-			) : (
-				<div className="space-y-4">
-					{clients.map((client) => (
-						<div
-							key={client.id}
-							className={`border-border rounded-lg border p-4 ${!client.active ? 'opacity-50' : ''}`}
-						>
-							<div className="flex items-start justify-between">
-								<div>
-									<h3 className="text-foreground font-medium">
-										{client.name}
-										{!client.active && (
-											<span className="bg-muted text-muted-foreground ml-2 rounded px-1.5 py-0.5 text-xs">
-												Inactive
-											</span>
-										)}
-									</h3>
-									{client.description && (
-										<p className="text-muted-foreground text-sm">
-											{client.description}
-										</p>
-									)}
-								</div>
-								<div className="flex gap-1">
-									{client.active && (
-										<Button
-											variant="ghost"
-											size="sm"
-											onClick={(): void => setRotateTarget(client)}
-											title="Rotate secret"
-										>
-											<ShieldAlert className="h-4 w-4" />
-										</Button>
-									)}
-									<Button
-										variant="ghost"
-										size="sm"
-										onClick={(): void => setEditClient(client)}
-									>
-										<Pencil className="h-4 w-4" />
-									</Button>
-									{client.active ? (
-										<Button
-											variant="ghost"
-											size="sm"
-											onClick={(): void => setDeleteTarget(client)}
-										>
-											<Trash2 className="h-4 w-4" />
-										</Button>
-									) : (
-										<Button
-											variant="ghost"
-											size="sm"
-											onClick={(): void => void handleReactivate(client)}
-											disabled={reactivateMutation.isPending}
-										>
-											<RotateCcw className="h-4 w-4" />
-										</Button>
-									)}
-								</div>
-							</div>
-							<div className="mt-3 space-y-2 text-sm">
-								<div>
-									<span className="text-muted-foreground">Client ID: </span>
-									<code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
-										{client.client_id}
-									</code>
-									<CopyButton
-										value={client.client_id}
-										variant="ghost"
-										size="icon"
-									/>
-								</div>
-								<div>
-									<span className="text-muted-foreground">Redirect URIs: </span>
-									<ul className="text-foreground mt-1 list-inside list-disc pl-1">
-										{client.redirect_uris.map((uri) => (
-											<li key={uri} className="truncate font-mono text-xs">
-												{uri}
-											</li>
-										))}
-									</ul>
-								</div>
-								<div>
-									<span className="text-muted-foreground">
-										Consent required:{' '}
-									</span>
-									<span className="text-foreground">
-										{client.require_consent ? 'Yes' : 'No'}
-									</span>
-								</div>
-								{client.allowed_scopes != null && (
-									<div>
-										<span className="text-muted-foreground">
-											Allowed scopes:{' '}
-										</span>
-										<span className="text-foreground">
-											{client.allowed_scopes.length > 0
-												? client.allowed_scopes.join(', ')
-												: 'OIDC only'}
-										</span>
-									</div>
-								)}
-							</div>
+			{activeTab === 'queue' && <ApprovalQueueTab />}
+
+			{activeTab === 'clients' && (
+				<>
+					<div className="mb-4 flex items-center justify-between">
+						<div className="flex items-center gap-2">
+							<input
+								type="checkbox"
+								id="show-inactive"
+								checked={showInactive}
+								onChange={(e): void => setShowInactive(e.target.checked)}
+								className="h-4 w-4"
+							/>
+							<Label htmlFor="show-inactive" className="text-sm">
+								Show inactive
+							</Label>
 						</div>
-					))}
-				</div>
+						<Button variant="ghost" size="sm" onClick={(): void => void refetch()}>
+							Refresh
+						</Button>
+					</div>
+
+					{isLoading ? (
+						<LoadingState message="Loading OAuth clients..." />
+					) : error ? (
+						<p className="text-destructive">Failed to load OAuth clients</p>
+					) : !clients?.length ? (
+						<EmptyState
+							icon={<KeyRound className="h-6 w-6" />}
+							title="No OAuth clients"
+							description="Register an OAuth client to allow third-party applications to authenticate with Jentic One."
+							action={
+								<Button onClick={(): void => setCreateOpen(true)}>
+									<Plus className="mr-2 h-4 w-4" />
+									Create your first client
+								</Button>
+							}
+						/>
+					) : (
+						<div className="space-y-4">
+							{clients.map((client) => (
+								<div
+									key={client.id}
+									className={`border-border rounded-lg border p-4 ${!client.active ? 'opacity-50' : ''}`}
+								>
+									<div className="flex items-start justify-between">
+										<div>
+											<h3 className="text-foreground flex flex-wrap items-center gap-2 font-medium">
+												{client.name}
+												<ClientBadges client={client} />
+												{!client.active && (
+													<span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-xs">
+														Inactive
+													</span>
+												)}
+											</h3>
+											{client.description && (
+												<p className="text-muted-foreground text-sm">
+													{client.description}
+												</p>
+											)}
+										</div>
+										<div className="flex gap-1">
+											{client.active &&
+												client.token_endpoint_auth_method !== 'none' && (
+													<Button
+														variant="ghost"
+														size="sm"
+														onClick={(): void =>
+															setRotateTarget(client)
+														}
+														title="Rotate secret"
+													>
+														<ShieldAlert className="h-4 w-4" />
+													</Button>
+												)}
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={(): void => setEditClient(client)}
+											>
+												<Pencil className="h-4 w-4" />
+											</Button>
+											{client.active ? (
+												<Button
+													variant="ghost"
+													size="sm"
+													onClick={(): void => setDeleteTarget(client)}
+												>
+													<Trash2 className="h-4 w-4" />
+												</Button>
+											) : (
+												<Button
+													variant="ghost"
+													size="sm"
+													onClick={(): void =>
+														void handleReactivate(client)
+													}
+													disabled={reactivateMutation.isPending}
+												>
+													<RotateCcw className="h-4 w-4" />
+												</Button>
+											)}
+										</div>
+									</div>
+									<div className="mt-3 space-y-2 text-sm">
+										<div>
+											<span className="text-muted-foreground">
+												Client ID:{' '}
+											</span>
+											<code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+												{client.client_id}
+											</code>
+											<CopyButton
+												value={client.client_id}
+												variant="ghost"
+												size="icon"
+											/>
+										</div>
+										<div>
+											<span className="text-muted-foreground">
+												Redirect URIs:{' '}
+											</span>
+											<ul className="text-foreground mt-1 list-inside list-disc pl-1">
+												{client.redirect_uris.map((uri) => (
+													<li
+														key={uri}
+														className="truncate font-mono text-xs"
+													>
+														{uri}
+													</li>
+												))}
+											</ul>
+										</div>
+										<div>
+											<span className="text-muted-foreground">
+												Consent required:{' '}
+											</span>
+											<span className="text-foreground">
+												{client.require_consent ? 'Yes' : 'No'}
+											</span>
+										</div>
+										<div>
+											<span className="text-muted-foreground">
+												Active grants:{' '}
+											</span>
+											<span className="text-foreground">
+												{client.active_grant_count}
+											</span>
+										</div>
+										{client.allowed_scopes != null && (
+											<div>
+												<span className="text-muted-foreground">
+													Allowed scopes:{' '}
+												</span>
+												<span className="text-foreground">
+													{client.allowed_scopes.length > 0
+														? client.allowed_scopes.join(', ')
+														: 'OIDC only'}
+												</span>
+											</div>
+										)}
+									</div>
+								</div>
+							))}
+						</div>
+					)}
+				</>
 			)}
 
 			{createOpen && (

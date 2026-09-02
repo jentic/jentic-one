@@ -16,6 +16,7 @@ from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.monitoring_service import MonitoringService
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
+from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminService
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.provider_config_service import ProviderConfigService
 from jentic_one.admin.services.user_service import UserService
@@ -77,6 +78,10 @@ def get_event_stream_service(ctx: Context = Depends(get_ctx)) -> EventStreamServ
 
 def get_oauth_client_service(ctx: Context = Depends(get_ctx)) -> OAuthClientService:
     return OAuthClientService(ctx)
+
+
+def get_oauth_grant_admin_service(ctx: Context = Depends(get_ctx)) -> OAuthGrantAdminService:
+    return OAuthGrantAdminService(ctx)
 
 
 def get_monitoring_service(request: Request) -> MonitoringService:

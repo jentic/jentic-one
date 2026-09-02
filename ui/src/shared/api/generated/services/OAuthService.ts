@@ -7,12 +7,73 @@ import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
+import type { OAuthGrantAdminListResponse } from '../models/OAuthGrantAdminListResponse';
 import type { RevokeRequest } from '../models/RevokeRequest';
 import type { TokenResponse } from '../models/TokenResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class OAuthService {
+    /**
+     * List OAuth grants
+     * List consent→agent grants across all clients and agents (§4.8).
+     *
+     * The admin cross-view over the grant registry: filter by client, agent,
+     * consenting user, or status. Each item carries the client's display name
+     * and redirect-URI origin plus the consenting ``user_id`` — after an agent
+     * ownership transfer the grant stays with the original consenter, so this
+     * column is how an admin spots stranded grants.
+     * @returns OAuthGrantAdminListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listOauthGrants({
+        clientId,
+        agentId,
+        userId,
+        status,
+        limit = 50,
+        cursor,
+    }: {
+        /**
+         * Filter by the client's public client_id.
+         */
+        clientId?: (string | null),
+        /**
+         * Filter by bound agent.
+         */
+        agentId?: (string | null),
+        /**
+         * Filter by consenting user.
+         */
+        userId?: (string | null),
+        /**
+         * Filter by grant lifecycle state.
+         */
+        status?: ('active' | 'revoked' | null),
+        limit?: number,
+        cursor?: (string | null),
+    }): CancelablePromise<OAuthGrantAdminListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/oauth-grants',
+            query: {
+                'client_id': clientId,
+                'agent_id': agentId,
+                'user_id': userId,
+                'status': status,
+                'limit': limit,
+                'cursor': cursor,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
     /**
      * Authorize Endpoint
      * RFC 6749 Authorization endpoint with PKCE (S256 only).

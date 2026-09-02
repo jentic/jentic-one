@@ -828,6 +828,42 @@ func (e JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode) Valid()
 	}
 }
 
+// Defines values for ListOauthGrantsParamsStatus.
+const (
+	ListOauthGrantsParamsStatusActive  ListOauthGrantsParamsStatus = "active"
+	ListOauthGrantsParamsStatusRevoked ListOauthGrantsParamsStatus = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the ListOauthGrantsParamsStatus enum.
+func (e ListOauthGrantsParamsStatus) Valid() bool {
+	switch e {
+	case ListOauthGrantsParamsStatusActive:
+		return true
+	case ListOauthGrantsParamsStatusRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAgentOauthGrantsParamsStatus.
+const (
+	ListAgentOauthGrantsParamsStatusActive  ListAgentOauthGrantsParamsStatus = "active"
+	ListAgentOauthGrantsParamsStatusRevoked ListAgentOauthGrantsParamsStatus = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the ListAgentOauthGrantsParamsStatus enum.
+func (e ListAgentOauthGrantsParamsStatus) Valid() bool {
+	switch e {
+	case ListAgentOauthGrantsParamsStatusActive:
+		return true
+	case ListAgentOauthGrantsParamsStatusRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InspectOperationParamsDetail.
 const (
 	Full    InspectOperationParamsDetail = "full"
@@ -2102,6 +2138,9 @@ type OAuthClientCreateRequestTokenEndpointAuthMethod string
 type OAuthClientCreateResponse struct {
 	Active bool `json:"active"`
 
+	// ActiveGrantCount Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+	ActiveGrantCount *int `json:"active_grant_count,omitempty"`
+
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
 	AllowedScopes *[]string `json:"allowed_scopes"`
 
@@ -2200,6 +2239,9 @@ type OAuthClientRegistrationResponse struct {
 type OAuthClientResponse struct {
 	Active bool `json:"active"`
 
+	// ActiveGrantCount Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+	ActiveGrantCount *int `json:"active_grant_count,omitempty"`
+
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
 	AllowedScopes *[]string `json:"allowed_scopes"`
 
@@ -2250,6 +2292,90 @@ type OAuthClientUpdateRequest struct {
 	Name           *string   `json:"name,omitempty"`
 	RedirectUris   *[]string `json:"redirect_uris,omitempty"`
 	RequireConsent *bool     `json:"require_consent,omitempty"`
+}
+
+// OAuthGrantAdminListResponse A paginated list of OAuth grants (admin cross-view).
+type OAuthGrantAdminListResponse struct {
+	Data       []OAuthGrantAdminResponse `json:"data"`
+	HasMore    bool                      `json:"has_more"`
+	NextCursor *string                   `json:"next_cursor,omitempty"`
+}
+
+// OAuthGrantAdminResponse One consent→agent grant in the admin cross-view.
+type OAuthGrantAdminResponse struct {
+	// AgentId The agent this grant binds the client to.
+	AgentId string `json:"agent_id"`
+
+	// CanRevoke Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. a read-only admin.
+	CanRevoke bool `json:"can_revoke"`
+
+	// ClientName Display name of the registered client, if the row still exists.
+	ClientName *string `json:"client_name"`
+
+	// ClientOrigin Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
+	ClientOrigin *string   `json:"client_origin"`
+	CreatedAt    time.Time `json:"created_at"`
+
+	// Id Grant ID (ksuid, `ocg_` prefix).
+	Id string `json:"id"`
+
+	// LastUsedAt Last time the client obtained tokens under this grant (stamped at exchange/refresh, not per request).
+	LastUsedAt *time.Time `json:"last_used_at"`
+
+	// OauthClientId The client's public client_id — the same identifier stamped on tokens minted under this grant.
+	OauthClientId string     `json:"oauth_client_id"`
+	RevokedAt     *time.Time `json:"revoked_at"`
+
+	// Scopes Scopes granted at consent (the D2 intersection).
+	Scopes []string `json:"scopes"`
+
+	// Status Grant lifecycle state: ``active`` or ``revoked``.
+	Status string `json:"status"`
+
+	// UserId The consenting user who approved this grant. Shown even after an agent ownership transfer: the grant stays with the original consenter (it is their consent, not the agent's).
+	UserId string `json:"user_id"`
+}
+
+// OAuthGrantListResponse A paginated list of OAuth grants.
+type OAuthGrantListResponse struct {
+	Data       []OAuthGrantResponse `json:"data"`
+	HasMore    bool                 `json:"has_more"`
+	NextCursor *string              `json:"next_cursor,omitempty"`
+}
+
+// OAuthGrantResponse One consent→agent grant in API responses.
+type OAuthGrantResponse struct {
+	// AgentId The agent this grant binds the client to.
+	AgentId string `json:"agent_id"`
+
+	// CanRevoke Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. the agent's new owner after an ownership transfer, or a read-only admin.
+	CanRevoke bool `json:"can_revoke"`
+
+	// ClientName Display name of the registered client, if the row still exists.
+	ClientName *string `json:"client_name"`
+
+	// ClientOrigin Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
+	ClientOrigin *string   `json:"client_origin"`
+	CreatedAt    time.Time `json:"created_at"`
+
+	// Id Grant ID (ksuid, `ocg_` prefix).
+	Id string `json:"id"`
+
+	// LastUsedAt Last time the client obtained tokens under this grant (stamped at exchange/refresh, not per request).
+	LastUsedAt *time.Time `json:"last_used_at"`
+
+	// OauthClientId The client's public client_id — the same identifier stamped on tokens minted under this grant.
+	OauthClientId string     `json:"oauth_client_id"`
+	RevokedAt     *time.Time `json:"revoked_at"`
+
+	// Scopes Scopes granted at consent (the D2 intersection).
+	Scopes []string `json:"scopes"`
+
+	// Status Grant lifecycle state: ``active`` or ``revoked``.
+	Status string `json:"status"`
+
+	// UserId The consenting user who approved this grant. Shown even after an agent ownership transfer: the grant stays with the original consenter (it is their consent, not the agent's).
+	UserId string `json:"user_id"`
 }
 
 // OperationPreviewListResponse Capped, offset-paginated operation preview for a catalog entry.
@@ -3214,12 +3340,43 @@ type ListOauthClientsParams struct {
 // DenyOauthClientJSONBody defines parameters for DenyOauthClient.
 type DenyOauthClientJSONBody = OAuthClientDenyRequest
 
+// ListOauthGrantsParams defines parameters for ListOauthGrants.
+type ListOauthGrantsParams struct {
+	// ClientId Filter by the client's public client_id.
+	ClientId *string `form:"client_id,omitempty" json:"client_id,omitempty"`
+
+	// AgentId Filter by bound agent.
+	AgentId *string `form:"agent_id,omitempty" json:"agent_id,omitempty"`
+
+	// UserId Filter by consenting user.
+	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// Status Filter by grant lifecycle state.
+	Status *ListOauthGrantsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	Limit  *int                         `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor *string                      `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListOauthGrantsParamsStatus defines parameters for ListOauthGrants.
+type ListOauthGrantsParamsStatus string
+
 // ListAgentsParams defines parameters for ListAgents.
 type ListAgentsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
 }
+
+// ListAgentOauthGrantsParams defines parameters for ListAgentOauthGrants.
+type ListAgentOauthGrantsParams struct {
+	// Status Filter by grant lifecycle state.
+	Status *ListAgentOauthGrantsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	Limit  *int                              `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor *string                           `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListAgentOauthGrantsParamsStatus defines parameters for ListAgentOauthGrants.
+type ListAgentOauthGrantsParamsStatus string
 
 // ListApisParams defines parameters for ListApis.
 type ListApisParams struct {
@@ -4757,6 +4914,19 @@ type ClientInterface interface {
 	// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
 	DenyOauthClient(ctx context.Context, id string, body DenyOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListOauthGrants List OAuth grants
+	//
+	// List consent→agent grants across all clients and agents (§4.8).
+	//
+	// The admin cross-view over the grant registry: filter by client, agent,
+	// consenting user, or status. Each item carries the client's display name
+	// and redirect-URI origin plus the consenting ``user_id`` — after an agent
+	// ownership transfer the grant stays with the original consenter, so this
+	// column is how an admin spots stranded grants.
+	//
+	// Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
+	ListOauthGrants(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListAgents List Agents
 	//
 	// List agents — scoped by identity via dynamic query scoping.
@@ -4853,6 +5023,19 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
 	UpdateAgentJwks(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAgentOauthGrants List agent OAuth grants
+	//
+	// List OAuth consent grants binding clients to this agent (§4.8).
+	//
+	// The "Connected clients" surface: every grant carries the client's display
+	// name and redirect-URI origin, the granted scopes, the consenting user,
+	// and created/last-used timestamps. Allowed for the agent's owner or an
+	// admin — authorization is enforced in the service layer, mirroring the
+	// ``:revoke`` semantics.
+	//
+	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
+	ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAgentScopes Get Agent Scopes
 	//
@@ -7186,6 +7369,29 @@ func (c *Client) DenyOauthClient(ctx context.Context, id string, body DenyOauthC
 	return c.Client.Do(req)
 }
 
+// ListOauthGrants List OAuth grants
+//
+// List consent→agent grants across all clients and agents (§4.8).
+//
+// The admin cross-view over the grant registry: filter by client, agent,
+// consenting user, or status. Each item carries the client's display name
+// and redirect-URI origin plus the consenting “user_id“ — after an agent
+// ownership transfer the grant stays with the original consenter, so this
+// column is how an admin spots stranded grants.
+//
+// Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
+func (c *Client) ListOauthGrants(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListOauthGrantsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListAgents List Agents
 //
 // List agents — scoped by identity via dynamic query scoping.
@@ -7383,6 +7589,29 @@ func (c *Client) UpdateAgentJwksWithBody(ctx context.Context, agentId string, co
 // Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
 func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateAgentJwksRequest(c.Server, agentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAgentOauthGrants List agent OAuth grants
+//
+// List OAuth consent grants binding clients to this agent (§4.8).
+//
+// The "Connected clients" surface: every grant carries the client's display
+// name and redirect-URI origin, the granted scopes, the consenting user,
+// and created/last-used timestamps. Allowed for the agent's owner or an
+// admin — authorization is enforced in the service layer, mirroring the
+// “:revoke“ semantics.
+//
+// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
+func (c *Client) ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentOauthGrantsRequest(c.Server, agentId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -11896,6 +12125,120 @@ func NewDenyOauthClientRequestWithBody(server string, id string, contentType str
 	return req, nil
 }
 
+// NewListOauthGrantsRequest constructs an http.Request for the ListOauthGrants method
+func NewListOauthGrantsRequest(server string, params *ListOauthGrantsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-grants")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ClientId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "client_id", *params.ClientId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AgentId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListAgentsRequest constructs an http.Request for the ListAgents method
 func NewListAgentsRequest(server string, params *ListAgentsParams) (*http.Request, error) {
 	var err error
@@ -12240,6 +12583,91 @@ func NewUpdateAgentJwksRequestWithBody(server string, agentId string, contentTyp
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListAgentOauthGrantsRequest constructs an http.Request for the ListAgentOauthGrants method
+func NewListAgentOauthGrantsRequest(server string, agentId string, params *ListAgentOauthGrantsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/oauth-grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -19850,6 +20278,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /admin/oauth-clients/{id}:deny (the `DenyOauthClient` operationId).
 	DenyOauthClientWithResponse(ctx context.Context, id string, body DenyOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*DenyOauthClientHTTPResp, error)
 
+	// ListOauthGrantsWithResponse List OAuth grants
+	//
+	// List consent→agent grants across all clients and agents (§4.8).
+	//
+	// The admin cross-view over the grant registry: filter by client, agent,
+	// consenting user, or status. Each item carries the client's display name
+	// and redirect-URI origin plus the consenting ``user_id`` — after an agent
+	// ownership transfer the grant stays with the original consenter, so this
+	// column is how an admin spots stranded grants.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
+	ListOauthGrantsWithResponse(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*ListOauthGrantsHTTPResp, error)
+
 	// ListAgentsWithResponse List Agents
 	//
 	// List agents — scoped by identity via dynamic query scoping.
@@ -19956,6 +20399,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
 	UpdateAgentJwksWithResponse(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentJwksHTTPResp, error)
+
+	// ListAgentOauthGrantsWithResponse List agent OAuth grants
+	//
+	// List OAuth consent grants binding clients to this agent (§4.8).
+	//
+	// The "Connected clients" surface: every grant carries the client's display
+	// name and redirect-URI origin, the granted scopes, the consenting user,
+	// and created/last-used timestamps. Allowed for the agent's owner or an
+	// admin — authorization is enforced in the service layer, mirroring the
+	// ``:revoke`` semantics.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
+	ListAgentOauthGrantsWithResponse(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*ListAgentOauthGrantsHTTPResp, error)
 
 	// GetAgentScopesWithResponse Get Agent Scopes
 	//
@@ -23852,6 +24310,89 @@ func (r DenyOauthClientHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListOauthGrantsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthGrantAdminListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListOauthGrantsHTTPResp) GetJSON200() *OAuthGrantAdminListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListOauthGrantsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListOauthGrantsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListOauthGrantsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListOauthGrantsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListAgentsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24503,6 +25044,96 @@ func (r UpdateAgentJwksHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UpdateAgentJwksHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListAgentOauthGrantsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthGrantListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAgentOauthGrantsHTTPResp) GetJSON200() *OAuthGrantListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAgentOauthGrantsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAgentOauthGrantsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAgentOauthGrantsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAgentOauthGrantsHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -36100,6 +36731,27 @@ func (c *ClientWithResponses) DenyOauthClientWithResponse(ctx context.Context, i
 	return ParseDenyOauthClientHTTPResp(rsp)
 }
 
+// ListOauthGrantsWithResponse List OAuth grants
+//
+// List consent→agent grants across all clients and agents (§4.8).
+//
+// The admin cross-view over the grant registry: filter by client, agent,
+// consenting user, or status. Each item carries the client's display name
+// and redirect-URI origin plus the consenting “user_id“ — after an agent
+// ownership transfer the grant stays with the original consenter, so this
+// column is how an admin spots stranded grants.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
+func (c *ClientWithResponses) ListOauthGrantsWithResponse(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*ListOauthGrantsHTTPResp, error) {
+	rsp, err := c.ListOauthGrants(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListOauthGrantsHTTPResp(rsp)
+}
+
 // ListAgentsWithResponse List Agents
 //
 // List agents — scoped by identity via dynamic query scoping.
@@ -36271,6 +36923,27 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 		return nil, err
 	}
 	return ParseUpdateAgentJwksHTTPResp(rsp)
+}
+
+// ListAgentOauthGrantsWithResponse List agent OAuth grants
+//
+// List OAuth consent grants binding clients to this agent (§4.8).
+//
+// The "Connected clients" surface: every grant carries the client's display
+// name and redirect-URI origin, the granted scopes, the consenting user,
+// and created/last-used timestamps. Allowed for the agent's owner or an
+// admin — authorization is enforced in the service layer, mirroring the
+// “:revoke“ semantics.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
+func (c *ClientWithResponses) ListAgentOauthGrantsWithResponse(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*ListAgentOauthGrantsHTTPResp, error) {
+	rsp, err := c.ListAgentOauthGrants(ctx, agentId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAgentOauthGrantsHTTPResp(rsp)
 }
 
 // GetAgentScopesWithResponse Get Agent Scopes
@@ -40911,6 +41584,74 @@ func ParseDenyOauthClientHTTPResp(rsp *http.Response) (*DenyOauthClientHTTPResp,
 	return response, nil
 }
 
+// ParseListOauthGrantsHTTPResp parses an HTTP response from a ListOauthGrantsWithResponse call
+func ParseListOauthGrantsHTTPResp(rsp *http.Response) (*ListOauthGrantsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListOauthGrantsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthGrantAdminListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListAgentsHTTPResp parses an HTTP response from a ListAgentsWithResponse call
 func ParseListAgentsHTTPResp(rsp *http.Response) (*ListAgentsHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -41424,6 +42165,81 @@ func ParseUpdateAgentJwksHTTPResp(rsp *http.Response) (*UpdateAgentJwksHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListAgentOauthGrantsHTTPResp parses an HTTP response from a ListAgentOauthGrantsWithResponse call
+func ParseListAgentOauthGrantsHTTPResp(rsp *http.Response) (*ListAgentOauthGrantsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAgentOauthGrantsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthGrantListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

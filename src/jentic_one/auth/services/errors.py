@@ -159,11 +159,15 @@ class OAuthGrantAccessDeniedError(AuthServiceError):
     Grant ``:revoke`` is owner-or-admin (design §4.8): the consenting user
     owns the grant; anyone else needs the admin permission. 403, not 404 —
     the grant id is a ksuid, not a secret.
+
+    ``resource_id`` is the denied resource — a grant id on the ``:revoke``
+    path, an agent id on the per-agent listing path (the listing gate denies
+    before any grant is in hand).
     """
 
-    def __init__(self, grant_id: str) -> None:
-        super().__init__(f"Not permitted to operate on OAuth grant '{grant_id}'")
-        self.grant_id = grant_id
+    def __init__(self, resource_id: str, *, message: str | None = None) -> None:
+        super().__init__(message or f"Not permitted to operate on OAuth grant '{resource_id}'")
+        self.resource_id = resource_id
 
 
 class InvalidClientMetadataError(AuthServiceError):

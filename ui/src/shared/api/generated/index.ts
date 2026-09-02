@@ -129,6 +129,10 @@ export type { OAuthClientRegistrationResponse } from './models/OAuthClientRegist
 export type { OAuthClientResponse } from './models/OAuthClientResponse';
 export type { OAuthClientRotateSecretResponse } from './models/OAuthClientRotateSecretResponse';
 export type { OAuthClientUpdateRequest } from './models/OAuthClientUpdateRequest';
+export type { OAuthGrantAdminListResponse } from './models/OAuthGrantAdminListResponse';
+export type { OAuthGrantAdminResponse } from './models/OAuthGrantAdminResponse';
+export type { OAuthGrantListResponse } from './models/OAuthGrantListResponse';
+export type { OAuthGrantResponse } from './models/OAuthGrantResponse';
 export type { OperationPreviewListResponse } from './models/OperationPreviewListResponse';
 export type { OperationResultResponse } from './models/OperationResultResponse';
 export type { OperationSummaryLinksResponse } from './models/OperationSummaryLinksResponse';

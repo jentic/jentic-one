@@ -278,3 +278,12 @@ export type { InstanceIdentityResponse } from '@/shared/api/generated/models/Ins
 // session bundle as password login. Append-only, like the rest.
 export { getIdpDescriptor, exchangeAuthCode } from '@/shared/api/idp';
 export type { IdpDescriptor } from '@/shared/api/idp';
+
+// OAuth consent grants (phase-3a §4.8, local-MCP 3a-5). The per-agent
+// "Connected clients" listing lives on `AgentsService.listAgentOauthGrants`
+// (already exported above); the grant kill switch (`POST
+// /oauth-grants/{id}:revoke`) and the admin cross-view (`GET
+// /admin/oauth-grants`) live on `OAuthService`. Append-only, like the rest.
+export { OAuthService } from '@/shared/api/generated/services/OAuthService';
+export type { OAuthGrantResponse } from '@/shared/api/generated/models/OAuthGrantResponse';
+export type { OAuthGrantListResponse } from '@/shared/api/generated/models/OAuthGrantListResponse';

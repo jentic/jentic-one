@@ -10,7 +10,11 @@ from jentic.problem_details import Unauthorized
 
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.services.token_service import ACCESS_TOKEN_PREFIX, TokenService
-from jentic_one.auth.web.errors import database_error_handler, service_error_handler
+from jentic_one.auth.web.errors import (
+    cursor_error_handler,
+    database_error_handler,
+    service_error_handler,
+)
 from jentic_one.auth.web.routers import (
     agents,
     authorize,
@@ -32,6 +36,7 @@ from jentic_one.shared.auth.verify import resolve_permissions_for_actor, verify_
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state import build_state_backend
 from jentic_one.shared.state.factory import BackendKind
@@ -68,6 +73,9 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     return [
         (AuthServiceError, service_error_handler),
         (DatabaseUnavailableError, database_error_handler),
+        # A user-supplied `?cursor=` that fails to decode must 400, not 500 —
+        # the per-agent grant listing decodes it (see auth/web/errors.py).
+        (InvalidCursorError, cursor_error_handler),
     ]
 
 

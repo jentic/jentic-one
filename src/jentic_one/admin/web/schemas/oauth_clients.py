@@ -134,6 +134,12 @@ class OAuthClientResponse(BaseModel):
         "Only approved clients may enter OAuth flows; ``active`` remains the "
         "independent kill switch."
     )
+    active_grant_count: int = Field(
+        default=0,
+        description="Number of active consent→agent grants for this client (§4.8 "
+        "per-client grant count). Computed on the read endpoints (list/get); "
+        "write-path responses report 0.",
+    )
     created_at: datetime
     updated_at: datetime | None
     created_by: str | None

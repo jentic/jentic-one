@@ -42,6 +42,12 @@ const TYPE_ICON_MAP: Record<string, { Icon: LucideIcon; tone: string }> = {
 	'catalog.update_available': { Icon: PackageCheck, tone: 'text-warning' },
 	'catalog.update_conflicts_overlay': { Icon: AlertTriangle, tone: 'text-warning' },
 	'overlay.deprecated': { Icon: Layers, tone: 'text-muted-foreground' },
+	// Interactive OAuth (phase-3a §4.8): client registration awaits an approval
+	// decision (warning), the rest are lifecycle notifications.
+	'oauth_client.registered': { Icon: ShieldQuestion, tone: 'text-warning' },
+	'oauth_client.approved': { Icon: CheckCircle2, tone: 'text-success' },
+	'oauth_grant.created': { Icon: KeyRound, tone: 'text-success' },
+	'oauth_grant.revoked': { Icon: XCircle, tone: 'text-muted-foreground' },
 };
 
 const KIND_ICON_MAP: Record<StreamKind, { Icon: LucideIcon; tone: string }> = {
@@ -51,6 +57,7 @@ const KIND_ICON_MAP: Record<StreamKind, { Icon: LucideIcon; tone: string }> = {
 	access_request: { Icon: ShieldQuestion, tone: 'text-muted-foreground' },
 	agent: { Icon: Bot, tone: 'text-muted-foreground' },
 	catalog: { Icon: Layers, tone: 'text-muted-foreground' },
+	oauth: { Icon: KeyRound, tone: 'text-muted-foreground' },
 	other: { Icon: AlertTriangle, tone: 'text-muted-foreground' },
 };
 
