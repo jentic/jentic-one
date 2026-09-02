@@ -2772,9 +2772,43 @@
           "path": "jentic mcp",
           "use": "mcp",
           "short": "Serve Jentic tools to a local MCP client over stdio",
-          "long": "mcp runs a Model Context Protocol server on stdin/stdout for a local MCP\nclient (Claude Code, Cursor, …) to spawn. It serves the Jentic tool surface\npre-auth: the session always boots — `tools/list` works with no or invalid\nconfiguration — and the `get_started` tool diagnoses this machine's setup\nstate (config, registration, instance reachability) with the exact operator\ninstruction for each gap. `whoami` reports the agent identity the control\nplane sees. Every tool result carries a top-level `instance` key identifying\nthe Jentic One instance it came from.\n\nContext selection uses the root --context flag / $JENTIC_CONTEXT; broker\ntargeting comes from the context's environment. stdout is the JSON-RPC wire —\nserver logs go to --log-file (default under the XDG state dir), never stdout.\nThe command never prompts and never starts or stops the instance.",
+          "long": "mcp runs a Model Context Protocol server on stdin/stdout for a local MCP\nclient (Claude Code, Cursor, …) to spawn. It serves the Jentic tool surface\npre-auth: the session always boots — `tools/list` works with no or invalid\nconfiguration — and the `get_started` tool diagnoses this machine's setup\nstate (config, registration, instance reachability) with the exact operator\ninstruction for each gap. `whoami` reports the agent identity the control\nplane sees. Every tool result carries a top-level `instance` key identifying\nthe Jentic One instance it came from.\n\nContext selection uses the root --context flag / $JENTIC_CONTEXT; broker\ntargeting comes from the context's environment. stdout is the JSON-RPC wire —\nserver logs go to --log-file (default under the XDG state dir), never stdout.\nThe command never prompts and never starts or stops the instance.\n\n--http serves the same tool surface as a stateless Streamable HTTP daemon\n(the isolated-local-daemon mode): a unix socket with OS-identity\n(peer-credential) checks by default, or TCP with --listen (token required;\nnon-loopback additionally requires --allow-non-loopback + TLS). The daemon\nholds exactly one context's keys and idle-exits for socket activation — see\ndeploy/mcp-daemon/ for the systemd/launchd templates.\n\n--connect \u003curl\u003e turns this process into the credential-less stdio relay for\nstdio-only clients: frames are pumped to the daemon over Streamable HTTP.\nAgainst a local unix socket the relay holds no key material at all; against\na remote https daemon it forwards the short-lived bearer from\n$JENTIC_MCP_BEARER or --bearer-file, never persisting it.",
           "group_title": "Local agent client",
           "flags": [
+            {
+              "name": "allow-non-loopback",
+              "type": "bool",
+              "default": "false",
+              "usage": "explicitly allow a non-loopback --listen bind (still refuses without --tls-cert/--tls-key and --token-file)"
+            },
+            {
+              "name": "allow-origin",
+              "type": "stringSlice",
+              "default": "[]",
+              "usage": "Origin values allowed on --http requests besides loopback (repeatable); anything else is refused with 403"
+            },
+            {
+              "name": "allow-uid",
+              "type": "intSlice",
+              "default": "[]",
+              "usage": "peer uids allowed to connect to the --http unix socket (repeatable); the daemon's own uid and root always are"
+            },
+            {
+              "name": "allow-unauthenticated",
+              "type": "bool",
+              "default": "false",
+              "usage": "serve loopback --listen without a token — every local user may then act as this context; loopback-only"
+            },
+            {
+              "name": "bearer-file",
+              "type": "string",
+              "usage": "file holding a short-lived bearer for a remote --connect target (mode 0600; $JENTIC_MCP_BEARER is the env alternative; never persisted)"
+            },
+            {
+              "name": "connect",
+              "type": "string",
+              "usage": "relay stdio to a Streamable HTTP daemon at this URL (unix:///path/mcp.sock, http://\u003cloopback\u003e, or https://…) instead of serving"
+            },
             {
               "name": "context",
               "type": "string",
@@ -2785,6 +2819,29 @@
               "type": "stringSlice",
               "default": "[]",
               "usage": "tool names to withhold from the client (repeatable or comma-separated)"
+            },
+            {
+              "name": "from-launchd",
+              "type": "bool",
+              "default": "false",
+              "usage": "inherit the launchd inetd-wait listening socket on fd 0 (set by the LaunchDaemon template)"
+            },
+            {
+              "name": "http",
+              "type": "bool",
+              "default": "false",
+              "usage": "serve stateless Streamable HTTP instead of stdio (unix socket by default; see --socket/--listen)"
+            },
+            {
+              "name": "idle-timeout",
+              "type": "duration",
+              "default": "15m0s",
+              "usage": "exit after this long without a request in --http mode (0 disables) — pairs with socket activation"
+            },
+            {
+              "name": "listen",
+              "type": "string",
+              "usage": "TCP host:port to serve --http on; TCP callers must present the --token-file token"
             },
             {
               "name": "log-file",
@@ -2809,9 +2866,29 @@
               "usage": "serve only tools annotated read-only"
             },
             {
+              "name": "socket",
+              "type": "string",
+              "usage": "unix socket path to serve --http on; callers are checked by OS identity (default: \u003cXDG state dir\u003e/jentic/mcp.sock)"
+            },
+            {
               "name": "theme",
               "type": "string",
               "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            },
+            {
+              "name": "tls-cert",
+              "type": "string",
+              "usage": "TLS certificate for --listen (required for a non-loopback bind)"
+            },
+            {
+              "name": "tls-key",
+              "type": "string",
+              "usage": "TLS private key for --listen (required for a non-loopback bind)"
+            },
+            {
+              "name": "token-file",
+              "type": "string",
+              "usage": "file holding the bearer token TCP callers must present (mode 0600; required for --listen)"
             }
           ]
         },
