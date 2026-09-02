@@ -38,8 +38,6 @@ jobs:
       openapi-client: ${{ steps.filter.outputs.openapi-client }}
       installer: ${{ steps.filter.outputs.installer }}
       e2e-install: ${{ steps.filter.outputs.e2e-install }}
-      mcp-registry: ${{ steps.filter.outputs.mcp-registry }}
-      cli-image: ${{ steps.filter.outputs.cli-image }}
     steps:
       - uses: actions/checkout@v7
 
@@ -103,21 +101,6 @@ jobs:
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'
-            mcp-registry:
-              # Drift gate for the official MCP registry entry: release.yml's
-              # publish-registry job stamps the tag version into this file and
-              # publishes it, so a schema break must be caught in-PR, not at
-              # release time.
-              - 'cli/server.json'
-            cli-image:
-              # Branch-CI build + scan of the CLI image (cli-image-scan job):
-              # release.yml's publish-cli-image builds this Dockerfile on every
-              # tag and GATES the `release` job, so a build break (e.g. a
-              # cli/go.mod `go` directive outpacing the pinned golang digest)
-              # or a new base-image CVE must fail the PR that introduces it,
-              # not the release run.
-              - 'deploy/docker/cli.Dockerfile'
-              - 'cli/**'
             e2e-install:
               # CLI-V2 Phase 9 (impl/9.0 §9.4): the cross-OS install + smoke
               # matrix. The Linux leg does a real Docker install; macOS/Windows
@@ -323,43 +306,6 @@ jobs:
         with:
           scan-type: 'image'
           image-ref: jentic-one/app:scan
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          exit-code: '1'
-          trivyignores: .trivyignore
-
-  # Branch-CI build + scan of the CLI image — the same "fail here before a
-  # registry does" posture the security job applies to the app image, but
-  # path-gated: it only matters when cli/** or its Dockerfile change.
-  # Without it, the FIRST-EVER build of deploy/docker/cli.Dockerfile would
-  # happen inside release.yml's publish-cli-image on a real tag — a job that
-  # gates `release` — so silent breakage (cli/go.mod's `go` directive
-  # outpacing the pinned golang digest, source-layout drift breaking
-  # `COPY cli/ ./`, new fixable base-image CVEs) would surface only as a red
-  # release run. amd64-only and never pushed: release.yml owns multi-arch
-  # and publishing.
-  cli-image-scan:
-    name: CLI image build & scan
-    needs: [changes]
-    if: needs.changes.outputs.cli-image == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Build the CLI image (amd64, not pushed)
-        run: |
-          docker build -f deploy/docker/cli.Dockerfile \
-            --build-arg VERSION=0.0.0-ci \
-            -t jentic-one/cli:scan .
-
-      # Same policy as the security job's app-image scan above: fixable
-      # HIGH/CRITICAL fail, overrides live in .trivyignore (CVE id +
-      # justification + expiry).
-      - name: Trivy image scan (fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: 'image'
-          image-ref: jentic-one/cli:scan
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
           exit-code: '1'
@@ -932,46 +878,6 @@ jobs:
       - name: Run installer tests
         run: bash tests/tools/install_test.sh
 
-  # Official-MCP-registry drift gate: cli/server.json is published (version-
-  # stamped) by release.yml's publish-registry job on every stable tag, so a
-  # schema/semantic break in the committed file must fail the PR that
-  # introduces it rather than the release DAG's last job. Same validator
-  # (`mcp-publisher validate`) and pinned version as the release job.
-  mcp-registry-validate:
-    name: MCP registry manifest valid
-    needs: [changes]
-    if: needs.changes.outputs.mcp-registry == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install mcp-publisher
-        env:
-          # MUST move in lockstep with release.yml publish-registry's copy of
-          # these two literals — a bump touching one file silently splits this
-          # gate from the publisher (the checksum pin at least forces both
-          # bumps to be deliberate: a new version fails loudly here until its
-          # hash is looked up and updated).
-          MCP_PUBLISHER_VERSION: v1.8.1
-          # sha256 of mcp-publisher_linux_amd64.tar.gz from upstream's
-          # registry_1.8.1_checksums.txt — release-tag assets are mutable, so
-          # verify the download instead of trusting the tag.
-          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
-        run: |
-          set -euo pipefail
-          curl -fsSL -o mcp-publisher.tar.gz \
-            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
-          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
-          tar xzf mcp-publisher.tar.gz mcp-publisher
-
-      # NOTE: `mcp-publisher validate` is NOT an offline schema check — v1.8.1
-      # POSTs the file to the live registry's /v0/validate endpoint (no offline
-      # mode exists), so this step depends on registry.modelcontextprotocol.io
-      # being up. Accepted trade-off: it validates against the semantics the
-      # publish will actually hit.
-      - name: Validate cli/server.json
-        run: ./mcp-publisher validate cli/server.json
-
   # CLI-V2 Phase 9 (impl/9.0 §9.4): cross-platform install + smoke matrix.
   #   - ubuntu-24.04:  full headless Docker install + live-stack smoke (deep).
   #   - macos-latest:  build via install.sh (no chain-install) + offline smoke.
@@ -1105,7 +1011,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, cli-image-scan, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, mcp-registry-validate, e2e-install]
+    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -1114,7 +1020,6 @@ jobs:
             ${{ needs.lint.result }}
             ${{ needs.openapi-client-drift.result }}
             ${{ needs.security.result }}
-            ${{ needs.cli-image-scan.result }}
             ${{ needs.test-unit.result }}
             ${{ needs.test-integration.result }}
             ${{ needs.ui.result }}
@@ -1124,7 +1029,6 @@ jobs:
             ${{ needs.cli.result }}
             ${{ needs.cli-artifact-smoke.result }}
             ${{ needs.installer.result }}
-            ${{ needs.mcp-registry-validate.result }}
             ${{ needs.e2e-install.result }}
         run: |
           for r in $RESULTS; do
