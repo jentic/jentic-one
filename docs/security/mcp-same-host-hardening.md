@@ -127,14 +127,24 @@ The keys live in a named volume rather than in the desktop user's home, so
 ordinary file reads by desktop-user processes cannot reach them (but see the
 residual risk below — Docker daemon access can).
 
-**Bring your own image.** No official CLI image is published today — build
-one from the released `jentic` binary. The steps below assume an image that
-provides: the `jentic` binary on `PATH`; a non-root user (uid 10001 here)
-with a writable `HOME` (`/home/jentic`); and the config directory
+**Official image.** The CLI image is published with every release as
+`ghcr.io/jentic/jentic-one-cli:<X.Y.Z>` (multi-arch amd64+arm64, built from
+`deploy/docker/cli.Dockerfile`, cosign-signed with an SBOM attestation — the
+same verification recipe as the app image, see deploy/README.md "Verify the
+image signature"). Pin a version tag matching your instance's release rather
+than floating on `:latest`. The image provides the contract the steps below
+assume: the `jentic` binary on `PATH`; a non-root user (uid 10001) with a
+writable `HOME` (`/home/jentic`); and the config directory
 `$HOME/.config/jentic` pre-created and **owned by that user**, so the named
 volume initializes with the right ownership on first mount (Docker seeds an
-empty named volume from the image's content at the mount path). A minimal
-example:
+empty named volume from the image's content at the mount path). This is a
+manual recipe today — with the image published, a later release re-enables
+the automated container rung in `jentic setup`'s isolation step, the only
+automatable isolated rung on Windows.
+
+**Bring your own image (fallback).** If you cannot pull from `ghcr.io`, any
+image satisfying the same contract works in the steps below — build one from
+the released `jentic` binary. A minimal example:
 
 ```dockerfile
 FROM debian:bookworm-slim
@@ -161,7 +171,7 @@ ENV HOME=/home/jentic
    docker run -i --rm \
      --add-host=host.docker.internal:host-gateway \
      -v jentic-mcp-claude:/home/jentic/.config/jentic \
-     your-jentic-cli-image \
+     ghcr.io/jentic/jentic-one-cli:<version> \
      jentic register --url http://host.docker.internal:8000 \
        --broker-url http://host.docker.internal:8100 \
        --env local --name claude
@@ -175,7 +185,7 @@ ENV HOME=/home/jentic
 
    ```
    docker run --rm -v jentic-mcp-claude:/home/jentic/.config/jentic \
-     your-jentic-cli-image jentic context rename local-claude claude
+     ghcr.io/jentic/jentic-one-cli:<version> jentic context rename local-claude claude
    ```
 
 3. **Point the MCP entry at the container.** `--read-only` makes the rootfs
@@ -194,7 +204,7 @@ ENV HOME=/home/jentic
               "--add-host=host.docker.internal:host-gateway",
               "--tmpfs", "/tmp",
               "-v", "jentic-mcp-claude:/home/jentic/.config/jentic",
-              "your-jentic-cli-image",
+              "ghcr.io/jentic/jentic-one-cli:<version>",
               "jentic", "mcp", "--context", "claude",
               "--log-file", "/tmp/mcp.log"]
    }

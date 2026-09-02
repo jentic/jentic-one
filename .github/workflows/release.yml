@@ -17,11 +17,24 @@
 #                      smoke: the image is part of the release, so it must not
 #                      publish (nor move :latest) while any deployment mode is
 #                      red.
+#   3b. publish-cli-image — (parallel to publish-image, same gate+smoke bar)
+#                      build the `jentic` CLI image FROM SOURCE
+#                      (deploy/docker/cli.Dockerfile) and push it to GHCR
+#                      (ghcr.io/<owner>/jentic-one-cli). This is the container
+#                      the MCP container-isolation rung spawns
+#                      (docs/security/mcp-same-host-hardening.md, Recipe 3) and
+#                      the OCI package behind the official MCP registry entry.
 #   4. release       — GoReleaser builds the signed, checksummed jenticctl +
 #                      jentic binaries (cosign keyless via OIDC + syft SBOMs) and
 #                      pushes the Homebrew cask. This is the install (see
-#                      docs/releasing.md). Needs gate + smoke + publish-image so
-#                      a release never half-ships (binaries without the image).
+#                      docs/releasing.md). Needs gate + smoke + both publish
+#                      jobs so a release never half-ships (binaries without the
+#                      images, or vice versa).
+#   5. publish-registry — refresh the official MCP registry entry
+#                      (one.jentic/jentic, cli/server.json) at the released
+#                      version via mcp-publisher. Runs LAST: the entry
+#                      references the CLI image and the release, and a registry
+#                      failure must never strand either.
 #
 # Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
 # release assets here because we're already ON the tag (no downstream trigger
@@ -395,13 +408,214 @@ jobs:
           cosign sign "${ECR_IMAGE}@${DIGEST}"
           cosign attest --type spdxjson --predicate sbom.spdx.json "${ECR_IMAGE}@${DIGEST}"
 
+  publish-cli-image:
+    name: Publish CLI image to GHCR
+    # Mirrors publish-image step-for-step (same gate+smoke bar, same
+    # credential-ordering posture, per-arch Trivy before any push, cosign +
+    # SBOM by digest, :latest last) — diff-review against that job. Built
+    # FROM SOURCE (deploy/docker/cli.Dockerfile), NOT from GoReleaser
+    # artifacts: GoReleaser's `dockers:` was considered and rejected — it
+    # cannot interpose the per-arch Trivy scan between build and push, and it
+    # would move image publishing AFTER the binaries, breaking the
+    # never-half-ships gating (the image must be able to gate the `release`
+    # job). Version-stamp parity with the binaries is enforced by the
+    # `jentic --version` == tag gate below.
+    needs: [gate, smoke]
+    runs-on: ubuntu-latest
+    # Serialize CLI-image publishes across concurrently pushed tags — same
+    # rationale as publish-image's group, separate group because the two
+    # jobs touch different GHCR packages and may run in parallel.
+    concurrency:
+      group: release-publish-cli-image
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write # push the CLI image to GHCR (ghcr.io/<owner>/jentic-one-cli)
+      id-token: write # cosign keyless signing (fulcio/OIDC), mirroring the CLI binaries
+    steps:
+      - uses: actions/checkout@v7
+
+      # Install the third-party tooling BEFORE `docker login` writes the
+      # packages:write-scoped token to ~/.docker/config.json — see the
+      # credential-ordering comment on publish-image; the same posture
+      # applies verbatim here.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
+      # The Go build cross-compiles on the BUILDPLATFORM (no emulated
+      # compile), but the runtime stage's apt-get still executes per-arch, so
+      # the arm64 leg needs QEMU. Set up BEFORE `docker login` (same ordering
+      # rationale as above).
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # DATE is resolved ONCE here (not per buildx invocation): it feeds the
+      # version-stamp ldflags as a build arg, and a differing value between
+      # the scan builds and the final --push build would invalidate the layer
+      # cache and rebuild (or worse, re-stamp) the pushed image.
+      - name: Resolve image name/version
+        id: build
+        run: |
+          set -euo pipefail
+          OWNER="$(tr '[:upper:]' '[:lower:]' <<<"${GITHUB_REPOSITORY_OWNER}")"
+          IMAGE="ghcr.io/${OWNER}/jentic-one-cli"
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA="$(git rev-parse --short HEAD)"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
+
+      # Trivy gates BEFORE any push (an index can't be `--load`ed, so build
+      # each arch single-platform, load it, scan it) — same recipe and
+      # rationale as publish-image. buildx caches the layers, so the final
+      # multi-arch `--push` build below is nearly free.
+      - name: Build per-arch images for scanning (loaded locally)
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          VERSION: ${{ steps.build.outputs.version }}
+          SHA: ${{ steps.build.outputs.sha }}
+          DATE: ${{ steps.build.outputs.date }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker buildx build -f deploy/docker/cli.Dockerfile \
+              --platform "linux/${arch}" \
+              --build-arg VERSION="${VERSION}" \
+              --build-arg COMMIT="${SHA}" \
+              --build-arg DATE="${DATE}" \
+              -t "${IMAGE}:${VERSION}-${arch}" \
+              --load .
+          done
+
+      # CVE gate before anything is pushed — for EVERY shipped arch. Same
+      # policy as publish-image: fixable HIGH/CRITICAL fail, overrides live
+      # in .trivyignore (CVE id + justification + expiry).
+      - name: Trivy image scan — amd64 (release gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}-amd64
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+      - name: Trivy image scan — arm64 (release gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}-arm64
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      # CLI-specific release gates, still before any push:
+      #   1. `jentic --version` == tag — mirrors the `release` job's binary
+      #      check, so a bad ldflag stamp can't ship an image whose CLI
+      #      disagrees with the tag (the image version must always equal the
+      #      binary version it contains).
+      #   2. The io.modelcontextprotocol.server.name label == server.json's
+      #      `name` — the official MCP registry's OCI ownership verification
+      #      pulls the image and checks exactly this, so a drift here would
+      #      surface as a publish-registry failure at the end of the DAG.
+      - name: Image version matches tag + MCP registry ownership label
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          got="$(docker run --rm "${IMAGE}:${VERSION}-amd64" jentic --version 2>/dev/null \
+            | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+          echo "tag=${VERSION} image binary=${got}"
+          test "${got}" = "${VERSION}" || { echo "::error::jentic --version (${got}) != tag (${VERSION})"; exit 1; }
+          want_name="$(jq -r .name cli/server.json)"
+          got_name="$(docker inspect --format '{{ index .Config.Labels "io.modelcontextprotocol.server.name" }}' "${IMAGE}:${VERSION}-amd64")"
+          echo "server.json name=${want_name} image label=${got_name}"
+          test "${got_name}" = "${want_name}" || { echo "::error::io.modelcontextprotocol.server.name label (${got_name}) != cli/server.json name (${want_name})"; exit 1; }
+
+      # Login deliberately AFTER build + scan (see the installer-ordering
+      # comment on publish-image): no third-party tool runs with the registry
+      # credential on disk.
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build+push the MULTI-ARCH index in one step — a cache hit on the
+      # layers the scan builds populated (same build args, same DATE). The
+      # pushed INDEX digest is the immutable pin cosign signs below.
+      - name: Build + push multi-arch index (version + SHA tags)
+        id: push
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          VERSION: ${{ steps.build.outputs.version }}
+          SHA: ${{ steps.build.outputs.sha }}
+          DATE: ${{ steps.build.outputs.date }}
+        run: |
+          set -euo pipefail
+          docker buildx build -f deploy/docker/cli.Dockerfile \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg VERSION="${VERSION}" \
+            --build-arg COMMIT="${SHA}" \
+            --build-arg DATE="${DATE}" \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:${SHA}" \
+            --metadata-file /tmp/bake-metadata.json \
+            --push .
+          DIGEST="$(jq -r '."containerimage.digest"' /tmp/bake-metadata.json)"
+          test -n "${DIGEST}" && [ "${DIGEST}" != "null" ]
+          echo "Image index digest: ${DIGEST}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # Sign the image and attach an SBOM attestation — identical recipe to
+      # publish-image: cosign keyless via the job's OIDC identity + syft
+      # SBOM, both targeting the immutable INDEX digest (covers every arch),
+      # never a floating tag.
+      - name: Sign the image and attest its SBOM (cosign keyless + syft)
+        env:
+          COSIGN_YES: "true"
+          IMAGE: ${{ steps.push.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign "${IMAGE}@${DIGEST}"
+          syft "${IMAGE}@${DIGEST}" -o spdx-json > sbom.spdx.json
+          cosign attest --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
+
+      # :latest moves LAST, only on stable releases, only after signing —
+      # same guard and mechanism (registry-side manifest copy) as
+      # publish-image.
+      - name: Move :latest (stable releases only, after signing)
+        env:
+          IMAGE: ${{ steps.push.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+            echo "Moved ${IMAGE}:latest to ${IMAGE}@${DIGEST}"
+          else
+            echo "Prerelease tag — not moving :latest"
+          fi
+
   release:
     name: GoReleaser (signed CLI binaries)
-    # publish-image gates the binaries too: a release must not exist in a state
-    # where the CLI shipped but the container image it documents did not (or
-    # vice versa). If either publish half fails, the whole release run is red
-    # and gets re-run from the tag.
-    needs: [gate, smoke, publish-image]
+    # The publish jobs gate the binaries too: a release must not exist in a
+    # state where the CLI shipped but the container images it documents did
+    # not (or vice versa). If any publish half fails, the whole release run is
+    # red and gets re-run from the tag.
+    needs: [gate, smoke, publish-image, publish-cli-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write # attach artifacts to the GitHub Release
@@ -479,3 +693,82 @@ jobs:
             gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
               -f ref="refs/tags/${CLI_TAG}" -f sha="${GITHUB_SHA}"
           fi
+
+  publish-registry:
+    name: Publish MCP registry entry (one.jentic/jentic)
+    # Runs LAST in the DAG: the entry references the CLI image (the
+    # registry's OCI ownership verification PULLS ghcr.io/jentic/jentic-one-cli
+    # and checks its io.modelcontextprotocol.server.name label) and describes
+    # the released version, and a registry failure must never strand the
+    # image/binaries — same posture as publish-image's Marketplace-ECR tail.
+    # A red run here is retried by re-running the workflow from the tag; the
+    # earlier jobs re-push the same digest-addressed content.
+    #
+    # PREREQUISITES (one-time admin setup, see #1214's lead-time asks):
+    #   - Ed25519 publisher keypair minted; the PRIVATE key (64 hex chars)
+    #     stored as the MCP_REGISTRY_ED25519_KEY Actions secret,
+    #   - DNS TXT record on jentic.one: "v=MCPv1; k=ed25519; p=<base64 pubkey>",
+    #   - the GHCR jentic-one-cli package made PUBLIC after its first push
+    #     (ownership verification pulls it anonymously).
+    # Until the secret exists this job fails at login; the release artifacts
+    # are unaffected (this job gates nothing).
+    needs: [publish-cli-image, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # Stable tags only — mirror the publish jobs' :latest regex guard, so a
+      # prerelease (e.g. v1.2.3-rc.1) never touches the public registry
+      # entry. Steps below are gated on this output rather than failing,
+      # keeping prerelease runs green.
+      - name: Stable tag guard
+        id: guard
+        run: |
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "Prerelease tag — skipping the MCP registry publish"
+          fi
+
+      # Pinned release download (never `latest/download`) — same
+      # reproducibility posture as every other pinned tool in this pipeline.
+      - name: Install mcp-publisher
+        if: steps.guard.outputs.stable == 'true'
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+
+      # cli/server.json is committed with a 0.0.0 placeholder (drift-gated by
+      # ci.yml's mcp-registry-validate job); the tag version is stamped into
+      # `version` and the OCI package identifier here so the entry always
+      # tracks the binary/image version — no manual step per release.
+      - name: Stamp the release version into server.json and validate
+        if: steps.guard.outputs.stable == 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          jq --arg v "${VERSION}" \
+            '.version = $v
+             | .packages[0].identifier = "ghcr.io/jentic/jentic-one-cli:" + $v' \
+            cli/server.json > /tmp/server.json
+          mv /tmp/server.json cli/server.json
+          ./mcp-publisher validate cli/server.json
+
+      # DNS login is the non-interactive, CI-friendly method that grants
+      # publish rights on one.jentic/* (github-oidc would only grant
+      # io.github.jentic/*, the old namespace). The secret goes through env,
+      # never argv interpolation into the script text.
+      - name: Publish to the official MCP registry
+        if: steps.guard.outputs.stable == 'true'
+        env:
+          MCP_REGISTRY_ED25519_KEY: ${{ secrets.MCP_REGISTRY_ED25519_KEY }}
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login dns --domain=jentic.one --private-key="${MCP_REGISTRY_ED25519_KEY}"
+          ./mcp-publisher publish cli/server.json

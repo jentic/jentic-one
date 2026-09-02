@@ -38,6 +38,7 @@ jobs:
       openapi-client: ${{ steps.filter.outputs.openapi-client }}
       installer: ${{ steps.filter.outputs.installer }}
       e2e-install: ${{ steps.filter.outputs.e2e-install }}
+      mcp-registry: ${{ steps.filter.outputs.mcp-registry }}
     steps:
       - uses: actions/checkout@v7
 
@@ -101,6 +102,12 @@ jobs:
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'
+            mcp-registry:
+              # Drift gate for the official MCP registry entry: release.yml's
+              # publish-registry job stamps the tag version into this file and
+              # publishes it, so a schema break must be caught in-PR, not at
+              # release time.
+              - 'cli/server.json'
             e2e-install:
               # CLI-V2 Phase 9 (impl/9.0 §9.4): the cross-OS install + smoke
               # matrix. The Linux leg does a real Docker install; macOS/Windows
@@ -878,6 +885,30 @@ jobs:
       - name: Run installer tests
         run: bash tests/tools/install_test.sh
 
+  # Official-MCP-registry drift gate: cli/server.json is published (version-
+  # stamped) by release.yml's publish-registry job on every stable tag, so a
+  # schema/semantic break in the committed file must fail the PR that
+  # introduces it rather than the release DAG's last job. Same validator
+  # (`mcp-publisher validate`) and pinned version as the release job.
+  mcp-registry-validate:
+    name: MCP registry manifest valid
+    needs: [changes]
+    if: needs.changes.outputs.mcp-registry == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Validate cli/server.json
+        run: ./mcp-publisher validate cli/server.json
+
   # CLI-V2 Phase 9 (impl/9.0 §9.4): cross-platform install + smoke matrix.
   #   - ubuntu-24.04:  full headless Docker install + live-stack smoke (deep).
   #   - macos-latest:  build via install.sh (no chain-install) + offline smoke.
@@ -1011,7 +1042,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
+    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, mcp-registry-validate, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -1029,6 +1060,7 @@ jobs:
             ${{ needs.cli.result }}
             ${{ needs.cli-artifact-smoke.result }}
             ${{ needs.installer.result }}
+            ${{ needs.mcp-registry-validate.result }}
             ${{ needs.e2e-install.result }}
         run: |
           for r in $RESULTS; do
