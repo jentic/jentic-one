@@ -5,19 +5,22 @@ import multiple surfaces to wire them together. The architecture-boundary tests
 only scan the surface packages (``broker``, ``registry``, ``admin``, ``control``,
 ``shared``, ``auth``); they intentionally do not constrain this composition layer.
 
-Today its only job is injecting a concrete ``RegistryResolverProtocol`` (the
-registry's in-process ``RegistryService``) onto the broker app, so the broker can
-resolve upstream URLs to operations without importing ``jentic_one.registry``.
-Swapping the implementation later (e.g. an HTTP-backed resolver) is a change here
-only — the broker is unaffected.
+Its jobs are injecting a concrete ``RegistryResolverProtocol`` (the registry's
+in-process ``RegistryService``) onto the broker app, so the broker can resolve
+upstream URLs to operations without importing ``jentic_one.registry`` — and
+carrying the ``/mcp`` mount (``jentic_one.mcp``) onto control-plane app shapes
+via the container seam (phase 3). Swapping an implementation later (e.g. an
+HTTP-backed resolver) is a change here only — the surfaces are unaffected.
 """
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 
 from fastapi import FastAPI
 
+from jentic_one.mcp.installer import install_mcp_mount, mcp_lifespan
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
@@ -70,10 +73,23 @@ def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
 
 
 def build_default_container(ctx: Context) -> AppContainer:
-    """Assemble the default ``AppContainer`` (no extra injection).
+    """Assemble the default ``AppContainer`` for this process's surface set.
 
     The composition root's factory for the DI seam. A downstream package can
     provide its own ``build_container`` that starts here and adds its ``Broker`` /
     extra routers, then calls the same app factories with the resulting container.
+
+    Control-plane shapes (``"control" in ctx.config.apps``) additionally carry
+    the ``/mcp`` mount's installer + session-manager lifespan (phase-3 item 1;
+    master §6 Q1 — the mount never rides the broker). The mount itself is
+    request-time gated by ``server.mcp.enabled``, so carrying it on every
+    eligible shape adds no observable surface while the flag is off.
     """
-    return AppContainer.default(ctx)
+    container = AppContainer.default(ctx)
+    if "control" in ctx.config.apps:
+        container = replace(
+            container,
+            extra_installers=(*container.extra_installers, install_mcp_mount),
+            extra_lifespans=(*container.extra_lifespans, mcp_lifespan),
+        )
+    return container

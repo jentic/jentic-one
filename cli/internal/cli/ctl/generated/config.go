@@ -1325,10 +1325,37 @@ func (j *LoggingConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// “server.mcp“ sub-config (minimal 3a-2 seam; phase-3 item 2 extends it).
+// “server.mcp“ sub-config (3a-2 seam, extended by phase-3 item 2).
 type McpConfig struct {
+	// BrokerUrl corresponds to the JSON schema field "broker_url".
+	BrokerUrl string `json:"broker_url,omitempty,omitzero" yaml:"broker_url,omitempty" mapstructure:"broker_url,omitempty"`
+
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
 	// Oauth corresponds to the JSON schema field "oauth".
 	Oauth *McpOAuthConfig `json:"oauth,omitempty,omitzero" yaml:"oauth,omitempty" mapstructure:"oauth,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *McpConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain McpConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["broker_url"]; !ok || v == nil {
+		plain.BrokerUrl = "http://127.0.0.1:8100"
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	*j = McpConfig(plain)
+	return nil
 }
 
 // Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).

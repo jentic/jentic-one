@@ -250,6 +250,12 @@ export interface InstanceIdentityEntity {
 	backend: string;
 	baseUrl: string;
 	host: string;
+	/**
+	 * Whether the instance serves the daemon-native Streamable HTTP `/mcp`
+	 * endpoint (`server.mcp.enabled`, phase 3) — gates the config card's HTTP
+	 * variant so the UI never advertises a transport that 404s.
+	 */
+	mcpEnabled: boolean;
 }
 
 // ---------------------------------------------------------------------------

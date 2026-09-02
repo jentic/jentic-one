@@ -121,13 +121,13 @@ def test_instance_endpoint_surfaces_resolved_instance_id_as_digest(
 def test_instance_endpoint_response_has_exactly_the_documented_fields(
     sample_config_dict: dict[str, Any],
 ) -> None:
-    """The contract is exactly four fields — in particular no ``version`` (CWE-200)."""
+    """The contract is exactly five fields — in particular no ``version`` (CWE-200)."""
     ctx = _ctx(sample_config_dict)
     client = TestClient(create_combined_app(ctx, ["control"]), raise_server_exceptions=False)
 
     data = client.get("/instance").json()
 
-    assert set(data) == {"backend", "canonical_base_url", "host", "instance_id"}
+    assert set(data) == {"backend", "canonical_base_url", "host", "instance_id", "mcp_enabled"}
 
 
 def test_instance_endpoint_schema_visible_and_public(sample_config_dict: dict[str, Any]) -> None:

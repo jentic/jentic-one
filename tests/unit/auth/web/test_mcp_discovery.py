@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from jentic_one.auth.web import app as auth_app
 from jentic_one.auth.web.routers import discovery
+from jentic_one.mcp.installer import install_mcp_mount
 from jentic_one.shared.config import AuthConfig, ServerConfig
 from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
@@ -85,6 +86,12 @@ def _make_client(
     server.mcp.oauth.enabled = oauth_enabled
     mock_ctx.config.server = server
     app.state.ctx = mock_ctx
+    # Phase 3: the /mcp path itself is owned by the mounted MCP app (installed
+    # on control-plane shapes by the composition root) — the placeholder route
+    # moved there with its challenge contract. server.mcp.enabled stays at its
+    # default (False) here, so /mcp answers exactly the two placeholder arms
+    # these tests pin: the discovery challenge / the plain 404.
+    install_mcp_mount(app, mock_ctx)
     return TestClient(app)
 
 

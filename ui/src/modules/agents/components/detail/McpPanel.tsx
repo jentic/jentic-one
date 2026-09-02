@@ -18,9 +18,11 @@
  *     stdio liveness is unknowable server-side and phase 3's `/mcp` is
  *     stateless by design, so request-level recency is the honest signal.
  *
- * The HTTP variant is unconditionally hidden in phase 2: `server.mcp` config
- * doesn't exist yet (phase 3 creates it and exposes `server.mcp.enabled`).
- * Un-hiding is a phase-3 follow-up; a test pins it hidden until then.
+ * The HTTP variant is instance-gated: phase 3 created `server.mcp` and the
+ * instance endpoint exposes `server.mcp.enabled`, so the config card renders
+ * the Streamable HTTP snippet exactly when this instance actually serves
+ * `/mcp` (advertising it unconditionally would show a transport that 404s on
+ * default installs).
  */
 import { Plug, Terminal } from 'lucide-react';
 import {
@@ -42,12 +44,14 @@ import {
 import { MetaItem } from '@/modules/agents/components/detail/shared';
 
 /**
- * Phase-2 pin: the streamable-HTTP variant stays hidden until phase 3 lands
- * `server.mcp` and exposes `server.mcp.enabled` to the UI. Exported so the
- * test suite can assert the pin still holds (flipping this without the
- * backend capability would advertise a transport that 404s).
+ * The streamable-HTTP variant renders only when the instance reports
+ * `server.mcp.enabled` (phase 3). Kept as an explicit predicate (and exported
+ * for the test suite) so the gate is one auditable expression: flipping it to
+ * ignore the instance flag would advertise a transport that 404s.
  */
-export const SHOW_HTTP_VARIANT = false;
+export function showHttpVariant(mcpEnabled: boolean | undefined): boolean {
+	return mcpEnabled === true;
+}
 
 interface McpPanelProps {
 	agentName: string;
@@ -106,6 +110,22 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 		null,
 		2,
 	);
+	// The daemon-native Streamable HTTP endpoint (phase 3): per-request bearer
+	// auth against this instance's /mcp — the agent's API key (or an access
+	// token) goes in the Authorization header, no CLI or context needed on the
+	// agent machine.
+	const httpConfig = JSON.stringify(
+		{
+			mcpServers: {
+				jentic: {
+					url: `${instanceUrl.replace(/\/+$/, '')}/mcp`,
+					headers: { Authorization: 'Bearer <agent-api-key>' },
+				},
+			},
+		},
+		null,
+		2,
+	);
 
 	return (
 		<DetailSection title="Connect via MCP" icon={<Terminal className="h-4 w-4" />}>
@@ -134,9 +154,14 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 					label=".cursor/mcp.json · claude_desktop_config.json"
 					code={jsonConfig}
 				/>
-				{/* Phase-3 follow-up: the streamable-HTTP variant renders here once
-				    `server.mcp.enabled` exists and is true. Test-pinned hidden. */}
-				{SHOW_HTTP_VARIANT && <CodeSnippet label="Streamable HTTP" code="" />}
+				{/* Instance-gated (server.mcp.enabled): the HTTP transport only
+				    renders when this instance actually serves /mcp. */}
+				{showHttpVariant(identity.data?.mcpEnabled) && (
+					<CodeSnippet
+						label="Streamable HTTP (.mcp.json url variant)"
+						code={httpConfig}
+					/>
+				)}
 			</div>
 
 			<p className="text-muted-foreground text-xs">

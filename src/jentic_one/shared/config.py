@@ -909,8 +909,23 @@ class McpOAuthConfig(BaseModel):
 
 
 class McpConfig(BaseModel):
-    """``server.mcp`` sub-config (minimal 3a-2 seam; phase-3 item 2 extends it)."""
+    """``server.mcp`` sub-config (3a-2 seam, extended by phase-3 item 2)."""
 
+    enabled: bool = False
+    """Master switch for the daemon-native Streamable HTTP ``/mcp`` endpoint
+    (phase-3 item 2). Off (the default) the mounted app answers the framework's
+    plain route-not-found 404 — unless ``oauth.enabled`` keeps the 3a-4
+    discovery-challenge behaviour alive (401 + ``WWW-Authenticate``) so OAuth
+    clients can still walk the RFC 9728 chain ahead of the endpoint being
+    turned on. Flipping this on is an explicit operator choice (master §3.3)."""
+    broker_url: str = "http://127.0.0.1:8100"
+    """Broker base URL for the MCP ``execute`` tools' server-side
+    control-plane→broker proxy hop (master §6 Q1: the broker stays MCP-free,
+    so the mounted app forwards execute calls to the broker exactly like the
+    CLI does). The default matches the local install topology (plain-HTTP
+    loopback broker on 8100); compose/split deployments set the broker
+    service's URL. Plaintext ``http://`` is refused for non-loopback hosts —
+    the caller's bearer rides this hop (SEC-1 posture)."""
     oauth: McpOAuthConfig = Field(default_factory=McpOAuthConfig)
 
 

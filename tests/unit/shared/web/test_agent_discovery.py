@@ -210,7 +210,7 @@ def test_broker_catch_all_does_not_shadow_discovery_documents(
     The discovery router is registered before the surface routers precisely so
     the broker's auth-gated catch-all cannot shadow these literal paths.
     """
-    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"]))
+    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"], app_config))
     app = create_broker_app(broker_ctx)
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get(SKILL_PATH)
@@ -227,7 +227,7 @@ def test_broker_catch_all_does_not_shadow_non_jentic_skill(
     Guards that the parameterized /skills/{name}.md route (not just the literal
     jentic path) is registered ahead of the broker's forward-proxy catch-all.
     """
-    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"]))
+    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"], app_config))
     app = create_broker_app(broker_ctx)
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get("/skills/contribute-spec-fix.md")
