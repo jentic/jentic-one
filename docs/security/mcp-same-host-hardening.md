@@ -219,11 +219,21 @@ where Docker Desktop exists (and the only one on Windows); on isolation
 strength, Recipe 2's uid boundary is the stronger of the two, and the
 sudo-shim also serves docker-less machines.
 
+## Recipe 4 — isolated local daemon (`jentic mcp --http`)
+
+The top rung replaces per-runtime stdio processes with one socket-activated
+daemon under a dedicated service user, reached through the credential-less
+`jentic mcp --connect` relay: the desktop side holds no key material, no
+sudoers line, and no Docker-daemon power — the OS's peer-credential check on
+the daemon's unix socket is the boundary. It has its own page,
+[mcp-daemon.md](mcp-daemon.md), and ready-made systemd/launchd templates in
+`deploy/mcp-daemon/`.
+
 ## Choosing a rung
 
 | Setup | Recommendation |
 |---|---|
-| Instance on another host / VPC | Recipe 1 (remote) already covers the instance files; add 2 or 3 if the agent's own key must move off the desktop uid |
-| Same host, Docker available | Recipe 1 (containerized instance) + Recipe 3 for convenience — but Recipe 3's key boundary yields to Docker-daemon access (see its residual risk); pick Recipe 2 where key exfiltration is the concern |
-| Same host, no Docker (macOS/Linux) | Recipe 1 (different OS user) + Recipe 2 |
+| Instance on another host / VPC | Recipe 1 (remote) already covers the instance files; add 2, 3 or 4 if the agent's own key must move off the desktop uid |
+| Same host, Docker available | Recipe 1 (containerized instance) + Recipe 3 for convenience — but Recipe 3's key boundary yields to Docker-daemon access (see its residual risk); pick Recipe 2 or 4 where key exfiltration is the concern |
+| Same host, no Docker (macOS/Linux) | Recipe 1 (different OS user) + Recipe 2, or Recipe 4 for a spawn-free entry with the same uid boundary |
 | Trying it out, low-value credentials | Plain stdio entry — the supported default |
