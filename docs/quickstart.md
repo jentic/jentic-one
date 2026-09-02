@@ -33,11 +33,18 @@ the catalog browser:
 
 ```bash
 jentic catalog search httpbin   # find an API in the public directory (used in step 6)
+jentic catalog import httpbin.org
+jentic apis list --json         # confirm the imported API's vendor/name reference
 ```
 
 `jentic catalog` opens an interactive browser to search the public directory and
 import an API into your local registry; `jentic apis` manages the ones you have
 imported. See [`cli/README.md`](../cli/README.md) for the full command surface.
+
+Catalog commands take the exact `api_id` printed by `catalog search`. For the
+current httpbin entry that ID is `httpbin.org`; `httpbin.org/httpbin` is not a
+catalog entry. Access commands use a separate `vendor/name` reference after
+import (shown by `jentic apis list --json`).
 
 Or register your own OpenAPI description for a private or internal service — the
 same credential custody, per-agent permissions and audit trail apply whether the
@@ -83,9 +90,12 @@ first-match. An agent reaches only the operations it has been approved for, and
 asking for more is a reviewable request rather than a silent widening:
 
 ```bash
-jentic access request --toolkit httpbin.org/httpbin   # file a request the operator can review
-jentic access status <request-id>                     # check whether it has been granted
+jentic access request --toolkit httpbin.org/httpbin.org  # file a request for operator review
+jentic access status <request-id>                        # check whether it has been granted
 ```
+
+Here `httpbin.org/httpbin.org` is the imported API's `vendor/name` reference,
+not a catalog ID. Jentic canonicalizes both fields internally.
 
 ## 6. Make the call
 
