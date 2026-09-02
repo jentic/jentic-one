@@ -531,8 +531,11 @@ jobs:
           VERSION: ${{ steps.build.outputs.version }}
         run: |
           set -euo pipefail
+          # Prerelease-aware: extract the FULL semver (incl. -rc.N / +meta)
+          # so a v1.2.3-rc.1 tag compares against 1.2.3-rc.1, not a stripped
+          # 1.2.3 that could never match.
           got="$(docker run --rm "${IMAGE}:${VERSION}-amd64" jentic --version 2>/dev/null \
-            | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+            | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?' | head -n1 || true)"
           echo "tag=${VERSION} image binary=${got}"
           test "${got}" = "${VERSION}" || { echo "::error::jentic --version (${got}) != tag (${VERSION})"; exit 1; }
           want_name="$(jq -r .name cli/server.json)"
@@ -661,7 +664,9 @@ jobs:
           want="${GITHUB_REF_NAME#v}"
           bin="$(find dist -type f -name jentic -path '*linux_amd64*' | head -n1)"
           test -n "${bin}" || { echo "::error::could not locate built jentic binary under cli/dist"; ls -R dist || true; exit 1; }
-          got="$("${bin}" --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+          # Prerelease-aware (same extraction as publish-cli-image's gate): a
+          # v1.2.3-rc.1 tag must compare against the full 1.2.3-rc.1 stamp.
+          got="$("${bin}" --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?' | head -n1 || true)"
           echo "tag=${want} binary=${got}"
           test "${got}" = "${want}" || { echo "::error::jentic --version (${got}) != tag (${want})"; exit 1; }
         working-directory: cli
@@ -710,8 +715,15 @@ jobs:
     #   - DNS TXT record on jentic.one: "v=MCPv1; k=ed25519; p=<base64 pubkey>",
     #   - the GHCR jentic-one-cli package made PUBLIC after its first push
     #     (ownership verification pulls it anonymously).
-    # Until the secret exists this job fails at login; the release artifacts
-    # are unaffected (this job gates nothing).
+    # DORMANT until the secret is provisioned — in kind with the ECR tail's
+    # vars-gating: secrets aren't readable in job-level `if:`, so the
+    # "Publisher key provisioned?" step below checks the env-injected secret
+    # and every publish step gates on its output. Unprovisioned (forks,
+    # pre-provisioning releases) = clean green skip; provisioned + broken =
+    # loud red. The release artifacts are unaffected either way (this job
+    # gates nothing).
+    # `publish-cli-image` is transitively implied via `release`; kept
+    # explicitly as self-documentation of what this job consumes.
     needs: [publish-cli-image, release]
     runs-on: ubuntu-latest
     permissions:
@@ -733,23 +745,52 @@ jobs:
             echo "Prerelease tag — skipping the MCP registry publish"
           fi
 
+      # Dormant gate (see the job comment): GitHub can't evaluate `secrets.*`
+      # in job-level `if:`, so check the env-injected secret in a step and
+      # gate everything below on the output. Empty/absent secret = green
+      # skip; once provisioned, any publish failure is a loud red.
+      - name: Publisher key provisioned?
+        id: key
+        env:
+          MCP_REGISTRY_ED25519_KEY: ${{ secrets.MCP_REGISTRY_ED25519_KEY }}
+        run: |
+          if [ -n "${MCP_REGISTRY_ED25519_KEY}" ]; then
+            echo "provisioned=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "provisioned=false" >> "$GITHUB_OUTPUT"
+            echo "MCP_REGISTRY_ED25519_KEY not provisioned — skipping the MCP registry publish (dormant)"
+          fi
+
       # Pinned release download (never `latest/download`) — same
       # reproducibility posture as every other pinned tool in this pipeline.
       - name: Install mcp-publisher
-        if: steps.guard.outputs.stable == 'true'
+        if: steps.guard.outputs.stable == 'true' && steps.key.outputs.provisioned == 'true'
         env:
+          # MUST move in lockstep with ci.yml mcp-registry-validate's copy of
+          # these two literals — a bump touching one file silently splits the
+          # PR gate from the publisher (the checksum pin at least forces both
+          # bumps to be deliberate: a new version fails loudly here until its
+          # hash is looked up and updated).
           MCP_PUBLISHER_VERSION: v1.8.1
+          # sha256 of mcp-publisher_linux_amd64.tar.gz from upstream's
+          # registry_1.8.1_checksums.txt — release-tag assets are mutable, so
+          # verify the download instead of trusting the tag.
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
         run: |
           set -euo pipefail
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
-            | tar xz mcp-publisher
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
 
       # cli/server.json is committed with a 0.0.0 placeholder (drift-gated by
       # ci.yml's mcp-registry-validate job); the tag version is stamped into
       # `version` and the OCI package identifier here so the entry always
       # tracks the binary/image version — no manual step per release.
+      # (`validate` here, as in ci.yml, POSTs to the live registry's
+      # /v0/validate — v1.8.1 has no offline mode.)
       - name: Stamp the release version into server.json and validate
-        if: steps.guard.outputs.stable == 'true'
+        if: steps.guard.outputs.stable == 'true' && steps.key.outputs.provisioned == 'true'
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
@@ -762,10 +803,15 @@ jobs:
 
       # DNS login is the non-interactive, CI-friendly method that grants
       # publish rights on one.jentic/* (github-oidc would only grant
-      # io.github.jentic/*, the old namespace). The secret goes through env,
-      # never argv interpolation into the script text.
+      # io.github.jentic/*, the old namespace). The secret is injected via
+      # env — never ${{ }}-interpolated into the script text — but v1.8.1's
+      # `login dns` accepts the key ONLY as a --private-key flag, so it does
+      # land on mcp-publisher's argv for the login's duration (visible in
+      # /proc/*/cmdline). Acceptable on an ephemeral single-tenant runner;
+      # the argv-free alternative upstream offers is KMS-backed signing,
+      # which needs cloud infra we don't have here.
       - name: Publish to the official MCP registry
-        if: steps.guard.outputs.stable == 'true'
+        if: steps.guard.outputs.stable == 'true' && steps.key.outputs.provisioned == 'true'
         env:
           MCP_REGISTRY_ED25519_KEY: ${{ secrets.MCP_REGISTRY_ED25519_KEY }}
         run: |
