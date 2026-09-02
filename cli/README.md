@@ -81,12 +81,12 @@ The cask installs both `jentic` and `jenticctl`.
 ### 2. One-line download (verified binary, no compiler)
 
 ```bash
-# jentic only (default) — for talking to a remote jentic server:
+# both binaries (default) — jentic (discover/run) + jenticctl (run the stack locally):
 JENTIC_INSTALL_METHOD=binary \
   curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 
-# both binaries (also install jenticctl to run the stack locally):
-JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=both \
+# jentic only — for talking to a remote jentic server without the stack tooling:
+JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=jentic \
   curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 ```
 
@@ -104,7 +104,7 @@ Environment knobs:
 
 - `JENTIC_INSTALL_METHOD` — `auto` (default) · `binary` (force download; errors
   if no asset) · `source` (force the from-source build).
-- `JENTIC_INSTALL_BINARIES` — `jentic` (default for downloads) · `both`.
+- `JENTIC_INSTALL_BINARIES` — `both` (default) · `jentic` (agent CLI only).
 - `JENTIC_NO_INSTALL=1` — install the binaries only; **skip** the
   `jenticctl install` stack wizard (useful in CI or when you only want the CLI).
 - `GITHUB_TOKEN=ghp_xxx` — download/clone from a **private** fork (token needs
