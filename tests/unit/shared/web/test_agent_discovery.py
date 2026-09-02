@@ -287,6 +287,49 @@ def test_llms_txt_advertises_mcp_server(client: TestClient) -> None:
     assert "still returns 404" not in body
 
 
+def test_llms_txt_advertises_http_endpoint_only_when_enabled(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """Phase-3 item 8: `server.mcp.enabled` flips the llms.txt MCP paragraph.
+
+    Enabled: the document advertises the Streamable HTTP endpoint at
+    ``{base}/mcp`` (bearer per request), keeps the stdio server, and points
+    stdio-only runtimes at the ``mcp-remote``/``mcp-proxy`` bridge recipes.
+    Disabled (the default, pinned by ``test_llms_txt_advertises_mcp_server``):
+    the pre-phase-3 wording — a 404-answering endpoint is never advertised.
+    """
+    config_dict = dict(sample_config_dict)
+    config_dict["server"] = {"mcp": {"enabled": True}}
+    ctx = Context(AppConfig.model_validate(config_dict))
+    app = create_combined_app(ctx, ["control"])
+    client = TestClient(app, raise_server_exceptions=False)
+    body = client.get(LLMS_TXT_PATH).text
+
+    assert "http://testserver/mcp" in body
+    assert "Streamable HTTP endpoint" in body
+    assert "Authorization: Bearer" in body
+    # The disabled-arm denial wording must be gone in this arm.
+    assert "serves no MCP server today" not in body
+    # The stdio server stays advertised; stdio-only runtimes get the bridges.
+    assert "`jentic mcp`" in body
+    assert "mcp-remote" in body
+    assert "mcp-proxy" in body
+    assert "docs/mcp-http-endpoint.md" in body
+    # The routing paragraph (§3.5) is arm-independent.
+    assert "prefer them" in body
+    assert "`backend`/`host`" in body
+
+
+def test_llms_txt_disabled_arm_never_mentions_the_endpoint_url(client: TestClient) -> None:
+    """The disabled arm is silent about the endpoint: no URL-shaped `/mcp`
+    advertisement an agent could wire an entry to (the path only appears in
+    the probe-misdiagnosis explanation)."""
+    body = client.get(LLMS_TXT_PATH).text
+    assert "http://testserver/mcp" not in body
+    assert "Streamable HTTP endpoint" not in body
+    assert "mcp-remote" not in body
+
+
 def test_render_llms_txt_stamps_base_everywhere() -> None:
     """No hardcoded host survives rendering; every link uses the given base."""
     body = render_llms_txt("https://example.test", assertion_max_ttl_seconds=300)

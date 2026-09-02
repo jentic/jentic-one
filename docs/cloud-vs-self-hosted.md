@@ -6,7 +6,7 @@ especially for an AI agent (or its operator) that has used both:
 |  | Jentic cloud platform | Jentic One (this repo) |
 | --- | --- | --- |
 | Where it runs | Hosted by Jentic — dashboard at `app.jentic.com`, API at `api.jentic.com` | Your infrastructure (laptop, VM, Kubernetes) |
-| How agents connect | Remote **MCP server** (`https://api.jentic.com/mcp`) configured in the agent runtime with a workspace API key | **`jentic` CLI + generated skill**, the local **`jentic mcp`** stdio server (available in the `jentic` CLI from the next release), or the raw HTTP flow — see below |
+| How agents connect | Remote **MCP server** (`https://api.jentic.com/mcp`) configured in the agent runtime with a workspace API key | **`jentic` CLI + generated skill**, the local **`jentic mcp`** stdio server (available in the `jentic` CLI from the next release), an optional hosted **`/mcp`** endpoint (off by default), or the raw HTTP flow — see below |
 | Agent identity | Workspace API key | Per-agent Ed25519 keypair via dynamic client registration (`jentic register` / `jentic setup`) |
 | Dashboard | `app.jentic.com` | The bundled UI on your deployment (`/app`) |
 | Data | Jentic-hosted workspace | Stays on your infrastructure; stored secrets are decrypted only inside your Broker at execution time |
@@ -14,25 +14,31 @@ especially for an AI agent (or its operator) that has used both:
 They do not share state: an API imported or a credential stored in one is
 invisible to the other.
 
-## MCP against a self-hosted install: the local `jentic mcp` server
+## MCP against a self-hosted install: `jentic mcp` and the `/mcp` endpoint
 
-MCP access to a Jentic One deployment runs through the **local `jentic mcp`
-stdio server** — available in the `jentic` CLI from the next release; check
-`jentic mcp --help`. Your agent runtime (Claude Desktop/Code, Cursor, …)
-spawns it as an ordinary stdio MCP entry; it authenticates with the agent's
-registered identity and exposes the same discover → execute loop the CLI
-drives (`search_apis`, `inspect_operation`, `execute`, …). Every tool result
-carries an identity stamp (`backend`, `host`, `instance_id`, `fetched_at`)
-so an agent can always tell which instance answered.
+MCP access to a Jentic One deployment comes in two shapes. The default is
+the **local `jentic mcp` stdio server** — available in the `jentic` CLI from
+the next release; check `jentic mcp --help`. Your agent runtime (Claude
+Desktop/Code, Cursor, …) spawns it as an ordinary stdio MCP entry; it
+authenticates with the agent's registered identity and exposes the same
+discover → execute loop the CLI drives (`search_apis`, `inspect_operation`,
+`execute`, …). Every tool result carries an identity stamp (`backend`,
+`host`, `instance_id`, `fetched_at`) so an agent can always tell which
+instance answered.
 
-There is still **no hosted `/mcp` HTTP endpoint** on the deployment itself.
-Probing the control plane (`:8000/mcp`, `/v1/mcp`, `/api/mcp`, `/sse`) returns
-404. The broker (`:8100`) answers 401 to an unauthenticated `/mcp` probe —
-that is **not** a hidden MCP server behind auth; it is the broker's
-credential-injecting forward proxy rejecting the request, like it would any
-other unauthenticated path. Do not configure a *URL-based* MCP entry pointing
-at your self-hosted host; MCP entries for a self-hosted install spawn
-`jentic mcp` as a command.
+A deployment can additionally serve a **hosted Streamable HTTP endpoint at
+`/mcp`** on the control plane — the same tool surface, per-request bearer
+auth, no CLI on the agent machine. It is **off by default**
+(`server.mcp.enabled`): on a default install, probing the control plane
+(`:8000/mcp`, `/v1/mcp`, `/api/mcp`, `/sse`) still returns 404 (or, on
+deployments preparing interactive OAuth, a 401 discovery challenge). The
+broker (`:8100`) answers 401 to an unauthenticated `/mcp` probe in every
+configuration — that is **not** a hidden MCP server behind auth; it is the
+broker's credential-injecting forward proxy rejecting the request, like it
+would any other unauthenticated path. Only configure a *URL-based* MCP entry
+against a deployment whose operator has enabled the endpoint — see
+[mcp-http-endpoint.md](mcp-http-endpoint.md) for enabling it, client
+snippets, and stdio-bridge recipes for runtimes that cannot use URL entries.
 
 The supported integration paths for agents are:
 
@@ -47,7 +53,9 @@ The supported integration paths for agents are:
    the execute loop is MCP-preferred. If a session has both surfaces, prefer
    the MCP tools and use the CLI for `setup`/`access` recovery and anything
    not exposed over MCP — both talk to the same instance (check
-   `backend`/`host` in the identity stamp).
+   `backend`/`host` in the identity stamp). Where the operator has enabled
+   the hosted `/mcp` endpoint, a URL-based entry with the agent's API key is
+   the CLI-less alternative ([mcp-http-endpoint.md](mcp-http-endpoint.md)).
 3. **Raw HTTP.** For runtimes without the CLI, every deployment self-describes
    at `GET /llms.txt`: dynamic client registration, token exchange, discovery,
    access requests, and brokered execution.
