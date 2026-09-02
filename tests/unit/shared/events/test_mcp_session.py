@@ -17,9 +17,12 @@ import pytest
 import jentic_one.shared.events.mcp_session as mcp_session
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.events.mcp_session import (
+    MCP_HTTP_WINDOW_SECONDS,
     McpUserAgent,
+    mcp_http_window_key,
     parse_mcp_user_agent,
     record_mcp_session_started,
+    schedule_mcp_http_session_emit,
     schedule_mcp_session_emit,
     valid_session_id_or_none,
 )
@@ -395,3 +398,208 @@ def test_seen_set_is_bounded() -> None:
     mcp_session._remember("one-more")
     assert len(mcp_session._seen_sessions) == 1
     assert "one-more" in mcp_session._seen_sessions
+
+
+# --- HTTP windowed emit (phase-3 item 6) -----------------------------------------
+
+_FROZEN_NOW = 1_700_000_000.0
+
+
+def _freeze_time(now: float = _FROZEN_NOW) -> Any:
+    return patch("jentic_one.shared.events.mcp_session.time.time", return_value=now)
+
+
+def _patch_emit(*, exists: bool = False) -> tuple[Any, Any]:
+    """Patchers for the record path: table lookup + emit_event."""
+    return (
+        patch(
+            "jentic_one.shared.events.mcp_session.EventRepository.exists_with_data_value",
+            AsyncMock(return_value=exists),
+        ),
+        patch("jentic_one.shared.events.mcp_session.emit_event", new_callable=AsyncMock),
+    )
+
+
+async def _run_scheduled_tasks() -> None:
+    for task in list(mcp_session._background_tasks):
+        await task
+    await asyncio.sleep(0)  # let the done callbacks run
+
+
+def _schedule_http(
+    ctx: Any,
+    *,
+    client_name: str | None = "cursor",
+    client_version: str | None = "0.42",
+    actor_id: str = "agnt_abc",
+) -> None:
+    schedule_mcp_http_session_emit(
+        ctx,
+        client_name=client_name,
+        client_version=client_version,
+        actor_id=actor_id,
+        actor_type="agent",
+    )
+
+
+def test_http_window_key_is_deterministic_and_axis_sensitive() -> None:
+    """Same (agent x client x window) → same key; any axis change → new key."""
+    base = mcp_http_window_key("agnt_a", "cursor", "1.0", now=_FROZEN_NOW)
+    assert base == mcp_http_window_key("agnt_a", "cursor", "1.0", now=_FROZEN_NOW)
+    # Within the same window, time does not change the key.
+    assert base == mcp_http_window_key("agnt_a", "cursor", "1.0", now=_FROZEN_NOW + 1)
+    assert base != mcp_http_window_key("agnt_b", "cursor", "1.0", now=_FROZEN_NOW)
+    assert base != mcp_http_window_key("agnt_a", "claude", "1.0", now=_FROZEN_NOW)
+    assert base != mcp_http_window_key("agnt_a", "cursor", "2.0", now=_FROZEN_NOW)
+    assert base != mcp_http_window_key(
+        "agnt_a", "cursor", "1.0", now=_FROZEN_NOW + MCP_HTTP_WINDOW_SECONDS
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_emit_carries_transport_and_windowed_session_id() -> None:
+    """The HTTP event: synthetic per-window session id, transport http, full
+    clientInfo in data, the closed McpClient tag on the telemetry side."""
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        _schedule_http(_fake_ctx())
+        await _run_scheduled_tasks()
+
+    emit.assert_awaited_once()
+    kwargs = emit.call_args.kwargs
+    expected_sid = mcp_http_window_key("agnt_abc", "cursor", "0.42", now=_FROZEN_NOW)
+    assert kwargs["type"] == EventType.MCP_SESSION_STARTED
+    assert kwargs["actor_id"] == "agnt_abc"
+    assert kwargs["actor_type"] == "agent"
+    assert kwargs["data"] == {
+        "session_id": expected_sid,
+        "transport": "http",
+        "client_name": "cursor",
+        "client_version": "0.42",
+    }
+    assert kwargs["tags"] == {McpClient.CURSOR}
+    assert expected_sid in mcp_session._seen_sessions
+
+
+@pytest.mark.asyncio
+async def test_http_emits_once_within_window() -> None:
+    """Repeat requests inside one window are a set-membership no-op."""
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        _schedule_http(_fake_ctx())
+        await _run_scheduled_tasks()
+        _schedule_http(_fake_ctx())
+        await _run_scheduled_tasks()
+
+    emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_http_reemits_after_window_rolls() -> None:
+    """The same (agent x client) emits again once the window has passed."""
+    exists_p, emit_p = _patch_emit()
+    with exists_p, emit_p as emit:
+        with _freeze_time(_FROZEN_NOW):
+            _schedule_http(_fake_ctx())
+            await _run_scheduled_tasks()
+        with _freeze_time(_FROZEN_NOW + MCP_HTTP_WINDOW_SECONDS):
+            _schedule_http(_fake_ctx())
+            await _run_scheduled_tasks()
+
+    assert emit.await_count == 2
+    sids = [c.kwargs["data"]["session_id"] for c in emit.call_args_list]
+    assert len(set(sids)) == 2
+
+
+@pytest.mark.asyncio
+async def test_http_distinct_agent_and_client_keys_do_not_collide() -> None:
+    """One daemon serves many identities: each (agent x client) pair gets its
+    own window key — never whoever sent the first request ever."""
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        _schedule_http(_fake_ctx(), actor_id="agnt_a", client_name="cursor")
+        _schedule_http(_fake_ctx(), actor_id="agnt_b", client_name="cursor")
+        _schedule_http(_fake_ctx(), actor_id="agnt_a", client_name="claude")
+        await _run_scheduled_tasks()
+
+    assert emit.await_count == 3
+    sids = {c.kwargs["data"]["session_id"] for c in emit.call_args_list}
+    assert len(sids) == 3
+    actors = {c.kwargs["actor_id"] for c in emit.call_args_list}
+    assert actors == {"agnt_a", "agnt_b"}
+
+
+@pytest.mark.asyncio
+async def test_http_absent_client_info_emits_unknown_client() -> None:
+    """clientInfo is a SHOULD: absent still emits (mirroring stdio's
+    client-unknown degrade) with OTHER on the wire and null in data — and
+    dedupes on the same unknown-client key."""
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        _schedule_http(_fake_ctx(), client_name=None, client_version=None)
+        await _run_scheduled_tasks()
+        _schedule_http(_fake_ctx(), client_name=None, client_version=None)
+        await _run_scheduled_tasks()
+
+    emit.assert_awaited_once()
+    kwargs = emit.call_args.kwargs
+    assert kwargs["data"]["client_name"] is None
+    assert kwargs["data"]["client_version"] is None
+    assert kwargs["tags"] == {McpClient.OTHER}
+
+
+@pytest.mark.asyncio
+async def test_http_oversized_client_info_fields_are_capped() -> None:
+    """_meta is untrusted input — persisted fields are capped like UA fields."""
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        _schedule_http(_fake_ctx(), client_name="c" * 300, client_version="v" * 300)
+        await _run_scheduled_tasks()
+
+    kwargs = emit.call_args.kwargs
+    assert kwargs["data"]["client_name"] == "c" * 128
+    assert kwargs["data"]["client_version"] == "v" * 128
+
+
+@pytest.mark.asyncio
+async def test_http_existing_table_row_suppresses_emit_and_primes_seen() -> None:
+    """Another worker already wrote this window's row → skip, remember."""
+    exists_p, emit_p = _patch_emit(exists=True)
+    with _freeze_time(), exists_p, emit_p as emit:
+        _schedule_http(_fake_ctx())
+        await _run_scheduled_tasks()
+
+    emit.assert_not_awaited()
+    sid = mcp_http_window_key("agnt_abc", "cursor", "0.42", now=_FROZEN_NOW)
+    assert sid in mcp_session._seen_sessions
+
+
+@pytest.mark.asyncio
+async def test_http_schedule_without_ctx_is_a_noop() -> None:
+    with patch(
+        "jentic_one.shared.events.mcp_session._record_session_started",
+        new_callable=AsyncMock,
+    ) as record:
+        _schedule_http(None)
+
+    record.assert_not_awaited()
+    assert not mcp_session._background_tasks
+
+
+@pytest.mark.asyncio
+async def test_http_window_keys_ride_the_bounded_seen_set() -> None:
+    """Long-lived daemon, many identities: the window keys land in the same
+    capped seen-set as stdio session ids — memory stays bounded."""
+    for i in range(mcp_session._SEEN_SESSIONS_MAX):
+        mcp_session._remember(f"filler-{i}")
+
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p:
+        _schedule_http(_fake_ctx())
+        await _run_scheduled_tasks()
+
+    # _remember cleared the full set before adding, so growth is impossible.
+    assert len(mcp_session._seen_sessions) == 1
+    assert mcp_http_window_key("agnt_abc", "cursor", "0.42", now=_FROZEN_NOW) in (
+        mcp_session._seen_sessions
+    )
