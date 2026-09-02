@@ -62,6 +62,8 @@ import {
 	fetchMcpLastSeenByActor,
 	fetchMcpSessions,
 	listActorAudit,
+	listAgentOauthGrants,
+	revokeOauthGrant,
 	type ActorAuditEntry,
 	type ActorUsage,
 	type ActorUsageDetail,
@@ -77,6 +79,7 @@ import type {
 	LinkableToolkit,
 	McpLastSeen,
 	McpSessionEntity,
+	OAuthGrantEntity,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
@@ -167,6 +170,20 @@ export const actorAccessRequestsKey = (actorId: string, status: string) =>
  */
 export const actorAccessRequestsRootKey = (actorId: string) =>
 	['access-requests', 'by-actor', actorId] as const;
+
+/**
+ * OAuth consent grants binding clients to one agent (phase-3a §4.8), keyed by
+ * agent + status slice under the shared `oauthGrantsRoot`: grant creation
+ * happens out-of-band (a consent screen in another tab) and lands as an
+ * `oauth_grant.created` SSE event, which the shared agent-stream provider
+ * bridges into an invalidation of that root — so the slice must live under it.
+ */
+export const agentOauthGrantsKey = (agentId: string, status: string) =>
+	[...sharedQueryKeys.oauthGrantsRoot, 'by-agent', agentId, status] as const;
+
+/** Prefix key covering every status slice of one agent's grants. */
+export const agentOauthGrantsRootKey = (agentId: string) =>
+	[...sharedQueryKeys.oauthGrantsRoot, 'by-agent', agentId] as const;
 
 function notifyError(error: unknown, fallback: string): void {
 	toast({
@@ -752,6 +769,42 @@ export function useActorAccessRequests(actorId: string | null, status: string | 
 		queryKey: actorAccessRequestsKey(actorId ?? '', status ?? 'all'),
 		queryFn: () => fetchActorAccessRequests(actorId as string, status),
 		enabled: actorId != null,
+	});
+}
+
+/**
+ * The OAuth clients holding a consent→agent grant on this agent — the detail
+ * console's "Connected clients" panel (phase-3a §4.8). Owner-or-admin on the
+ * backend; a 403 surfaces as an error the card renders honestly.
+ */
+export function useAgentOauthGrants(
+	agentId: string | null,
+	status: 'active' | 'revoked' | null = 'active',
+) {
+	return useQuery<ListResult<OAuthGrantEntity>>({
+		queryKey: agentOauthGrantsKey(agentId ?? '', status ?? 'all'),
+		queryFn: () => listAgentOauthGrants(agentId as string, status),
+		enabled: agentId != null,
+	});
+}
+
+/**
+ * Revoke a consent→agent grant (§4.6 kill switch). Invalidates every status
+ * slice of the agent's grants (the row moves active→revoked) plus the shared
+ * oauth-clients root, whose rows carry a per-client active-grant count.
+ */
+export function useRevokeOauthGrant(agentId: string | null) {
+	const qc = useQueryClient();
+	return useMutation<void, Error, string>({
+		mutationFn: (grantId: string) => revokeOauthGrant(grantId),
+		onSuccess: () => {
+			if (agentId) {
+				void qc.invalidateQueries({ queryKey: agentOauthGrantsRootKey(agentId) });
+			}
+			void qc.invalidateQueries({ queryKey: sharedQueryKeys.oauthClientsRoot });
+			toast({ title: 'Grant revoked', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to revoke the grant.'),
 	});
 }
 

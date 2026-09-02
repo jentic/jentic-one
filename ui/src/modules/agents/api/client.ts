@@ -19,6 +19,7 @@ import {
 	ExecutionsService,
 	GroupBy,
 	MonitoringService,
+	OAuthService,
 	PermissionsService,
 	ServiceAccountsService,
 	SystemService,
@@ -26,6 +27,7 @@ import {
 	type AgentResponse,
 	type AuditResponse,
 	type EventResponse,
+	type OAuthGrantResponse,
 	type ServiceAccountResponse,
 } from '@/shared/api';
 import {
@@ -39,6 +41,7 @@ import {
 	type LinkableToolkit,
 	type McpLastSeen,
 	type McpSessionEntity,
+	type OAuthGrantEntity,
 	type PermissionCatalogEntry,
 	type ServiceAccountEntity,
 	type ToolkitBindingEntity,
@@ -925,5 +928,62 @@ export async function fetchInstanceIdentity(): Promise<InstanceIdentityEntity> {
 		};
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to load the instance identity.');
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OAuth consent grants (phase-3a §4.8) — the "Connected clients" panel.
+// ---------------------------------------------------------------------------
+
+function grantToEntity(r: OAuthGrantResponse): OAuthGrantEntity {
+	return {
+		id: r.id,
+		oauthClientId: r.oauth_client_id,
+		clientName: r.client_name ?? null,
+		clientOrigin: r.client_origin ?? null,
+		userId: r.user_id,
+		agentId: r.agent_id,
+		scopes: r.scopes,
+		status: r.status,
+		createdAt: r.created_at,
+		revokedAt: r.revoked_at ?? null,
+		lastUsedAt: r.last_used_at ?? null,
+	};
+}
+
+/**
+ * The OAuth clients holding a consent→agent grant on this agent
+ * (`GET /agents/{id}/oauth-grants`, owner-or-admin). `status` narrows to
+ * active/revoked; null returns the full history.
+ */
+export async function listAgentOauthGrants(
+	agentId: string,
+	status: 'active' | 'revoked' | null = 'active',
+): Promise<ListResult<OAuthGrantEntity>> {
+	try {
+		const res = await AgentsService.listAgentOauthGrants({
+			agentId,
+			status,
+		});
+		return {
+			entities: res.data.map(grantToEntity),
+			hasMore: res.has_more,
+			nextCursor: res.next_cursor ?? null,
+		};
+	} catch (error) {
+		throw toAgentsError(error, "Failed to load the agent's connected clients.");
+	}
+}
+
+/**
+ * Revoke one consent→agent grant (`POST /oauth-grants/{id}:revoke`) — the
+ * per-grant kill switch (§4.6). The backend also revokes every access/refresh
+ * token minted under the grant; the client's next token use fails closed.
+ */
+export async function revokeOauthGrant(grantId: string): Promise<void> {
+	try {
+		await OAuthService.revokeOauthGrant({ grantId });
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to revoke the grant.');
 	}
 }

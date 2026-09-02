@@ -69,6 +69,7 @@ import {
 import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
 import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
+import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 import {
 	LifecycleDialogs,
 	type PendingConfirm,
@@ -406,6 +407,8 @@ export default function AgentDetailPage() {
 						<ScopesCard actorKind="agent" actorId={agent.id} actorName={agent.name} />
 						{/* Pending access requests this agent has filed (#619). */}
 						<ActorAccessRequestsCard actorId={agent.id} actorName={agent.name} />
+						{/* OAuth clients holding a consent→agent grant (phase-3a §4.8). */}
+						<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 					</>
 				)}
 

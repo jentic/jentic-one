@@ -251,3 +251,28 @@ export interface InstanceIdentityEntity {
 	baseUrl: string;
 	host: string;
 }
+
+// ---------------------------------------------------------------------------
+// OAuth consent grants (phase-3a §4.8) — the detail console's "Connected
+// clients" panel: which OAuth clients hold a live consent→agent grant.
+// ---------------------------------------------------------------------------
+
+/**
+ * One consent→agent grant (`GET /agents/{id}/oauth-grants`). `userId` is the
+ * CONSENTING user, surfaced deliberately: after an agent ownership transfer
+ * the grant stays with the original consenter (gap G10), so the panel must
+ * show who holds it, not assume the current owner does.
+ */
+export interface OAuthGrantEntity {
+	id: string;
+	oauthClientId: string;
+	clientName: string | null;
+	clientOrigin: string | null;
+	userId: string;
+	agentId: string;
+	scopes: string[];
+	status: string;
+	createdAt: string;
+	revokedAt: string | null;
+	lastUsedAt: string | null;
+}
