@@ -195,6 +195,50 @@ def test_enabled_credential_less_tools_call_is_challenged() -> None:
         assert resp.headers["www-authenticate"] == _CHALLENGE
 
 
+def test_credential_less_resources_read_is_challenged() -> None:
+    """resources/read stays OFF the pre-auth whitelist until resources are
+    actually served — a future registration must not land pre-auth by default
+    (the listings stay whitelisted; they are empty and connection-independent)."""
+    with make_client(oauth_enabled=True) as client:
+        read = client.post(
+            "/mcp",
+            json=_rpc("resources/read", {"uri": "skill://jentic"}),
+            headers=_ACCEPT,
+        )
+        assert read.status_code == 401
+        assert read.headers["www-authenticate"] == _CHALLENGE
+        listing = client.post("/mcp", json=_rpc("resources/list"), headers=_ACCEPT)
+        assert listing.status_code == 200
+
+
+def test_authenticated_get_is_405_and_never_reaches_the_sse_arm() -> None:
+    """MINOR-3 regression: in stateless mode the SDK's GET-as-SSE arm opens a
+    stream that never carries a message and never ends — the gate must answer
+    405 before the transport sees the request (a hang here would block this
+    test forever)."""
+    with make_client() as client:
+        resp = client.get(
+            "/mcp",
+            headers={
+                "Accept": "text/event-stream",
+                "Authorization": f"Bearer {_GOOD_BEARER}",
+            },
+        )
+        assert resp.status_code == 405
+        assert resp.headers["allow"] == "POST"
+        assert resp.json() == {"detail": "Method Not Allowed"}
+
+
+def test_credential_less_get_stays_401_not_405() -> None:
+    """Auth precedes method semantics: an unauthenticated GET keeps answering
+    the 401 challenge (the 3a-4 contract), never a method tell."""
+    with make_client(oauth_enabled=True) as client:
+        resp = client.get("/mcp", headers={"Accept": "text/event-stream"})
+        assert resp.status_code == 401
+        assert resp.headers["www-authenticate"] == _CHALLENGE
+        assert "allow" not in resp.headers
+
+
 def test_enabled_credential_less_tools_list_is_served() -> None:
     """§3.3 pre-auth surface discovery: tools/list needs no credential, and
     the tool list is connection-independent (stateless — no initialize)."""
@@ -240,6 +284,44 @@ def test_spoofed_origin_is_403() -> None:
         assert resp.json() == {"detail": "Origin not allowed"}
 
 
+def test_rebinding_shaped_origin_matching_own_host_is_403() -> None:
+    """THE DNS-rebinding shape: the browser resolved the attacker's name to
+    this daemon's IP, so Origin and Host arrive as a self-consistent pair —
+    the request's own Host header must never vouch for an Origin."""
+    with make_client() as client:
+        for origin, host in (
+            ("http://attacker.example", "attacker.example"),
+            ("http://attacker.example:80", "attacker.example"),
+            ("http://attacker.example", "attacker.example:9999"),
+            ("http://testserver", "testserver"),  # pinned as a PASS before this fix
+        ):
+            resp = client.post(
+                "/mcp",
+                json=_rpc("tools/list"),
+                headers={**_ACCEPT, "Origin": origin, "Host": host},
+            )
+            assert resp.status_code == 403, (origin, host)
+
+
+def test_loopback_prefixed_dns_name_origin_is_403() -> None:
+    """``127.0.0.1.evil.example`` is a resolvable public name, not loopback —
+    the loopback arm parses the host as an IP, never prefix-matches it."""
+    with make_client() as client:
+        resp = client.post(
+            "/mcp",
+            json=_rpc("tools/list"),
+            headers={**_ACCEPT, "Origin": "http://127.0.0.1.evil.example"},
+        )
+        assert resp.status_code == 403
+
+
+def test_absent_origin_passes() -> None:
+    """Non-browser clients (every real MCP client today) send no Origin."""
+    with make_client() as client:
+        resp = client.post("/mcp", json=_rpc("tools/list"), headers=_ACCEPT)
+        assert resp.status_code == 200
+
+
 @pytest.mark.parametrize("origin", ["null", "not a url", "https://"])
 def test_malformed_origin_is_403(origin: str) -> None:
     with make_client() as client:
@@ -252,14 +334,43 @@ def test_malformed_origin_is_403(origin: str) -> None:
     [
         "http://localhost:6274",  # loopback (Inspector et al.)
         "http://127.0.0.1:8000",
-        "https://auth.example.com",  # the canonical host
-        "http://testserver",  # the request's own Host
+        "http://[::1]:6274",
+        "https://auth.example.com",  # the config-derived canonical origin
+        "https://auth.example.com:443",  # default-port normalization
     ],
 )
-def test_own_host_and_loopback_origins_pass(origin: str) -> None:
+def test_canonical_and_loopback_origins_pass(origin: str) -> None:
     with make_client() as client:
         resp = client.post("/mcp", json=_rpc("tools/list"), headers={**_ACCEPT, "Origin": origin})
         assert resp.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://auth.example.com",  # scheme mismatch = a different web origin
+        "https://auth.example.com:8443",  # port mismatch
+        "https://sub.auth.example.com",
+    ],
+)
+def test_near_canonical_origins_are_403(origin: str) -> None:
+    with make_client() as client:
+        resp = client.post("/mcp", json=_rpc("tools/list"), headers={**_ACCEPT, "Origin": origin})
+        assert resp.status_code == 403
+
+
+def test_without_canonical_base_url_only_loopback_origins_pass() -> None:
+    """No configured canonical origin (local dev) → the trusted set is
+    loopback only; the request's Host never substitutes for config."""
+    with make_client(canonical_base_url="") as client:
+        ok = client.post(
+            "/mcp", json=_rpc("tools/list"), headers={**_ACCEPT, "Origin": "http://localhost:3000"}
+        )
+        assert ok.status_code == 200
+        denied = client.post(
+            "/mcp", json=_rpc("tools/list"), headers={**_ACCEPT, "Origin": "http://testserver"}
+        )
+        assert denied.status_code == 403
 
 
 def test_origin_check_precedes_auth() -> None:

@@ -15,7 +15,7 @@ taxonomy (§3.7) and are asserted field-wise below, mirroring the Go
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -242,3 +242,96 @@ async def test_held_202_envelope_passes_through_untouched(broker) -> None:
     assert payload["status"] == 202
     assert payload["body"] == held_body
     assert payload["execution_id"] == "exec-held"
+
+
+# --- broker-leg transport posture (Go: mcp_execute_test.go's twin coverage) ---
+
+
+async def test_oversized_streamed_broker_body_fails_closed_at_the_cap(
+    broker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MAJOR-2 regression: the broker leg STREAMS the response and stops
+    reading at ``_MAX_BODY_BYTES`` (Go: ``ReadAllBounded`` — fail closed,
+    never buffer-then-truncate). The chunk counter proves the read stopped at
+    the cap rather than draining the multi-'GiB' body first."""
+    monkeypatch.setattr(ex, "_MAX_BODY_BYTES", 1 << 10)
+    pulled = {"chunks": 0}
+
+    async def chunk_stream() -> AsyncIterator[bytes]:
+        for _ in range(1000):
+            pulled["chunks"] += 1
+            yield b"x" * 256
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"Content-Type": "application/octet-stream"}, content=chunk_stream()
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert "response body exceeds maximum allowed size" in payload["error"]
+    assert pulled["chunks"] < 100, "the read must stop at the cap, not drain the body"
+
+
+async def test_model_supplied_headers_cannot_override_protected_headers(broker) -> None:
+    """MINOR-5 regression: ``Authorization``/``User-Agent`` merge AFTER the
+    tool-arg headers — the caller's bearer and the ``jentic-mcp/`` UA (the
+    broker's ``Origin.MCP`` signal) always win, in exactly one spelling."""
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers.get_list("Authorization")
+        seen["user_agent"] = request.headers.get_list("User-Agent")
+        seen["x_custom"] = request.headers.get("X-Custom")
+        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"{}")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(
+        env,
+        "execute",
+        {
+            "operation_id": "GET:/v1/pets",
+            "headers": {
+                "Authorization": "Bearer stolen",
+                "authorization": "Bearer stolen-too",
+                "User-Agent": "curl/8",
+                "X-Custom": "rides",
+            },
+        },
+    )
+    assert not result.is_error, result.content
+    assert seen["authorization"] == ["Bearer jak_test"]
+    (user_agent,) = seen["user_agent"]
+    assert user_agent.startswith("jentic-mcp/")
+    assert seen["x_custom"] == "rides"
+
+
+async def test_loopback_prefixed_broker_hostname_is_refused(broker) -> None:
+    """MINOR-1 regression: ``127.0.0.1.evil.example`` is a resolvable public
+    DNS name — SEC-1 parses the host as an IP (Go ``net.ParseIP`` semantics),
+    so a plaintext bearer never rides to it."""
+    env = make_env("http://127.0.0.1.evil.example:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert "plaintext" in payload["error"]
+
+
+async def test_ipv6_loopback_broker_stays_allowed(broker) -> None:
+    """The parsed-IP check keeps admitting every literal loopback form."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"[]")
+
+    broker(handler)
+    env = make_env("http://[::1]:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert not result.is_error, result.content

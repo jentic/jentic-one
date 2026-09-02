@@ -14,7 +14,11 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from jentic_one.__main__ import _build_app, _expand_allowed_dbs
-from jentic_one.mcp.installer import install_mcp_mount, mcp_lifespan
+from jentic_one.mcp.installer import (
+    install_mcp_challenge_placeholder,
+    install_mcp_mount,
+    mcp_lifespan,
+)
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.wiring import build_default_container
@@ -30,6 +34,7 @@ def test_control_shapes_carry_the_mcp_extras(sample_config_dict: dict[str, Any])
     container = build_default_container(_ctx(sample_config_dict, ["control", "admin"]))
     assert install_mcp_mount in container.extra_installers
     assert mcp_lifespan in container.extra_lifespans
+    assert install_mcp_challenge_placeholder not in container.extra_installers
 
 
 def test_broker_shape_stays_mcp_free(sample_config_dict: dict[str, Any]) -> None:
@@ -37,6 +42,39 @@ def test_broker_shape_stays_mcp_free(sample_config_dict: dict[str, Any]) -> None
     container = build_default_container(_ctx(sample_config_dict, ["broker"]))
     assert install_mcp_mount not in container.extra_installers
     assert mcp_lifespan not in container.extra_lifespans
+    assert install_mcp_challenge_placeholder not in container.extra_installers
+
+
+def test_auth_without_control_carries_the_challenge_placeholder(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """A standalone auth shape serves the RFC 8414/9728 discovery documents,
+    so its /mcp must keep answering the 3a-4 challenge contract (never a
+    dangling 404) — the placeholder rides instead of the real mount."""
+    container = build_default_container(_ctx(sample_config_dict, ["auth"]))
+    assert install_mcp_challenge_placeholder in container.extra_installers
+    assert install_mcp_mount not in container.extra_installers
+    assert mcp_lifespan not in container.extra_lifespans
+
+
+def test_standalone_auth_app_answers_the_challenge_when_oauth_enabled(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """End-to-end through _build_app: the auth-standalone shape answers the
+    discovery-chain 401 challenge on /mcp (3a-4 verbatim), and the plain 404
+    with the oauth gate off — even though the real transport lives with
+    control."""
+    config = {**sample_config_dict, "apps": ["auth"]}
+    config["server"] = {**config.get("server", {}), "mcp": {"oauth": {"enabled": True}}}
+    app_config = AppConfig.model_validate(config)
+    ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["auth"], app_config))
+    app = _build_app(ctx, ["auth"])
+    assert getattr(app.state, "mcp_mount", None) is None
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post("/mcp")
+    assert resp.status_code == 401
+    assert "resource_metadata" in resp.headers["www-authenticate"]
 
 
 def test_combined_app_answers_on_mcp_with_the_gate_default(

@@ -18,10 +18,12 @@ that owns everything the platform — not the SDK — must decide:
   review F7 pinned) keeps answering the framework's plain 404 in every arm
   and clients keep landing on the served RFC 8414 path-insertion documents.
 - **Strict Origin validation** (spec §security, DNS-rebinding): a request
-  carrying an ``Origin`` whose host is neither the request's own ``Host``,
-  the canonical base URL's host, nor loopback is refused with 403 before
-  anything else runs. Absent ``Origin`` (non-browser clients — every real MCP
-  client today) passes.
+  carrying an ``Origin`` that is neither the config-derived canonical origin
+  (``auth.canonical_base_url`` — the same source the discovery documents
+  build absolute URLs from) nor loopback is refused with 403 before anything
+  else runs. The request's own ``Host`` header is never trusted — in the
+  rebinding attack it is attacker-controlled. Absent ``Origin`` (non-browser
+  clients — every real MCP client today) passes.
 - **Bearer auth** reusing the identity-resolution LOGIC — the app-state
   ``verify_token`` the auth surface installs (``make_superset_verifier``),
   which resolves ``jak_``/``sak_`` API keys, ``at_`` access tokens (including
@@ -48,6 +50,7 @@ from __future__ import annotations
 
 import json
 from importlib.metadata import PackageNotFoundError, version
+from ipaddress import ip_address
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -73,8 +76,11 @@ MCP_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
 
 #: JSON-RPC methods served WITHOUT a credential (§3.3): discovery of the tool
 #: surface, the spec's ping, the legacy-``initialize`` fallback pair, and the
-#: public resource listings (skill resources land in a later slice; until
-#: then the listings are empty — still safely pre-auth).
+#: public resource listings. ``resources/read`` is deliberately NOT here: no
+#: resources are served yet, so pre-declaring it would hand a future resource
+#: registration a pre-auth ride nobody re-reviewed — when the public skill
+#: resources land (§3.3), add it back alongside a pin that the readable set
+#: stays public-only.
 PRE_AUTH_METHODS = frozenset(
     {
         "initialize",
@@ -82,7 +88,6 @@ PRE_AUTH_METHODS = frozenset(
         "ping",
         "tools/list",
         "resources/list",
-        "resources/read",
         "resources/templates/list",
     }
 )
@@ -90,8 +95,6 @@ PRE_AUTH_METHODS = frozenset(
 #: Bound on a buffered request body. The SDK transport's own bound is 4 MiB
 #: (``max_request_body_size``); this only guards the pre-auth sniff.
 _MAX_BUFFERED_BODY = 8 << 20
-
-_LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
 
 def _framework_404() -> Response:
@@ -123,12 +126,42 @@ def _unauthorized(ctx: Context, request: Request, method: str) -> Response:
     return JSONResponse(status_code=401, content={"detail": "Unauthorized"}, headers=headers)
 
 
+def _is_loopback_origin_host(hostname: str) -> bool:
+    """``localhost`` or a literal loopback IP (``ipaddress``-parsed, so a
+    public DNS name like ``127.0.0.1.evil.example`` never qualifies)."""
+    if hostname == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _origin_key(scheme: str, hostname: str, port: int | None) -> tuple[str, str, int | None]:
+    """One web origin as a comparable (scheme, host, effective-port) triple."""
+    if port is None:
+        port = {"http": 80, "https": 443}.get(scheme)
+    return (scheme, hostname, port)
+
+
 def origin_allowed(ctx: Context, request: Request) -> bool:
     """Strict ``Origin`` validation (403 on mismatch — spec DNS-rebinding rule).
 
     Absent ``Origin`` passes (non-browser clients never send one). A present
-    one must name this deployment: the request's own ``Host``, the canonical
-    base URL's host, or loopback. ``null`` and unparseable origins fail.
+    one must match a trusted set derived from **server config only**: the
+    canonical base URL's origin (``auth.canonical_base_url`` — the same source
+    the 3a-4 discovery documents build their absolute URLs from), or a
+    loopback/localhost origin for local dev. ``null`` and unparseable origins
+    fail.
+
+    The request's own ``Host`` header is deliberately NOT consulted: in the
+    DNS-rebinding attack this check exists to stop, the browser resolves the
+    attacker's name to this daemon's IP and sends a self-consistent
+    ``Host`` + ``Origin`` pair — trusting ``Host`` would make the gate a
+    no-op in exactly its threat model. (The SDK's ``TransportSecuritySettings``
+    is a static exact-string allowlist that also enforces ``Host`` and runs
+    inside the transport — after auth — so the platform gate keeps owning
+    this check.)
     """
     origin = request.headers.get("origin")
     if origin is None:
@@ -136,21 +169,23 @@ def origin_allowed(ctx: Context, request: Request) -> bool:
     parts = urlsplit(origin)
     if not parts.scheme or not parts.netloc:
         return False
-    hostname = (parts.hostname or "").lower()
-    if hostname in _LOOPBACK_HOSTNAMES:
+    try:
+        hostname, port = (parts.hostname or "").lower(), parts.port
+    except ValueError:  # pragma: no cover - non-numeric port
+        return False
+    if _is_loopback_origin_host(hostname):
         return True
-    allowed_netlocs = set()
-    host_header = request.headers.get("host")
-    if host_header:
-        allowed_netlocs.add(host_header.lower())
-        allowed_netlocs.add(host_header.split(":", 1)[0].lower())
     canonical = ctx.config.auth.canonical_base_url
-    if canonical:
-        canonical_parts = urlsplit(canonical)
-        if canonical_parts.netloc:
-            allowed_netlocs.add(canonical_parts.netloc.lower())
-            allowed_netlocs.add((canonical_parts.hostname or "").lower())
-    return parts.netloc.lower() in allowed_netlocs or hostname in allowed_netlocs
+    if not canonical:
+        return False
+    canonical_parts = urlsplit(canonical)
+    if not canonical_parts.scheme or not canonical_parts.netloc:
+        return False
+    return _origin_key(parts.scheme.lower(), hostname, port) == _origin_key(
+        canonical_parts.scheme.lower(),
+        (canonical_parts.hostname or "").lower(),
+        canonical_parts.port,
+    )
 
 
 def _body_methods(body: bytes) -> list[str] | None:
@@ -260,6 +295,33 @@ def _package_version() -> str:
         return "0.0.0"
 
 
+class McpChallengePlaceholder:
+    """The 3a-4 placeholder contract for shapes serving auth WITHOUT control.
+
+    The real mount rides control-plane shapes only (master §6 Q1), but the
+    RFC 8414/9728 discovery documents ride the auth surface — a standalone
+    auth deployment would serve the discovery documents while answering plain
+    404 on ``/mcp`` itself, leaving the ``resource_metadata`` pointers
+    dangling. This restores exactly what the 3a-4 placeholder shipped on the
+    auth surface: with ``server.mcp.oauth.enabled`` every probe answers the
+    discovery-chain 401 challenge; without it, the framework's plain 404.
+    Never a transport — the resource itself lives where control lives.
+    """
+
+    def __init__(self, ctx: Context) -> None:
+        self.ctx = ctx
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":  # pragma: no cover - routes only see http
+            raise RuntimeError(f"McpChallengePlaceholder cannot handle {scope['type']!r}")
+        request = Request(scope, receive)
+        if self.ctx.config.server.mcp.oauth.enabled:
+            response: Response = _unauthorized(self.ctx, request, scope["method"].upper())
+        else:
+            response = _framework_404()
+        await response(scope, receive, send)
+
+
 class McpMount:
     """The ASGI app mounted at ``/mcp``: gate → Origin → auth → SDK transport.
 
@@ -325,6 +387,18 @@ class McpMount:
             if identity is None:
                 return _unauthorized(self.ctx, request, method)
             self._stash_call_state(scope, request, identity, credential)
+
+        if method == "GET":
+            # Never reaches the SDK transport: in stateless mode its
+            # GET-as-SSE arm opens a stream no server-initiated message will
+            # ever ride and that never ends — each such request would pin a
+            # connection + task for the life of the process. json_response
+            # mode governs POST responses only, so the gate owns this refusal.
+            return JSONResponse(
+                status_code=405,
+                content={"detail": "Method Not Allowed"},
+                headers={"Allow": "POST"},
+            )
 
         if body is None:
             return receive
@@ -401,4 +475,10 @@ def _replay_receive(body: bytes) -> Receive:
     return receive
 
 
-__all__ = ["MCP_PRM_PATH", "PRE_AUTH_METHODS", "McpMount", "build_mcp_server"]
+__all__ = [
+    "MCP_PRM_PATH",
+    "PRE_AUTH_METHODS",
+    "McpChallengePlaceholder",
+    "McpMount",
+    "build_mcp_server",
+]

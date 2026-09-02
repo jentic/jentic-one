@@ -72,9 +72,11 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
         surface = apps[0]
         mod = importlib.import_module(SURFACE_MODULES[surface])
         # Standalone control carries the composition container so the /mcp
-        # mount (installer + session-manager lifespan) rides it — the other
-        # surfaces keep their own default wiring.
-        if surface == "control":
+        # mount (installer + session-manager lifespan) rides it; standalone
+        # auth carries it for the 3a-4 /mcp challenge placeholder (the
+        # discovery pointers it serves must not dangle) — the other surfaces
+        # keep their own default wiring.
+        if surface in ("control", "auth"):
             app: FastAPI = mod.create_app(ctx, container=container)
         else:
             app = mod.create_app(ctx)

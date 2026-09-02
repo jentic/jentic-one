@@ -41,6 +41,7 @@ from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state import build_state_backend
 from jentic_one.shared.state.factory import BackendKind
 from jentic_one.shared.web.app_factory import create_surface_app
+from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.health import make_health_router
 
 logger = structlog.get_logger(__name__)
@@ -178,10 +179,19 @@ def _make_auth_verifier(ctx: Context) -> Any:
     return _verify
 
 
-def create_app(ctx: Context) -> FastAPI:
-    """Create the auth FastAPI application for standalone deployment."""
+def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
+    """Create the auth FastAPI application for standalone deployment.
+
+    ``container`` lets the composition root ride its extras (notably the 3a-4
+    ``/mcp`` challenge placeholder on auth-sans-control shapes, phase 3) on a
+    standalone auth process; ``None`` keeps the default wiring.
+    """
     app = create_surface_app(
-        ctx, title="jentic-one-auth", routers=get_routers(), enabled_apps={"auth"}
+        ctx,
+        title="jentic-one-auth",
+        routers=get_routers(),
+        enabled_apps={"auth"},
+        container=container,
     )
     install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import uuid as uuid_mod
 from importlib.metadata import PackageNotFoundError, version
+from ipaddress import ip_address
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
@@ -49,7 +50,7 @@ _MAX_BODY_BYTES = 64 << 20
 #: The execute ceiling (Go: 60s client timeout on the broker leg).
 _EXECUTE_TIMEOUT_SECONDS = 60.0
 
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_LOOPBACK_HOSTS = frozenset({"localhost"})
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
@@ -57,9 +58,18 @@ _DENIAL_STATUSES = frozenset({401, 403, 409, 424})
 
 
 def _is_loopback_host(hostname: str | None) -> bool:
+    """Go's ``isLoopbackHost`` semantics (``cli/client/auth/oauth.go``):
+    ``localhost`` or a literal loopback IP — parsed, never prefix-matched, so
+    a public DNS name like ``127.0.0.1.evil.example`` never qualifies."""
     if hostname is None:
         return False
-    return hostname.lower() in _LOOPBACK_HOSTS or hostname.startswith("127.")
+    name = hostname.lower()
+    if name in _LOOPBACK_HOSTS:
+        return True
+    try:
+        return ip_address(name).is_loopback
+    except ValueError:
+        return False
 
 
 def resolve_broker_target(broker_url: str) -> tuple[str, str]:
@@ -350,6 +360,35 @@ def _broker_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=_EXECUTE_TIMEOUT_SECONDS, follow_redirects=False)
 
 
+class BodyTooLargeError(Exception):
+    """The broker/upstream body tripped ``_MAX_BODY_BYTES`` mid-stream.
+
+    The Go twin's ``sdkclient.ReadAllBounded`` posture: fail closed instead of
+    buffering without bound — the read stops at the cap, the connection is
+    dropped, and the failure surfaces as the §3.7 transport row (never a
+    truncated success: by the time the cap trips, the envelope caps in
+    :func:`execute_result_payload` could no longer report an honest
+    ``total_bytes``).
+    """
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(
+            f"read response: response body exceeds maximum allowed size (limit {limit} bytes)"
+        )
+
+
+async def _read_bounded(response: httpx.Response, limit: int) -> bytes:
+    """Accumulate the streamed body, refusing to read past ``limit`` bytes."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > limit:
+            raise BodyTooLargeError(limit)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def send_to_broker(
     *,
     method: str,
@@ -365,28 +404,39 @@ async def send_to_broker(
     The caller's own credential rides as the bearer (the broker authenticates
     the AGENT, not this mount); correlation headers mirror the Go path —
     ``X-Jentic-Session-Id`` when the inbound request carried one, a fresh
-    ``traceparent`` unless the caller supplied its own.
+    ``traceparent`` unless the caller supplied its own. The response is
+    STREAMED and the read stops at ``_MAX_BODY_BYTES`` (Go:
+    ``ReadAllBounded``) — the full body is never buffered first.
     """
-    request_headers: dict[str, str] = {
-        "Authorization": f"Bearer {credential}",
-        "User-Agent": _server_user_agent(),
-    }
-    has_content_type = any(k.strip().lower() == "content-type" for k, _v in headers)
-    if body is not None and not has_content_type:
-        request_headers["Content-Type"] = "application/json"
+    request_headers: dict[str, str] = {}
     for key, value in headers:
         request_headers[key.strip()] = value.strip()
-    if session_id and "x-jentic-session-id" not in {k.lower() for k in request_headers}:
+    lower_keys = {k.lower() for k in request_headers}
+    if body is not None and "content-type" not in lower_keys:
+        request_headers["Content-Type"] = "application/json"
+    if session_id and "x-jentic-session-id" not in lower_keys:
         request_headers["X-Jentic-Session-Id"] = session_id
-    if "traceparent" not in {k.lower() for k in request_headers}:
+    if "traceparent" not in lower_keys:
         request_headers["traceparent"] = f"00-{uuid_mod.uuid4().hex}-{uuid_mod.uuid4().hex[:16]}-01"
-    if idempotency_key and "idempotency-key" not in {k.lower() for k in request_headers}:
+    if idempotency_key and "idempotency-key" not in lower_keys:
         request_headers["Idempotency-Key"] = idempotency_key
+    # Protected headers merge LAST so a model-supplied ``headers`` tool-arg
+    # can never override the caller's bearer or the ``jentic-mcp/`` UA the
+    # broker derives ``Origin.MCP`` from (case-insensitive duplicates are
+    # dropped first — two spellings must not ride the wire). NOTE: the Go twin
+    # (``agentops/execute.go``) still merges the other way — follow-up filed.
+    for protected in ("authorization", "user-agent"):
+        for key in [k for k in request_headers if k.lower() == protected]:
+            del request_headers[key]
+    request_headers["Authorization"] = f"Bearer {credential}"
+    request_headers["User-Agent"] = _server_user_agent()
 
-    async with _broker_client() as client:
-        response = await client.request(method, broker_url, headers=request_headers, content=body)
-        raw = await response.aread()
-    if len(raw) > _MAX_BODY_BYTES:
-        raw = raw[:_MAX_BODY_BYTES]
-    execution_id = response.headers.get("Jentic-Execution-Id", "")
-    return response.status_code, response.headers, raw, execution_id
+    async with (
+        _broker_client() as client,
+        client.stream(method, broker_url, headers=request_headers, content=body) as response,
+    ):
+        raw = await _read_bounded(response, _MAX_BODY_BYTES)
+        status = response.status_code
+        response_headers = response.headers
+        execution_id = response.headers.get("Jentic-Execution-Id", "")
+    return status, response_headers, raw, execution_id

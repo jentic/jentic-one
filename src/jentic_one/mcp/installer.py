@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 from starlette.routing import Route
 
-from jentic_one.mcp.app import McpMount
+from jentic_one.mcp.app import McpChallengePlaceholder, McpMount
 from jentic_one.shared.context import Context
 
 if TYPE_CHECKING:
@@ -52,6 +52,20 @@ def install_mcp_mount(app: FastAPI, ctx: Context) -> None:
     mount = McpMount(ctx, app)
     app.state.mcp_mount = mount
     app.router.routes.append(Route("/mcp", mount, methods=None, include_in_schema=False))
+
+
+def install_mcp_challenge_placeholder(app: FastAPI, ctx: Context) -> None:
+    """Register the 3a-4 challenge placeholder on ``/mcp`` (auth-sans-control).
+
+    Wired by the composition root onto shapes that serve the auth surface
+    WITHOUT control: the real mount lives where control lives (§6 Q1), but the
+    RFC 9728 discovery pointers this shape serves must not dangle into a plain
+    404 — the placeholder keeps answering the 3a-4 challenge contract. Same
+    exact-path ``Route`` registration mechanics as the mount (no prefix
+    ``Mount``), so the routing-level tells stay identical.
+    """
+    placeholder = McpChallengePlaceholder(ctx)
+    app.router.routes.append(Route("/mcp", placeholder, methods=None, include_in_schema=False))
 
 
 @asynccontextmanager

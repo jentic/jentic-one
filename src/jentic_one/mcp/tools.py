@@ -203,6 +203,33 @@ def require_scopes(identity: Identity, required: list[str]) -> None:
 
 _OPERATION_ID_SPEC = ParamSpec("operation_id", "string", ("id", "uuid"))
 
+#: Tools reachable with an expired password — the REST parity map: ``whoami``
+#: fronts ``GET /me``, the one route ``get_current_identity`` grants
+#: ``allow_expired_password=True`` (so a locked-out user can still see WHY).
+_EXPIRED_PASSWORD_ALLOWED = frozenset({"whoami"})
+
+
+def require_password_current(identity: Identity, tool: str) -> None:
+    """The ``must_change_password`` gate (``shared/web/deps.py``), mount-side.
+
+    Every REST route except ``/me`` refuses a password-expired identity with
+    403 ``password_rotation_required``; the mount mirrors that per tool so a
+    web-session JWT for a password-expired user cannot drive tools over
+    ``/mcp`` that the REST routes fronted would refuse. Only login-JWT
+    identities carry the flag — agents and API keys are unaffected.
+    """
+    if tool in _EXPIRED_PASSWORD_ALLOWED or not identity.must_change_password:
+        return
+    raise ToolError(
+        CODE_NOT_AUTHENTICATED,
+        "the control plane rejected this credential (http 403: Password rotation "
+        "required before accessing this resource)",
+        actionable="This user must change their password before this credential can "
+        "drive tools again; relay this to your human operator — the rotation happens "
+        "in the dashboard, never through an agent.",
+        next_tool="whoami",
+    )
+
 
 def _parse_method_url(target: str) -> tuple[str, str] | None:
     """``METHOD:https://…`` / ``METHOD https://…`` (Go: ``parseMethodURL``)."""
@@ -430,12 +457,13 @@ async def handle_search_catalog(
         raise invalid_params(f"limit must be between 1 and 200, got {limit}")
     try:
         require_scopes(env.identity, ["capabilities:read"])
-    except ToolError:
+    except ToolError as exc:
         # The Go special case: a 403 on THIS route is the missing
-        # capabilities:read scope, which the agent can fix itself.
+        # capabilities:read scope, which the agent can fix itself. The wire
+        # error rides as the message tail, like Go's ``: %v`` (mcp_access.go).
         raise ToolError(
             CODE_BROKER_DENIED,
-            "reading the catalog requires the capabilities:read scope",
+            f"reading the catalog requires the capabilities:read scope: {exc}",
             actionable='Request the scope with request_access, e.g. {"scopes": '
             '["capabilities:read"], "reason": "search the catalog for the API needed '
             "for this task\"}, wait for your operator's approval, then retry "
@@ -705,6 +733,7 @@ async def dispatch_tool_call(
     if handler is None:
         raise MCPError(_INVALID_PARAMS, f"unknown tool: {name}")
     try:
+        require_password_current(env.identity, name)
         return await handler(env, arguments or {})
     except ToolError as err:
         return soft_error_result(env.ctx, err)

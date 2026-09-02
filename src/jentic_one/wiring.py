@@ -20,7 +20,11 @@ from dataclasses import replace
 
 from fastapi import FastAPI
 
-from jentic_one.mcp.installer import install_mcp_mount, mcp_lifespan
+from jentic_one.mcp.installer import (
+    install_mcp_challenge_placeholder,
+    install_mcp_mount,
+    mcp_lifespan,
+)
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
@@ -84,6 +88,12 @@ def build_default_container(ctx: Context) -> AppContainer:
     master §6 Q1 — the mount never rides the broker). The mount itself is
     request-time gated by ``server.mcp.enabled``, so carrying it on every
     eligible shape adds no observable surface while the flag is off.
+
+    Shapes serving the auth surface WITHOUT control instead carry the 3a-4
+    challenge placeholder on ``/mcp``: they serve the RFC 8414/9728 discovery
+    documents, so the ``resource_metadata`` pointers must keep landing on the
+    discovery-chain 401 challenge (never a dangling 404) even though the real
+    transport lives with control.
     """
     container = AppContainer.default(ctx)
     if "control" in ctx.config.apps:
@@ -91,5 +101,10 @@ def build_default_container(ctx: Context) -> AppContainer:
             container,
             extra_installers=(*container.extra_installers, install_mcp_mount),
             extra_lifespans=(*container.extra_lifespans, mcp_lifespan),
+        )
+    elif "auth" in ctx.config.apps:
+        container = replace(
+            container,
+            extra_installers=(*container.extra_installers, install_mcp_challenge_placeholder),
         )
     return container
