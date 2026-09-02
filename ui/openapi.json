@@ -9992,7 +9992,7 @@
             "description": "Bad Request"
           },
           "404": {
-            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, indistinguishable from not-shipped."
+            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
             "content": {
@@ -10061,15 +10061,15 @@
     },
     "/.well-known/oauth-protected-resource": {
       "get": {
-        "description": "Root-path alias of the MCP protected-resource document (phase-3a §4.7).\n\nCompatibility fallback for clients that probe the root\n`/.well-known/oauth-protected-resource` instead of following the 401's\n`resource_metadata` pointer (the documented Claude Code behaviour). Safe\nbecause this deployment has exactly one OAuth-protected resource, so the\nroot and path-scoped documents are the same body.",
-        "operationId": "oauthProtectedResource",
+        "description": "Root-path alias of the MCP protected-resource document (phase-3a §4.7).\n\nCompatibility fallback for clients that probe the root\n`/.well-known/oauth-protected-resource` instead of following the 401's\n`resource_metadata` pointer (the documented Claude Code behaviour). Safe\nbecause this deployment has exactly one OAuth-protected resource, so the\nroot and path-scoped documents are the same body.\n\nTwo acknowledged trades (§4.7, review F6):\n\n- RFC 9728 §3 says this well-known path corresponds to resource identifier\n  ``{base}`` (no path), and §3.3 has clients validate ``resource`` against\n  the resource they queried. This body claims ``resource={base}/mcp`` — a\n  strict path-deriving validator would reject it, but Claude's fallback\n  validates against the MCP server URL (``{base}/mcp``), which is exactly\n  what the alias exists to satisfy. That is the intended trade.\n- The alias squats the deployment's only root PRM slot: a future non-MCP\n  protected resource at ``{base}`` cannot get its own root document\n  without breaking this fallback. Phase 3's mount must re-confirm the\n  \"exactly one OAuth-protected resource\" premise before adding one.",
+        "operationId": "mcpOauthProtectedResourceRootAlias",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Oauthprotectedresource",
+                  "title": "Response Mcpoauthprotectedresourcerootalias",
                   "type": "object"
                 }
               }
@@ -10094,7 +10094,7 @@
             "description": "Bad Request"
           },
           "404": {
-            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, indistinguishable from not-shipped."
+            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
             "content": {
@@ -10155,7 +10155,7 @@
           }
         },
         "security": [],
-        "summary": "OAuth protected resource metadata (root alias)",
+        "summary": "OAuth protected resource metadata (root alias for the MCP resource)",
         "tags": [
           "Discovery"
         ]
@@ -10196,7 +10196,7 @@
             "description": "Bad Request"
           },
           "404": {
-            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, indistinguishable from not-shipped."
+            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
             "content": {

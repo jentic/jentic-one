@@ -4483,7 +4483,7 @@ type ClientInterface interface {
 	// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
 	McpOauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// OauthProtectedResource OAuth protected resource metadata (root alias)
+	// McpOauthProtectedResourceRootAlias OAuth protected resource metadata (root alias for the MCP resource)
 	//
 	// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
 	//
@@ -4493,8 +4493,21 @@ type ClientInterface interface {
 	// because this deployment has exactly one OAuth-protected resource, so the
 	// root and path-scoped documents are the same body.
 	//
-	// Corresponds with GET /.well-known/oauth-protected-resource (the `OauthProtectedResource` operationId).
-	OauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Two acknowledged trades (§4.7, review F6):
+	//
+	// - RFC 9728 §3 says this well-known path corresponds to resource identifier
+	//   ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
+	//   the resource they queried. This body claims ``resource={base}/mcp`` — a
+	//   strict path-deriving validator would reject it, but Claude's fallback
+	//   validates against the MCP server URL (``{base}/mcp``), which is exactly
+	//   what the alias exists to satisfy. That is the intended trade.
+	// - The alias squats the deployment's only root PRM slot: a future non-MCP
+	//   protected resource at ``{base}`` cannot get its own root document
+	//   without breaking this fallback. Phase 3's mount must re-confirm the
+	//   "exactly one OAuth-protected resource" premise before adding one.
+	//
+	// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
+	McpOauthProtectedResourceRootAlias(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
 	//
@@ -6619,7 +6632,7 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 	return c.Client.Do(req)
 }
 
-// OauthProtectedResource OAuth protected resource metadata (root alias)
+// McpOauthProtectedResourceRootAlias OAuth protected resource metadata (root alias for the MCP resource)
 //
 // Root-path alias of the MCP protected-resource document (phase-3a §4.7).
 //
@@ -6629,9 +6642,22 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 // because this deployment has exactly one OAuth-protected resource, so the
 // root and path-scoped documents are the same body.
 //
-// Corresponds with GET /.well-known/oauth-protected-resource (the `OauthProtectedResource` operationId).
-func (c *Client) OauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewOauthProtectedResourceRequest(c.Server)
+// Two acknowledged trades (§4.7, review F6):
+//
+//   - RFC 9728 §3 says this well-known path corresponds to resource identifier
+//     “{base}“ (no path), and §3.3 has clients validate “resource“ against
+//     the resource they queried. This body claims “resource={base}/mcp“ — a
+//     strict path-deriving validator would reject it, but Claude's fallback
+//     validates against the MCP server URL (“{base}/mcp“), which is exactly
+//     what the alias exists to satisfy. That is the intended trade.
+//   - The alias squats the deployment's only root PRM slot: a future non-MCP
+//     protected resource at “{base}“ cannot get its own root document
+//     without breaking this fallback. Phase 3's mount must re-confirm the
+//     "exactly one OAuth-protected resource" premise before adding one.
+//
+// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
+func (c *Client) McpOauthProtectedResourceRootAlias(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMcpOauthProtectedResourceRootAliasRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -10987,8 +11013,8 @@ func NewMcpOauthAuthorizationServerRequest(server string) (*http.Request, error)
 	return req, nil
 }
 
-// NewOauthProtectedResourceRequest constructs an http.Request for the OauthProtectedResource method
-func NewOauthProtectedResourceRequest(server string) (*http.Request, error) {
+// NewMcpOauthProtectedResourceRootAliasRequest constructs an http.Request for the McpOauthProtectedResourceRootAlias method
+func NewMcpOauthProtectedResourceRootAliasRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -19522,7 +19548,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
 	McpOauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthAuthorizationServerHTTPResp, error)
 
-	// OauthProtectedResourceWithResponse OAuth protected resource metadata (root alias)
+	// McpOauthProtectedResourceRootAliasWithResponse OAuth protected resource metadata (root alias for the MCP resource)
 	//
 	// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
 	//
@@ -19532,10 +19558,23 @@ type ClientWithResponsesInterface interface {
 	// because this deployment has exactly one OAuth-protected resource, so the
 	// root and path-scoped documents are the same body.
 	//
+	// Two acknowledged trades (§4.7, review F6):
+	//
+	// - RFC 9728 §3 says this well-known path corresponds to resource identifier
+	//   ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
+	//   the resource they queried. This body claims ``resource={base}/mcp`` — a
+	//   strict path-deriving validator would reject it, but Claude's fallback
+	//   validates against the MCP server URL (``{base}/mcp``), which is exactly
+	//   what the alias exists to satisfy. That is the intended trade.
+	// - The alias squats the deployment's only root PRM slot: a future non-MCP
+	//   protected resource at ``{base}`` cannot get its own root document
+	//   without breaking this fallback. Phase 3's mount must re-confirm the
+	//   "exactly one OAuth-protected resource" premise before adding one.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /.well-known/oauth-protected-resource (the `OauthProtectedResource` operationId).
-	OauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OauthProtectedResourceHTTPResp, error)
+	// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
+	McpOauthProtectedResourceRootAliasWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceRootAliasHTTPResp, error)
 
 	// McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
 	//
@@ -22035,7 +22074,7 @@ func (r McpOauthAuthorizationServerHTTPResp) ContentType() string {
 	return ""
 }
 
-type OauthProtectedResourceHTTPResp struct {
+type McpOauthProtectedResourceRootAliasHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
@@ -22051,37 +22090,37 @@ type OauthProtectedResourceHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r OauthProtectedResourceHTTPResp) GetJSON200() *map[string]interface{} {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetJSON200() *map[string]interface{} {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r OauthProtectedResourceHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r OauthProtectedResourceHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r OauthProtectedResourceHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 	return r.ApplicationproblemJSON500
 }
 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r OauthProtectedResourceHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
-func (r OauthProtectedResourceHTTPResp) GetBody() []byte {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r OauthProtectedResourceHTTPResp) Status() string {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -22089,7 +22128,7 @@ func (r OauthProtectedResourceHTTPResp) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r OauthProtectedResourceHTTPResp) StatusCode() int {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -22097,7 +22136,7 @@ func (r OauthProtectedResourceHTTPResp) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r OauthProtectedResourceHTTPResp) ContentType() string {
+func (r McpOauthProtectedResourceRootAliasHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -35591,7 +35630,7 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 	return ParseMcpOauthAuthorizationServerHTTPResp(rsp)
 }
 
-// OauthProtectedResourceWithResponse OAuth protected resource metadata (root alias)
+// McpOauthProtectedResourceRootAliasWithResponse OAuth protected resource metadata (root alias for the MCP resource)
 //
 // Root-path alias of the MCP protected-resource document (phase-3a §4.7).
 //
@@ -35601,15 +35640,28 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 // because this deployment has exactly one OAuth-protected resource, so the
 // root and path-scoped documents are the same body.
 //
+// Two acknowledged trades (§4.7, review F6):
+//
+//   - RFC 9728 §3 says this well-known path corresponds to resource identifier
+//     “{base}“ (no path), and §3.3 has clients validate “resource“ against
+//     the resource they queried. This body claims “resource={base}/mcp“ — a
+//     strict path-deriving validator would reject it, but Claude's fallback
+//     validates against the MCP server URL (“{base}/mcp“), which is exactly
+//     what the alias exists to satisfy. That is the intended trade.
+//   - The alias squats the deployment's only root PRM slot: a future non-MCP
+//     protected resource at “{base}“ cannot get its own root document
+//     without breaking this fallback. Phase 3's mount must re-confirm the
+//     "exactly one OAuth-protected resource" premise before adding one.
+//
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /.well-known/oauth-protected-resource (the `OauthProtectedResource` operationId).
-func (c *ClientWithResponses) OauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OauthProtectedResourceHTTPResp, error) {
-	rsp, err := c.OauthProtectedResource(ctx, reqEditors...)
+// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
+func (c *ClientWithResponses) McpOauthProtectedResourceRootAliasWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceRootAliasHTTPResp, error) {
+	rsp, err := c.McpOauthProtectedResourceRootAlias(ctx, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseOauthProtectedResourceHTTPResp(rsp)
+	return ParseMcpOauthProtectedResourceRootAliasHTTPResp(rsp)
 }
 
 // McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
@@ -39387,15 +39439,15 @@ func ParseMcpOauthAuthorizationServerHTTPResp(rsp *http.Response) (*McpOauthAuth
 	return response, nil
 }
 
-// ParseOauthProtectedResourceHTTPResp parses an HTTP response from a OauthProtectedResourceWithResponse call
-func ParseOauthProtectedResourceHTTPResp(rsp *http.Response) (*OauthProtectedResourceHTTPResp, error) {
+// ParseMcpOauthProtectedResourceRootAliasHTTPResp parses an HTTP response from a McpOauthProtectedResourceRootAliasWithResponse call
+func ParseMcpOauthProtectedResourceRootAliasHTTPResp(rsp *http.Response) (*McpOauthProtectedResourceRootAliasHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &OauthProtectedResourceHTTPResp{
+	response := &McpOauthProtectedResourceRootAliasHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

@@ -809,7 +809,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # root-path alias. Unauthenticated by spec; config-gated (404) instead.
         "mcpOauthAuthorizationServer",
         "mcpOauthProtectedResource",
-        "oauthProtectedResource",
+        "mcpOauthProtectedResourceRootAlias",
         # Public IdP-login capability hint (enabled flag + provider name only;
         # no secrets). The SPA reads this pre-login to render the SSO button.
         "authIdpDescriptor",

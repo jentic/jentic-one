@@ -29,6 +29,20 @@ _MCP_DOC_PATHS = (
     "/.well-known/oauth-protected-resource",
 )
 
+#: Every method registered on the /mcp placeholder (the full common set, so
+#: the disabled arm answers a uniform 404 with no 405/Allow method tell and
+#: the enabled arm challenges before method semantics — review F3/F4).
+_MCP_METHODS = ("GET", "POST", "DELETE", "HEAD", "OPTIONS", "PUT", "PATCH")
+
+#: RFC 8414/OIDC discovery variants MCP clients probe (§2) that this surface
+#: deliberately does NOT serve: path-appending and OIDC arms must fall through
+#: to 404 in both gate arms so clients land on the served path-insertion doc.
+_UNSERVED_PROBE_PATHS = (
+    "/mcp/.well-known/openid-configuration",
+    "/mcp/.well-known/oauth-authorization-server",
+    "/.well-known/openid-configuration/mcp",
+)
+
 #: Byte-identical golden of the ROOT RFC 8414 document (§9 regression pin):
 #: the agent ``/register`` stays the advertised agent-DCR endpoint and nothing
 #: the /mcp-scoped documents add may reshape this body.
@@ -95,21 +109,27 @@ def test_disabled_mcp_discovery_docs_are_plain_404(disabled_client: TestClient, 
     assert resp.json() == {"detail": "Not Found"}
 
 
-@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
+@pytest.mark.parametrize("method", _MCP_METHODS)
 def test_disabled_mcp_probe_is_plain_404_without_challenge(
     disabled_client: TestClient, method: str
 ) -> None:
-    """When off, /mcp keeps today's behaviour: 404 and no WWW-Authenticate."""
+    """When off, /mcp keeps today's behaviour on every registered method:
+    the framework's own 404 body and no WWW-Authenticate."""
     resp = disabled_client.request(method, "/mcp")
     assert resp.status_code == 404
-    assert resp.json() == {"detail": "Not Found"}
     assert "www-authenticate" not in resp.headers
+    if method != "HEAD":
+        assert resp.json() == {"detail": "Not Found"}
 
 
 # --- the /mcp-scoped RFC 8414 document (D10) --------------------------------
 
 
-def test_mcp_as_document_matches_d10_exactly(enabled_client: TestClient) -> None:
+def test_mcp_as_document_matches_d10_with_revocation_deviation(
+    enabled_client: TestClient,
+) -> None:
+    """The D10 document shape, minus the deliberately omitted
+    revocation_endpoint (see test_mcp_as_document_omits_revocation_endpoint)."""
     resp = enabled_client.get("/.well-known/oauth-authorization-server/mcp")
     assert resp.status_code == 200
     assert resp.json() == {
@@ -117,13 +137,24 @@ def test_mcp_as_document_matches_d10_exactly(enabled_client: TestClient) -> None
         "authorization_endpoint": f"{_BASE}/authorize",
         "token_endpoint": f"{_BASE}/oauth/token",
         "registration_endpoint": f"{_BASE}/oauth-clients",
-        "revocation_endpoint": f"{_BASE}/oauth/revoke",
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["none"],
         "response_types_supported": ["code"],
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": sorted(MCP_TOOL_SCOPES),
     }
+
+
+def test_mcp_as_document_omits_revocation_endpoint(enabled_client: TestClient) -> None:
+    """Deliberate deviation from D10: /oauth/revoke requires an authenticated
+    platform Identity and a JSON body, so an RFC 7009 public-client revoke
+    (client_id only, form-encoded) can never succeed against it. RFC 8414
+    makes the field optional — the /mcp doc omits it (public clients revoke by
+    grant lifecycle); the root doc's advertisement is a separate, pre-existing
+    surface pinned by the golden test."""
+    data = enabled_client.get("/.well-known/oauth-authorization-server/mcp").json()
+    assert "revocation_endpoint" not in data
+    assert "revocation_endpoint_auth_methods_supported" not in data
 
 
 def test_mcp_as_document_advertises_only_the_public_client_profile(
@@ -180,16 +211,23 @@ def test_mcp_docs_are_json_like_existing_well_known_endpoints(
 # --- the /mcp 401 challenge + discovery chain -------------------------------
 
 
-@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
+@pytest.mark.parametrize("method", _MCP_METHODS)
 def test_mcp_probe_answers_401_with_resource_metadata(
     enabled_client: TestClient, method: str
 ) -> None:
+    """Every registered method challenges: auth precedes method semantics on a
+    protected resource (the phase-3 mounted app covers all methods too)."""
     resp = enabled_client.request(method, "/mcp")
     assert resp.status_code == 401
     assert (
         resp.headers["www-authenticate"]
         == f'Bearer resource_metadata="{_BASE}/.well-known/oauth-protected-resource/mcp"'
     )
+    if method == "HEAD":
+        # RFC 9110 §9.3.2: same status and headers as GET, no body.
+        assert resp.content == b""
+    else:
+        assert resp.json() == {"detail": "Unauthorized"}
 
 
 def test_discovery_chain_e2e_from_unauthenticated_probe() -> None:
@@ -244,6 +282,80 @@ def test_mcp_docs_fall_back_to_request_host_when_canonical_empty() -> None:
     assert probe.headers["www-authenticate"] == (
         'Bearer resource_metadata="http://testserver/.well-known/oauth-protected-resource/mcp"'
     )
+
+
+# --- build-level tells: identical in both gate arms (review F3) -------------
+#
+# The _McpDiscoveryRoute gate only runs on a full route match, so Starlette
+# answers partial matches (405 + Allow), issues the redirect_slashes 307, and
+# lists the doc paths in the live OpenAPI schema before the gate can run.
+# These reveal BUILD state ("this build ships the routes"), never GATE state —
+# they are identical in both arms. Pinned so any change is deliberate.
+
+
+@pytest.mark.parametrize("path", _MCP_DOC_PATHS)
+def test_doc_path_method_tell_is_identical_in_both_arms(path: str) -> None:
+    """POST to a GET-only doc path → 405 + Allow, byte-identical across arms."""
+    by_arm = {}
+    for enabled in (True, False):
+        resp = _make_client(oauth_enabled=enabled).post(path)
+        by_arm[enabled] = (resp.status_code, resp.headers.get("allow"), resp.content)
+    assert by_arm[True] == by_arm[False]
+    status, allow, _body = by_arm[True]
+    assert status == 405
+    assert allow is not None and set(allow.replace(" ", "").split(",")) == {"GET"}
+
+
+def test_mcp_trailing_slash_redirect_tell_is_identical_in_both_arms() -> None:
+    """GET /mcp/ → redirect_slashes 307 to /mcp in both arms (never a 404)."""
+    by_arm = {}
+    for enabled in (True, False):
+        client = _make_client(oauth_enabled=enabled)
+        resp = client.get("/mcp/", follow_redirects=False)
+        by_arm[enabled] = (resp.status_code, resp.headers.get("location"))
+    assert by_arm[True] == by_arm[False]
+    status, location = by_arm[True]
+    assert status == 307
+    assert location is not None and location.endswith("/mcp")
+
+
+def test_mcp_probe_method_answer_is_uniform_in_the_disabled_arm() -> None:
+    """No 405/Allow method tell on /mcp itself: the placeholder registers the
+    full common method set, so a disabled deployment answers the same 404 on
+    every method instead of leaking an Allow list."""
+    client = _make_client(oauth_enabled=False)
+    for method in _MCP_METHODS:
+        resp = client.request(method, "/mcp")
+        assert resp.status_code == 404
+        assert "allow" not in resp.headers
+
+
+@pytest.mark.parametrize("oauth_enabled", [True, False])
+def test_doc_paths_listed_in_live_openapi_in_both_arms(oauth_enabled: bool) -> None:
+    """The live /openapi.json lists the three doc paths (build-level, like the
+    root discovery doc) in both arms; the /mcp placeholder stays schema-hidden."""
+    client = _make_client(oauth_enabled=oauth_enabled)
+    paths = client.get("/openapi.json").json()["paths"]
+    for path in _MCP_DOC_PATHS:
+        assert path in paths
+    assert "/mcp" not in paths
+
+
+# --- unserved discovery probe arms fall through to 404 (review F7) ----------
+
+
+@pytest.mark.parametrize("oauth_enabled", [True, False])
+@pytest.mark.parametrize("path", _UNSERVED_PROBE_PATHS)
+def test_unserved_discovery_probe_arms_fall_through_404(oauth_enabled: bool, path: str) -> None:
+    """Path-appending and OIDC probe variants 404 in both arms, against the
+    real auth-surface wiring — the fall-through that lands clients on the
+    served RFC 8414 path-insertion doc. A future /mcp/* mount answering
+    401/405 on /mcp/.well-known/... sub-paths would break this order."""
+    client = _make_client(oauth_enabled=oauth_enabled, full_wiring=True)
+    resp = client.get(path)
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not Found"}
+    assert "www-authenticate" not in resp.headers
 
 
 # --- the acceptance-critical root-document regression pins ------------------

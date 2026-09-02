@@ -61,7 +61,7 @@ export class DiscoveryService {
             url: '/.well-known/oauth-authorization-server/mcp',
             errors: {
                 400: `Bad Request`,
-                404: `Interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`): the route answers the framework's plain route-not-found 404, indistinguishable from not-shipped.`,
+                404: `Interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -69,7 +69,7 @@ export class DiscoveryService {
         });
     }
     /**
-     * OAuth protected resource metadata (root alias)
+     * OAuth protected resource metadata (root alias for the MCP resource)
      * Root-path alias of the MCP protected-resource document (phase-3a §4.7).
      *
      * Compatibility fallback for clients that probe the root
@@ -77,16 +77,29 @@ export class DiscoveryService {
      * `resource_metadata` pointer (the documented Claude Code behaviour). Safe
      * because this deployment has exactly one OAuth-protected resource, so the
      * root and path-scoped documents are the same body.
+     *
+     * Two acknowledged trades (§4.7, review F6):
+     *
+     * - RFC 9728 §3 says this well-known path corresponds to resource identifier
+     * ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
+     * the resource they queried. This body claims ``resource={base}/mcp`` — a
+     * strict path-deriving validator would reject it, but Claude's fallback
+     * validates against the MCP server URL (``{base}/mcp``), which is exactly
+     * what the alias exists to satisfy. That is the intended trade.
+     * - The alias squats the deployment's only root PRM slot: a future non-MCP
+     * protected resource at ``{base}`` cannot get its own root document
+     * without breaking this fallback. Phase 3's mount must re-confirm the
+     * "exactly one OAuth-protected resource" premise before adding one.
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static oauthProtectedResource(): CancelablePromise<Record<string, any>> {
+    public static mcpOauthProtectedResourceRootAlias(): CancelablePromise<Record<string, any>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/.well-known/oauth-protected-resource',
             errors: {
                 400: `Bad Request`,
-                404: `Interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`): the route answers the framework's plain route-not-found 404, indistinguishable from not-shipped.`,
+                404: `Interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -109,7 +122,7 @@ export class DiscoveryService {
             url: '/.well-known/oauth-protected-resource/mcp',
             errors: {
                 400: `Bad Request`,
-                404: `Interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`): the route answers the framework's plain route-not-found 404, indistinguishable from not-shipped.`,
+                404: `Interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
