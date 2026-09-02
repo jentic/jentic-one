@@ -607,22 +607,53 @@
       "type": "object"
     },
     "EncryptionKey": {
-      "description": "A single named encryption key.",
+      "description": "A single named encryption key.\n\nThe key material comes from exactly one source:\n\n- ``material``: inline base64 in the config file (the default layout\n  written by ``jenticctl install``).\n- ``material_env``: the NAME of an environment variable holding the\n  base64 material (container/orchestrator secret injection).\n- ``material_keychain``: the service name of a macOS Keychain\n  generic-password item holding the base64 material (local installs;\n  written by ``jenticctl install --keychain``).\n\nResolution happens lazily when the EncryptionService is first built —\nnot at config load — so commands that never touch encryption can't\ntrigger a Keychain prompt. See ``shared/crypto/key_material.py``.",
       "properties": {
         "id": {
           "title": "Id",
           "type": "string"
         },
         "material": {
-          "format": "password",
-          "title": "Material",
-          "type": "string",
-          "writeOnly": true
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material"
+        },
+        "material_env": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material Env"
+        },
+        "material_keychain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material Keychain"
         }
       },
       "required": [
-        "id",
-        "material"
+        "id"
       ],
       "title": "EncryptionKey",
       "type": "object"

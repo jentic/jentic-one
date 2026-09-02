@@ -44,6 +44,14 @@ def test_roundtrip_empty_string():
     assert svc.decrypt(svc.encrypt("")) == ""
 
 
+def test_roundtrip_with_env_sourced_key(monkeypatch):
+    material = base64.b64encode(os.urandom(32)).decode()
+    monkeypatch.setenv("JENTIC_TEST_ENC_KEY", material)
+    entry = EncryptionKey(id="v1", material_env="JENTIC_TEST_ENC_KEY")
+    svc = EncryptionService(EncryptionConfig(active_id="v1", entries=[entry]))
+    assert svc.decrypt(svc.encrypt("secret")) == "secret"
+
+
 # --- Blob format ---
 
 

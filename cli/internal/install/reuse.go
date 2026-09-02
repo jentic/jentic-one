@@ -105,12 +105,13 @@ func ReuseSecrets(d *Draft, path string) (bool, error) {
 
 	// Encryption keyset: preserve the whole block verbatim. A hand-rotated
 	// multi-key keyset (active_id: v2 + v1/v2 entries) must survive; only
-	// carry it over when it looks real (has at least one non-empty entry) so
-	// an empty/malformed prior config doesn't wipe the fresh default.
+	// carry it over when it looks real (has at least one entry with inline
+	// material OR a keychain reference — see keychain.go) so an
+	// empty/malformed prior config doesn't wipe the fresh default.
 	if len(view.Credentials.Encryption.Entries) > 0 {
 		nonEmpty := false
 		for _, e := range view.Credentials.Encryption.Entries {
-			if e.ID != "" && e.Material != "" {
+			if e.ID != "" && (e.Material != "" || e.MaterialKeychain != "") {
 				nonEmpty = true
 				break
 			}

@@ -84,8 +84,9 @@ type adminOut struct {
 }
 
 type encryptionEntryOut struct {
-	ID       string `yaml:"id"`
-	Material string `yaml:"material"`
+	ID               string `yaml:"id"`
+	Material         string `yaml:"material,omitempty"`
+	MaterialKeychain string `yaml:"material_keychain,omitempty"`
 }
 
 type encryptionOut struct {
@@ -171,10 +172,17 @@ type configOut struct {
 // encryptionOut builds the credentials.encryption block. When ReuseSecrets
 // carried a keyset over from an existing config, render it verbatim so a
 // hand-rotated multi-key keyset survives the rewrite; otherwise emit the
-// default single-v1 layout populated by FillSecrets.
+// default single-v1 layout — a keychain reference when ApplyKeychain moved
+// the material out of the config, else the inline key from FillSecrets.
 func (d *Draft) encryptionOut() encryptionOut {
 	if d.EncryptionKeyset != nil {
 		return *d.EncryptionKeyset
+	}
+	if d.EncryptionKeychain != "" {
+		return encryptionOut{
+			ActiveID: "v1",
+			Entries:  []encryptionEntryOut{{ID: "v1", MaterialKeychain: d.EncryptionKeychain}},
+		}
 	}
 	return encryptionOut{
 		ActiveID: "v1",

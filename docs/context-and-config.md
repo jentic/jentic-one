@@ -31,6 +31,25 @@ All other fields have sensible defaults (localhost:5432, pool sizes, etc.).
 
 Database passwords use `pydantic.SecretStr` — they are automatically redacted in logs, repr, and serialization. Access the raw value only via `.get_secret_value()`.
 
+### Encryption key sources
+
+The AES-256-GCM keyset that encrypts stored credentials (`credentials.encryption.entries`) supports one material source per entry — set exactly one:
+
+```yaml
+credentials:
+  encryption:
+    active_id: v1
+    entries:
+      - id: v1
+        material: "<base64>"           # inline (default; written by jenticctl install)
+      # - id: v1
+      #   material_env: MY_KEK_VAR     # name of an env var holding the base64 key
+      # - id: v1
+      #   material_keychain: jentic-one-credentials-encryption-v1  # macOS Keychain service name
+```
+
+`material_env` suits containerized deployments (compose/K8s secret injection). `material_keychain` reads a macOS Keychain generic-password item via `/usr/bin/security` and is written by `jenticctl install --keychain` (macOS, source runtime only) — it keeps the key off disk so a same-user process cannot silently read it. Resolution happens when the encryption service is first used, not at config load, so a locked keychain never blocks unrelated commands.
+
 ## Context
 
 `Context` is the central object that holds the resolved config and manages database engines/sessions.

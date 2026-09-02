@@ -30,6 +30,11 @@ type installOptions struct {
 	noWizard     bool
 	freshSecrets bool
 	freshVenv    bool
+	// keychain moves the credentials encryption key into the macOS Keychain
+	// instead of writing it inline into jentic-one.yaml (local source path on
+	// darwin only — a container cannot reach the host keychain). On a
+	// reinstall it also migrates a reused inline keyset into the keychain.
+	keychain bool
 	// preset selects an embedded config preset (impl/6.0 §3.5); empty means none
 	// (schema defaults + the wizard/flags stand). The schema-driven --section-field
 	// flags are bound onto the command from the generated BackendConfig and, together
@@ -108,6 +113,10 @@ func newInstallCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.freshVenv, "fresh-venv", false,
 		"wipe any existing local venv before building (recovers a wedged/half-populated "+
 			"~/.jentic/venv from a prior failed install; local path only)")
+	cmd.Flags().BoolVar(&opts.keychain, "keychain", false,
+		"store the credentials encryption key in the macOS Keychain instead of "+
+			"jentic-one.yaml (macOS + source runtime only; a reinstall migrates an "+
+			"existing inline key; uninstall leaves the keychain item in place)")
 	cmd.Flags().StringVar(&opts.preset, "preset", "",
 		"apply an embedded config preset over schema defaults ("+strings.Join(ctl.Presets(), ", ")+"); empty means none")
 	cmd.Flags().BoolVar(&opts.configForm, "config-form", false,
@@ -223,6 +232,21 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 
 	if err := draft.FillSecrets(); err != nil {
 		return err
+	}
+
+	// --keychain: move the (fresh or reused) key material into the macOS
+	// Keychain and leave only a material_keychain reference for Render.
+	// Validated inside ApplyKeychain (darwin + non-Docker); failing here,
+	// before the consent gate and any disk writes, keeps a refused flag from
+	// leaving a half-done install behind.
+	if opts.keychain {
+		if err := draft.ApplyKeychain(); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, theme.Dimf(
+			"Stored the credentials encryption key in the macOS Keychain "+
+				"(service prefix %q); jentic-one.yaml carries only a reference.",
+			install.KeychainServiceName("")))
 	}
 
 	// Telemetry consent gate: asked once, after the user has confirmed their

@@ -937,13 +937,39 @@ func (j *EncryptionConfig) UnmarshalJSON(value []byte) error {
 }
 
 // A single named encryption key.
+//
+// The key material comes from exactly one source:
+//
+//   - “material“: inline base64 in the config file (the default layout
+//     written by “jenticctl install“).
+//   - “material_env“: the NAME of an environment variable holding the
+//     base64 material (container/orchestrator secret injection).
+//   - “material_keychain“: the service name of a macOS Keychain
+//     generic-password item holding the base64 material (local installs;
+//     written by “jenticctl install --keychain“).
+//
+// Resolution happens lazily when the EncryptionService is first built —
+// not at config load — so commands that never touch encryption can't
+// trigger a Keychain prompt. See “shared/crypto/key_material.py“.
 type EncryptionKey struct {
 	// Id corresponds to the JSON schema field "id".
 	Id string `json:"id" yaml:"id" mapstructure:"id"`
 
 	// Material corresponds to the JSON schema field "material".
-	Material string `json:"material" yaml:"material" mapstructure:"material"`
+	Material interface{} `json:"material,omitempty,omitzero" yaml:"material,omitempty" mapstructure:"material,omitempty"`
+
+	// MaterialEnv corresponds to the JSON schema field "material_env".
+	MaterialEnv interface{} `json:"material_env,omitempty,omitzero" yaml:"material_env,omitempty" mapstructure:"material_env,omitempty"`
+
+	// MaterialKeychain corresponds to the JSON schema field "material_keychain".
+	MaterialKeychain interface{} `json:"material_keychain,omitempty,omitzero" yaml:"material_keychain,omitempty" mapstructure:"material_keychain,omitempty"`
 }
+
+type EncryptionKeyMaterialEnv_0 *string
+
+type EncryptionKeyMaterialKeychain_0 *string
+
+type EncryptionKeyMaterial_0 *string
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *EncryptionKey) UnmarshalJSON(value []byte) error {
@@ -953,9 +979,6 @@ func (j *EncryptionKey) UnmarshalJSON(value []byte) error {
 	}
 	if _, ok := raw["id"]; raw != nil && !ok {
 		return fmt.Errorf("field id in EncryptionKey: required")
-	}
-	if _, ok := raw["material"]; raw != nil && !ok {
-		return fmt.Errorf("field material in EncryptionKey: required")
 	}
 	type Plain EncryptionKey
 	var plain Plain

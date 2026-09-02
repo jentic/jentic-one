@@ -126,6 +126,13 @@ type Draft struct {
 	// layout from EncryptionKey in that case.
 	EncryptionKeyset *encryptionOut
 
+	// EncryptionKeychain is the Keychain service name the encryption key was
+	// stored under when the operator passed --keychain (set by ApplyKeychain
+	// after it moves the material out of the draft). When non-empty (and no
+	// keyset carry-over is present) render.go emits a `material_keychain`
+	// reference instead of an inline `material` value.
+	EncryptionKeychain string
+
 	// Telemetry consent decision, stamped onto the draft by the install command
 	// (from the consent prompt) before rendering. When TelemetryEnabled is true
 	// a stable opaque TelemetryInstanceID is generated and both are written into

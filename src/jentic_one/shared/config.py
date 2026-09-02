@@ -369,10 +369,27 @@ _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class EncryptionKey(BaseModel):
-    """A single named encryption key."""
+    """A single named encryption key.
+
+    The key material comes from exactly one source:
+
+    - ``material``: inline base64 in the config file (the default layout
+      written by ``jenticctl install``).
+    - ``material_env``: the NAME of an environment variable holding the
+      base64 material (container/orchestrator secret injection).
+    - ``material_keychain``: the service name of a macOS Keychain
+      generic-password item holding the base64 material (local installs;
+      written by ``jenticctl install --keychain``).
+
+    Resolution happens lazily when the EncryptionService is first built —
+    not at config load — so commands that never touch encryption can't
+    trigger a Keychain prompt. See ``shared/crypto/key_material.py``.
+    """
 
     id: str
-    material: SecretStr
+    material: SecretStr | None = None
+    material_env: str | None = None
+    material_keychain: str | None = None
 
     @field_validator("id")
     @classmethod
@@ -380,6 +397,24 @@ class EncryptionKey(BaseModel):
         if not _KEY_ID_RE.match(v):
             raise ValueError("key id must match [a-zA-Z0-9_-]+")
         return v
+
+    @model_validator(mode="after")
+    def _exactly_one_source(self) -> EncryptionKey:
+        sources = [
+            s
+            for s, present in (
+                ("material", self.material is not None),
+                ("material_env", bool(self.material_env)),
+                ("material_keychain", bool(self.material_keychain)),
+            )
+            if present
+        ]
+        if len(sources) != 1:
+            raise ValueError(
+                "exactly one of material, material_env, material_keychain must be set"
+                + (f" (got: {', '.join(sources)})" if sources else "")
+            )
+        return self
 
 
 class EncryptionConfig(BaseModel):

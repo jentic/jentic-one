@@ -18,9 +18,17 @@ CONFIG_FILE = SRC_ROOT / "shared" / "config.py"
 
 SECRET_NAME_PARTS = ("secret", "password", "pepper", "token", "key")
 
+# Fields that match the name heuristic but hold a REFERENCE to a secret's
+# location, not the secret itself. `material_keychain` is the macOS Keychain
+# service NAME the key material lives under (shared/crypto/key_material.py);
+# the material never enters the config object.
+NON_SECRET_FIELDS = frozenset({"material_keychain"})
+
 
 def _is_secret_field(name: str) -> bool:
     """Return True if a field name looks like it holds a secret value."""
+    if name in NON_SECRET_FIELDS:
+        return False
     lowered = name.lower()
     return any(part in lowered for part in SECRET_NAME_PARTS)
 

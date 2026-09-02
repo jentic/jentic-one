@@ -3089,6 +3089,12 @@
               "usage": "Docker path: pull this app image tag or @sha256: digest (or a full ghcr.io/…@sha256 ref) instead of the version-matched tag; ignored with --build-local"
             },
             {
+              "name": "keychain",
+              "type": "bool",
+              "default": "false",
+              "usage": "store the credentials encryption key in the macOS Keychain instead of jentic-one.yaml (macOS + source runtime only; a reinstall migrates an existing inline key; uninstall leaves the keychain item in place)"
+            },
+            {
               "name": "no-start",
               "type": "bool",
               "default": "false",

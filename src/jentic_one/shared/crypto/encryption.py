@@ -12,6 +12,7 @@ import os
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from jentic_one.shared.config import ConfigError, EncryptionConfig
+from jentic_one.shared.crypto.key_material import resolve_key_material
 
 _NONCE_BYTES = 12
 _KEY_BYTES = 32
@@ -34,7 +35,7 @@ class EncryptionService:
         for entry in cfg.entries:
             if entry.id in self._ciphers:
                 raise ConfigError(f"Duplicate encryption key id: '{entry.id}'")
-            raw = base64.b64decode(entry.material.get_secret_value())
+            raw = resolve_key_material(entry)
             if len(raw) != _KEY_BYTES:
                 raise ConfigError(
                     f"Encryption key '{entry.id}' must be {_KEY_BYTES} bytes, got {len(raw)}"
