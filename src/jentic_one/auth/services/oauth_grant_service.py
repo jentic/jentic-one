@@ -26,6 +26,7 @@ from jentic_one.admin.services.oauth_grant_admin_service import (
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
+    ConsentAgentNotEligibleError,
     OAuthGrantAccessDeniedError,
     OAuthGrantNotFoundError,
 )
@@ -34,7 +35,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OAUTH_CLIENTS_READ
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 from jentic_one.shared.pagination import Page
@@ -185,15 +186,37 @@ class OAuthGrantService:
     ) -> str:
         """Mint an ``oauth_client_grants`` row at consent-approve (§4.4 step 3).
 
-        Collapses any prior active row for the (client, agent) pair (§4.1:
-        re-consent revokes the old row and inserts the new one — history
-        stays, exactly one active row per pair). Writes the consent audit row
-        (the pre-3a ``record_consent_decision`` shape, extended with
-        ``agent_id``/``grant_id``) and emits ``oauth_grant.created`` — grant
-        creation is deliberately loud (§4.8). Returns the new grant id.
+        Locks the agent row and re-checks the consent predicate (exists +
+        ``active`` + owned by ``user_id``) inside the mint transaction —
+        raising :class:`ConsentAgentNotEligibleError` on failure — so a
+        concurrent ownership transfer serializes against the mint instead of
+        racing it. Collapses any prior active row for the (client, agent)
+        pair (§4.1: re-consent revokes the old row and inserts the new one —
+        history stays, exactly one active row per pair). Writes the consent
+        audit row (the pre-3a ``record_consent_decision`` shape, extended
+        with ``agent_id``/``grant_id``) and emits ``oauth_grant.created`` —
+        grant creation is deliberately loud (§4.8). Returns the new grant id.
         """
 
         async def _write(session: AsyncSession) -> str:
+            # Consent-vs-transfer TOCTOU closure: the consent screen's
+            # ownership check ran in an earlier, unlocked read, so a transfer
+            # can commit in between (the consent handle stays valid for
+            # 300 s). Take the SAME row lock the transfer transaction takes
+            # (FOR UPDATE in AgentService.update_agent) and re-run the
+            # list_consentable_agents predicate here, inside the mint
+            # transaction: either the mint commits first (the transfer's
+            # sweep then revokes it) or the transfer commits first (this
+            # re-check sees the new owner/status and refuses). This lock +
+            # re-check is what makes "a LIVE grant's consenter is the
+            # agent's current owner" hold.
+            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+            if (
+                agent is None
+                or agent.status != ActorStatus.ACTIVE.value
+                or agent.owner_id != user_id
+            ):
+                raise ConsentAgentNotEligibleError(agent_id)
             prior = await OAuthClientGrantRepository.list_active_for_pair(
                 session, oauth_client_id=oauth_client_id, agent_id=agent_id
             )
@@ -298,10 +321,13 @@ class OAuthGrantService:
         redirect-URI origin, scopes, created, last-used, status) plus the
         consenting ``user_id`` and the viewer's per-item ``can_revoke``
         capability. The two predicates still differ (list keys on the agent's
-        current owner, revoke on the grant's consenting user), but since G10
-        (#1222) an ownership transfer revokes all active grants, so a LIVE
-        grant's consenter is always the current owner — the divergence only
-        shows on revoked history rows.
+        current owner, revoke on the grant's consenting user), but a LIVE
+        grant's consenter is always the current owner — an invariant that
+        holds BECAUSE G10 (#1222) makes an ownership transfer revoke all
+        active grants in the transfer transaction AND ``create_grant`` locks
+        the agent row and re-checks ownership inside the mint transaction
+        (closing the consent-vs-transfer race). The divergence only shows on
+        revoked history rows.
         """
         async with self._ctx.admin_db.session() as session:
             agent = await AgentRepository.get_by_id(session, agent_id)

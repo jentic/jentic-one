@@ -28,6 +28,7 @@ from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.core.idp import IdpClaims
 from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import (
+    ConsentAgentNotEligibleError,
     InvalidGrantError,
     RateLimitExceededError,
     UserNotAdmittedError,
@@ -1477,13 +1478,23 @@ async def _approve_agent_consent(
         logger.warning("oauth_consent_no_grantable_scopes", client_id=client_id, agent_id=agent_id)
         return RedirectResponse(url="/error?error=no_grantable_scopes", status_code=302)
 
-    grant_id_value = await grant_svc.create_grant(
-        user_id=user_id,
-        oauth_client_id=client_id,
-        agent_id=selected.id,
-        scopes=effective,
-        client_name=oauth_client.name,
-    )
+    try:
+        grant_id_value = await grant_svc.create_grant(
+            user_id=user_id,
+            oauth_client_id=client_id,
+            agent_id=selected.id,
+            scopes=effective,
+            client_name=oauth_client.name,
+        )
+    except ConsentAgentNotEligibleError:
+        # The mint-time lock + re-check refused: the agent was transferred,
+        # archived, or disabled between the picker validation above and the
+        # grant write. Same user-facing posture as a failed picker
+        # validation — the human error page, never a code redirect or a 500.
+        logger.warning(
+            "oauth_consent_agent_invalid_at_mint", client_id=client_id, agent_id=agent_id
+        )
+        return RedirectResponse(url="/error?error=invalid_agent_selection", status_code=302)
     return grant_id_value, effective
 
 

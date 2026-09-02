@@ -10,7 +10,10 @@ the manual ``:revoke`` body (row flip + token sweep + audit + event).
 
 Covers the service seam (``AgentService.update_agent``) and the full REST
 path (``PATCH /agents/{id}``), plus the fail-safe posture: a failed sweep
-rolls the whole transfer back.
+rolls the whole transfer back. The consent-vs-transfer race half (review F1)
+is covered too: ``create_grant`` locks the agent row and re-checks ownership
+inside the mint transaction, so a consent approval racing a transfer is
+refused instead of committing a live grant consented by the old owner.
 """
 
 from __future__ import annotations
@@ -24,10 +27,16 @@ from sqlalchemy import select
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos import AgentRepository
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.agent_service import AgentService
-from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
+from jentic_one.auth.services.authorize_service import AuthorizeService
+from jentic_one.auth.services.errors import (
+    AuthServiceError,
+    ConsentAgentNotEligibleError,
+    InvalidGrantError,
+)
 from jentic_one.auth.services.oauth_grant_service import (
     AGENT_TRANSFER_REVOCATION_REASON,
     OAuthGrantService,
@@ -264,3 +273,116 @@ async def test_rest_patch_owner_transfer_revokes_grants(
     grant = await OAuthGrantService(ctx).get_grant(grant_id)
     assert grant is not None and grant.status == "revoked"
     assert await TokenService(ctx).resolve_access_token(access) is None
+
+
+async def test_consent_mint_racing_transfer_is_refused(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """Two-session race simulation (review F1): the consent screen's ownership
+    validation passes, a transfer commits in between, and the mint is refused
+    by the lock + re-check inside ``create_grant``'s transaction — no live
+    grant consented by the old owner ever commits.
+
+    NOTE: SQLite ignores FOR UPDATE, so on this backend the test proves the
+    in-transaction ownership re-check; the row lock's serialization against a
+    concurrent transfer transaction is proven by CI's Postgres leg.
+    """
+    ctx = integration_context
+    old_owner = await seeds.seed_user(ctx, "usr_t_race_old")
+    new_owner = await seeds.seed_user(ctx, "usr_t_race_new")
+    admin_id = await seeds.seed_user(ctx, "usr_t_race_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=old_owner, scopes=["apis:read"])
+    await seeds.seed_client(ctx, allowed_scopes=["apis:read"])
+
+    # t0 — the consent screen's server-side validation: the agent IS a valid
+    # pick for the old owner (this is the unlocked read the race exploits).
+    options = await AuthorizeService(ctx).list_consentable_agents(old_owner)
+    assert any(o.id == agent_id for o in options)
+
+    # t1 — the transfer commits between validation and mint (the departing
+    # owner can hold the consent handle for up to 300 s).
+    await AgentService(ctx).update_agent(
+        agent_id, update_data={"owner_id": new_owner}, identity=_admin_identity(admin_id)
+    )
+
+    # t2 — the mint re-checks ownership inside its own transaction and refuses.
+    with pytest.raises(ConsentAgentNotEligibleError):
+        await OAuthGrantService(ctx).create_grant(
+            user_id=old_owner,
+            oauth_client_id=seeds.CLIENT_ID,
+            agent_id=agent_id,
+            scopes=["apis:read"],
+            client_name="Grant Channel App",
+        )
+
+    # Nothing committed: no grant row (any status) exists for the agent.
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(
+            select(OAuthClientGrant).where(OAuthClientGrant.agent_id == agent_id)
+        )
+        assert list(result.scalars().all()) == []
+
+
+async def test_transfer_rolls_back_when_post_sweep_step_fails(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """Same-transaction pin (review F2): fail the step AFTER the sweep — the
+    transfer's own ``record_audit`` — and assert from a fresh session that
+    BOTH the owner change and the grant revocations rolled back. This test
+    fails if the sweep ever moves to its own (committed) transaction, which
+    the sweep-failure rollback test alone cannot distinguish."""
+    ctx = integration_context
+    old_owner = await seeds.seed_user(ctx, "usr_t_pin_old")
+    new_owner = await seeds.seed_user(ctx, "usr_t_pin_new")
+    admin_id = await seeds.seed_user(ctx, "usr_t_pin_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=old_owner, scopes=["apis:read"])
+    await seeds.seed_client(ctx, allowed_scopes=["apis:read"])
+    grant_id, access, _refresh, _ = await seeds.mint_grant_channel_tokens(
+        ctx, user_id=old_owner, agent_id=agent_id, grant_scopes=["apis:read"]
+    )
+
+    # Patch ONLY the transfer transaction's own audit call (the sweep's
+    # per-grant audits go through oauth_grant_service's import and stay real).
+    with (
+        patch(
+            "jentic_one.auth.services.agent_service.record_audit",
+            new=AsyncMock(side_effect=RuntimeError("audit exploded")),
+        ),
+        pytest.raises(RuntimeError, match="audit exploded"),
+    ):
+        await AgentService(ctx).update_agent(
+            agent_id, update_data={"owner_id": new_owner}, identity=_admin_identity(admin_id)
+        )
+
+    # Fresh session: owner unchanged AND the sweep's writes rolled back with it.
+    async with ctx.admin_db.session() as session:
+        agent = await AgentRepository.get_by_id(session, agent_id)
+    assert agent is not None and agent.owner_id == old_owner
+    grant = await OAuthGrantService(ctx).get_grant(grant_id)
+    assert grant is not None and grant.status == "active"
+    assert await TokenService(ctx).resolve_access_token(access) is not None
+
+
+async def test_transfer_from_unowned_agent_runs_empty_sweep(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """The NULL→owner PATCH arm (review F5): assigning an owner to an unowned
+    agent counts as a transfer (``None != new_owner``) and runs the sweep —
+    an unowned agent can hold no grants, so it is an empty no-op: no crash,
+    no grant audit/events, owner set."""
+    ctx = integration_context
+    old_owner = await seeds.seed_user(ctx, "usr_t_null_old")
+    new_owner = await seeds.seed_user(ctx, "usr_t_null_new")
+    admin_id = await seeds.seed_user(ctx, "usr_t_null_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=old_owner, scopes=["apis:read"])
+    admin = _admin_identity(admin_id)
+    svc = AgentService(ctx)
+
+    # Detach the owner first (owner→NULL is itself a transfer; with no grants
+    # it sweeps nothing) so the PATCH under test genuinely starts from NULL.
+    view = await svc.update_agent(agent_id, update_data={"owner_id": None}, identity=admin)
+    assert view.owner_id is None
+
+    view = await svc.update_agent(agent_id, update_data={"owner_id": new_owner}, identity=admin)
+    assert view.owner_id == new_owner
+    assert await _transfer_revoked_events(ctx, agent_id) == []

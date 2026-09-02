@@ -145,6 +145,23 @@ class RateLimitExceededError(AuthServiceError):
         self.retry_after = retry_after
 
 
+class ConsentAgentNotEligibleError(AuthServiceError):
+    """Raised when the mint-time re-check refuses a consent→agent grant.
+
+    ``OAuthGrantService.create_grant`` locks the agent row (``FOR UPDATE``)
+    and re-checks the consent predicate — exists, ``active``, owned by the
+    consenting user — INSIDE the mint transaction, closing the TOCTOU where
+    an ownership transfer commits between the consent screen's unlocked
+    validation read and the grant write. The consent flow maps this to the
+    same human error page as a failed picker validation (never an OAuth
+    redirect carrying a code, never a 500).
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' is not eligible for a consent grant")
+        self.agent_id = agent_id
+
+
 class OAuthGrantNotFoundError(AuthServiceError):
     """Raised when an oauth_client_grants row does not exist."""
 

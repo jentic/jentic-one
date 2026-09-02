@@ -6,8 +6,9 @@
  * Each row shows the client (name + redirect-URI origin), the granted scopes,
  * WHO consented (`userId` via `ActorLabel` — deliberately surfaced: revoked
  * history rows keep the original consenter, and since G10/#1222 an agent
- * ownership transfer auto-revokes all active grants, so a stale consenter
- * only ever appears on revoked rows), created / last-used timestamps,
+ * ownership transfer auto-revokes all active grants while grant minting
+ * locks + re-checks agent ownership in the same transaction, so a stale
+ * consenter only ever appears on revoked rows), created / last-used timestamps,
  * and the per-grant Revoke kill switch (§4.6). Revoke honours the server's
  * per-item `canRevoke` capability: the revoke predicate (consenting user or
  * write-set admin) is deliberately NARROWER than the list predicate (agent's
