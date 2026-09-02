@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
@@ -60,6 +60,52 @@ class OAuthClientGrantRepository:
         )
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def list_grants(
+        session: AsyncSession,
+        *,
+        agent_id: str | None = None,
+        oauth_client_id: str | None = None,
+        user_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        cursor: datetime | None = None,
+    ) -> list[OAuthClientGrant]:
+        """List grant rows for the §4.8 surfaces, newest first.
+
+        Filterable by any combination of agent, client (public ``client_id``
+        string — the token-lineage join key, D3), consenting user, and status.
+        Keyset-paginated on ``created_at`` like the other list repos.
+        """
+        stmt = (
+            select(OAuthClientGrant)
+            .order_by(OAuthClientGrant.created_at.desc(), OAuthClientGrant.id.desc())
+            .limit(limit)
+        )
+        if agent_id is not None:
+            stmt = stmt.where(OAuthClientGrant.agent_id == agent_id)
+        if oauth_client_id is not None:
+            stmt = stmt.where(OAuthClientGrant.oauth_client_id == oauth_client_id)
+        if user_id is not None:
+            stmt = stmt.where(OAuthClientGrant.user_id == user_id)
+        if status is not None:
+            stmt = stmt.where(OAuthClientGrant.status == status)
+        if cursor is not None:
+            stmt = stmt.where(OAuthClientGrant.created_at < cursor)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def count_active_by_client(session: AsyncSession) -> dict[str, int]:
+        """Active-grant counts keyed by public ``client_id`` (§4.8 per-client count)."""
+        stmt = (
+            select(OAuthClientGrant.oauth_client_id, func.count())
+            .where(OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value)
+            .group_by(OAuthClientGrant.oauth_client_id)
+        )
+        result = await session.execute(stmt)
+        return dict(result.all())  # type: ignore[arg-type]
 
     @staticmethod
     async def revoke(session: AsyncSession, grant_id: str) -> bool:

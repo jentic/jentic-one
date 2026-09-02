@@ -161,8 +161,8 @@ class OAuthGrantAccessDeniedError(AuthServiceError):
     the grant id is a ksuid, not a secret.
     """
 
-    def __init__(self, grant_id: str) -> None:
-        super().__init__(f"Not permitted to operate on OAuth grant '{grant_id}'")
+    def __init__(self, grant_id: str, *, message: str | None = None) -> None:
+        super().__init__(message or f"Not permitted to operate on OAuth grant '{grant_id}'")
         self.grant_id = grant_id
 
 

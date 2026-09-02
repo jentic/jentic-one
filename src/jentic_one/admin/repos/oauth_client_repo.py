@@ -96,6 +96,19 @@ class OAuthClientRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def list_by_client_ids(session: AsyncSession, client_ids: list[str]) -> list[OAuthClient]:
+        """Fetch client rows for a set of public ``client_id`` strings.
+
+        Used to enrich grant listings (§4.8: client name + redirect-URI
+        origin) without an N+1 per grant row.
+        """
+        if not client_ids:
+            return []
+        stmt = select(OAuthClient).where(OAuthClient.client_id.in_(client_ids))
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_dcr_by_dedupe_key(
         session: AsyncSession, software_id: str, fingerprint: str
     ) -> list[OAuthClient]:

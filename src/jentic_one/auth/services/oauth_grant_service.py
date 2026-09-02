@@ -14,21 +14,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos import (
     AccessTokenRepository,
+    AgentRepository,
     OAuthClientGrantRepository,
     RefreshTokenRepository,
 )
+from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminService
+from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
 from jentic_one.auth.services.errors import (
+    ActorNotFoundError,
     OAuthGrantAccessDeniedError,
     OAuthGrantNotFoundError,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import OAUTH_CLIENTS_WRITE, ORG_ADMIN
+from jentic_one.shared.auth.permission_catalog import (
+    OAUTH_CLIENTS_READ,
+    OAUTH_CLIENTS_WRITE,
+    ORG_ADMIN,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
+from jentic_one.shared.pagination import Page
 
 logger = structlog.get_logger(__name__)
 
@@ -37,6 +46,12 @@ logger = structlog.get_logger(__name__)
 #: holders administer the client lifecycle (the same permission gating the
 #: admin oauth-clients router), and a grant is part of that lifecycle.
 _ADMIN_PERMISSIONS: frozenset[str] = frozenset({ORG_ADMIN, OAUTH_CLIENTS_WRITE})
+
+#: Read-side admin set (§4.8 listings): everything above plus the read-only
+#: half of the client-lifecycle permission pair — the same permission that
+#: gates ``GET /admin/oauth-clients`` and the ``/admin/oauth-grants``
+#: cross-view, so a caller who can see grants there can see them per-agent.
+_ADMIN_READ_PERMISSIONS: frozenset[str] = _ADMIN_PERMISSIONS | {OAUTH_CLIENTS_READ}
 
 
 class OAuthGrantService:
@@ -182,6 +197,40 @@ class OAuthGrantService:
         revoked = await self._ctx.admin_db.run_in_transaction(_write)
         if revoked:
             logger.info("oauth_grant_revoked", grant_id=grant_id, actor_id=identity.sub)
+
+    async def list_grants_for_agent(
+        self,
+        agent_id: str,
+        *,
+        identity: Identity,
+        status: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> Page[OAuthGrantView]:
+        """The per-agent "Connected clients" listing (§4.8).
+
+        Owner-or-admin, mirroring ``revoke_grant``'s semantics on the read
+        side: the agent's owner sees their agent's grants; anyone else needs
+        an admin permission (403, not 404 — agent ids are ksuids, not
+        secrets). Items carry the §4.8 display fields (client name,
+        redirect-URI origin, scopes, created, last-used, status) plus the
+        consenting ``user_id`` so the G10 ownership-transfer gap is visible.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agent = await AgentRepository.get_by_id(session, agent_id)
+        if agent is None:
+            raise ActorNotFoundError(agent_id)
+        if agent.owner_id != identity.sub and not (
+            _ADMIN_READ_PERMISSIONS & set(identity.permissions)
+        ):
+            raise OAuthGrantAccessDeniedError(
+                agent_id,
+                message=f"Not permitted to list OAuth grants for agent '{agent_id}'",
+            )
+
+        return await OAuthGrantAdminService(self._ctx).list_grants(
+            agent_id=agent_id, status=status, limit=limit, cursor=cursor
+        )
 
     async def get_grant(self, grant_id: str) -> OAuthClientGrant | None:
         """Read one grant row (used by tests and the exchange path)."""

@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import structlog
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
+from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services._support.passwords import hash_password, verify_password
 from jentic_one.admin.services._support.tokens import generate_client_id, generate_client_secret
@@ -212,12 +213,15 @@ class OAuthClientService:
             return OAuthClientCreateResult(**view.model_dump(), client_secret=client_secret)
 
     async def get(self, id: str) -> OAuthClientView:
-        """Get an OAuth client by internal ID."""
+        """Get an OAuth client by internal ID (with its active-grant count)."""
         async with self._ctx.admin_db.session() as session:
             client = await OAuthClientRepository.get_by_id(session, id)
-        if client is None:
-            raise OAuthClientNotFoundError(id)
-        return _to_view(client)
+            if client is None:
+                raise OAuthClientNotFoundError(id)
+            counts = await OAuthClientGrantRepository.count_active_by_client(session)
+        view = _to_view(client)
+        view.active_grant_count = counts.get(client.client_id, 0)
+        return view
 
     async def get_by_client_id(self, client_id: str) -> OAuthClientView | None:
         """Get an OAuth client by its public client_id. Returns None if not found."""
@@ -257,7 +261,13 @@ class OAuthClientService:
                 include_inactive=include_inactive,
                 approval_status=approval_status,
             )
-        return [_to_view(c) for c in clients]
+            counts = await OAuthClientGrantRepository.count_active_by_client(session)
+        views = []
+        for c in clients:
+            view = _to_view(c)
+            view.active_grant_count = counts.get(c.client_id, 0)
+            views.append(view)
+        return views
 
     async def update(
         self,

@@ -3352,6 +3352,11 @@ components:
         active:
           title: Active
           type: boolean
+        active_grant_count:
+          default: 0
+          description: Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+          title: Active Grant Count
+          type: integer
         allowed_scopes:
           anyOf:
           - items:
@@ -3631,6 +3636,11 @@ components:
         active:
           title: Active
           type: boolean
+        active_grant_count:
+          default: 0
+          description: Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+          title: Active Grant Count
+          type: integer
         allowed_scopes:
           anyOf:
           - items:
@@ -3775,6 +3785,192 @@ components:
           - type: 'null'
           title: Require Consent
       title: OAuthClientUpdateRequest
+      type: object
+    OAuthGrantAdminListResponse:
+      description: A paginated list of OAuth grants (admin cross-view).
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/OAuthGrantAdminResponse'
+          title: Data
+          type: array
+        has_more:
+          title: Has More
+          type: boolean
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - data
+      - has_more
+      title: OAuthGrantAdminListResponse
+      type: object
+    OAuthGrantAdminResponse:
+      description: One consent→agent grant in the admin cross-view.
+      properties:
+        agent_id:
+          description: The agent this grant binds the client to.
+          title: Agent Id
+          type: string
+        client_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Display name of the registered client, if the row still exists.
+          title: Client Name
+        client_origin:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
+          title: Client Origin
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          description: Grant ID (ksuid, `ocg_` prefix).
+          title: Id
+          type: string
+        last_used_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: Last time the client obtained tokens under this grant (stamped at exchange/refresh, not per request).
+          title: Last Used At
+        oauth_client_id:
+          description: The client's public client_id — the same identifier stamped on tokens minted under this grant.
+          title: Oauth Client Id
+          type: string
+        revoked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Revoked At
+        scopes:
+          description: Scopes granted at consent (the D2 intersection).
+          items:
+            type: string
+          title: Scopes
+          type: array
+        status:
+          description: 'Grant lifecycle state: ``active`` or ``revoked``.'
+          title: Status
+          type: string
+        user_id:
+          description: 'The consenting user who approved this grant. Shown even after an agent ownership transfer: the grant stays with the original consenter (it is their consent, not the agent''s).'
+          title: User Id
+          type: string
+      required:
+      - id
+      - oauth_client_id
+      - client_name
+      - client_origin
+      - user_id
+      - agent_id
+      - scopes
+      - status
+      - created_at
+      - revoked_at
+      - last_used_at
+      title: OAuthGrantAdminResponse
+      type: object
+    OAuthGrantListResponse:
+      description: A paginated list of OAuth grants.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/OAuthGrantResponse'
+          title: Data
+          type: array
+        has_more:
+          title: Has More
+          type: boolean
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - data
+      - has_more
+      title: OAuthGrantListResponse
+      type: object
+    OAuthGrantResponse:
+      description: One consent→agent grant in API responses.
+      properties:
+        agent_id:
+          description: The agent this grant binds the client to.
+          title: Agent Id
+          type: string
+        client_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Display name of the registered client, if the row still exists.
+          title: Client Name
+        client_origin:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
+          title: Client Origin
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          description: Grant ID (ksuid, `ocg_` prefix).
+          title: Id
+          type: string
+        last_used_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: Last time the client obtained tokens under this grant (stamped at exchange/refresh, not per request).
+          title: Last Used At
+        oauth_client_id:
+          description: The client's public client_id — the same identifier stamped on tokens minted under this grant.
+          title: Oauth Client Id
+          type: string
+        revoked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Revoked At
+        scopes:
+          description: Scopes granted at consent (the D2 intersection).
+          items:
+            type: string
+          title: Scopes
+          type: array
+        status:
+          description: 'Grant lifecycle state: ``active`` or ``revoked``.'
+          title: Status
+          type: string
+        user_id:
+          description: 'The consenting user who approved this grant. Shown even after an agent ownership transfer: the grant stays with the original consenter (it is their consent, not the agent''s).'
+          title: User Id
+          type: string
+      required:
+      - id
+      - oauth_client_id
+      - client_name
+      - client_origin
+      - user_id
+      - agent_id
+      - scopes
+      - status
+      - created_at
+      - revoked_at
+      - last_used_at
+      title: OAuthGrantResponse
       type: object
     OperationPreviewListResponse:
       description: |-
@@ -8151,6 +8347,132 @@ paths:
       summary: Deny OAuth client
       tags:
       - OAuth Clients
+  /admin/oauth-grants:
+    get:
+      description: |-
+        List consent→agent grants across all clients and agents (§4.8).
+
+        The admin cross-view over the grant registry: filter by client, agent,
+        consenting user, or status. Each item carries the client's display name
+        and redirect-URI origin plus the consenting ``user_id`` — after an agent
+        ownership transfer the grant stays with the original consenter, so this
+        column is how an admin spots stranded grants.
+      operationId: listOauthGrants
+      parameters:
+      - description: Filter by the client's public client_id.
+        in: query
+        name: client_id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by the client's public client_id.
+          title: Client Id
+      - description: Filter by bound agent.
+        in: query
+        name: agent_id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by bound agent.
+          title: Agent Id
+      - description: Filter by consenting user.
+        in: query
+        name: user_id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by consenting user.
+          title: User Id
+      - description: Filter by grant lifecycle state.
+        in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - active
+            - revoked
+            type: string
+          - type: 'null'
+          description: Filter by grant lifecycle state.
+          title: Status
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthGrantAdminListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List OAuth grants
+      tags:
+      - OAuth
   /agents:
     get:
       description: List agents — scoped by identity via dynamic query scoping.
@@ -8700,6 +9022,115 @@ paths:
       security:
       - BearerAuth: []
       summary: Update Agent Jwks
+      tags:
+      - Agents
+  /agents/{agent_id}/oauth-grants:
+    get:
+      description: |-
+        List OAuth consent grants binding clients to this agent (§4.8).
+
+        The "Connected clients" surface: every grant carries the client's display
+        name and redirect-URI origin, the granted scopes, the consenting user,
+        and created/last-used timestamps. Allowed for the agent's owner or an
+        admin — authorization is enforced in the service layer, mirroring the
+        ``:revoke`` semantics.
+      operationId: listAgentOauthGrants
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      - description: Filter by grant lifecycle state.
+        in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - active
+            - revoked
+            type: string
+          - type: 'null'
+          description: Filter by grant lifecycle state.
+          title: Status
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthGrantListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List agent OAuth grants
       tags:
       - Agents
   /agents/{agent_id}/scopes:

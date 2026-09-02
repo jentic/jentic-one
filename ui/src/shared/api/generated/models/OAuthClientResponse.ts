@@ -8,6 +8,10 @@
 export type OAuthClientResponse = {
     active: boolean;
     /**
+     * Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+     */
+    active_grant_count?: number;
+    /**
      * Scopes this client may request. Null means unrestricted.
      */
     allowed_scopes: (Array<string> | null);

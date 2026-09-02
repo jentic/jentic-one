@@ -528,6 +528,30 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:read": []
+      },
+      "method": "GET",
+      "operation_id": "listOauthGrants",
+      "path": "/admin/oauth-grants",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:read"
+      ],
+      "summary": "List OAuth grants",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
         "agents:read": []
@@ -714,6 +738,26 @@
       "summary": "Update Agent Jwks",
       "surface": "agents",
       "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "listAgentOauthGrants",
+      "path": "/agents/{agent_id}/oauth-grants",
+      "public": false,
+      "required_scopes": [],
+      "summary": "List agent OAuth grants",
+      "surface": "agents",
+      "typical_caller": "any"
     },
     {
       "actor_types": [
@@ -5105,5 +5149,5 @@
     ],
     "total": 33
   },
-  "total": 176
+  "total": 178
 }

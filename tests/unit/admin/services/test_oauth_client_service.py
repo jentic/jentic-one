@@ -835,12 +835,19 @@ async def test_approve_missing_client_raises(mock_repo: MagicMock) -> None:
 
 
 # ---------- list_all approval_status filter ----------
+#
+# The list/get read paths also fold in the §4.8 active-grant counts, so the
+# grant repo is patched alongside the client repo (returning no counts).
 
 
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientGrantRepository")
 @patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
-async def test_list_all_passes_approval_status_filter(mock_repo: MagicMock) -> None:
+async def test_list_all_passes_approval_status_filter(
+    mock_repo: MagicMock, mock_grant_repo: MagicMock
+) -> None:
     ctx = _make_ctx()
     mock_repo.list_all = AsyncMock(return_value=[])
+    mock_grant_repo.count_active_by_client = AsyncMock(return_value={})
 
     svc = OAuthClientService(ctx)
     await svc.list_all(include_inactive=True, approval_status="pending")
@@ -851,14 +858,16 @@ async def test_list_all_passes_approval_status_filter(mock_repo: MagicMock) -> N
 
 
 @pytest.mark.parametrize("approval_status", ["pending", "denied"])
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientGrantRepository")
 @patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
 async def test_list_all_pending_or_denied_filter_implies_include_inactive(
-    mock_repo: MagicMock, approval_status: str
+    mock_repo: MagicMock, mock_grant_repo: MagicMock, approval_status: str
 ) -> None:
     """Pending/denied rows are active=false by construction (D7); the approval
     queue must not need the caller to also pass include_inactive=true."""
     ctx = _make_ctx()
     mock_repo.list_all = AsyncMock(return_value=[])
+    mock_grant_repo.count_active_by_client = AsyncMock(return_value={})
 
     svc = OAuthClientService(ctx)
     await svc.list_all(approval_status=approval_status)
@@ -868,11 +877,15 @@ async def test_list_all_pending_or_denied_filter_implies_include_inactive(
     )
 
 
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientGrantRepository")
 @patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
-async def test_list_all_approved_filter_keeps_active_default(mock_repo: MagicMock) -> None:
+async def test_list_all_approved_filter_keeps_active_default(
+    mock_repo: MagicMock, mock_grant_repo: MagicMock
+) -> None:
     """Filtering on approved keeps today's active-only default."""
     ctx = _make_ctx()
     mock_repo.list_all = AsyncMock(return_value=[])
+    mock_grant_repo.count_active_by_client = AsyncMock(return_value={})
 
     svc = OAuthClientService(ctx)
     await svc.list_all(approval_status="approved")

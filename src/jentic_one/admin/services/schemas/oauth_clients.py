@@ -23,6 +23,7 @@ class OAuthClientView(BaseModel):
     registration_source: str
     software_id: str | None
     approval_status: str
+    active_grant_count: int = 0
     created_at: datetime
     updated_at: datetime | None
     created_by: str | None

@@ -175,6 +175,14 @@ func (OAuthClientResponse) RequiredFields() []string {
 	return []string{"active", "allowed_scopes", "approval_status", "client_id", "consent_model", "created_at", "created_by", "description", "id", "name", "redirect_uris", "registration_source", "require_consent", "software_id", "token_endpoint_auth_method", "updated_at"}
 }
 func (OAuthClientRotateSecretResponse) RequiredFields() []string { return []string{"client_secret"} }
+func (OAuthGrantAdminListResponse) RequiredFields() []string     { return []string{"data", "has_more"} }
+func (OAuthGrantAdminResponse) RequiredFields() []string {
+	return []string{"agent_id", "client_name", "client_origin", "created_at", "id", "last_used_at", "oauth_client_id", "revoked_at", "scopes", "status", "user_id"}
+}
+func (OAuthGrantListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
+func (OAuthGrantResponse) RequiredFields() []string {
+	return []string{"agent_id", "client_name", "client_origin", "created_at", "id", "last_used_at", "oauth_client_id", "revoked_at", "scopes", "status", "user_id"}
+}
 func (OperationPreviewListResponse) RequiredFields() []string {
 	return []string{"data", "info", "offset", "security_schemes", "total", "truncated"}
 }

@@ -38,6 +38,7 @@ def _to_response(view: OAuthClientView) -> OAuthClientResponse:
         registration_source=view.registration_source,
         software_id=view.software_id,
         approval_status=view.approval_status,
+        active_grant_count=view.active_grant_count,
         created_at=view.created_at,
         updated_at=view.updated_at,
         created_by=view.created_by,
