@@ -10,7 +10,7 @@ import {
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
-import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import { resetAgentsStore, seedOauthGrants } from '@/modules/agents/mocks/handlers';
 import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 
 function renderCard(props: { agentId: string; agentName: string }) {
@@ -82,6 +82,78 @@ describe('ConnectedClientsCard', () => {
 		// The grant leaves the active slice → empty state takes over.
 		expect(await screen.findByText('No connected clients')).toBeInTheDocument();
 		expect(await screen.findByText('Grant revoked')).toBeInTheDocument();
+	});
+
+	it('disables Revoke with an explanatory tooltip when the caller cannot revoke (G10)', async () => {
+		// Post-transfer shape: the current owner LISTS the grant but the server
+		// says they cannot revoke it (consenting user ≠ viewer, no write set).
+		seedOauthGrants([
+			{
+				id: 'ocg_stranded_1',
+				client_name: 'Stranded Client',
+				user_id: 'usr_departed_owner',
+				can_revoke: false,
+			},
+		]);
+		renderCard({ agentId: 'agnt_active_1', agentName: 'support-agent' });
+		await screen.findByText('Stranded Client');
+
+		// The consenter's own grant keeps its live Revoke button…
+		expect(screen.getByRole('button', { name: 'Revoke grant for Cursor' })).toBeEnabled();
+		// …while the stranded grant's button is disabled, not a 403 trap.
+		const disabled = screen.getByRole('button', {
+			name: 'Revoke grant for Stranded Client (not permitted)',
+		});
+		expect(disabled).toBeDisabled();
+		// The tooltip explains WHY (rendered visually hidden until hover/focus).
+		expect(screen.getByText(/Only the user who consented to this grant/)).toBeInTheDocument();
+	});
+
+	it('shows the server reason in the toast when a revoke 403s under the button', async () => {
+		// Belt-and-braces arm: `canRevoke` went stale between render and click
+		// (e.g. an ownership change mid-session) — the 403 toast must carry the
+		// server's problem-details reason, not a generic "failed".
+		const user = userEvent.setup();
+		const reason = 'Access denied to OAuth grant ocg_active_1.';
+		worker.use(
+			createErrorHandler('post', '/oauth-grants/:id\\:revoke', {
+				status: 403,
+				body: { detail: reason },
+			}),
+		);
+		renderCard({ agentId: 'agnt_active_1', agentName: 'support-agent' });
+		await screen.findByText('Cursor');
+
+		await user.click(screen.getByRole('button', { name: 'Revoke grant for Cursor' }));
+		const dialog = await screen.findByRole('dialog');
+		await user.click(within(dialog).getByRole('button', { name: 'Revoke' }));
+
+		expect(await screen.findByText('Not permitted to revoke this grant')).toBeInTheDocument();
+		expect(screen.getByText(reason)).toBeInTheDocument();
+	});
+
+	it('pages through Load more and marks the count badge open-ended until the tail loads', async () => {
+		// 51 extra actives + the seeded Cursor grant = 52 > one page (50).
+		seedOauthGrants(
+			Array.from({ length: 51 }, (_, i) => ({
+				id: `ocg_bulk_${i}`,
+				client_name: `Bulk Client ${i}`,
+			})),
+		);
+		const user = userEvent.setup();
+		renderCard({ agentId: 'agnt_active_1', agentName: 'support-agent' });
+		await screen.findByText('Cursor');
+
+		// First page: 50 rows loaded, more behind the cursor → "50+" badge.
+		expect(screen.getByText('50+')).toBeInTheDocument();
+		const loadMore = screen.getByRole('button', { name: 'Load more' });
+		await user.click(loadMore);
+
+		// Tail loaded: exact count, no "+", and the button withdraws.
+		expect(await screen.findByText('52')).toBeInTheDocument();
+		expect(screen.queryByText('50+')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+		expect(screen.getByText('Bulk Client 50')).toBeInTheDocument();
 	});
 
 	it('shows an honest empty state when no client is connected', async () => {

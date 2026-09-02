@@ -2306,6 +2306,9 @@ type OAuthGrantAdminResponse struct {
 	// AgentId The agent this grant binds the client to.
 	AgentId string `json:"agent_id"`
 
+	// CanRevoke Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. a read-only admin.
+	CanRevoke bool `json:"can_revoke"`
+
 	// ClientName Display name of the registered client, if the row still exists.
 	ClientName *string `json:"client_name"`
 
@@ -2344,6 +2347,9 @@ type OAuthGrantListResponse struct {
 type OAuthGrantResponse struct {
 	// AgentId The agent this grant binds the client to.
 	AgentId string `json:"agent_id"`
+
+	// CanRevoke Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. the agent's new owner after an ownership transfer, or a read-only admin.
+	CanRevoke bool `json:"can_revoke"`
 
 	// ClientName Display name of the registered client, if the row still exists.
 	ClientName *string `json:"client_name"`

@@ -36,6 +36,17 @@ class OAuthGrantResponse(BaseModel):
         description="Last time the client obtained tokens under this grant "
         "(stamped at exchange/refresh, not per request)."
     )
+    # G10: the list predicate (agent's current owner or read-set admin) and the
+    # revoke predicate (grant's consenting user or write-set admin) deliberately
+    # diverge — after an agent ownership transfer the new owner can list but
+    # not revoke. `can_revoke` surfaces the revoke predicate per item so
+    # clients never render a revoke that would 403.
+    can_revoke: bool = Field(
+        description="Whether the CALLER may revoke this grant (the consenting "
+        "user, or an admin holding the revoke permission set). May be false "
+        "even for callers who can list — e.g. the agent's new owner after an "
+        "ownership transfer, or a read-only admin."
+    )
 
 
 class OAuthGrantListResponse(BaseModel):

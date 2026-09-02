@@ -397,6 +397,17 @@ type AgentStreamValue = {
 	 * stream and supersedes this optimistic flip.
 	 */
 	resolveEvent: (eventId: string) => void;
+	/**
+	 * Settle every unacknowledged actionable `oauth_client.registered` row for
+	 * one client (matched on the internal `oauth_client_id` token). The approve
+	 * arm gets this mirror for free from the `oauth_client.approved` SSE event;
+	 * a DENY emits no event (§4.8 / D7), so the deny mutation — which knows the
+	 * client id — calls this on success. The backend settles the row inside the
+	 * decision transaction either way; this only syncs the live session's local
+	 * copy so a stale "Review" prompt doesn't linger until the next backlog
+	 * fetch.
+	 */
+	settleOAuthClientRegistration: (oauthClientId: string) => void;
 	/** Fetch one older page from `GET /events?cursor=…` and append it. */
 	loadOlderEvents: () => Promise<void>;
 	canLoadOlder: boolean;
@@ -546,6 +557,24 @@ export function AgentStreamProvider({
 		});
 	}, []);
 
+	// One definition for both `oauth_client.registered` settle arms (approve
+	// via its SSE event in the live subscription below, deny via the deny
+	// mutation through the context) so the matching predicate can't drift.
+	const settleOAuthClientRegistration = useCallback(
+		(oauthClientId: string) => {
+			setEvents((prev) =>
+				prev.map((row) =>
+					row.type === 'oauth_client.registered' &&
+					row.tokens.oauth_client_id === oauthClientId &&
+					!row.acknowledged
+						? markResolved(row)
+						: row,
+				),
+			);
+		},
+		[markResolved],
+	);
+
 	// 1. Backlog seed.
 	useEffect(() => {
 		let cancelled = false;
@@ -650,16 +679,9 @@ export function AgentStreamProvider({
 						// alert inside the approve/deny transaction (§4.8 / D7);
 						// mirror on local rows so the live session drops the stale
 						// "Review" prompt immediately. (A deny emits no event, so
-						// its settle lands on the next backlog fetch instead.)
-						setEvents((prev) =>
-							prev.map((row) =>
-								row.type === 'oauth_client.registered' &&
-								row.tokens.oauth_client_id === ev.tokens.oauth_client_id &&
-								!row.acknowledged
-									? markResolved(row)
-									: row,
-							),
-						);
+						// the deny mutation calls this same settle directly —
+						// see settleOAuthClientRegistration.)
+						settleOAuthClientRegistration(ev.tokens.oauth_client_id);
 					}
 					if (!firstDelivery) return;
 					setLatest(ev);
@@ -689,6 +711,7 @@ export function AgentStreamProvider({
 		invalidateAgentSurfaces,
 		invalidateOAuthSurfaces,
 		markResolved,
+		settleOAuthClientRegistration,
 	]);
 
 	const acknowledge = useCallback(
@@ -781,6 +804,7 @@ export function AgentStreamProvider({
 			acknowledge,
 			decide,
 			resolveEvent,
+			settleOAuthClientRegistration,
 			loadOlderEvents,
 			canLoadOlder: hasMore && cursor != null,
 			loadingOlder,
@@ -792,6 +816,7 @@ export function AgentStreamProvider({
 			acknowledge,
 			decide,
 			resolveEvent,
+			settleOAuthClientRegistration,
 			loadOlderEvents,
 			hasMore,
 			cursor,

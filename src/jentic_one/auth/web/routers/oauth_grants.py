@@ -43,6 +43,7 @@ def grant_response(view: OAuthGrantView) -> OAuthGrantResponse:
         created_at=view.created_at,
         revoked_at=view.revoked_at,
         last_used_at=view.last_used_at,
+        can_revoke=view.can_revoke,
     )
 
 

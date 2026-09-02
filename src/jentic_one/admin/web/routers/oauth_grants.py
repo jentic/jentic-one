@@ -32,6 +32,7 @@ def _to_response(view: OAuthGrantView) -> OAuthGrantAdminResponse:
         created_at=view.created_at,
         revoked_at=view.revoked_at,
         last_used_at=view.last_used_at,
+        can_revoke=view.can_revoke,
     )
 
 
@@ -59,6 +60,7 @@ async def list_oauth_grants(
     column is how an admin spots stranded grants.
     """
     page = await svc.list_grants(
+        identity=identity,
         client_id=client_id,
         agent_id=agent_id,
         user_id=user_id,

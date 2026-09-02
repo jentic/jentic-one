@@ -18,7 +18,11 @@ from jentic_one.admin.repos import (
     OAuthClientGrantRepository,
     RefreshTokenRepository,
 )
-from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminService
+from jentic_one.admin.services.oauth_grant_admin_service import (
+    GRANT_REVOKE_ADMIN_PERMISSIONS,
+    OAuthGrantAdminService,
+    viewer_can_revoke,
+)
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
@@ -27,11 +31,7 @@ from jentic_one.auth.services.errors import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import (
-    OAUTH_CLIENTS_READ,
-    OAUTH_CLIENTS_WRITE,
-    ORG_ADMIN,
-)
+from jentic_one.shared.auth.permission_catalog import OAUTH_CLIENTS_READ
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorType
@@ -41,17 +41,13 @@ from jentic_one.shared.pagination import Page
 
 logger = structlog.get_logger(__name__)
 
-#: Permissions that make a non-owner an admin for grant operations. Broader
-#: than the usual ``ORG_ADMIN``-only idiom on purpose: ``oauth-clients:write``
-#: holders administer the client lifecycle (the same permission gating the
-#: admin oauth-clients router), and a grant is part of that lifecycle.
-_ADMIN_PERMISSIONS: frozenset[str] = frozenset({ORG_ADMIN, OAUTH_CLIENTS_WRITE})
-
-#: Read-side admin set (§4.8 listings): everything above plus the read-only
-#: half of the client-lifecycle permission pair — the same permission that
-#: gates ``GET /admin/oauth-clients`` and the ``/admin/oauth-grants``
-#: cross-view, so a caller who can see grants there can see them per-agent.
-_ADMIN_READ_PERMISSIONS: frozenset[str] = _ADMIN_PERMISSIONS | {OAUTH_CLIENTS_READ}
+#: Read-side admin set (§4.8 listings): the ``:revoke`` write pair
+#: (:data:`GRANT_REVOKE_ADMIN_PERMISSIONS` — the single revoke-predicate
+#: definition, shared with ``viewer_can_revoke``) plus the read-only half of
+#: the client-lifecycle permission pair — the same permission that gates
+#: ``GET /admin/oauth-clients`` and the ``/admin/oauth-grants`` cross-view,
+#: so a caller who can see grants there can see them per-agent.
+_ADMIN_READ_PERMISSIONS: frozenset[str] = GRANT_REVOKE_ADMIN_PERMISSIONS | {OAUTH_CLIENTS_READ}
 
 
 class OAuthGrantService:
@@ -147,9 +143,7 @@ class OAuthGrantService:
             grant = await OAuthClientGrantRepository.get_by_id(session, grant_id)
             if grant is None:
                 raise OAuthGrantNotFoundError(grant_id)
-            if grant.user_id != identity.sub and not (
-                _ADMIN_PERMISSIONS & set(identity.permissions)
-            ):
+            if not viewer_can_revoke(grant.user_id, identity):
                 raise OAuthGrantAccessDeniedError(grant_id)
 
             newly_revoked = grant.status == OAuthGrantStatus.ACTIVE.value and (
@@ -214,7 +208,11 @@ class OAuthGrantService:
         an admin permission (403, not 404 — agent ids are ksuids, not
         secrets). Items carry the §4.8 display fields (client name,
         redirect-URI origin, scopes, created, last-used, status) plus the
-        consenting ``user_id`` so the G10 ownership-transfer gap is visible.
+        consenting ``user_id`` and the viewer's per-item ``can_revoke``
+        capability, so the G10 ownership-transfer gap is visible AND
+        actionable state is honest (list keys on the agent's current owner,
+        revoke on the grant's consenting user — they diverge after a
+        transfer).
         """
         async with self._ctx.admin_db.session() as session:
             agent = await AgentRepository.get_by_id(session, agent_id)
@@ -229,7 +227,7 @@ class OAuthGrantService:
             )
 
         return await OAuthGrantAdminService(self._ctx).list_grants(
-            agent_id=agent_id, status=status, limit=limit, cursor=cursor
+            identity=identity, agent_id=agent_id, status=status, limit=limit, cursor=cursor
         )
 
     async def get_grant(self, grant_id: str) -> OAuthClientGrant | None:

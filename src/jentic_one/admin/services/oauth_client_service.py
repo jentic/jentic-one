@@ -218,9 +218,11 @@ class OAuthClientService:
             client = await OAuthClientRepository.get_by_id(session, id)
             if client is None:
                 raise OAuthClientNotFoundError(id)
-            counts = await OAuthClientGrantRepository.count_active_by_client(session)
+            count = await OAuthClientGrantRepository.count_active_for_client(
+                session, client.client_id
+            )
         view = _to_view(client)
-        view.active_grant_count = counts.get(client.client_id, 0)
+        view.active_grant_count = count
         return view
 
     async def get_by_client_id(self, client_id: str) -> OAuthClientView | None:

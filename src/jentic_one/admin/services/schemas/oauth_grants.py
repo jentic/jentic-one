@@ -17,6 +17,9 @@ class OAuthGrantView(BaseModel):
     ``user_id`` is the consenting owner — surfaced deliberately (gap G10:
     agent ownership transfer strands the grant with the old owner, so
     listings must show WHO consented, not just which agent is bound).
+    ``can_revoke`` is the viewer's per-item ``:revoke`` capability — computed
+    from the same predicate the revoke endpoint enforces, so the UI never
+    advertises a revoke that would 403 (the G10 list/revoke divergence).
     """
 
     id: str
@@ -30,6 +33,7 @@ class OAuthGrantView(BaseModel):
     created_at: datetime
     revoked_at: datetime | None
     last_used_at: datetime | None
+    can_revoke: bool
 
 
 def redirect_uri_origin(client: OAuthClient | None) -> str | None:
@@ -42,7 +46,9 @@ def redirect_uri_origin(client: OAuthClient | None) -> str | None:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def grant_to_view(grant: OAuthClientGrant, client: OAuthClient | None) -> OAuthGrantView:
+def grant_to_view(
+    grant: OAuthClientGrant, client: OAuthClient | None, *, can_revoke: bool
+) -> OAuthGrantView:
     """Build the enriched view; ``client`` may be None for a deleted row."""
     return OAuthGrantView(
         id=grant.id,
@@ -56,4 +62,5 @@ def grant_to_view(grant: OAuthClientGrant, client: OAuthClient | None) -> OAuthG
         created_at=grant.created_at,
         revoked_at=grant.revoked_at,
         last_used_at=grant.last_used_at,
+        can_revoke=can_revoke,
     )

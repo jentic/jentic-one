@@ -28,6 +28,7 @@ from jentic_one.auth.services.errors import (
 )
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.metrics import get_meter
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web.errors import make_service_error_handler
 
 _logger = structlog.get_logger(__name__)
@@ -93,3 +94,17 @@ _DB_SAFE_DETAILS: dict[type[Exception], str] = {
 }
 
 database_error_handler = make_service_error_handler(_DB_ERROR_MAP, safe_details=_DB_SAFE_DETAILS)
+
+# A tampered/garbage pagination cursor on `GET /agents/{id}/oauth-grants` is a
+# client fault, not a server one: map it to a 400 like the admin surface
+# (`admin/web/errors.py`) and the registry routers do. Registered as its own
+# handler because `InvalidCursorError` lives outside the `AuthServiceError`
+# hierarchy (it's a shared pagination error, ultimately a ValueError). Without
+# this, the standalone auth deployment 500s on `?cursor=garbage` — combined
+# mode was rescued only because the admin surface registers the handler on the
+# shared app.
+_CURSOR_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
+    InvalidCursorError: (400, "invalid_cursor"),
+}
+
+cursor_error_handler = make_service_error_handler(_CURSOR_ERROR_MAP)

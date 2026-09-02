@@ -948,22 +948,27 @@ function grantToEntity(r: OAuthGrantResponse): OAuthGrantEntity {
 		createdAt: r.created_at,
 		revokedAt: r.revoked_at ?? null,
 		lastUsedAt: r.last_used_at ?? null,
+		canRevoke: r.can_revoke,
 	};
 }
 
 /**
  * The OAuth clients holding a consent→agent grant on this agent
  * (`GET /agents/{id}/oauth-grants`, owner-or-admin). `status` narrows to
- * active/revoked; null returns the full history.
+ * active/revoked; null returns the full history. Cursor-paginated like the
+ * other list reads (`listAgents`): callers page through `nextCursor`.
  */
 export async function listAgentOauthGrants(
 	agentId: string,
 	status: 'active' | 'revoked' | null = 'active',
+	params: { cursor?: string | null; limit?: number } = {},
 ): Promise<ListResult<OAuthGrantEntity>> {
 	try {
 		const res = await AgentsService.listAgentOauthGrants({
 			agentId,
 			status,
+			cursor: params.cursor ?? null,
+			limit: params.limit ?? 50,
 		});
 		return {
 			entities: res.data.map(grantToEntity),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
@@ -70,13 +70,17 @@ class OAuthClientGrantRepository:
         user_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor_created_at: datetime | None = None,
+        cursor_id: str | None = None,
     ) -> list[OAuthClientGrant]:
         """List grant rows for the §4.8 surfaces, newest first.
 
         Filterable by any combination of agent, client (public ``client_id``
         string — the token-lineage join key, D3), consenting user, and status.
-        Keyset-paginated on ``created_at`` like the other list repos.
+        Compound keyset on ``(created_at, id)`` matching the order-by, like
+        ``OverlayRepository.list_page``: the id tiebreaker keeps rows sharing
+        a boundary ``created_at`` (burst consents, coarse timestamp
+        precision) from being skipped between pages.
         """
         stmt = (
             select(OAuthClientGrant)
@@ -91,8 +95,16 @@ class OAuthClientGrantRepository:
             stmt = stmt.where(OAuthClientGrant.user_id == user_id)
         if status is not None:
             stmt = stmt.where(OAuthClientGrant.status == status)
-        if cursor is not None:
-            stmt = stmt.where(OAuthClientGrant.created_at < cursor)
+        if cursor_created_at is not None and cursor_id is not None:
+            stmt = stmt.where(
+                or_(
+                    OAuthClientGrant.created_at < cursor_created_at,
+                    and_(
+                        OAuthClientGrant.created_at == cursor_created_at,
+                        OAuthClientGrant.id < cursor_id,
+                    ),
+                )
+            )
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
@@ -106,6 +118,24 @@ class OAuthClientGrantRepository:
         )
         result = await session.execute(stmt)
         return dict(result.all())  # type: ignore[arg-type]
+
+    @staticmethod
+    async def count_active_for_client(session: AsyncSession, oauth_client_id: str) -> int:
+        """Active-grant count for ONE public ``client_id``.
+
+        The single-client companion to :meth:`count_active_by_client` — a
+        per-client GET must not pay a whole-table aggregate for one row.
+        """
+        stmt = (
+            select(func.count())
+            .select_from(OAuthClientGrant)
+            .where(
+                OAuthClientGrant.oauth_client_id == oauth_client_id,
+                OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value,
+            )
+        )
+        result = await session.execute(stmt)
+        return int(result.scalar_one())
 
     @staticmethod
     async def revoke(session: AsyncSession, grant_id: str) -> bool:

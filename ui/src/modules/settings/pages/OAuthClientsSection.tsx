@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import {
 	Plus,
@@ -425,17 +425,34 @@ function ClientBadges({ client }: { client: OAuthClient }) {
 }
 
 interface DenyClientDialogProps {
-	client: OAuthClient;
+	/** The client under decision; null only before the first Deny click. */
+	client: OAuthClient | null;
+	open: boolean;
 	onClose: () => void;
 	onConfirm: (reason: string) => void;
 	isPending: boolean;
 }
 
-function DenyClientDialog({ client, onClose, onConfirm, isPending }: DenyClientDialogProps) {
+/**
+ * Deny confirmation with an optional reason draft. Mounted once and toggled
+ * via `open` (dialog-state rule: persist between dismissals, reset on
+ * successful commit) — a casual Esc/backdrop dismiss keeps the half-typed
+ * reason. The draft resets when the TARGET changes (a different client's
+ * denial is a different draft), which also covers the success path: the
+ * parent clears the target after a committed deny.
+ */
+function DenyClientDialog({ client, open, onClose, onConfirm, isPending }: DenyClientDialogProps) {
 	const [reason, setReason] = useState('');
+	const lastIdRef = useRef(client?.id);
+	useEffect(() => {
+		if (lastIdRef.current !== client?.id) {
+			lastIdRef.current = client?.id;
+			setReason('');
+		}
+	}, [client?.id]);
 	return (
 		<Dialog
-			open
+			open={open && client != null}
 			onClose={onClose}
 			title="Deny OAuth Client?"
 			footer={
@@ -455,7 +472,7 @@ function DenyClientDialog({ client, onClose, onConfirm, isPending }: DenyClientD
 		>
 			<div className="space-y-3">
 				<p className="text-muted-foreground">
-					<strong>{client.name}</strong> will not be able to start authorization flows.
+					<strong>{client?.name}</strong> will not be able to start authorization flows.
 					The registration is kept, so you can approve it later to reverse this.
 				</p>
 				<div>
@@ -491,7 +508,10 @@ function ApprovalQueueTab() {
 	const { data: clients, isLoading, error } = useOAuthClientQueue(filter);
 	const approveMutation = useApproveOAuthClient();
 	const denyMutation = useDenyOAuthClient();
+	// Target + open are separate so a casual dismiss keeps the target (and the
+	// dialog's reason draft — dialog-state rule); only a committed deny clears it.
 	const [denyTarget, setDenyTarget] = useState<OAuthClient | null>(null);
+	const [denyOpen, setDenyOpen] = useState(false);
 
 	const handleApprove = async (client: OAuthClient): Promise<void> => {
 		try {
@@ -514,6 +534,8 @@ function ApprovalQueueTab() {
 				reason: reason || undefined,
 			});
 			toast({ title: `${denyTarget.name} denied`, variant: 'success' });
+			setDenyOpen(false);
+			// Clearing the target resets the dialog's reason draft (commit path).
 			setDenyTarget(null);
 		} catch (err) {
 			toast({
@@ -570,7 +592,10 @@ function ApprovalQueueTab() {
 										<Button
 											size="sm"
 											variant="outline"
-											onClick={(): void => setDenyTarget(client)}
+											onClick={(): void => {
+												setDenyTarget(client);
+												setDenyOpen(true);
+											}}
 											disabled={denyMutation.isPending}
 										>
 											Deny
@@ -609,14 +634,15 @@ function ApprovalQueueTab() {
 				</div>
 			)}
 
-			{denyTarget != null && (
-				<DenyClientDialog
-					client={denyTarget}
-					onClose={(): void => setDenyTarget(null)}
-					onConfirm={(reason): void => void handleDeny(reason)}
-					isPending={denyMutation.isPending}
-				/>
-			)}
+			{/* Mounted persistently (not `{target && …}`) so a casual dismiss
+			    keeps the reason draft — see DenyClientDialog. */}
+			<DenyClientDialog
+				client={denyTarget}
+				open={denyOpen}
+				onClose={(): void => setDenyOpen(false)}
+				onConfirm={(reason): void => void handleDeny(reason)}
+				isPending={denyMutation.isPending}
+			/>
 		</div>
 	);
 }

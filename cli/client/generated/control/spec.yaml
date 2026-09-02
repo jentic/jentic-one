@@ -3814,6 +3814,10 @@ components:
           description: The agent this grant binds the client to.
           title: Agent Id
           type: string
+        can_revoke:
+          description: Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. a read-only admin.
+          title: Can Revoke
+          type: boolean
         client_name:
           anyOf:
           - type: string
@@ -3877,6 +3881,7 @@ components:
       - created_at
       - revoked_at
       - last_used_at
+      - can_revoke
       title: OAuthGrantAdminResponse
       type: object
     OAuthGrantListResponse:
@@ -3907,6 +3912,10 @@ components:
           description: The agent this grant binds the client to.
           title: Agent Id
           type: string
+        can_revoke:
+          description: Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. the agent's new owner after an ownership transfer, or a read-only admin.
+          title: Can Revoke
+          type: boolean
         client_name:
           anyOf:
           - type: string
@@ -3970,6 +3979,7 @@ components:
       - created_at
       - revoked_at
       - last_used_at
+      - can_revoke
       title: OAuthGrantResponse
       type: object
     OperationPreviewListResponse:

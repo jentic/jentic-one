@@ -36,6 +36,15 @@ class OAuthGrantAdminResponse(BaseModel):
         description="Last time the client obtained tokens under this grant "
         "(stamped at exchange/refresh, not per request)."
     )
+    # G10: the list gate (`oauth-clients:read`) is wider than the revoke set
+    # (org:admin / oauth-clients:write) — a read-only admin can list but not
+    # revoke. `can_revoke` surfaces the revoke predicate per item so clients
+    # never render a revoke that would 403.
+    can_revoke: bool = Field(
+        description="Whether the CALLER may revoke this grant (the consenting "
+        "user, or an admin holding the revoke permission set). May be false "
+        "even for callers who can list — e.g. a read-only admin."
+    )
 
 
 class OAuthGrantAdminListResponse(BaseModel):

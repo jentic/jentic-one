@@ -13,9 +13,36 @@ from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepos
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services.errors import InvalidInputError
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView, grant_to_view
+from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OAUTH_CLIENTS_WRITE, ORG_ADMIN
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+
+#: Permissions that make a non-owner an admin for grant WRITE operations
+#: (``:revoke``). Broader than the usual ``ORG_ADMIN``-only idiom on purpose:
+#: ``oauth-clients:write`` holders administer the client lifecycle (the same
+#: permission gating the admin oauth-clients router), and a grant is part of
+#: that lifecycle. Lives here (not in the auth tier) so both the revoke
+#: predicate and the per-item ``can_revoke`` capability read one definition.
+GRANT_REVOKE_ADMIN_PERMISSIONS: frozenset[str] = frozenset({ORG_ADMIN, OAUTH_CLIENTS_WRITE})
+
+
+def viewer_can_revoke(grant_user_id: str, identity: Identity) -> bool:
+    """The ``:revoke`` predicate: the grant's consenting user, or a write-set admin.
+
+    THE single definition — ``OAuthGrantService.revoke_grant`` enforces it and
+    the listing surfaces surface it per item as ``can_revoke``, so the two can
+    never drift. Note the deliberate divergence from the LIST predicate (gap
+    G10): listing keys on the agent's CURRENT owner, revoke on the grant's
+    consenting user — after an agent ownership transfer the new owner can see
+    the grant but not revoke it. That policy decision is still pending; until
+    it lands, ``can_revoke`` makes the divergence explicit instead of letting
+    the UI advertise a revoke that would 403.
+    """
+    return grant_user_id == identity.sub or bool(
+        GRANT_REVOKE_ADMIN_PERMISSIONS & set(identity.permissions)
+    )
 
 
 class OAuthGrantAdminService:
@@ -27,6 +54,7 @@ class OAuthGrantAdminService:
     async def list_grants(
         self,
         *,
+        identity: Identity,
         agent_id: str | None = None,
         client_id: str | None = None,
         user_id: str | None = None,
@@ -39,7 +67,8 @@ class OAuthGrantAdminService:
         ``client_id`` is the public client identifier (the join key grants
         store, D3). Each item carries the §4.8 display fields: client name,
         redirect-URI origin, scopes, consenting ``user_id`` (G10), created,
-        last-used, status.
+        last-used, status — plus ``can_revoke``, the viewer's ``:revoke``
+        capability computed per item via :func:`viewer_can_revoke`.
         """
         if status is not None and status not in (
             OAuthGrantStatus.ACTIVE.value,
@@ -48,8 +77,9 @@ class OAuthGrantAdminService:
             raise InvalidInputError(f"unsupported status filter: {status}")
 
         cursor_dt = None
+        cursor_id = None
         if cursor is not None:
-            cursor_dt, _ = decode_cursor_str(cursor)
+            cursor_dt, cursor_id = decode_cursor_str(cursor)
 
         async with self._ctx.admin_db.session() as session:
             grants = await OAuthClientGrantRepository.list_grants(
@@ -59,7 +89,8 @@ class OAuthGrantAdminService:
                 user_id=user_id,
                 status=status,
                 limit=limit + 1,
-                cursor=cursor_dt,
+                cursor_created_at=cursor_dt,
+                cursor_id=cursor_id,
             )
             has_more = len(grants) > limit
             if has_more:
@@ -69,7 +100,14 @@ class OAuthGrantAdminService:
             )
 
         clients_by_id = {c.client_id: c for c in clients}
-        views = [grant_to_view(g, clients_by_id.get(g.oauth_client_id)) for g in grants]
+        views = [
+            grant_to_view(
+                g,
+                clients_by_id.get(g.oauth_client_id),
+                can_revoke=viewer_can_revoke(g.user_id, identity),
+            )
+            for g in grants
+        ]
 
         next_cursor = None
         if has_more and grants:

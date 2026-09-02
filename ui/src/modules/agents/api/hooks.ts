@@ -64,6 +64,7 @@ import {
 	listActorAudit,
 	listAgentOauthGrants,
 	revokeOauthGrant,
+	AgentsApiError,
 	type ActorAuditEntry,
 	type ActorUsage,
 	type ActorUsageDetail,
@@ -776,14 +777,23 @@ export function useActorAccessRequests(actorId: string | null, status: string | 
  * The OAuth clients holding a consent→agent grant on this agent — the detail
  * console's "Connected clients" panel (phase-3a §4.8). Owner-or-admin on the
  * backend; a 403 surfaces as an error the card renders honestly.
+ *
+ * Cursor-paginated like {@link useAgents}: the first page renders
+ * immediately and the card offers "Load more" through `next_cursor`, so an
+ * agent with more than one page of grants (default 50) is fully reachable.
  */
 export function useAgentOauthGrants(
 	agentId: string | null,
 	status: 'active' | 'revoked' | null = 'active',
 ) {
-	return useQuery<ListResult<OAuthGrantEntity>>({
+	return useInfiniteQuery<ListResult<OAuthGrantEntity>>({
 		queryKey: agentOauthGrantsKey(agentId ?? '', status ?? 'all'),
-		queryFn: () => listAgentOauthGrants(agentId as string, status),
+		queryFn: ({ pageParam }) =>
+			listAgentOauthGrants(agentId as string, status, {
+				cursor: (pageParam as string | null) ?? null,
+			}),
+		initialPageParam: null,
+		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
 		enabled: agentId != null,
 	});
 }
@@ -792,6 +802,12 @@ export function useAgentOauthGrants(
  * Revoke a consent→agent grant (§4.6 kill switch). Invalidates every status
  * slice of the agent's grants (the row moves active→revoked) plus the shared
  * oauth-clients root, whose rows carry a per-client active-grant count.
+ *
+ * A 403 gets an HONEST toast: the server's reason (the revoke predicate is
+ * the grant's consenting user or a write-set admin — narrower than the list
+ * predicate, G10) rather than a generic "failed". The card already disables
+ * the button on `canRevoke=false`, so this is the belt-and-braces arm for a
+ * capability that went stale between render and click.
  */
 export function useRevokeOauthGrant(agentId: string | null) {
 	const qc = useQueryClient();
@@ -804,7 +820,19 @@ export function useRevokeOauthGrant(agentId: string | null) {
 			void qc.invalidateQueries({ queryKey: sharedQueryKeys.oauthClientsRoot });
 			toast({ title: 'Grant revoked', variant: 'success' });
 		},
-		onError: (e) => notifyError(e, 'Failed to revoke the grant.'),
+		onError: (e) => {
+			if (e instanceof AgentsApiError && e.status === 403) {
+				toast({
+					title: 'Not permitted to revoke this grant',
+					// The server's problem-details reason, carried through the
+					// repository's error normalisation.
+					description: e.message,
+					variant: 'error',
+				});
+				return;
+			}
+			notifyError(e, 'Failed to revoke the grant.');
+		},
 	});
 }
 

@@ -261,7 +261,12 @@ export interface InstanceIdentityEntity {
  * One consent→agent grant (`GET /agents/{id}/oauth-grants`). `userId` is the
  * CONSENTING user, surfaced deliberately: after an agent ownership transfer
  * the grant stays with the original consenter (gap G10), so the panel must
- * show who holds it, not assume the current owner does.
+ * show who holds it, not assume the current owner does. `canRevoke` is the
+ * server-computed revoke capability for the CALLER — the revoke predicate
+ * (consenting user or write-set admin) deliberately diverges from the list
+ * predicate (agent's current owner or read-set admin), so a viewer may see a
+ * grant they cannot revoke; the card disables the button instead of offering
+ * an action that would 403.
  */
 export interface OAuthGrantEntity {
 	id: string;
@@ -275,4 +280,5 @@ export interface OAuthGrantEntity {
 	createdAt: string;
 	revokedAt: string | null;
 	lastUsedAt: string | null;
+	canRevoke: boolean;
 }

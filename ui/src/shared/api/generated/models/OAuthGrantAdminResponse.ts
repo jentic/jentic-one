@@ -11,6 +11,10 @@ export type OAuthGrantAdminResponse = {
      */
     agent_id: string;
     /**
+     * Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. a read-only admin.
+     */
+    can_revoke: boolean;
+    /**
      * Display name of the registered client, if the row still exists.
      */
     client_name: (string | null);

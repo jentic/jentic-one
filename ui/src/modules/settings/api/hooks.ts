@@ -13,6 +13,7 @@ import {
 	type OAuthClientUpdateRequest,
 	type PermissionResponse,
 } from '@/shared/api';
+import { useAgentStreamOptional } from '@/shared/lib';
 
 export type OAuthClient = OAuthClientResponse;
 
@@ -21,7 +22,11 @@ export type OAuthClient = OAuthClientResponse;
 // `oauth_grant.*` event lands (phase-3a §4.8), which must hit these slices.
 const QUERY_KEY = sharedQueryKeys.oauthClientsRoot;
 const QUEUE_KEY = [...QUERY_KEY, 'queue'] as const;
-const PERMISSIONS_KEY = [...QUERY_KEY, 'permissions'] as const;
+// The permission catalogue is NOT client data — it gets its own root (like the
+// agents module's `permissionsKey`) so the oauth-clients invalidation fan-out
+// (every client mutation + every live `oauth_client.*`/`oauth_grant.*` event
+// sweeps `oauthClientsRoot`) doesn't pointlessly refetch `GET /permissions`.
+const PERMISSIONS_KEY = ['settings-oauth-permissions'] as const;
 
 export function usePermissionCatalogue() {
 	return useQuery<PermissionResponse[]>({
@@ -66,14 +71,21 @@ export function useApproveOAuthClient() {
 /** Deny a client (D7: the row is kept, so approve can reverse the decision). */
 export function useDenyOAuthClient() {
 	const qc = useQueryClient();
+	// A deny emits no SSE event (unlike approve, whose `oauth_client.approved`
+	// event settles the rail's actionable row via the stream mirror), so this
+	// mutation settles the `oauth_client.registered` row itself — it knows the
+	// client id. Provider-optional: tests and embedded surfaces without the
+	// rail's stream still work.
+	const stream = useAgentStreamOptional();
 	return useMutation({
 		mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
 			OAuthClientsService.denyOauthClient({
 				id,
 				requestBody: reason ? { reason } : undefined,
 			}),
-		onSuccess: () => {
+		onSuccess: (_data, { id }) => {
 			void qc.invalidateQueries({ queryKey: QUERY_KEY });
+			stream?.settleOAuthClientRegistration(id);
 		},
 	});
 }

@@ -1,10 +1,11 @@
 """Unit tests for the per-agent grant listing (GET /agents/{id}/oauth-grants).
 
-The §4.8 "Connected clients" endpoint: response shape, query forwarding, and
-the web mapping of the service-layer authorization results (owner-or-admin is
-enforced in :class:`OAuthGrantService`, so here it is mocked as its error
-outcomes: 403 for a non-owner without admin permission, 404 for an unknown
-agent).
+The §4.8 "Connected clients" endpoint: response shape (including the per-item
+``can_revoke`` capability, G10), query forwarding, and the web mapping of the
+service-layer outcomes (owner-or-admin is enforced in
+:class:`OAuthGrantService`, so here it is mocked as its error outcomes: 403
+for a non-owner without admin permission, 404 for an unknown agent, 400 for a
+tampered cursor) plus the unauthenticated 401 arm.
 """
 
 from __future__ import annotations
@@ -19,18 +20,17 @@ from fastapi.testclient import TestClient
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
-    AuthServiceError,
     OAuthGrantAccessDeniedError,
 )
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
-from jentic_one.auth.web.errors import service_error_handler
+from jentic_one.auth.web.app import get_exception_handlers
 from jentic_one.auth.web.routers import oauth_grants
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.pagination import Page
+from jentic_one.shared.pagination import InvalidCursorError, Page
 from jentic_one.shared.web.deps import resolve_identity
 
 
-def _view(grant_id: str = "ocg_1") -> OAuthGrantView:
+def _view(grant_id: str = "ocg_1", *, can_revoke: bool = True) -> OAuthGrantView:
     return OAuthGrantView(
         id=grant_id,
         oauth_client_id="oc_app",
@@ -43,6 +43,7 @@ def _view(grant_id: str = "ocg_1") -> OAuthGrantView:
         created_at=datetime(2026, 8, 1, tzinfo=UTC),
         revoked_at=None,
         last_used_at=datetime(2026, 8, 2, tzinfo=UTC),
+        can_revoke=can_revoke,
     )
 
 
@@ -59,13 +60,22 @@ def mock_grant_svc() -> MagicMock:
     return svc
 
 
-@pytest.fixture()
-def client(mock_grant_svc: MagicMock) -> TestClient:
+def _make_app(mock_grant_svc: MagicMock) -> FastAPI:
     app = FastAPI()
     app.include_router(oauth_grants.router)
-    app.add_exception_handler(AuthServiceError, service_error_handler)
+    # The REAL registration list from the auth app factory (standalone and
+    # combined-mode both consume it), so these tests prove the surface maps
+    # every service outcome — notably InvalidCursorError → 400, not 500.
+    for exc_class, handler in get_exception_handlers():
+        app.add_exception_handler(exc_class, handler)
     app.dependency_overrides[oauth_grants.get_oauth_grant_service] = lambda: mock_grant_svc
     app.state.ctx = MagicMock()
+    return app
+
+
+@pytest.fixture()
+def client(mock_grant_svc: MagicMock) -> TestClient:
+    app = _make_app(mock_grant_svc)
     app.dependency_overrides[resolve_identity] = _identity
     return TestClient(app)
 
@@ -87,6 +97,19 @@ def test_list_returns_grant_shape(client: TestClient, mock_grant_svc: MagicMock)
     assert item["scopes"] == ["apis:read"]
     assert item["status"] == "active"
     assert item["last_used_at"] is not None
+    # G10: the revoke capability is part of the wire contract.
+    assert item["can_revoke"] is True
+
+
+def test_list_surfaces_can_revoke_false(client: TestClient, mock_grant_svc: MagicMock) -> None:
+    """A viewer who may list but not revoke (post-transfer owner, read-only
+    admin — the G10 divergence) sees can_revoke=false on the wire."""
+    mock_grant_svc.list_grants_for_agent = AsyncMock(
+        return_value=Page(data=[_view(can_revoke=False)], has_more=False, next_cursor=None)
+    )
+    resp = client.get("/agents/agt_1/oauth-grants")
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["can_revoke"] is False
 
 
 def test_list_forwards_filters_and_identity(client: TestClient, mock_grant_svc: MagicMock) -> None:
@@ -119,3 +142,23 @@ def test_list_maps_unknown_agent_to_404(client: TestClient, mock_grant_svc: Magi
     resp = client.get("/agents/agt_x/oauth-grants")
     assert resp.status_code == 404
     assert resp.json()["type"] == "actor_not_found"
+
+
+def test_list_maps_tampered_cursor_to_400(client: TestClient, mock_grant_svc: MagicMock) -> None:
+    """`?cursor=garbage` is a client fault: the standalone auth surface must
+    map InvalidCursorError to 400, never let it escape as a 500 (review F2)."""
+    mock_grant_svc.list_grants_for_agent = AsyncMock(
+        side_effect=InvalidCursorError("Invalid pagination cursor")
+    )
+    resp = client.get("/agents/agt_1/oauth-grants?cursor=garbage")
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "invalid_cursor"
+
+
+def test_list_unauthenticated_is_401(mock_grant_svc: MagicMock) -> None:
+    """No credential → 401 through the real resolve_identity path (no
+    dependency override), and the service is never consulted."""
+    unauthed = TestClient(_make_app(mock_grant_svc), raise_server_exceptions=False)
+    resp = unauthed.get("/agents/agt_1/oauth-grants")
+    assert resp.status_code == 401
+    mock_grant_svc.list_grants_for_agent.assert_not_awaited()

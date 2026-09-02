@@ -3,9 +3,11 @@
 Covers the read side of the grant registry end-to-end at the service layer:
 the per-agent "Connected clients" listing with its owner-or-admin
 authorization matrix, the admin cross-view with its filters and keyset
-pagination, the §4.8 display enrichment (client name + redirect-URI origin +
-consenting ``user_id`` — gap G10), and the per-client active-grant counts
-folded into the admin client listing.
+pagination (including the id tiebreaker on ``created_at`` ties), the §4.8
+display enrichment (client name + redirect-URI origin + consenting
+``user_id`` — gap G10), the per-item ``can_revoke`` capability (the G10
+list/revoke predicate divergence made explicit), and the per-client
+active-grant counts folded into the admin client listing.
 
     Seed helpers and the ``clean_grants`` fixture are shared with the grant
 channel tests via :mod:`tests.integration.auth.seeds` and this package's
@@ -14,8 +16,13 @@ channel tests via :mod:`tests.integration.auth.seeds` and this package's
 
 from __future__ import annotations
 
-import pytest
+from datetime import UTC, datetime
 
+import pytest
+from sqlalchemy import update
+
+from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
+from jentic_one.admin.repos import AgentRepository
 from jentic_one.admin.services.errors import InvalidInputError
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminService
@@ -34,6 +41,25 @@ _CLIENT_ID = seeds.CLIENT_ID
 _seed_user = seeds.seed_user
 _seed_agent = seeds.seed_agent
 _seed_client = seeds.seed_client
+
+#: Cross-view caller for tests where the viewer's revoke capability is not the
+#: subject under test (org:admin holds the revoke set, so can_revoke is True).
+_VIEWER = Identity(sub="usr_l_viewer", email="", permissions=["org:admin"])
+
+
+async def _force_created_at(ctx: Context, grant_ids: list[str], created_at: datetime) -> None:
+    """Pin several grants to one ``created_at`` — a keyset-tie fixture.
+
+    ``create_grant`` stamps distinct timestamps, so boundary ties (burst
+    consents, coarse DB timestamp precision) are manufactured directly.
+    """
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(OAuthClientGrant)
+            .where(OAuthClientGrant.id.in_(grant_ids))
+            .values(created_at=created_at)
+        )
+        await session.commit()
 
 
 # --- per-agent listing: authorization matrix (§4.8 / §9) ---------------------
@@ -153,25 +179,25 @@ async def test_admin_cross_view_filters(integration_context: Context, clean_gran
 
     admin_svc = OAuthGrantAdminService(integration_context)
 
-    everything = await admin_svc.list_grants()
+    everything = await admin_svc.list_grants(identity=_VIEWER)
     assert {g.id for g in everything.data} == {g_a, g_b, g_c}
 
-    by_agent = await admin_svc.list_grants(agent_id=agent_a)
+    by_agent = await admin_svc.list_grants(identity=_VIEWER, agent_id=agent_a)
     assert [g.id for g in by_agent.data] == [g_a]
 
-    by_user = await admin_svc.list_grants(user_id=user_b)
+    by_user = await admin_svc.list_grants(identity=_VIEWER, user_id=user_b)
     assert {g.id for g in by_user.data} == {g_b, g_c}
 
-    by_client = await admin_svc.list_grants(client_id=other_client)
+    by_client = await admin_svc.list_grants(identity=_VIEWER, client_id=other_client)
     assert [g.id for g in by_client.data] == [g_c]
 
-    active = await admin_svc.list_grants(status="active")
+    active = await admin_svc.list_grants(identity=_VIEWER, status="active")
     assert {g.id for g in active.data} == {g_a, g_c}
-    revoked = await admin_svc.list_grants(status="revoked")
+    revoked = await admin_svc.list_grants(identity=_VIEWER, status="revoked")
     assert [g.id for g in revoked.data] == [g_b]
 
     with pytest.raises(InvalidInputError, match="status"):
-        await admin_svc.list_grants(status="bogus")
+        await admin_svc.list_grants(identity=_VIEWER, status="bogus")
 
 
 async def test_admin_cross_view_keyset_pagination(
@@ -202,7 +228,7 @@ async def test_admin_cross_view_keyset_pagination(
     cursor: str | None = None
     pages = 0
     while True:
-        page = await admin_svc.list_grants(limit=1, cursor=cursor)
+        page = await admin_svc.list_grants(identity=_VIEWER, limit=1, cursor=cursor)
         seen.extend(g.id for g in page.data)
         pages += 1
         if not page.has_more:
@@ -214,6 +240,153 @@ async def test_admin_cross_view_keyset_pagination(
     assert seen == list(reversed(expected))  # newest first, no overlap/loss
 
 
+async def test_admin_cross_view_pagination_walks_created_at_ties(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """Rows sharing a page-boundary ``created_at`` are not skipped: the cursor
+    carries ``(created_at, id)`` and the repo applies the compound keyset
+    (``created_at < c OR (created_at = c AND id < cid)``)."""
+    user_id = await _seed_user(integration_context, "usr_l_tie")
+    await _seed_client(integration_context, allowed_scopes=["apis:read"])
+    grant_svc = OAuthGrantService(integration_context)
+
+    grant_ids: list[str] = []
+    for i in range(5):
+        agent_id = await _seed_agent(
+            integration_context, owner_id=user_id, scopes=["apis:read"], name=f"tie-agent-{i}"
+        )
+        grant_ids.append(
+            await grant_svc.create_grant(
+                user_id=user_id,
+                oauth_client_id=_CLIENT_ID,
+                agent_id=agent_id,
+                scopes=["apis:read"],
+            )
+        )
+    # Every row shares one timestamp, so EVERY page boundary is a tie.
+    await _force_created_at(
+        integration_context, grant_ids, datetime(2026, 8, 15, 12, 0, 0, tzinfo=UTC)
+    )
+
+    admin_svc = OAuthGrantAdminService(integration_context)
+    seen: list[str] = []
+    cursor: str | None = None
+    while True:
+        page = await admin_svc.list_grants(identity=_VIEWER, limit=2, cursor=cursor)
+        seen.extend(g.id for g in page.data)
+        if not page.has_more:
+            break
+        cursor = page.next_cursor
+    # All 5 rows walked exactly once (id DESC within the tied timestamp).
+    assert seen == sorted(grant_ids, reverse=True)
+
+
+async def test_list_grants_for_agent_pagination_walks_created_at_ties(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """The per-agent listing walks tied ``created_at`` rows without skips —
+    the same compound keyset via the shared admin read service."""
+    owner_id = await _seed_user(integration_context, "usr_l_tie_agent")
+    agent_id = await _seed_agent(
+        integration_context, owner_id=owner_id, scopes=["apis:read"], name="tie-one-agent"
+    )
+    grant_svc = OAuthGrantService(integration_context)
+
+    # Distinct clients on ONE agent so the §4.1 pair-collapse keeps all rows.
+    grant_ids: list[str] = []
+    for i in range(4):
+        client_id = await _seed_client(
+            integration_context,
+            allowed_scopes=["apis:read"],
+            client_id=f"oc_grant_listing_tie_{i}",
+        )
+        grant_ids.append(
+            await grant_svc.create_grant(
+                user_id=owner_id,
+                oauth_client_id=client_id,
+                agent_id=agent_id,
+                scopes=["apis:read"],
+            )
+        )
+    await _force_created_at(
+        integration_context, grant_ids, datetime(2026, 8, 16, 9, 30, 0, tzinfo=UTC)
+    )
+
+    owner = Identity(sub=owner_id, email="")
+    seen: list[str] = []
+    cursor: str | None = None
+    while True:
+        page = await grant_svc.list_grants_for_agent(
+            agent_id, identity=owner, limit=1, cursor=cursor
+        )
+        seen.extend(g.id for g in page.data)
+        if not page.has_more:
+            break
+        cursor = page.next_cursor
+    assert seen == sorted(grant_ids, reverse=True)
+
+
+# --- per-item can_revoke capability (G10 list/revoke divergence) --------------
+
+
+async def test_can_revoke_matrix_consenter_transfer_and_admin_arms(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """``can_revoke`` mirrors the ``:revoke`` predicate per item — including
+    the two G10 divergence arms: the agent's post-transfer owner can LIST but
+    not revoke, and a read-only admin can LIST but not revoke."""
+    consenter_id = await _seed_user(integration_context, "usr_l_consenter")
+    new_owner_id = await _seed_user(integration_context, "usr_l_new_owner")
+    ro_admin_id = await _seed_user(integration_context, "usr_l_ro_admin")
+    agent_id = await _seed_agent(
+        integration_context, owner_id=consenter_id, scopes=["apis:read"], name="cap-agent"
+    )
+    await _seed_client(integration_context, allowed_scopes=["apis:read"])
+    grant_svc = OAuthGrantService(integration_context)
+    grant_id = await grant_svc.create_grant(
+        user_id=consenter_id, oauth_client_id=_CLIENT_ID, agent_id=agent_id, scopes=["apis:read"]
+    )
+
+    # The consenting owner sees an actionable revoke.
+    consenter = Identity(sub=consenter_id, email="")
+    page = await grant_svc.list_grants_for_agent(agent_id, identity=consenter)
+    assert [(g.id, g.can_revoke) for g in page.data] == [(grant_id, True)]
+
+    # G10 transfer arm: hand the agent to a new owner. The new owner can list
+    # (list keys on the agent's CURRENT owner) but can_revoke is False (revoke
+    # keys on the grant's CONSENTING user) — and the revoke verb agrees.
+    async with integration_context.admin_db.session() as session:
+        await AgentRepository.update_agent(session, agent_id, owner_id=new_owner_id)
+        await session.commit()
+
+    new_owner = Identity(sub=new_owner_id, email="")
+    page = await grant_svc.list_grants_for_agent(agent_id, identity=new_owner)
+    assert [(g.id, g.can_revoke) for g in page.data] == [(grant_id, False)]
+    with pytest.raises(OAuthGrantAccessDeniedError):
+        await grant_svc.revoke_grant(grant_id, identity=new_owner)
+
+    # Read-only-admin arm: `oauth-clients:read` unlocks the LIST but is not in
+    # the revoke write set — can_revoke False, and the revoke verb agrees.
+    ro_admin = Identity(sub=ro_admin_id, email="", permissions=["oauth-clients:read"])
+    page = await grant_svc.list_grants_for_agent(agent_id, identity=ro_admin)
+    assert [(g.id, g.can_revoke) for g in page.data] == [(grant_id, False)]
+    with pytest.raises(OAuthGrantAccessDeniedError):
+        await grant_svc.revoke_grant(grant_id, identity=ro_admin)
+
+    # The write-set admins CAN revoke — capability True on both surfaces.
+    for permission in ("org:admin", "oauth-clients:write"):
+        admin = Identity(sub=ro_admin_id, email="", permissions=[permission])
+        page = await grant_svc.list_grants_for_agent(agent_id, identity=admin)
+        assert [(g.id, g.can_revoke) for g in page.data] == [(grant_id, True)]
+        cross = await OAuthGrantAdminService(integration_context).list_grants(identity=admin)
+        assert [(g.id, g.can_revoke) for g in cross.data] == [(grant_id, True)]
+
+    # The consenting user still holds the revoke on the admin cross-view shape
+    # too (were they ever granted the read permission to reach it).
+    cross = await OAuthGrantAdminService(integration_context).list_grants(identity=consenter)
+    assert [(g.id, g.can_revoke) for g in cross.data] == [(grant_id, True)]
+
+
 # --- per-client active-grant counts (§4.8) -----------------------------------
 
 
@@ -221,7 +394,7 @@ async def test_client_listing_carries_active_grant_count(
     integration_context: Context, clean_grants: None
 ) -> None:
     """The admin client list/get fold in per-client ACTIVE grant counts;
-    revoked rows do not count."""
+    revoked rows do not count and neighbours' grants do not bleed in."""
     user_id = await _seed_user(integration_context, "usr_l_count")
     agent_a = await _seed_agent(
         integration_context, owner_id=user_id, scopes=["apis:read"], name="count-agent-a"
@@ -230,6 +403,9 @@ async def test_client_listing_carries_active_grant_count(
         integration_context, owner_id=user_id, scopes=["apis:read"], name="count-agent-b"
     )
     await _seed_client(integration_context, allowed_scopes=["apis:read"])
+    other_client = await _seed_client(
+        integration_context, allowed_scopes=["apis:read"], client_id="oc_grant_listing_count"
+    )
     grant_svc = OAuthGrantService(integration_context)
 
     await grant_svc.create_grant(
@@ -239,11 +415,16 @@ async def test_client_listing_carries_active_grant_count(
         user_id=user_id, oauth_client_id=_CLIENT_ID, agent_id=agent_b, scopes=["apis:read"]
     )
     await grant_svc.revoke_grant(revoked_id, identity=Identity(sub=user_id, email=""))
+    # A neighbouring client's active grant must not inflate the first's count.
+    await grant_svc.create_grant(
+        user_id=user_id, oauth_client_id=other_client, agent_id=agent_b, scopes=["apis:read"]
+    )
 
     client_svc = OAuthClientService(integration_context)
-    views = [c for c in await client_svc.list_all() if c.client_id == _CLIENT_ID]
-    assert len(views) == 1
-    assert views[0].active_grant_count == 1
+    views = {c.client_id: c for c in await client_svc.list_all()}
+    assert views[_CLIENT_ID].active_grant_count == 1
+    assert views[other_client].active_grant_count == 1
 
-    got = await client_svc.get(views[0].id)
+    # get() scopes its aggregate to the one requested client (review F4).
+    got = await client_svc.get(views[_CLIENT_ID].id)
     assert got.active_grant_count == 1
