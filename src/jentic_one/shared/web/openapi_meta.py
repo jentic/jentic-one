@@ -804,6 +804,12 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # Unauthenticated discovery metadata.
         "jwks",
         "oauthAuthorizationServer",
+        # /mcp-scoped discovery documents (phase-3a §4.7): RFC 8414 for the
+        # path-scoped issuer, RFC 9728 protected-resource metadata, and its
+        # root-path alias. Unauthenticated by spec; config-gated (404) instead.
+        "mcpOauthAuthorizationServer",
+        "mcpOauthProtectedResource",
+        "mcpOauthProtectedResourceRootAlias",
         # Public IdP-login capability hint (enabled flag + provider name only;
         # no secrets). The SPA reads this pre-login to render the SSO button.
         "authIdpDescriptor",

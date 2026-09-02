@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **173**._
+_Total endpoints: **176**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -380,7 +380,7 @@ _Total endpoints: **173**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (22)
+## Public (unauthenticated) (25)
 
 
 ### `.well-known`
@@ -389,6 +389,9 @@ _Total endpoints: **173**._
 |---|---|---|---|---|
 | GET | `/.well-known/jwks.json` | _public — no auth_ | — | JSON Web Key Set |
 | GET | `/.well-known/oauth-authorization-server` | _public — no auth_ | — | OAuth authorization server metadata |
+| GET | `/.well-known/oauth-authorization-server/mcp` | _public — no auth_ | — | OAuth authorization server metadata for the MCP resource |
+| GET | `/.well-known/oauth-protected-resource` | _public — no auth_ | — | OAuth protected resource metadata (root alias for the MCP resource) |
+| GET | `/.well-known/oauth-protected-resource/mcp` | _public — no auth_ | — | OAuth protected resource metadata for the MCP resource |
 
 ### `admin`
 

@@ -9957,6 +9957,312 @@
         ]
       }
     },
+    "/.well-known/oauth-authorization-server/mcp": {
+      "get": {
+        "description": "RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).\n\nRFC 8414 §3.1 path insertion: this is the metadata URL clients derive for\nthe issuer `{base}/mcp` named by the protected-resource document. It\nadvertises the anonymous OAuth-client registration door (`/oauth-clients`)\nand the public-client profile (`none` + PKCE S256) — the root document is a\nseparate, unchanged surface whose `registration_endpoint` remains the agent\n`/register`.",
+        "operationId": "mcpOauthAuthorizationServer",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mcpoauthauthorizationserver",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "OAuth authorization server metadata for the MCP resource",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "description": "Root-path alias of the MCP protected-resource document (phase-3a §4.7).\n\nCompatibility fallback for clients that probe the root\n`/.well-known/oauth-protected-resource` instead of following the 401's\n`resource_metadata` pointer (the documented Claude Code behaviour). Safe\nbecause this deployment has exactly one OAuth-protected resource, so the\nroot and path-scoped documents are the same body.\n\nTwo acknowledged trades (§4.7, review F6):\n\n- RFC 9728 §3 says this well-known path corresponds to resource identifier\n  ``{base}`` (no path), and §3.3 has clients validate ``resource`` against\n  the resource they queried. This body claims ``resource={base}/mcp`` — a\n  strict path-deriving validator would reject it, but Claude's fallback\n  validates against the MCP server URL (``{base}/mcp``), which is exactly\n  what the alias exists to satisfy. That is the intended trade.\n- The alias squats the deployment's only root PRM slot: a future non-MCP\n  protected resource at ``{base}`` cannot get its own root document\n  without breaking this fallback. Phase 3's mount must re-confirm the\n  \"exactly one OAuth-protected resource\" premise before adding one.",
+        "operationId": "mcpOauthProtectedResourceRootAlias",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mcpoauthprotectedresourcerootalias",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "OAuth protected resource metadata (root alias for the MCP resource)",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/.well-known/oauth-protected-resource/mcp": {
+      "get": {
+        "description": "RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).\n\nNames the /mcp-scoped authorization server and the MCP tool scopes. The\nsame body is also served at the root well-known path for clients that\nignore the 401's `resource_metadata` pointer.",
+        "operationId": "mcpOauthProtectedResource",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mcpoauthprotectedresource",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "OAuth protected resource metadata for the MCP resource",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
     "/access-requests": {
       "get": {
         "description": "List access requests with cursor-based pagination.",

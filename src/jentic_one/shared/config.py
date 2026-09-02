@@ -313,6 +313,10 @@ class OAuthRateLimitConfig(BaseModel):
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
+    # Expected shape: scheme://host[:port] with NO path. Unvalidated — a
+    # path-bearing value (e.g. https://host/jentic) silently breaks the fixed
+    # RFC 8414/9728 well-known routes: path-insertion metadata URLs derived
+    # from a path-bearing issuer are not served (root and /mcp docs alike).
     canonical_base_url: str = ""
     access_ttl_seconds: int = 3600
     refresh_ttl_seconds: int = 604800

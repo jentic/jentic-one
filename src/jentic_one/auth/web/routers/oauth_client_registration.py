@@ -78,10 +78,14 @@ class _Rfc7591Route(APIRoute):
 
     Both concerns must run *outside* the FastAPI dependency/validation
     machinery: the ``enabled`` gate has to precede body parsing and the
-    rate-limit dependency so a disabled door is byte-identical to a missing
-    route (F2), and schema rejections have to be reshaped from FastAPI's 422
-    into the RFC's 400 ``invalid_client_metadata`` (F3). Scoped to this
-    router only — the platform Problem Details handler is untouched.
+    rate-limit dependency so the gate state is unobservable — a disabled door
+    answers the framework's own route-not-found 404 on a full route match
+    (F2; routing-level tells like 405 on non-registered methods are
+    build-level and identical in both gate arms, same as the /mcp discovery
+    gate's ``_McpDiscoveryRoute``) — and schema rejections have to be
+    reshaped from FastAPI's 422 into the RFC's 400 ``invalid_client_metadata``
+    (F3). Scoped to this router only — the platform Problem Details handler
+    is untouched.
     """
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
@@ -90,10 +94,10 @@ class _Rfc7591Route(APIRoute):
         async def handler(request: Request) -> Response:
             ctx: Context = request.app.state.ctx
             if not ctx.config.server.mcp.oauth.enabled:
-                # Mirror the framework's route-not-found body exactly so a
-                # disabled door is indistinguishable from a build that never
-                # shipped it (§4.2). Runs before rate limiting and body
-                # validation: a 429 or 422 would reveal the endpoint exists.
+                # Mirror the framework's route-not-found body exactly so the
+                # gate state stays unobservable (§4.2). Runs before rate
+                # limiting and body validation: a 429 or 422 would reveal the
+                # gate is on.
                 return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
             content_length = request.headers.get("content-length")
