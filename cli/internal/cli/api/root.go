@@ -99,6 +99,11 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	// mutates host state and is exactly the diagnostic an agent needs where
 	// jenticctl is absent.
 	cmdcore.AddGrouped(root, "client", newDoctorCmd(app))
+	// The MCP stdio server (local-MCP phase 1): serves the Jentic tool surface
+	// to a local MCP client. Registered through the root so it inherits
+	// --context/$JENTIC_CONTEXT, state injection, fencing, and the migrate
+	// gate. Not fenced: serving tools is the agent's normal operating mode.
+	cmdcore.AddGrouped(root, "client", newMCPCmd(app))
 	cmdcore.AddGrouped(root, "admin", newAdminCmd(app))
 	cmdcore.AddGrouped(root, "admin", newThemeCmd(app))
 

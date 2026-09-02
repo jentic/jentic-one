@@ -32,5 +32,9 @@ class AuthorizationCode(AuditableMixin, AdminBase):
     code_challenge: Mapped[str] = mapped_column(String(128), nullable=False)
     scopes: Mapped[str] = mapped_column(String(1024), nullable=False, server_default="openid")
     nonce: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Set at consent for consent_model='agent' clients (§4.4 step 4): the
+    # freshly-minted oauth_client_grants row the exchange must honour. NULL
+    # keeps today's act-as-user exchange path byte-identical.
+    grant_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)

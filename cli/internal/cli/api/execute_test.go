@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,6 +41,53 @@ func TestBadFlagKV(t *testing.T) {
 	}
 	if !strings.Contains(ce.Msg, "--query") || !strings.Contains(ce.Msg, "nope") {
 		t.Errorf("msg %q should name the flag and offending value", ce.Msg)
+	}
+}
+
+// TestExecuteMalformedHeaderWinsOverInsecureBroker freezes the doubly-invalid
+// precedence the agentops extraction changed (PR #1179 review #2): ParseKVs on
+// --header now runs BEFORE BuildRequest's SEC-1 secure-transport guard, so a
+// malformed --header combined with a SEC-1-violating broker target (plaintext
+// http to a non-loopback host) surfaces MISSING_ARGUMENT — previously SEC-1 ran
+// first and TRANSPORT_ERROR won. Both codes map to exit 1 (ux/contract.go), so
+// exit parity holds; error_code is part of the closed machine contract (13
+// §3a), so the new order is pinned here as a decision, not an accident.
+func TestExecuteMalformedHeaderWinsOverInsecureBroker(t *testing.T) {
+	app := testApp(t)
+	// Loopback control plane; never dialed — GET:/v1/pets short-circuits the
+	// resolve phase and the header parse fails before any request is built.
+	seedRegistered(t, app, "default", "http://127.0.0.1:1")
+
+	out := new(bytes.Buffer)
+	errBuf := new(bytes.Buffer)
+	app.Out = out
+	app.Err = errBuf
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(errBuf)
+	root.SetArgs([]string{
+		"execute", "GET:/v1/pets",
+		"--header", "no-equals-sign",
+		// SEC-1 violation (plaintext http to a non-loopback broker) — would be
+		// TRANSPORT_ERROR if the request were ever built.
+		"--broker-scheme", "http",
+		"--broker-host", "203.0.113.9:8100",
+	})
+
+	err := root.Execute()
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("doubly-invalid execute returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeMissingArgument {
+		t.Errorf("code = %q, want %q (the malformed --header wins over the SEC-1 refusal)",
+			coded.Code, ux.CodeMissingArgument)
+	}
+	if coded.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1 (exit parity with the old TRANSPORT_ERROR precedence)", coded.ExitCode())
+	}
+	if !strings.Contains(coded.Msg, "--header") || !strings.Contains(coded.Msg, "no-equals-sign") {
+		t.Errorf("msg %q should name the flag and offending value", coded.Msg)
 	}
 }
 
@@ -1169,6 +1219,122 @@ func TestExecuteRemoteBrokerGuardHonoursExplicitLoopback(t *testing.T) {
 	if errors.As(err, &coded) && coded.Code == ux.CodeResolveFailed &&
 		strings.Contains(coded.Msg, "no broker is configured") {
 		t.Errorf("explicit loopback broker must be honoured, not refused by the guard: %v", err)
+	}
+}
+
+// TestExecuteCmdBrokerLegHonorsCAPin is the #1206 regression, modeled on
+// TestMCPExecute_BrokerLegHonorsCAPinAndHook (§3.7.2): the COBRA execute
+// path's broker leg must ride clictx's SEC-20 CA-pinned client — previously it
+// fell through agentops.Do's default, un-pinned client, silently ignoring the
+// environment's ca_cert_path. The broker here serves a cert only the
+// environment's bundle trusts, so success proves the pinned client carried the
+// request; the un-pinned default would fail TLS verification.
+func TestExecuteCmdBrokerLegHonorsCAPin(t *testing.T) {
+	var brokerHits int
+	broker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		brokerHits++
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer broker.Close()
+
+	// Write the test server's own CA cert as the environment's bundle.
+	pemPath := filepath.Join(t.TempDir(), "ca.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: broker.Certificate().Raw})
+	if err := os.WriteFile(pemPath, pemBytes, 0o600); err != nil {
+		t.Fatalf("write ca bundle: %v", err)
+	}
+
+	state := &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "test-agent",
+			EnvironmentName:     "test",
+			BaseURL:             "https://127.0.0.1:8000", // loopback so the remote-broker guard stays quiet
+			BrokerURL:           broker.URL,
+			CACertPath:          pemPath,
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	}
+
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	cmd.SetContext(clictx.WithActiveState(context.Background(), state))
+
+	// Default broker flags: the environment's broker_url (the TLS server) wins.
+	opts := &executeOptions{
+		brokerHost:   config.DefaultBrokerHost,
+		brokerScheme: config.DefaultBrokerScheme,
+		json:         true,
+	}
+	if err := app.executeE(cmd, opts, "GET:/v1/pets"); err != nil {
+		t.Fatalf("CA-pinned broker call must succeed against the pinned cert: %v", err)
+	}
+	if brokerHits != 1 {
+		t.Fatalf("broker hits = %d, want 1", brokerHits)
+	}
+
+	// SEC-20 fail-closed: a set-but-broken bundle is an error, never a silent
+	// fallback to system roots (which is exactly what the un-pinned default
+	// client used to do).
+	state.CACertPath = filepath.Join(t.TempDir(), "missing.pem")
+	err := app.executeE(cmd, opts, "GET:/v1/pets")
+	if err == nil {
+		t.Fatal("a broken ca_cert_path must fail closed on the cobra execute broker leg")
+	}
+	if !strings.Contains(err.Error(), "ca_cert_path") {
+		t.Errorf("error %q must name the broken ca_cert_path", err)
+	}
+	if brokerHits != 1 {
+		t.Errorf("broker hits = %d after fail-closed error, want still 1 (no un-pinned fallback request)", brokerHits)
+	}
+}
+
+// TestExecuteCmdBrokerRedirectRefused is the cobra-path #1207 regression: a
+// broker answering with a 302 must not be followed (the redirect target never
+// receives a request) and must surface as a coded TRANSPORT_ERROR (exit 1)
+// naming the redirect — not as a confusing "HTTP 302" success envelope.
+func TestExecuteCmdBrokerRedirectRefused(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/internal-admin" {
+			_, _ = w.Write([]byte(`{"should":"never be seen"}`))
+			return
+		}
+		http.Redirect(w, r, "/internal-admin", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+	app.Out = new(bytes.Buffer)
+	app.Err = new(bytes.Buffer)
+	root := newAPIRootCmd(app.App)
+	root.SetOut(app.Out)
+	root.SetErr(app.Err)
+	root.SetArgs([]string{
+		"execute", "GET:/v1/pets",
+		"--json",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("a broker redirect returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeTransportError {
+		t.Errorf("code = %q, want %q", coded.Code, ux.CodeTransportError)
+	}
+	if coded.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1 (transport failure)", coded.ExitCode())
+	}
+	if !strings.Contains(coded.Msg, "redirect") {
+		t.Errorf("msg %q should name the refused redirect", coded.Msg)
+	}
+	if len(paths) != 1 || paths[0] != "/v1/pets" {
+		t.Errorf("requested paths = %v, want only the broker path (the redirect target must never be fetched)", paths)
 	}
 }
 

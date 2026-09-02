@@ -2703,7 +2703,7 @@
           "path": "jentic reset",
           "use": "reset",
           "short": "Tear down the agent account and wipe this machine's jentic identity state",
-          "long": "reset is the inverse of the agent-user setup folded into `jentic setup`,\nand the clean-slate hatch for this machine's jentic identity state.\n\nIt tears down the agent account — the dedicated Unix user, the named-user\nACLs stamped across your home (both the leaf read/write grants and the\nexecute-only ancestor traverse grants), and the passwordless-launch sudoers\ndrop-in — and then also wipes your OWN jentic identity state: the store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
+          "long": "reset is the inverse of the agent-user setup folded into `jentic setup`,\nand the clean-slate hatch for this machine's jentic identity state.\n\nIt tears down the agent account — the dedicated Unix user, the named-user\nACLs stamped across your home (both the leaf read/write grants and the\nexecute-only ancestor traverse grants), and the passwordless-launch sudoers\ndrop-in — plus any MCP-isolation service accounts (`_jentic-\u003cruntime\u003e`,\ntheir sudoers lines, and their exported key material), and then also wipes\nyour OWN jentic identity state: the store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
           "example": "  jentic reset                              # full clean slate: the account + your identity state\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
           "group_title": "Local agent client",
           "flags": [
@@ -2759,6 +2759,54 @@
               "name": "mode",
               "type": "string",
               "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ]
+        },
+        {
+          "name": "mcp",
+          "path": "jentic mcp",
+          "use": "mcp",
+          "short": "Serve Jentic tools to a local MCP client over stdio",
+          "long": "mcp runs a Model Context Protocol server on stdin/stdout for a local MCP\nclient (Claude Code, Cursor, …) to spawn. It serves the Jentic tool surface\npre-auth: the session always boots — `tools/list` works with no or invalid\nconfiguration — and the `get_started` tool diagnoses this machine's setup\nstate (config, registration, instance reachability) with the exact operator\ninstruction for each gap. `whoami` reports the agent identity the control\nplane sees. Every tool result carries a top-level `instance` key identifying\nthe Jentic One instance it came from.\n\nContext selection uses the root --context flag / $JENTIC_CONTEXT; broker\ntargeting comes from the context's environment. stdout is the JSON-RPC wire —\nserver logs go to --log-file (default under the XDG state dir), never stdout.\nThe command never prompts and never starts or stops the instance.",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "exclude-tools",
+              "type": "stringSlice",
+              "default": "[]",
+              "usage": "tool names to withhold from the client (repeatable or comma-separated)"
+            },
+            {
+              "name": "log-file",
+              "type": "string",
+              "usage": "server log file (default: \u003cXDG state dir\u003e/jentic/logs/mcp.log)"
+            },
+            {
+              "name": "max-result-bytes",
+              "type": "int64",
+              "default": "131072",
+              "usage": "hard cap on a relayed response body in a tool result; larger bodies are truncated with {truncated, total_bytes, execution_id}"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "read-only",
+              "type": "bool",
+              "default": "false",
+              "usage": "serve only tools annotated read-only"
             },
             {
               "name": "theme",

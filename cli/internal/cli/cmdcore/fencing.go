@@ -13,6 +13,14 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
+// LongRunningAnnotation marks a command whose lifetime is owned by its caller
+// (e.g. `jentic mcp`, a stdio server the MCP client spawns and keeps for the
+// whole session). The interceptor's non-interactive wall-clock deadline (see
+// installInterceptor) is skipped for these commands: it exists to bound a
+// SINGLE control-plane call, and applying it to a server process would kill
+// the session after 60s. Long-running commands own their per-call deadlines.
+const LongRunningAnnotation = "long-running"
+
 // installInterceptor wires the audience-aware root PersistentPreRunE (impl/3.2 §2)
 // onto a root command: resolve state -> resolve theme (Stage-0 mode gate) ->
 // construct the Audience -> ENFORCE FENCING -> inject Audience + ActiveState into
@@ -142,9 +150,12 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// Control Plane would otherwise hang forever (the shared control client
 		// leaves http.Client.Timeout zero, deferring to per-call contexts that
 		// today carry no deadline). Human mode stays undeadlined so interactive
-		// prompts/paginators aren't cut off. The cancel is released in
-		// PersistentPostRunE above.
-		if state.Mode == clictx.ModeAgent || state.Mode == clictx.ModeServiceAccount {
+		// prompts/paginators aren't cut off. Long-running commands (annotation
+		// above) are exempt: their lifetime is caller-owned and they bound their
+		// own per-call contexts. The cancel is released in PersistentPostRunE
+		// above.
+		if (state.Mode == clictx.ModeAgent || state.Mode == clictx.ModeServiceAccount) &&
+			cmd.Annotations[LongRunningAnnotation] != "true" {
 			//nolint:gosec // G118: the cancel is stored in cancelTimeout and invoked in the root PersistentPostRunE above (one invocation runs one command to completion); a leaked timer would in any case be reclaimed at process exit.
 			ctx, cancelTimeout = context.WithTimeout(ctx, agentTimeout)
 		}

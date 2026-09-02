@@ -35,6 +35,7 @@ var configWriterAllowlist = map[string]bool{
 	"internal/profile/store.go":           true, // profile state (atomic)
 	"internal/agentkey/key.go":            true, // Ed25519 key material (0600)
 	"internal/skillgen/apply.go":          true, // rendered skill files (atomic)
+	"internal/mcpcfg/writers.go":          true, // third-party MCP configs (~/.cursor/mcp.json, claude_desktop_config.json, ~/.codex/config.toml) — foreign runtimes' files, NOT jentic config.yaml; merge is idempotent, mode-preserving, and atomic (temp+fsync+rename) (2-E3)
 	"internal/update/update.go":           true, // self-update binary swap (atomic)
 	"internal/update/download.go":         true, // extracts a verified release binary into the update stage dir (STATE, not config.yaml; sha256/cosign-verified before write)
 	"internal/install/start.go":           true, // pid file

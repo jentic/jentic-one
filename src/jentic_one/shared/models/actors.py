@@ -20,6 +20,22 @@ class Origin(StrEnum):
     API = "api"
     AGENT = "agent"
     SYSTEM = "system"
+    MCP = "mcp"
+
+
+def origin_or_none(value: str | None) -> Origin | None:
+    """Coerce a persisted/threaded origin string back to the enum.
+
+    Emit sites receive the origin as a plain string (job payloads, persisted
+    execution rows); an absent or unrecognised value degrades to ``None`` so a
+    garbage origin can never become an event tag.
+    """
+    if not value:
+        return None
+    try:
+        return Origin(value)
+    except ValueError:
+        return None
 
 
 _PREFIX_TO_ACTOR_TYPE: dict[str, ActorType] = {

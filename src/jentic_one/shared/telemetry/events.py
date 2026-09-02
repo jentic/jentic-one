@@ -56,6 +56,9 @@ class TelemetryEventName(StrEnum):
     CREDENTIAL_CONNECTION_FAILED = "credential_connection_failed"
     CREDENTIAL_REFRESH_FAILED = "credential_refresh_failed"
     CREDENTIAL_UNDECRYPTABLE = "credential_undecryptable"
+    # Local-MCP transport adoption (issue #1177)
+    MCP_SESSION_STARTED = "mcp_session_started"
+    MCP_CONFIG_REGISTERED = "mcp_config_registered"
 
 
 #: Allowlist: internal ``EventType`` → wire ``TelemetryEventName``. Only events
@@ -89,6 +92,8 @@ TELEMETRY_EVENTS: dict[str, TelemetryEventName] = {
     EventType.EXECUTION_COMPLETED: TelemetryEventName.BROKER_EXECUTION,
     EventType.EXECUTION_FAILED: TelemetryEventName.BROKER_EXECUTION_FAILED,
     EventType.PBAC_DENIED: TelemetryEventName.PBAC_DENIED,
+    EventType.MCP_SESSION_STARTED: TelemetryEventName.MCP_SESSION_STARTED,
+    EventType.MCP_CONFIG_REGISTERED: TelemetryEventName.MCP_CONFIG_REGISTERED,
 }
 
 

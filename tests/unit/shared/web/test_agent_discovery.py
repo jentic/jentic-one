@@ -258,15 +258,27 @@ def test_llms_txt_quickstart_matches_backend_contract(client: TestClient) -> Non
     assert "300 seconds in the future" in body
 
 
-def test_llms_txt_disclaims_mcp_endpoint(client: TestClient) -> None:
-    """llms.txt tells agents there is no MCP endpoint on this deployment (#753).
+def test_llms_txt_advertises_mcp_server(client: TestClient) -> None:
+    """llms.txt advertises the local `jentic mcp` server and the routing rule (#1176).
 
-    Agents arriving from the Jentic cloud platform probe ``/mcp`` and then
-    misdiagnose the 404; the document must state the integration path is the
-    CLI + skill (or raw HTTP), not MCP.
+    The document must advertise MCP as the preferred surface for MCP-capable
+    runtimes (with the CLI for bootstrap/recovery), state that both surfaces
+    reach the same instance (verifiable via ``backend``/``host`` in the
+    identity stamp), and still preempt the ``/mcp``-probe misdiagnosis (#753):
+    MCP runs through the local stdio server, not an HTTP endpoint on the
+    deployment.
     """
     body = client.get(LLMS_TXT_PATH).text
-    assert "no MCP endpoint" in body
+    assert "no MCP endpoint" not in body
+    assert "`jentic mcp`" in body
+    assert "jentic mcp --help" in body
+    # The §3.5 routing paragraph: MCP preferred, CLI for recovery, same instance.
+    assert "prefer them" in body
+    assert "`setup`/`access` recovery" in body
+    assert "same instance" in body
+    assert "`backend`/`host`" in body
+    # The /mcp probe still 404s — the advertisement must not imply an HTTP endpoint.
+    assert "probing `/mcp` still returns 404" in body
 
 
 def test_render_llms_txt_stamps_base_everywhere() -> None:

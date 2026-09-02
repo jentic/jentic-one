@@ -171,6 +171,33 @@ make help    # list all targets (test, lint, check, cov, ...)
 `make build-ctl` / `make build-api` build a single binary; `make check` runs
 lint + vet + race tests.
 
+### Debugging the MCP server (Inspector loop)
+
+`jentic mcp` serves the agent tool surface over **stdio MCP** — stdin/stdout
+are the JSON-RPC wire, so you can't poke it from a shell. The fast debug loop
+is the official Inspector, a local web UI that spawns the server exactly like
+a real client would:
+
+```bash
+make build-api
+npx @modelcontextprotocol/inspector ./jentic mcp
+```
+
+It opens a browser page where you can run `tools/list`, call tools with
+hand-written arguments, read the `skill://` resources, and watch the raw
+JSON-RPC frames. Handy checks while developing:
+
+- `tools/list` works with **no config at all** (the "always boots"
+  invariant), and `get_started` diagnoses the machine's setup state.
+- `resources/read` on `skill://jentic` reports `one.jentic/source: hosted`
+  when the configured backend answers, `bundled` offline / pre-auth.
+- Flag behavior: `--read-only` withholds exactly `execute`;
+  `--exclude-tools` drops what you name.
+
+Server logs never touch stdout (it's the wire) — tail them with
+`tail -f ~/.local/state/jentic/logs/mcp.log`, or point `--log-file`
+somewhere else (pass flags after `jentic mcp` in the Inspector command line).
+
 The examples below assume both binaries are on your `PATH`:
 
 ```bash
@@ -231,6 +258,23 @@ jentic execute <operation>
 > (`jentic env add <env> --url <URL> --broker-url <URL> --force` does the same
 > without re-registering.) See [Local setup](#local-setup) for the loopback
 > case, where `register` seeds the broker automatically.
+
+## MCP server (`jentic mcp`)
+
+`jentic mcp` runs a Model Context Protocol server on stdin/stdout for a local
+MCP client (Claude Code, Cursor, …) to spawn. The session always boots —
+`tools/list` works with no or invalid configuration — and the `get_started`
+tool diagnoses this machine's setup state with the exact operator instruction
+for each gap. Context selection uses the root `--context` flag /
+`$JENTIC_CONTEXT`; server logs go to `--log-file` (default under the XDG state
+dir), never stdout.
+
+**Windows is in scope** for `jentic mcp`: the `jentic` binary ships natively
+for Windows (see [Supported platforms](#supported-platforms)) and the stdio
+server runs with it — the remaining work is verification, not porting (the
+stdio path and per-runtime config writers are to be verified on Windows —
+paths, `.exe` in written entries — before one-click client configs are
+published; WSL is documented only as an alternative).
 
 ## Local setup
 

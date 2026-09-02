@@ -15,7 +15,7 @@ from jentic_one.control.web.errors import (
     database_error_handler,
     toolkit_service_error_handler,
 )
-from jentic_one.control.web.routers import access_requests, credentials, toolkits
+from jentic_one.control.web.routers import access_requests, credentials, mcp, toolkits
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import (
     DatabaseDataError,
@@ -35,6 +35,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (credentials.router, "", []),
         (toolkits.router, "", []),
         (access_requests.router, "", []),
+        (mcp.router, "", []),
     ]
 
 

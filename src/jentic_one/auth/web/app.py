@@ -17,6 +17,8 @@ from jentic_one.auth.web.routers import (
     discovery,
     identity,
     oauth,
+    oauth_client_registration,
+    oauth_grants,
     registration,
     service_accounts,
 )
@@ -30,6 +32,9 @@ from jentic_one.shared.auth.verify import resolve_permissions_for_actor, verify_
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
+from jentic_one.shared.state import build_state_backend
+from jentic_one.shared.state.factory import BackendKind
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.health import make_health_router
 
@@ -48,6 +53,8 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (agents.router, "", []),
         (service_accounts.router, "", []),
         (oauth.router, "", []),
+        (oauth_client_registration.router, "", []),
+        (oauth_grants.router, "", []),
         (registration.router, "", []),
     ]
 
@@ -61,8 +68,25 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 
 def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Install the auth token verifier on the app for shared identity resolution."""
+    """Install the auth token verifier and shared state on the app."""
     app.state.verify_token = make_superset_verifier(ctx)
+    backend_cfg = ctx.config.broker.resilience.backend
+    backend = build_state_backend(backend_cfg)
+    app.state.auth_state_backend = backend
+    if backend_cfg.backend is BackendKind.MEMORY:
+        # Rate limiters and consent-handle state live per-process on this
+        # backend, so a multi-worker deployment gets independent buckets and
+        # loses the anti-replay guarantee across workers. Warn loudly so an
+        # operator running >1 worker knows to configure Redis.
+        logger.warning(
+            "auth_state_backend_memory_selected — rate limits and consent "
+            "handles are per-process; configure redis for multi-worker deployments",
+        )
+
+    async def _close_auth_backend() -> None:
+        await backend.aclose()
+
+    app.router.add_event_handler("shutdown", _close_auth_backend)
 
 
 def make_superset_verifier(ctx: Context) -> Any:
@@ -119,6 +143,11 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 # broker's InProcessTokenResolver, which already reads row.scopes.
                 # parent_permissions (owner inheritance) is still resolved above.
                 permissions = list(resolved.permissions)
+            elif resolved.oauth_client_id is not None:
+                consented = set(resolved.permissions)
+                permissions = [p for p in permissions if p in consented]
+                oidc = [s for s in consented if s in OIDC_PASSTHROUGH_SCOPES]
+                permissions.extend(oidc)
 
             return Identity(
                 sub=resolved.sub,
@@ -127,6 +156,8 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 parent_permissions=parent_permissions,
                 actor_type=resolved.actor_type,
                 parent_actor_id=resolved.parent_actor_id,
+                oauth_client_id=resolved.oauth_client_id,
+                oauth_grant_id=resolved.oauth_grant_id,
             )
         return await verify_token(
             token, secret=ctx.config.admin.auth.jwt_secret.get_secret_value(), ctx=ctx

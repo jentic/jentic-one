@@ -45,7 +45,7 @@ from jentic_one.auth.core.idp import (
     set_default_idp_grants,
 )
 from jentic_one.auth.web.app import create_app
-from jentic_one.shared.config import IdpConfig, SigningKeyConfig
+from jentic_one.shared.config import IdpConfig, PlatformClientConfig, SigningKeyConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 from tests.web.conftest import noop_lifespan
@@ -95,6 +95,12 @@ def oidc_context(web_context: Context) -> Context:
     """web_context with the auth surface configured for the OIDC login flow."""
     auth = web_context.config.auth
     auth.canonical_base_url = CANONICAL_BASE
+    auth.platform_clients = [
+        PlatformClientConfig.model_construct(
+            client_id=CLIENT_ID,
+            redirect_uris=[CLIENT_REDIRECT],
+        ),
+    ]
     auth.id_signing = [
         SigningKeyConfig(kid=SIGNING_KID, private_key_pem=_gen_es256_pem())  # type: ignore[arg-type]
     ]

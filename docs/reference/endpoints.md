@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **159**._
+_Total endpoints: **173**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -109,7 +109,7 @@ _Total endpoints: **159**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (49)
+## Operator-facing (typically a human operator / admin) (50)
 
 
 ### `access-requests`
@@ -134,6 +134,7 @@ _Total endpoints: **159**._
 | PATCH | `/agents/{agent_id}` | `agents:write` | operator | Update Agent |
 | GET | `/agents/{agent_id}/api-key` | `agents:read` | operator | Get Agent Api Key Info |
 | GET | `/agents/{agent_id}/api-key/history` | `agents:read` | operator | Get Agent Api Key History |
+| PUT | `/agents/{agent_id}/jwks` | `agents:write` | operator | Update Agent Jwks |
 | GET | `/agents/{agent_id}/scopes` | `agents:read` | operator | Get Agent Scopes |
 | PUT | `/agents/{agent_id}/scopes` | `agents:write` | operator | Replace Agent Scopes |
 | POST | `/agents/{agent_id}/toolkits` | `agents:write` | operator | Bind Toolkit |
@@ -221,7 +222,7 @@ _Total endpoints: **159**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (60)
+## Any authenticated actor (70)
 
 
 ### `access-requests`
@@ -241,6 +242,14 @@ _Total endpoints: **159**._
 | GET | `/admin/config/providers` | `config:read` | any | List credential provider configs |
 | GET | `/admin/config/providers/{name}` | `config:read` | any | Get a credential provider config |
 | PUT | `/admin/config/providers/{name}` | `config:write` | any | Set a credential provider config |
+| GET | `/admin/oauth-clients` | `oauth-clients:read` | any | List OAuth clients |
+| POST | `/admin/oauth-clients` | `oauth-clients:write` | any | Register OAuth client |
+| DELETE | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Deactivate OAuth client |
+| GET | `/admin/oauth-clients/{id}` | `oauth-clients:read` | any | Get OAuth client |
+| PATCH | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Update OAuth client |
+| POST | `/admin/oauth-clients/{id}/rotate-secret` | `oauth-clients:write` | any | Rotate client secret |
+| POST | `/admin/oauth-clients/{id}:approve` | `oauth-clients:write` | any | Approve OAuth client |
+| POST | `/admin/oauth-clients/{id}:deny` | `oauth-clients:write` | any | Deny OAuth client |
 
 ### `agents`
 
@@ -281,6 +290,12 @@ _Total endpoints: **159**._
 |---|---|---|---|---|
 | POST | `/jobs/{job_id}:cancel` | `jobs:write` | any | Cancel Job |
 
+### `mcp`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/mcp/config-registrations` | _any authenticated_ | any | Report MCP config registration |
+
 ### `me`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -303,6 +318,12 @@ _Total endpoints: **159**._
 |---|---|---|---|---|
 | POST | `/oauth/introspect` | _any authenticated_ | any | Introspect Endpoint |
 | POST | `/oauth/revoke` | _any authenticated_ | any | Revoke Endpoint |
+
+### `oauth-grants`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/oauth-grants/{grant_id}:revoke` | _any authenticated_ | any | Revoke OAuth grant |
 
 ### `permissions`
 
@@ -359,7 +380,7 @@ _Total endpoints: **159**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (19)
+## Public (unauthenticated) (22)
 
 
 ### `.well-known`
@@ -424,7 +445,15 @@ _Total endpoints: **159**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/oauth/callback` | _public — no auth_ | — | Authorize Oauth Callback |
+| GET | `/oauth/consent` | _public — no auth_ | — | Consent Page |
+| POST | `/oauth/consent` | _public — no auth_ | — | Consent Submit |
 | POST | `/oauth/token` | _public — no auth_ | — | Token Endpoint |
+
+### `oauth-clients`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/oauth-clients` | _public — no auth_ | — | Register OAuth client (anonymous DCR) |
 
 ### `ready`
 

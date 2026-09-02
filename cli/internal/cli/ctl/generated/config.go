@@ -157,6 +157,12 @@ type AuthConfig struct {
 	// Idp corresponds to the JSON schema field "idp".
 	Idp *IdpConfig `json:"idp,omitempty,omitzero" yaml:"idp,omitempty" mapstructure:"idp,omitempty"`
 
+	// OauthRateLimit corresponds to the JSON schema field "oauth_rate_limit".
+	OauthRateLimit *OAuthRateLimitConfig `json:"oauth_rate_limit,omitempty,omitzero" yaml:"oauth_rate_limit,omitempty" mapstructure:"oauth_rate_limit,omitempty"`
+
+	// PlatformClients corresponds to the JSON schema field "platform_clients".
+	PlatformClients []PlatformClientConfig `json:"platform_clients,omitempty,omitzero" yaml:"platform_clients,omitempty" mapstructure:"platform_clients,omitempty"`
+
 	// RatTtlSeconds corresponds to the JSON schema field "rat_ttl_seconds".
 	RatTtlSeconds int `json:"rat_ttl_seconds,omitempty,omitzero" yaml:"rat_ttl_seconds,omitempty" mapstructure:"rat_ttl_seconds,omitempty"`
 
@@ -1319,6 +1325,52 @@ func (j *LoggingConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// “server.mcp“ sub-config (minimal 3a-2 seam; phase-3 item 2 extends it).
+type McpConfig struct {
+	// Oauth corresponds to the JSON schema field "oauth".
+	Oauth *McpOAuthConfig `json:"oauth,omitempty,omitzero" yaml:"oauth,omitempty" mapstructure:"oauth,omitempty"`
+}
+
+// Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).
+//
+// Minimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full
+// “server.mcp“ sub-config (“server.mcp.enabled“ etc.) and extends this
+// model in place — fields here must keep their names and defaults.
+type McpOAuthConfig struct {
+	// AutoApproveClients corresponds to the JSON schema field "auto_approve_clients".
+	AutoApproveClients bool `json:"auto_approve_clients,omitempty,omitzero" yaml:"auto_approve_clients,omitempty" mapstructure:"auto_approve_clients,omitempty"`
+
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// RegistrationGcDays corresponds to the JSON schema field "registration_gc_days".
+	RegistrationGcDays int `json:"registration_gc_days,omitempty,omitzero" yaml:"registration_gc_days,omitempty" mapstructure:"registration_gc_days,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain McpOAuthConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["auto_approve_clients"]; !ok || v == nil {
+		plain.AutoApproveClients = true
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["registration_gc_days"]; !ok || v == nil {
+		plain.RegistrationGcDays = 90
+	}
+	*j = McpOAuthConfig(plain)
+	return nil
+}
+
 // Metrics exporter configuration.
 type MetricsConfig struct {
 	// ExportIntervalSeconds corresponds to the JSON schema field
@@ -1379,6 +1431,63 @@ func (j *MetricsConfig) UnmarshalJSON(value []byte) error {
 		plain.Exporter = "otlp"
 	}
 	*j = MetricsConfig(plain)
+	return nil
+}
+
+// Pre-auth rate limit tunables for OAuth endpoints.
+type OAuthRateLimitConfig struct {
+	// AuthorizeBurst corresponds to the JSON schema field "authorize_burst".
+	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
+
+	// AuthorizeRpm corresponds to the JSON schema field "authorize_rpm".
+	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
+
+	// ExchangeBurst corresponds to the JSON schema field "exchange_burst".
+	ExchangeBurst int `json:"exchange_burst,omitempty,omitzero" yaml:"exchange_burst,omitempty" mapstructure:"exchange_burst,omitempty"`
+
+	// ExchangeRpm corresponds to the JSON schema field "exchange_rpm".
+	ExchangeRpm int `json:"exchange_rpm,omitempty,omitzero" yaml:"exchange_rpm,omitempty" mapstructure:"exchange_rpm,omitempty"`
+
+	// RegistrationBurst corresponds to the JSON schema field "registration_burst".
+	RegistrationBurst int `json:"registration_burst,omitempty,omitzero" yaml:"registration_burst,omitempty" mapstructure:"registration_burst,omitempty"`
+
+	// RegistrationRpm corresponds to the JSON schema field "registration_rpm".
+	RegistrationRpm int `json:"registration_rpm,omitempty,omitzero" yaml:"registration_rpm,omitempty" mapstructure:"registration_rpm,omitempty"`
+
+	// TrustedProxies corresponds to the JSON schema field "trusted_proxies".
+	TrustedProxies []string `json:"trusted_proxies,omitempty,omitzero" yaml:"trusted_proxies,omitempty" mapstructure:"trusted_proxies,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *OAuthRateLimitConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain OAuthRateLimitConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["authorize_burst"]; !ok || v == nil {
+		plain.AuthorizeBurst = 30
+	}
+	if v, ok := raw["authorize_rpm"]; !ok || v == nil {
+		plain.AuthorizeRpm = 30
+	}
+	if v, ok := raw["exchange_burst"]; !ok || v == nil {
+		plain.ExchangeBurst = 60
+	}
+	if v, ok := raw["exchange_rpm"]; !ok || v == nil {
+		plain.ExchangeRpm = 60
+	}
+	if v, ok := raw["registration_burst"]; !ok || v == nil {
+		plain.RegistrationBurst = 5
+	}
+	if v, ok := raw["registration_rpm"]; !ok || v == nil {
+		plain.RegistrationRpm = 10
+	}
+	*j = OAuthRateLimitConfig(plain)
 	return nil
 }
 
@@ -1481,6 +1590,43 @@ func (j *PipedreamProviderConfig) UnmarshalJSON(value []byte) error {
 		return fmt.Errorf("field %s: must be equal to %s", "kind", "pipedream")
 	}
 	*j = PipedreamProviderConfig(plain)
+	return nil
+}
+
+// A static first-party OAuth client (e.g. the operator SPA).
+//
+// Platform clients authenticate via PKCE only — no client secret. They are
+// defined in config (not the oauth_clients DB table) because they are
+// deployment-time constants, not admin-managed dynamic registrations.
+type PlatformClientConfig struct {
+	// ClientId corresponds to the JSON schema field "client_id".
+	ClientId string `json:"client_id" yaml:"client_id" mapstructure:"client_id"`
+
+	// RedirectUris corresponds to the JSON schema field "redirect_uris".
+	RedirectUris []string `json:"redirect_uris" yaml:"redirect_uris" mapstructure:"redirect_uris"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *PlatformClientConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["client_id"]; raw != nil && !ok {
+		return fmt.Errorf("field client_id in PlatformClientConfig: required")
+	}
+	if _, ok := raw["redirect_uris"]; raw != nil && !ok {
+		return fmt.Errorf("field redirect_uris in PlatformClientConfig: required")
+	}
+	type Plain PlatformClientConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if plain.RedirectUris != nil && len(plain.RedirectUris) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "redirect_uris", 1)
+	}
+	*j = PlatformClientConfig(plain)
 	return nil
 }
 
@@ -1792,6 +1938,9 @@ type ServerConfig struct {
 
 	// Host corresponds to the JSON schema field "host".
 	Host string `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
+
+	// Mcp corresponds to the JSON schema field "mcp".
+	Mcp *McpConfig `json:"mcp,omitempty,omitzero" yaml:"mcp,omitempty" mapstructure:"mcp,omitempty"`
 
 	// Port corresponds to the JSON schema field "port".
 	Port int `json:"port,omitempty,omitzero" yaml:"port,omitempty" mapstructure:"port,omitempty"`

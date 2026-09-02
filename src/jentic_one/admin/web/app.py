@@ -20,6 +20,7 @@ from jentic_one.admin.web.routers import (
     health,
     jobs,
     monitoring,
+    oauth_clients,
     permissions,
     users,
 )
@@ -60,6 +61,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (audit.router, "", []),
         (monitoring.router, "", []),
         (config.router, "", []),
+        (oauth_clients.router, "", []),
     ]
 
 

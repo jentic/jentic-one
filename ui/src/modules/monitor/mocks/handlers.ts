@@ -70,6 +70,7 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_1',
 		http_status: 200,
 		operation_id: 'POST /v1/charges',
+		origin: 'api',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:00:00Z',
 		status: 'completed',
@@ -87,6 +88,7 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_2',
 		http_status: 503,
 		operation_id: 'GET /repos/{owner}/{repo}',
+		origin: 'cli',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:05:00Z',
 		status: 'failed',
@@ -104,6 +106,8 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_3',
 		http_status: 200,
 		operation_id: 'POST /v1/refunds',
+		// MCP-origin run (local-MCP #1178) — the origin-filter specs pivot on it.
+		origin: 'mcp',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:06:00Z',
 		status: 'completed',
@@ -462,6 +466,7 @@ export const monitorHandlers = [
 		const traceId = url.searchParams.get('trace_id');
 		const actorId = url.searchParams.get('actor_id');
 		const toolkitId = url.searchParams.get('toolkit_id');
+		const origin = url.searchParams.get('origin');
 		const from = url.searchParams.get('from');
 		const statuses = url.searchParams.getAll('status');
 		const cursor = url.searchParams.get('cursor');
@@ -472,6 +477,7 @@ export const monitorHandlers = [
 		if (traceId) rows = rows.filter((r) => r.trace_id === traceId);
 		if (actorId) rows = rows.filter((r) => r.actor_id === actorId);
 		if (toolkitId) rows = rows.filter((r) => r.toolkit_id === toolkitId);
+		if (origin) rows = rows.filter((r) => (r as { origin?: string }).origin === origin);
 		if (from) rows = rows.filter((r) => r.started_at >= from);
 		if (statuses.length) rows = rows.filter((r) => statuses.includes(r.status));
 		return HttpResponse.json(paginateCursor(rows, cursor, limit));
