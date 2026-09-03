@@ -98,8 +98,9 @@ is still production-shaped.
 > **Public Beta.** The same caveat as the repo front page applies: we don't
 > recommend production use yet. "Production-shaped" here means the topology
 > and secret handling are the real thing — not that the product is done.
-> Also note a self-hosted instance serves the HTTP APIs + UI; the hosted MCP
-> endpoint is a cloud-tier feature — see
+> Also note a self-hosted instance serves the HTTP APIs + UI; MCP access is
+> via the local `jentic mcp` stdio server (available in the `jentic` CLI from
+> the next release), not an HTTP endpoint on the instance — see
 > [`docs/guides/cloud-vs-self-hosted.md`](../docs/guides/cloud-vs-self-hosted.md).
 
 ### The one-image, two-surfaces model
@@ -226,7 +227,7 @@ shipped placeholder values for these — they must be set explicitly:
 
 | Secret                          | Where                                               | Why |
 | ------------------------------- | --------------------------------------------------- | --- |
-| Credential encryption keyset    | `credentials.encryption` (`active_id` + `entries`)  | AES-256-GCM envelope key for credential-at-rest. Credential **writes** fail without a non-empty keyset. Set via YAML (a list of `{id, material}`), not a single env var. |
+| Credential encryption keyset    | `credentials.encryption` (`active_id` + `entries`)  | AES-256-GCM envelope key for credential-at-rest. Credential **writes** fail without a non-empty keyset. Set via YAML (a list of `{id, material}`), not a single env var. On Kubernetes the chart can manage it — see [Generated application secrets on Kubernetes](#generated-application-secrets-on-kubernetes). |
 | Database passwords              | `JENTIC__DATABASES__<DB>__PASSWORD`                 | Needed to connect to a real Postgres. |
 
 Generate a fresh secret / encryption key material with:
@@ -548,23 +549,29 @@ To bump the release:
 
 ## Reproducibility: the digest pin
 
-`deploy/docker/python-base.Dockerfile` pins `python:3.12-slim` **and**
-`node:22-slim` to specific sha256 digests, not just the floating tags, so a
-build today and a build in six months produce the same base layers:
+`deploy/docker/python-base.Dockerfile` pins `python:3.12-slim`,
+`node:22-slim` **and** `ubuntu:24.04` to specific sha256 digests, not just the
+floating tags, so a build today and a build in six months produce the same
+base layers. The runtime stage is Ubuntu rather than Debian-based
+`python:3.12-slim`: AWS Marketplace's scanner blocks on NVD-critical CVEs
+that Debian stable marks won't-fix (no-dsa) and therefore never patches,
+while Ubuntu backports the fixes — see the Dockerfile header. The
+builder/UI stages never ship, so they stay on the official images:
 
 ```dockerfile
-ARG PYTHON_IMAGE=python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203
-ARG NODE_IMAGE=node:22-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:...   # builder only
+ARG NODE_IMAGE=node:22-slim@sha256:...         # UI build only
+ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:...       # the runtime base that ships
 FROM ${PYTHON_IMAGE} AS builder
 ...
-FROM ${PYTHON_IMAGE} AS runtime
+FROM ${UBUNTU_IMAGE} AS runtime
 ```
 
-To bump either base image (e.g. for a CVE patch):
+To bump any base image (e.g. for a CVE patch):
 
 ```bash
-docker pull python:3.12-slim          # or node:22-slim
-docker buildx imagetools inspect python:3.12-slim
+docker pull ubuntu:24.04              # or python:3.12-slim / node:22-slim
+docker buildx imagetools inspect ubuntu:24.04
 # copy the resulting sha256:... into the matching ARG in python-base.Dockerfile
 ```
 
@@ -823,8 +830,8 @@ into the kind cluster, to keep the deploy fast:
 | `parts`    | `registry`, `admin`, `control`, `broker` |
 | `broker`   | `broker`                               |
 
-The bundled PostgreSQL uses the stock Bitnami image pulled from Docker Hub, so
-no custom database image needs to be built or loaded.
+The bundled PostgreSQL runs the official `postgres` image pulled from Docker
+Hub, so no custom database image needs to be built or loaded.
 
 If you plan to switch modes back-and-forth and want to pre-warm everything
 once, run `uv run python -m tools.deploy load --all` after `cluster up` —
@@ -993,10 +1000,62 @@ The umbrella [`values.yaml`](helm/jentic-one/values.yaml) and
 carry inline warnings about this so the dev pattern can't silently leak
 into a prod values file.
 
+### Generated application secrets on Kubernetes
+
+Four config values have no safe default and every deployment must supply
+them (see [Mandatory vs optional secrets](#mandatory-vs-optional-secrets)):
+the credential-encryption keyset (`credentials.encryption` — a *list*, so it
+cannot ride the flat `JENTIC__*` env convention; credential writes 500
+without it), the admin JWT secret, the invite pepper, and the connect state
+secret (all three ship a public placeholder that `JENTIC_ENV=production`
+refuses to boot with). The same Secret also carries the **bundled-DB
+passwords** (`db-password-{registry,control,admin,postgres}` keys): for the
+in-cluster Postgres these are pure pod-to-pod wiring on a ClusterIP service
+nothing outside the cluster can reach, so generated random values beat
+anything an operator would type in. The chart offers three sources, in
+order of preference:
+
+1. **`global.appSecrets.generate: true`** — the chart mints random values
+   into a release-scoped Secret (`<release>-app-secrets`) on first install
+   and **reuses each key verbatim on every upgrade** (the template `lookup`s
+   the live Secret and generates only missing keys — regenerating would
+   orphan everything already encrypted, revoke every live session, and break
+   DB logins). The config.yaml key mounts into the app, broker, and control
+   pods as `JENTIC_CONFIG_FILE`; the DB passwords reach the service pods and
+   the Postgres server/init script as `secretKeyRef` env, so no password
+   ever lands in a ConfigMap or plain pod env. The Secret carries
+   `helm.sh/resource-policy: keep` so `helm uninstall` leaves it (and your
+   decryptability) behind; a same-name reinstall re-adopts it. This is the
+   AWS Marketplace overlay's default, paired with `JENTIC_ENV=production` —
+   a Marketplace launch needs zero buyer-supplied values.
+   Caveat: piping `helm template` to `kubectl apply` bypasses the lookup and
+   WILL rotate the secrets — use `helm install`/`upgrade`.
+2. **`global.appSecrets.existingSecret: <name>`** — mount your own Secret
+   (created via SealedSecrets/ESO/etc.). It must hold a `config.yaml` key
+   shaped like the keyset block in the worked production config above, plus
+   `admin.auth.jwt_secret`, `admin.invite.pepper`, and
+   `credentials.connect.state_secret` — and, if the bundled Postgres is
+   enabled, the four `db-password-*` keys.
+3. **Per-service `configFile.contents`** (dev overlays only) — inlines
+   secrets into a plain ConfigMap; never for real data.
+
+Explicit password values always win over the generated keys:
+`global.databases.<surface>.password` / `postgresql.auth.password` render as
+plain env exactly as before (this is the external-DB path, and the upgrade
+path for installs whose DB roles predate the generated passwords).
+
+The generate/existingSecret modes are mutually exclusive per pod with
+`configFile.contents`: both claim `JENTIC_CONFIG_FILE`, and the chart fails
+the render rather than silently preferring one. Encryption-key **rotation**
+is a config-level operation either way: add a new entry, flip `active_id`,
+keep the old entry until all rows are re-encrypted.
+
 ## AWS Marketplace
 
 Only relevant when deploying the AWS Marketplace container listing (values
 overlay: [`deploy/helm/values/aws-marketplace.yaml`](helm/values/aws-marketplace.yaml)).
+This section is the **seller/maintainer** view — buyers should read
+[`docs/installation/aws-marketplace.md`](../docs/installation/aws-marketplace.md) instead.
 **Not a Marketplace customer? Leave `entitlement.enabled` unset — nothing
 activates**, no AWS call is ever made, and the app is byte-identical to a
 build without the gate.
@@ -1069,8 +1128,14 @@ values are sensitive; the trust policy below is what protects the role):
 | Variable | Value |
 | -------- | ----- |
 | `MARKETPLACE_ECR_ROLE_ARN` | The IAM role below, e.g. `arn:aws:iam::<seller-account-id>:role/jentic-one-marketplace-publish` |
-| `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app` |
-| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` (only if the listing ships the bundled DB) |
+| `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-app` |
+| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-psql` — the bundled-DB mirror of the official `postgres` image (the first-party `charts/postgresql` subchart). Needs the repo's ARN in the role policy below |
+| `MARKETPLACE_ECR_CHART` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one` — the Helm chart as an OCI artifact (the listing's deployment-template URI). The final path segment **must equal the chart name** (`jentic-one`): `helm push` derives it from `Chart.yaml` |
+
+These paths belong to the re-listed product (`prod-cwonumew2jeyo`, created
+2026-09-03 — a fresh listing was the only way to fix the public offer's
+locked pricing terms); the original listing's `jentic/jentic-one-*` repos are
+retired with it.
 
 Once set:
 
@@ -1081,11 +1146,44 @@ Once set:
 - [`marketplace-mirror.yml`](../.github/workflows/marketplace-mirror.yml)
   (weekly + manual dispatch) mirrors the bundled Postgres image
   ([`postgres-mirror.Dockerfile`](docker/postgres-mirror.Dockerfile), digest
-  kept fresh by Dependabot) through the same Trivy gate.
+  kept fresh by Dependabot) through the same Trivy gate;
+- [`marketplace-chart.yml`](../.github/workflows/marketplace-chart.yml)
+  publishes the umbrella Helm chart as an OCI artifact after every successful
+  release run (chart version = tag minus the `v`). The packaged chart is NOT
+  byte-identical to the repo chart: the workflow **bakes
+  [`aws-marketplace.yaml`](helm/values/aws-marketplace.yaml) + the release
+  version (`X.Y.Z`, no `v` — the tag the images carry in ECR) into its
+  `values.yaml`** first — AWS requires image references to live
+  in the chart's own defaults (their validator extracts them there, and
+  their replication pipeline rewrites them per region). The publish gate
+  then runs exactly what AWS runs on submission: bare `helm lint` + bare
+  `helm template` (must succeed — the baked chart generates every secret, so
+  no install-time password guard remains in its render) with every rendered
+  image from the listing's ECR. Backfill an already-released tag with
+  `gh workflow run marketplace-chart.yml -f tag=vX.Y.Z`.
 
 Publishing a new **listing version** stays a portal step (product → Request
 changes → *Add version*, pinning the pushed tag/digest); automate via the
 Marketplace Catalog API only after the manual loop has worked once.
+
+Because the Marketplace chart is self-contained — every password and secret
+is generated at install (see [Generated application secrets on
+Kubernetes](#generated-application-secrets-on-kubernetes)) — the version's
+**Helm delivery option** needs only two override parameters, both
+substituted by AWS at launch (portal validation rejects paid products
+without them). A buyer supplies nothing:
+
+| Override parameter key | DefaultValue |
+| ---------------------- | ------------ |
+| `global.serviceAccount.name` | `${AWSMP_SERVICE_ACCOUNT}` — the buyer's (IRSA) service account; the app/broker pods run under it (chart support: `global.serviceAccount`) |
+| `global.awsmp.licenseSecret` | `${AWSMP_LICENSE_SECRET}` — an AWS-created Secret, mounted read-only at `/var/run/secrets/aws-marketplace/license` (chart support: `global.awsmp.licenseSecret`) |
+
+Everything else (ECR image repositories, `broker.enabled=true`, the bundled
+Postgres, the secret/password generation, the tag pin) is baked into the
+published chart's defaults. Buyers preferring RDS install manually instead,
+disabling the bundled DB and setting the `global.databases.*.host` values
+plus explicit `*.password` values (explicit passwords always win over the
+generated ones).
 
 The IAM role lives in the **seller account** and trusts GitHub's OIDC
 provider — no long-lived AWS keys anywhere. Trust policy (create the
@@ -1129,8 +1227,8 @@ doesn't have it):
 ```
 
 (The first statement covers the release workflow, which runs on `v*` tags;
-the second covers the scheduled/dispatched mirror workflow, which runs on
-`main`.)
+the second covers the mirror and chart workflows, which run on `main` —
+`workflow_run`/scheduled/dispatched workflows execute on the default branch.)
 
 Permissions policy — ECR push scoped to the listing's repos, which live in
 AWS's Marketplace registry account and are granted to the seller through the
@@ -1159,8 +1257,9 @@ portal (`aws-marketplace` actions may be required by newer portal setups; add
         "ecr:DescribeImages"
       ],
       "Resource": [
-        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-app",
-        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-psql"
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/one-app",
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/one-psql",
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/charts/jentic-one"
       ]
     }
   ]
@@ -1182,8 +1281,10 @@ and will be filled when the answers exist:
   every subchart sets an explicit `image.repository: jentic-one/<svc>` (so
   `--set global.image.registry=…` is a no-op), the common helper composes
   `<registry>/<chart-name>` which doesn't match the `jentic-one-app` package
-  name, and the broker subchart has no way to set `JENTIC__APPS=broker` on
-  the app image. Only the app subchart can be pointed at it manually
+  name, and the broker subchart doesn't set `JENTIC__APPS=broker` itself —
+  running it on the app image needs `broker.extraEnv.JENTIC__APPS=broker`
+  (the AWS Marketplace overlay does exactly that). Only the app subchart can
+  be pointed at it manually
   (`--set app.image.repository=ghcr.io/jentic/jentic-one-app --set
   app.image.tag=X.Y.Z`). Publishing per-service images (or teaching the
   chart the app-image + `JENTIC__APPS` model) is the follow-up.
@@ -1191,7 +1292,9 @@ and will be filled when the answers exist:
   and full re-runs strand untagged manifests; nothing prunes them yet. A
   scheduled `actions/delete-package-versions` for untagged + aged SHA tags
   is the likely shape.
-- **Helm chart publishing** — chart is built locally; no OCI-registry push
-  yet.
+- **Helm chart publishing** — the chart publishes to the AWS Marketplace ECR
+  as an OCI artifact on release
+  ([`marketplace-chart.yml`](../.github/workflows/marketplace-chart.yml));
+  there is no general-purpose (non-Marketplace) OCI-registry push yet.
 - **Real Terraform env values** — cluster/namespace/ingress are TODO
   placeholders.

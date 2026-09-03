@@ -1,5 +1,105 @@
 # Changelog
 
+## [0.37.4](https://github.com/jentic/jentic-one/compare/v0.37.3...v0.37.4) (2026-08-28)
+
+
+### Bug Fixes
+
+* **deploy:** set JENTIC__APPS=broker on the Marketplace broker pod ([#1182](https://github.com/jentic/jentic-one/issues/1182)) ([6d2c883](https://github.com/jentic/jentic-one/commit/6d2c883da9a639263c09046c80fae598fefbf58e))
+* **entitlement:** use Count entitlements and release the checkout seat ([#1184](https://github.com/jentic/jentic-one/issues/1184)) ([a451813](https://github.com/jentic/jentic-one/commit/a4518138997b97db3f7b6df9be19dcbf18b69eab))
+
+## [0.37.3](https://github.com/jentic/jentic-one/compare/v0.37.2...v0.37.3) (2026-08-28)
+
+
+### Bug Fixes
+
+* **docker:** venv-install the wheel in the per-service images too ([#1172](https://github.com/jentic/jentic-one/issues/1172)) ([c2f6669](https://github.com/jentic/jentic-one/commit/c2f6669c2b95bc7dc22fc6b15e06bea1bbe2c48d))
+
+## [0.37.2](https://github.com/jentic/jentic-one/compare/v0.37.1...v0.37.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **docker:** move shipped images off Debian's won't-fix glibc CVEs ([#1170](https://github.com/jentic/jentic-one/issues/1170)) ([a0bfee7](https://github.com/jentic/jentic-one/commit/a0bfee76feed842bb64ece4b67f7f37886521062))
+
+## [0.37.1](https://github.com/jentic/jentic-one/compare/v0.37.0...v0.37.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **ci:** drop stale placeholder assertion from the Marketplace chart gate ([#1166](https://github.com/jentic/jentic-one/issues/1166)) ([a0c363f](https://github.com/jentic/jentic-one/commit/a0c363f9ea5695c765271f6de8e8e99a829dd87d))
+* **helm:** bake un-prefixed image tags into the Marketplace chart ([#1169](https://github.com/jentic/jentic-one/issues/1169)) ([67fb464](https://github.com/jentic/jentic-one/commit/67fb4647953430c5386f6435a5e2d9ec0c13fc8b))
+
+## [0.37.0](https://github.com/jentic/jentic-one/compare/v0.36.0...v0.37.0) (2026-08-27)
+
+
+### Features
+
+* **helm:** generate the bundled-DB passwords too — zero-touch Marketplace install ([#1163](https://github.com/jentic/jentic-one/issues/1163)) ([bece9f0](https://github.com/jentic/jentic-one/commit/bece9f0e2649745a147211eac2ee27fdc1990cab))
+
+
+### Bug Fixes
+
+* **helm:** stamp explicit per-service image tags into the baked Marketplace chart ([#1164](https://github.com/jentic/jentic-one/issues/1164)) ([5e4ab87](https://github.com/jentic/jentic-one/commit/5e4ab87e7f63f9425848033f14874406a2ab8594))
+
+## [0.36.0](https://github.com/jentic/jentic-one/compare/v0.35.0...v0.36.0) (2026-08-27)
+
+
+### Features
+
+* **helm:** generate all mandatory app secrets, not just the keyset ([#1160](https://github.com/jentic/jentic-one/issues/1160)) ([aaf72ec](https://github.com/jentic/jentic-one/commit/aaf72ec415f7568991fd1537007fad9eb1c5ef0c))
+
+
+### Bug Fixes
+
+* **ci:** create the cli/vX.Y.Z tag via the REST API, not git push ([#1162](https://github.com/jentic/jentic-one/issues/1162)) ([7fcedbd](https://github.com/jentic/jentic-one/commit/7fcedbd65f495146e05217d5a9fed17903bdd5e1))
+
+## [0.35.0](https://github.com/jentic/jentic-one/compare/v0.34.0...v0.35.0) (2026-08-27)
+
+
+### Features
+
+* **helm:** chart-managed credential-encryption keyset (global.encryption) ([#1159](https://github.com/jentic/jentic-one/issues/1159)) ([90dfd00](https://github.com/jentic/jentic-one/commit/90dfd00de5a4cf4d697e53720b67480d1b93c0b1))
+
+
+### Bug Fixes
+
+* **helm:** AWS-parseable image format for the Marketplace psql reference ([#1156](https://github.com/jentic/jentic-one/issues/1156)) ([a493b2b](https://github.com/jentic/jentic-one/commit/a493b2b4337447fa4dee3b680e9330f9a3b64e03))
+
+## [0.34.0](https://github.com/jentic/jentic-one/compare/v0.33.0...v0.34.0) (2026-08-27)
+
+
+### Features
+
+* **helm:** pass AWS Marketplace chart validation ([#1155](https://github.com/jentic/jentic-one/issues/1155)) ([7bb2526](https://github.com/jentic/jentic-one/commit/7bb2526e0717b01998bfeb651e86e35fd3c878ba))
+
+
+### Bug Fixes
+
+* **docker:** harden the Marketplace postgres mirror to pass the Trivy gate ([#1153](https://github.com/jentic/jentic-one/issues/1153)) ([e8d0092](https://github.com/jentic/jentic-one/commit/e8d0092263d6b732bc502f8b61af3dfa24686bbd))
+
+## [0.33.0](https://github.com/jentic/jentic-one/compare/v0.32.1...v0.33.0) (2026-08-27)
+
+
+### Features
+
+* **ci:** publish the Helm chart to Marketplace ECR as an OCI artifact ([#1145](https://github.com/jentic/jentic-one/issues/1145)) ([c15eab8](https://github.com/jentic/jentic-one/commit/c15eab8f494f58d7802e9a3e6c159d1212447642))
+* **helm:** first-party bundled Postgres on the official image ([#1150](https://github.com/jentic/jentic-one/issues/1150)) ([2005f18](https://github.com/jentic/jentic-one/commit/2005f184d7bed414f47049192c83c9e06001d32b))
+* **helm:** make the Marketplace listing RDS-only, park the postgres mirror ([#1143](https://github.com/jentic/jentic-one/issues/1143)) ([7e4b244](https://github.com/jentic/jentic-one/commit/7e4b244f1441b37eed58543e07030b4b6f3b0f72))
+* **helm:** Marketplace launch wiring — service account + license secret ([#1149](https://github.com/jentic/jentic-one/issues/1149)) ([e55318e](https://github.com/jentic/jentic-one/commit/e55318e457811817b87dec9ec3c18ba70e77b6b7))
+
+
+### Bug Fixes
+
+* **ci:** docker login before cosign signs the Marketplace chart ([#1148](https://github.com/jentic/jentic-one/issues/1148)) ([ef56ec6](https://github.com/jentic/jentic-one/commit/ef56ec6e38507a72cb9988c7769edac0550706c6))
+
+## [0.32.1](https://github.com/jentic/jentic-one/compare/v0.32.0...v0.32.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **auth:** re-check actor status on every token verdict so disable kills outstanding tokens ([#1137](https://github.com/jentic/jentic-one/issues/1137)) ([4dd7acd](https://github.com/jentic/jentic-one/commit/4dd7acd456a68c01faccfd2556a35d8cf351897a))
+
 ## [0.32.0](https://github.com/jentic/jentic-one/compare/v0.31.1...v0.32.0) (2026-08-25)
 
 

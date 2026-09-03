@@ -2,17 +2,78 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { Body_consentSubmit } from '../models/Body_consentSubmit';
 import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
+import type { OAuthGrantAdminListResponse } from '../models/OAuthGrantAdminListResponse';
 import type { RevokeRequest } from '../models/RevokeRequest';
-import type { TokenRequest } from '../models/TokenRequest';
 import type { TokenResponse } from '../models/TokenResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class OAuthService {
+    /**
+     * List OAuth grants
+     * List consent→agent grants across all clients and agents (§4.8).
+     *
+     * The admin cross-view over the grant registry: filter by client, agent,
+     * consenting user, or status. Each item carries the client's display name
+     * and redirect-URI origin plus the consenting ``user_id`` — after an agent
+     * ownership transfer the grant stays with the original consenter, so this
+     * column is how an admin spots stranded grants.
+     * @returns OAuthGrantAdminListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listOauthGrants({
+        clientId,
+        agentId,
+        userId,
+        status,
+        limit = 50,
+        cursor,
+    }: {
+        /**
+         * Filter by the client's public client_id.
+         */
+        clientId?: (string | null),
+        /**
+         * Filter by bound agent.
+         */
+        agentId?: (string | null),
+        /**
+         * Filter by consenting user.
+         */
+        userId?: (string | null),
+        /**
+         * Filter by grant lifecycle state.
+         */
+        status?: ('active' | 'revoked' | null),
+        limit?: number,
+        cursor?: (string | null),
+    }): CancelablePromise<OAuthGrantAdminListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/oauth-grants',
+            query: {
+                'client_id': clientId,
+                'agent_id': agentId,
+                'user_id': userId,
+                'status': status,
+                'limit': limit,
+                'cursor': cursor,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
     /**
      * Authorize Endpoint
      * RFC 6749 Authorization endpoint with PKCE (S256 only).
@@ -88,6 +149,40 @@ export class OAuthService {
         });
     }
     /**
+     * Revoke OAuth grant
+     * Revoke a consent→agent grant — one of the three §4.6 kill radii.
+     *
+     * Allowed for the grant's owner (the consenting user) or an admin. Marks
+     * the grant ``revoked`` and revokes every outstanding access/refresh token
+     * minted under it in the same transaction; the live resolvers also re-check
+     * grant status on every verdict (belt + braces). The client's next token
+     * use or refresh fails closed. Idempotent on an already-revoked grant.
+     * @returns void
+     * @throws ApiError
+     */
+    public static revokeOauthGrant({
+        grantId,
+    }: {
+        grantId: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth-grants/{grant_id}:revoke',
+            path: {
+                'grant_id': grantId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Authorize Oauth Callback
      * External IdP callback — exchanges upstream code and issues platform auth code.
      * @returns any Successful Response
@@ -107,6 +202,68 @@ export class OAuthService {
                 'code': code,
                 'state': state,
             },
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Consent Page
+     * Display the OAuth consent screen.
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static consentPage({
+        ch,
+    }: {
+        /**
+         * Opaque consent-flow handle
+         */
+        ch: string,
+    }): CancelablePromise<string> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/oauth/consent',
+            query: {
+                'ch': ch,
+            },
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Consent Submit
+     * Process the consent form submission. Mints the auth code only on approval.
+     *
+     * ``consent_token`` is the opaque handle emitted by the callback. It never
+     * leaves the state backend as anything more than an ID — the actual consent
+     * parameters (user_id, email, scopes, redirect_uri) live server-side and
+     * can't be tampered with or captured from browser history/proxy logs.
+     *
+     * ``agent_id`` is posted only by the §4.4 agent-picker variant
+     * (``consent_model='agent'`` clients); it is validated and the scope math
+     * recomputed entirely server-side — the browser's selection is never
+     * trusted.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static consentSubmit({
+        formData,
+    }: {
+        formData: Body_consentSubmit,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/consent',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,
@@ -205,7 +362,16 @@ export class OAuthService {
     public static tokenEndpoint({
         requestBody,
     }: {
-        requestBody: TokenRequest,
+        requestBody: {
+            assertion?: (string | null);
+            client_id?: (string | null);
+            client_secret?: (string | null);
+            code?: (string | null);
+            code_verifier?: (string | null);
+            grant_type: string;
+            redirect_uri?: (string | null);
+            refresh_token?: (string | null);
+        },
     }): CancelablePromise<TokenResponse> {
         return __request(OpenAPI, {
             method: 'POST',

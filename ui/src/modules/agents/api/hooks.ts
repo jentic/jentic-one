@@ -57,7 +57,14 @@ import {
 	fetchActorsUsage,
 	fetchActorUsageDetail,
 	fetchActorExecutions,
+	fetchInstanceIdentity,
+	fetchLatestMcpActivity,
+	fetchMcpLastSeenByActor,
+	fetchMcpSessions,
 	listActorAudit,
+	listAgentOauthGrants,
+	revokeOauthGrant,
+	AgentsApiError,
 	type ActorAuditEntry,
 	type ActorUsage,
 	type ActorUsageDetail,
@@ -69,7 +76,11 @@ import type {
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
+	InstanceIdentityEntity,
 	LinkableToolkit,
+	McpLastSeen,
+	McpSessionEntity,
+	OAuthGrantEntity,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
@@ -160,6 +171,20 @@ export const actorAccessRequestsKey = (actorId: string, status: string) =>
  */
 export const actorAccessRequestsRootKey = (actorId: string) =>
 	['access-requests', 'by-actor', actorId] as const;
+
+/**
+ * OAuth consent grants binding clients to one agent (phase-3a §4.8), keyed by
+ * agent + status slice under the shared `oauthGrantsRoot`: grant creation
+ * happens out-of-band (a consent screen in another tab) and lands as an
+ * `oauth_grant.created` SSE event, which the shared agent-stream provider
+ * bridges into an invalidation of that root — so the slice must live under it.
+ */
+export const agentOauthGrantsKey = (agentId: string, status: string) =>
+	[...sharedQueryKeys.oauthGrantsRoot, 'by-agent', agentId, status] as const;
+
+/** Prefix key covering every status slice of one agent's grants. */
+export const agentOauthGrantsRootKey = (agentId: string) =>
+	[...sharedQueryKeys.oauthGrantsRoot, 'by-agent', agentId] as const;
 
 function notifyError(error: unknown, fallback: string): void {
 	toast({
@@ -749,6 +774,69 @@ export function useActorAccessRequests(actorId: string | null, status: string | 
 }
 
 /**
+ * The OAuth clients holding a consent→agent grant on this agent — the detail
+ * console's "Connected clients" panel (phase-3a §4.8). Owner-or-admin on the
+ * backend; a 403 surfaces as an error the card renders honestly.
+ *
+ * Cursor-paginated like {@link useAgents}: the first page renders
+ * immediately and the card offers "Load more" through `next_cursor`, so an
+ * agent with more than one page of grants (default 50) is fully reachable.
+ */
+export function useAgentOauthGrants(
+	agentId: string | null,
+	status: 'active' | 'revoked' | null = 'active',
+) {
+	return useInfiniteQuery<ListResult<OAuthGrantEntity>>({
+		queryKey: agentOauthGrantsKey(agentId ?? '', status ?? 'all'),
+		queryFn: ({ pageParam }) =>
+			listAgentOauthGrants(agentId as string, status, {
+				cursor: (pageParam as string | null) ?? null,
+			}),
+		initialPageParam: null,
+		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
+		enabled: agentId != null,
+	});
+}
+
+/**
+ * Revoke a consent→agent grant (§4.6 kill switch). Invalidates every status
+ * slice of the agent's grants (the row moves active→revoked) plus the shared
+ * oauth-clients root, whose rows carry a per-client active-grant count.
+ *
+ * A 403 gets an HONEST toast: the server's reason (the revoke predicate is
+ * the grant's consenting user or a write-set admin — narrower than the list
+ * predicate, G10) rather than a generic "failed". The card already disables
+ * the button on `canRevoke=false`, so this is the belt-and-braces arm for a
+ * capability that went stale between render and click.
+ */
+export function useRevokeOauthGrant(agentId: string | null) {
+	const qc = useQueryClient();
+	return useMutation<void, Error, string>({
+		mutationFn: (grantId: string) => revokeOauthGrant(grantId),
+		onSuccess: () => {
+			if (agentId) {
+				void qc.invalidateQueries({ queryKey: agentOauthGrantsRootKey(agentId) });
+			}
+			void qc.invalidateQueries({ queryKey: sharedQueryKeys.oauthClientsRoot });
+			toast({ title: 'Grant revoked', variant: 'success' });
+		},
+		onError: (e) => {
+			if (e instanceof AgentsApiError && e.status === 403) {
+				toast({
+					title: 'Not permitted to revoke this grant',
+					// The server's problem-details reason, carried through the
+					// repository's error normalisation.
+					description: e.message,
+					variant: 'error',
+				});
+				return;
+			}
+			notifyError(e, 'Failed to revoke the grant.');
+		},
+	});
+}
+
+/**
  * Actor-scoped audit trail for the detail console's "Recent changes" panel —
  * the lifecycle events recorded against this agent / service account as the
  * TARGET. Mirrors the toolkit console's `useToolkitAudit`. Non-admins resolve
@@ -761,5 +849,73 @@ export function useActorAudit(actorKind: 'agent' | 'service-account', actorId: s
 		queryFn: () => listActorAudit(actorKind, actorId as string),
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
+	});
+}
+
+// ---------------------------------------------------------------------------
+// MCP transport visibility (local-MCP 2-E2, #1188).
+//
+// Keyed under their OWN `agents-mcp` root (like `linkableToolkitsKey` /
+// `agents-usage`) so agent lifecycle mutations — which sweep the broad
+// `sharedQueryKeys.agentsRoot` on approve/deny/create — don't pointlessly
+// refetch the events table. All are enrichment reads with the same
+// `null`-on-403 / `retry: false` degrade contract as `useActorsUsage`.
+// ---------------------------------------------------------------------------
+
+/**
+ * One agent's MCP session history (`mcp.session_started` internal events) —
+ * the detail page's MCP sessions card. `null` for viewers without
+ * `events:read` (the card renders a quiet permission note).
+ */
+export function useMcpSessions(actorId: string | null) {
+	return useQuery<McpSessionEntity[] | null>({
+		queryKey: ['agents-mcp', 'sessions', actorId],
+		queryFn: () => fetchMcpSessions(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * Latest MCP session per agent for the roster's "last seen via MCP" cell.
+ * One events-page read for the whole fleet (never per-row). `null` on 403 —
+ * the table hides the column entirely, mirroring the usage columns.
+ */
+export function useMcpLastSeen() {
+	return useQuery<Map<string, McpLastSeen> | null>({
+		queryKey: ['agents-mcp', 'last-seen'],
+		queryFn: () => fetchMcpLastSeenByActor(),
+		staleTime: 60 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * When this agent last executed over MCP — the "last active" line on the
+ * sessions card. `null` means no MCP execution known (or gated); the card
+ * shows a dash, never an error.
+ */
+export function useLatestMcpActivity(actorId: string | null) {
+	return useQuery<string | null>({
+		queryKey: ['agents-mcp', 'last-activity', actorId],
+		queryFn: () => fetchLatestMcpActivity(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * The instance's self-described identity (`GET /instance`) for the MCP config
+ * card. Slow-changing (it's deploy config), so cached generously; a failure
+ * resolves `undefined` and the card falls back to the browser origin.
+ */
+export function useInstanceIdentity() {
+	return useQuery<InstanceIdentityEntity>({
+		queryKey: ['instance-identity'],
+		queryFn: () => fetchInstanceIdentity(),
+		staleTime: 5 * 60 * 1000,
+		retry: false,
 	});
 }

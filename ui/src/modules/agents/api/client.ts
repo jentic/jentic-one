@@ -15,14 +15,19 @@ import {
 	AgentsService,
 	AuditService,
 	AuditTargetType,
+	EventsService,
 	ExecutionsService,
 	GroupBy,
 	MonitoringService,
+	OAuthService,
 	PermissionsService,
 	ServiceAccountsService,
+	SystemService,
 	ToolkitsService,
 	type AgentResponse,
 	type AuditResponse,
+	type EventResponse,
+	type OAuthGrantResponse,
 	type ServiceAccountResponse,
 } from '@/shared/api';
 import {
@@ -32,7 +37,11 @@ import {
 	type ApiKeyHistoryEntry,
 	type ApiKeyInfoEntity,
 	type ApiKeyResult,
+	type InstanceIdentityEntity,
 	type LinkableToolkit,
+	type McpLastSeen,
+	type McpSessionEntity,
+	type OAuthGrantEntity,
 	type PermissionCatalogEntry,
 	type ServiceAccountEntity,
 	type ToolkitBindingEntity,
@@ -790,5 +799,199 @@ export async function listActorAudit(
 			return [];
 		}
 		throw toAgentsError(error, 'Failed to load the audit log.');
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MCP transport visibility (local-MCP 2-E2, #1188).
+//
+// No new backend surface: the sessions read is the existing
+// `GET /events?event_type=mcp.session_started[&actor_id=…]` (behind
+// `events:read`), last-active is the latest MCP-origin execution
+// (`GET /executions?origin=mcp&actor_id=…`), and instance identity is the
+// unauthenticated `GET /instance`. Event reads follow the enrichment degrade
+// contract (`fetchActorsUsage`): 401/403 resolve to `null` and the caller
+// hides the surface — a permission gate is not an error.
+// ---------------------------------------------------------------------------
+
+/** Wire value of the MCP session event type (`EventType.MCP_SESSION_STARTED`). */
+export const MCP_SESSION_STARTED_EVENT = 'mcp.session_started';
+
+/** The `origin` wire value stamped on MCP executions (`Origin.MCP`). */
+export const MCP_ORIGIN = 'mcp';
+
+function eventToMcpSession(e: EventResponse): McpSessionEntity {
+	// The emitter writes clientInfo + transport + session id into the internal
+	// event's `data` (two-plane pattern: the telemetry wire is property-free,
+	// the UI reads the events table). `data` is a free JSON bag on the wire, so
+	// read defensively — a missing key degrades to null, never a crash.
+	const data = (e.data ?? {}) as Record<string, unknown>;
+	const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
+	return {
+		eventId: e.event_id,
+		sessionId: str(data.session_id),
+		transport: str(data.transport),
+		clientName: str(data.client_name),
+		clientVersion: str(data.client_version),
+		startedAt: e.created_at,
+	};
+}
+
+/**
+ * One agent's MCP session history, newest first (single page — the backend
+ * caps `limit` at 100; older sessions fall off, which is fine for a
+ * recent-history card). `null` when events are permission-gated (401/403).
+ */
+export async function fetchMcpSessions(actorId: string): Promise<McpSessionEntity[] | null> {
+	try {
+		const res = await EventsService.listEvents({
+			eventType: [MCP_SESSION_STARTED_EVENT],
+			actorId,
+			limit: 100,
+		});
+		return res.data.map(eventToMcpSession);
+	} catch (error) {
+		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+			return null;
+		}
+		throw toAgentsError(error, 'Failed to load MCP sessions.');
+	}
+}
+
+/**
+ * Latest MCP session per agent for the roster's "last seen via MCP" cell,
+ * from ONE page of `mcp.session_started` events. The feed is newest-first, so
+ * the first row per `actor_id` is that agent's latest session. Like the
+ * usage top-50 leaderboard, this is bounded enrichment: an agent absent from
+ * the newest 100 session events means "no recent MCP session known", not
+ * "never" — callers render an em-dash. `null` when permission-gated.
+ */
+export async function fetchMcpLastSeenByActor(): Promise<Map<string, McpLastSeen> | null> {
+	try {
+		const res = await EventsService.listEvents({
+			eventType: [MCP_SESSION_STARTED_EVENT],
+			limit: 100,
+		});
+		const out = new Map<string, McpLastSeen>();
+		for (const e of res.data) {
+			if (!e.actor_id || out.has(e.actor_id)) continue;
+			const s = eventToMcpSession(e);
+			out.set(e.actor_id, {
+				clientName: s.clientName,
+				clientVersion: s.clientVersion,
+				startedAt: s.startedAt,
+			});
+		}
+		return out;
+	} catch (error) {
+		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+			return null;
+		}
+		throw toAgentsError(error, 'Failed to load MCP session events.');
+	}
+}
+
+/**
+ * When this agent last executed over MCP (`started_at` of the newest
+ * MCP-origin execution) — the "last active" half of the sessions card's
+ * "started / last active" story. `null` result covers both "no MCP
+ * executions yet" and the 403 gate; the caller renders a quiet dash either
+ * way, so the two need no distinct copy.
+ */
+export async function fetchLatestMcpActivity(actorId: string): Promise<string | null> {
+	try {
+		const res = await ExecutionsService.listExecutions({
+			actorId,
+			origin: MCP_ORIGIN,
+			limit: 1,
+		});
+		return res.data[0]?.started_at ?? null;
+	} catch (error) {
+		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+			return null;
+		}
+		throw toAgentsError(error, 'Failed to load MCP activity.');
+	}
+}
+
+/**
+ * This backend's self-described identity (`GET /instance`, unauthenticated) —
+ * the config card shows which instance a pasted snippet registers against.
+ */
+export async function fetchInstanceIdentity(): Promise<InstanceIdentityEntity> {
+	try {
+		const res = await SystemService.getInstance();
+		return {
+			backend: res.backend,
+			baseUrl: res.canonical_base_url,
+			host: res.host,
+			// Older backends predate the field; absent means the endpoint
+			// doesn't exist there either, so hiding the HTTP variant is right.
+			mcpEnabled: res.mcp_enabled ?? false,
+		};
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load the instance identity.');
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OAuth consent grants (phase-3a §4.8) — the "Connected clients" panel.
+// ---------------------------------------------------------------------------
+
+function grantToEntity(r: OAuthGrantResponse): OAuthGrantEntity {
+	return {
+		id: r.id,
+		oauthClientId: r.oauth_client_id,
+		clientName: r.client_name ?? null,
+		clientOrigin: r.client_origin ?? null,
+		userId: r.user_id,
+		agentId: r.agent_id,
+		scopes: r.scopes,
+		status: r.status,
+		createdAt: r.created_at,
+		revokedAt: r.revoked_at ?? null,
+		lastUsedAt: r.last_used_at ?? null,
+		canRevoke: r.can_revoke,
+	};
+}
+
+/**
+ * The OAuth clients holding a consent→agent grant on this agent
+ * (`GET /agents/{id}/oauth-grants`, owner-or-admin). `status` narrows to
+ * active/revoked; null returns the full history. Cursor-paginated like the
+ * other list reads (`listAgents`): callers page through `nextCursor`.
+ */
+export async function listAgentOauthGrants(
+	agentId: string,
+	status: 'active' | 'revoked' | null = 'active',
+	params: { cursor?: string | null; limit?: number } = {},
+): Promise<ListResult<OAuthGrantEntity>> {
+	try {
+		const res = await AgentsService.listAgentOauthGrants({
+			agentId,
+			status,
+			cursor: params.cursor ?? null,
+			limit: params.limit ?? 50,
+		});
+		return {
+			entities: res.data.map(grantToEntity),
+			hasMore: res.has_more,
+			nextCursor: res.next_cursor ?? null,
+		};
+	} catch (error) {
+		throw toAgentsError(error, "Failed to load the agent's connected clients.");
+	}
+}
+
+/**
+ * Revoke one consent→agent grant (`POST /oauth-grants/{id}:revoke`) — the
+ * per-grant kill switch (§4.6). The backend also revokes every access/refresh
+ * token minted under the grant; the client's next token use fails closed.
+ */
+export async function revokeOauthGrant(grantId: string): Promise<void> {
+	try {
+		await OAuthService.revokeOauthGrant({ grantId });
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to revoke the grant.');
 	}
 }

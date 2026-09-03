@@ -97,6 +97,26 @@ let serviceAccounts: ServiceAccountRow[] = [];
 /** Per-actor granted scopes, keyed by actor id (agents + service accounts). */
 let actorScopes: Record<string, string[]> = {};
 
+/** One consent→agent OAuth grant (`GET /agents/{id}/oauth-grants`, §4.8). */
+interface OAuthGrantRow {
+	id: string;
+	oauth_client_id: string;
+	client_name: string | null;
+	client_origin: string | null;
+	user_id: string;
+	agent_id: string;
+	scopes: string[];
+	status: 'active' | 'revoked';
+	created_at: string;
+	revoked_at: string | null;
+	last_used_at: string | null;
+	/** Per-item revoke capability for the CALLER (G10 list/revoke divergence). */
+	can_revoke: boolean;
+}
+
+/** Consent→agent grants, mutated by the `:revoke` kill switch. */
+let oauthGrants: OAuthGrantRow[] = [];
+
 /**
  * The platform permission catalogue (`GET /permissions`).
  *
@@ -350,6 +370,64 @@ export function resetAgentsStore(): void {
 		],
 		sva_active_1: ['credentials:read'],
 	};
+	// OAuth consent grants (§4.8): `agnt_active_1` has one live connected
+	// client plus revoked history; the consenting user_id deliberately differs
+	// from ADMIN on the revoked row so the G10 "who consented" column is
+	// observable. Other actors have none (exercises the empty state).
+	oauthGrants = [
+		{
+			id: 'ocg_active_1',
+			oauth_client_id: 'oc_cursor_ide',
+			client_name: 'Cursor',
+			client_origin: 'http://localhost:33418',
+			user_id: 'usr_admin_1',
+			agent_id: 'agnt_active_1',
+			scopes: ['apis:read', 'capabilities:execute'],
+			status: 'active',
+			created_at: now(-45),
+			revoked_at: null,
+			last_used_at: now(-5),
+			can_revoke: true,
+		},
+		{
+			id: 'ocg_revoked_1',
+			oauth_client_id: 'oc_old_tool',
+			client_name: 'Old Integration',
+			client_origin: 'https://old.example.com',
+			user_id: 'usr_departed_owner',
+			agent_id: 'agnt_active_1',
+			scopes: ['apis:read'],
+			status: 'revoked',
+			created_at: now(-600),
+			revoked_at: now(-300),
+			last_used_at: null,
+			can_revoke: false,
+		},
+	];
+}
+
+/**
+ * Test-only: append extra grant rows (e.g. to exercise the connected-clients
+ * pagination or a `can_revoke=false` disabled Revoke button). Resets with
+ * `resetAgentsStore()`.
+ */
+export function seedOauthGrants(rows: Array<Partial<OAuthGrantRow> & { id: string }>): void {
+	for (const over of rows) {
+		oauthGrants.push({
+			oauth_client_id: 'oc_seeded',
+			client_name: 'Seeded Client',
+			client_origin: 'https://seeded.example.com',
+			user_id: 'usr_admin_1',
+			agent_id: 'agnt_active_1',
+			scopes: ['apis:read'],
+			status: 'active',
+			created_at: now(-45),
+			revoked_at: null,
+			last_used_at: null,
+			can_revoke: true,
+			...over,
+		});
+	}
 }
 
 resetAgentsStore();
@@ -512,6 +590,7 @@ function executionRow(opts: {
 	httpStatus: number;
 	minutesAgo: number;
 	error?: string;
+	origin?: string;
 }) {
 	return {
 		_links: { self: `/executions/${opts.id}` },
@@ -524,7 +603,7 @@ function executionRow(opts: {
 		execution_id: opts.id,
 		http_status: opts.httpStatus,
 		operation_id: opts.operationId,
-		origin: 'api',
+		origin: opts.origin ?? 'api',
 		pinned_revisions: null,
 		started_at: now(-opts.minutesAgo),
 		status: opts.status,
@@ -551,6 +630,20 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			durationMs: 412,
 			httpStatus: 200,
 			minutesAgo: 2,
+		}),
+		// MCP-origin run — the newest one is the MCP sessions card's
+		// "last active" signal (local-MCP 2-E2).
+		executionRow({
+			id: 'exec_agnt_mcp_1',
+			actorId: 'agnt_active_1',
+			status: 'completed',
+			toolkitId: 'github',
+			toolkitName: 'github',
+			operationId: 'search_issues',
+			durationMs: 180,
+			httpStatus: 200,
+			minutesAgo: 5,
+			origin: 'mcp',
 		}),
 		executionRow({
 			id: 'exec_agnt_2',
@@ -685,6 +778,74 @@ const ACTOR_AUDIT: Record<string, ReturnType<typeof auditRow>[]> = {
 	],
 };
 
+/**
+ * `mcp.session_started` internal-event fixture (`GET /events?event_type=…`,
+ * local-MCP 2-E2). Shapes mirror the generated `EventResponse`; `data` carries
+ * what the emitter writes (session_id / transport / client_name /
+ * client_version — see shared/events/mcp_session.py). Newest first, like the
+ * real feed. Only agnt_active_1 has sessions; other agents render the honest
+ * empty state.
+ */
+const MCP_SESSION_STARTED = 'mcp.session_started';
+
+function mcpSessionEvent(opts: {
+	id: string;
+	actorId: string;
+	sessionId: string;
+	minutesAgo: number;
+	clientName?: string;
+	clientVersion?: string;
+}) {
+	return {
+		_links: { self: `/events/${opts.id}` },
+		acknowledged: false,
+		acknowledged_at: null,
+		acknowledged_by: null,
+		actor_id: opts.actorId,
+		actor_type: 'agent',
+		created_at: now(-opts.minutesAgo),
+		data: {
+			session_id: opts.sessionId,
+			transport: 'stdio',
+			client_name: opts.clientName ?? null,
+			client_version: opts.clientVersion ?? null,
+		},
+		detail: null,
+		event_id: opts.id,
+		requires_action: false,
+		severity: 'info',
+		summary: `MCP session started for ${opts.actorId}`,
+		trace_id: null,
+		type: MCP_SESSION_STARTED,
+	};
+}
+
+const MCP_SESSION_EVENTS = [
+	mcpSessionEvent({
+		id: 'evt_mcp_3',
+		actorId: 'agnt_active_1',
+		sessionId: 'sess-uuid-3',
+		minutesAgo: 30,
+		clientName: 'claude-desktop',
+		clientVersion: '1.5.2',
+	}),
+	// clientInfo is a SHOULD in the MCP spec — a client that sent only a name
+	// (no version) and one that sent nothing both render, not error.
+	mcpSessionEvent({
+		id: 'evt_mcp_2',
+		actorId: 'agnt_active_1',
+		sessionId: 'sess-uuid-2',
+		minutesAgo: 60 * 24,
+		clientName: 'cursor',
+	}),
+	mcpSessionEvent({
+		id: 'evt_mcp_1',
+		actorId: 'agnt_active_1',
+		sessionId: 'sess-uuid-1',
+		minutesAgo: 60 * 24 * 3,
+	}),
+];
+
 export const agentsHandlers = [
 	// ---- Platform permission catalogue (#615) ----
 	http.get('/permissions', () => HttpResponse.json({ data: PERMISSION_CATALOGUE })),
@@ -734,9 +895,26 @@ export const agentsHandlers = [
 		});
 	}),
 	http.get('/executions', ({ request }) => {
-		const actorId = new URL(request.url).searchParams.get('actor_id');
+		const url = new URL(request.url);
+		const actorId = url.searchParams.get('actor_id');
 		if (!actorId || !findActor(actorId)) return undefined;
-		const rows = ACTOR_EXECUTIONS[actorId] ?? [];
+		// Origin scoping (local-MCP 2-E2): the sessions card asks for the
+		// newest MCP-origin run (`?origin=mcp&limit=1`) as its "last active".
+		const origin = url.searchParams.get('origin');
+		const rows = (ACTOR_EXECUTIONS[actorId] ?? []).filter(
+			(r) => !origin || r.origin === origin,
+		);
+		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
+	}),
+	// MCP session history (local-MCP 2-E2): answer ONLY the
+	// `event_type=mcp.session_started` reads this module's MCP surfaces make;
+	// any other /events query falls through to the rail/monitor fixtures.
+	http.get('/events', ({ request }) => {
+		const url = new URL(request.url);
+		const eventTypes = url.searchParams.getAll('event_type');
+		if (!eventTypes.includes(MCP_SESSION_STARTED)) return undefined;
+		const actorId = url.searchParams.get('actor_id');
+		const rows = MCP_SESSION_EVENTS.filter((e) => !actorId || e.actor_id === actorId);
 		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
 	}),
 	// Actor-scoped audit slice ("Recent changes"): answer only for targets in
@@ -1081,5 +1259,36 @@ export const agentsHandlers = [
 		}
 		actorScopes[row.id] = [...new Set(requested)];
 		return HttpResponse.json({ scopes: actorScopes[row.id] });
+	}),
+	// ---- OAuth consent grants (§4.8): the Connected-clients panel ----
+	http.get('/agents/:id/oauth-grants', ({ params, request }) => {
+		const agent = agents.find((a) => a.id === params.id);
+		if (!agent) return new HttpResponse(null, { status: 404 });
+		const url = new URL(request.url);
+		const status = url.searchParams.get('status');
+		const rows = oauthGrants.filter(
+			(g) => g.agent_id === params.id && (!status || g.status === status),
+		);
+		// Index-based cursor pagination, like the sibling mock stores: the card
+		// pages through `next_cursor` behind "Load more".
+		const limit = Number(url.searchParams.get('limit') ?? 50);
+		const start = Number(url.searchParams.get('cursor') ?? 0);
+		const pageRows = rows.slice(start, start + limit);
+		const hasMore = start + limit < rows.length;
+		return HttpResponse.json({
+			data: pageRows,
+			has_more: hasMore,
+			next_cursor: hasMore ? String(start + limit) : null,
+		});
+	}),
+	http.post('/oauth-grants/:id\\:revoke', ({ params }) => {
+		const grant = oauthGrants.find((g) => g.id === params.id);
+		if (!grant) return new HttpResponse(null, { status: 404 });
+		// Idempotent, like the backend: re-revoking is a 204 no-op.
+		if (grant.status === 'active') {
+			grant.status = 'revoked';
+			grant.revoked_at = now();
+		}
+		return new HttpResponse(null, { status: 204 });
 	}),
 ];

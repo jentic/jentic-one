@@ -18,6 +18,9 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
       {{- include "common.pod-annotations" . | nindent 6 }}
     spec:
+      {{- with (include "common.service-account-name" . | trim) }}
+      {{ . }}
+      {{- end }}
       containers:
         - name: broker
           image: {{ include "common.image" . | quote }}
@@ -29,12 +32,24 @@ spec:
               value: {{ $v | quote }}
 {{- end }}
 {{ include "common.config-file.env" . | indent 12 }}
+{{ include "common.app-secrets.env" . | indent 12 }}
 {{ include "common.logging-env" . | indent 12 }}
 {{ include "common.metrics-env" . | indent 12 }}
 {{ include "common.db-env" . | indent 12 }}
-{{- with (include "common.config-file.mount" . | trim) }}
+{{- $cfgMount := (include "common.config-file.mount" . | trim) }}
+{{- $encMount := (include "common.app-secrets.mount" . | trim) }}
+{{- $licMount := (include "common.awsmp-license.mount" . | trim) }}
+{{- if or $cfgMount $encMount $licMount }}
           volumeMounts:
+{{- with $cfgMount }}
 {{ . | indent 12 }}
+{{- end }}
+{{- with $encMount }}
+{{ . | indent 12 }}
+{{- end }}
+{{- with $licMount }}
+{{ . | indent 12 }}
+{{- end }}
 {{- end }}
           readinessProbe:
             httpGet:
@@ -55,12 +70,20 @@ spec:
         {{- end }}
       {{- $otel := .Values.global.observability.otel.enabled }}
       {{- $cfg := (include "common.config-file.volume" . | trim) }}
-      {{- if or $otel $cfg }}
+      {{- $enc := (include "common.app-secrets.volume" . | trim) }}
+      {{- $lic := (include "common.awsmp-license.volume" . | trim) }}
+      {{- if or $otel $cfg $enc $lic }}
       volumes:
       {{- if $otel }}
 {{ include "common.otel-config-volume" . | indent 8 }}
       {{- end }}
       {{- with $cfg }}
+{{ . | indent 8 }}
+      {{- end }}
+      {{- with $enc }}
+{{ . | indent 8 }}
+      {{- end }}
+      {{- with $lic }}
 {{ . | indent 8 }}
       {{- end }}
       {{- end }}

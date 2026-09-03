@@ -1,8 +1,9 @@
 # Mirrors the bundled Postgres image into the AWS Marketplace ECR repo.
 #
 # The Marketplace disallows docker.io pulls at install time, so the postgresql
-# subchart's image (deploy/docker/postgres-mirror.Dockerfile — a one-FROM
-# retag whose digest Dependabot keeps fresh) must exist in the listing's ECR.
+# subchart's image (deploy/docker/postgres-mirror.Dockerfile — a lightly
+# hardened build of the official image, digest kept fresh by Dependabot) must
+# exist in the listing's ECR.
 # Weekly cron + manual dispatch: cheap to re-run, and a re-push of the same
 # digest is a no-op registry-side.
 #
@@ -12,7 +13,7 @@
 # skip cleanly):
 #   MARKETPLACE_ECR_ROLE_ARN     — IAM role trusting GitHub's OIDC provider
 #   MARKETPLACE_ECR_POSTGRES     — full mirror repo URI from the portal
-#                                  (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql)
+#                                  (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-psql)
 #
 # Tag contract: pushes the source tag (matching the Helm values pin) and the
 # source digest as a tag suffix — tags float, digests pin, same as the app
@@ -57,17 +58,18 @@ jobs:
           echo "from=${FROM_LINE}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      # A single-FROM build is a retag: layers are preserved byte-for-byte
-      # from the pinned digest.
-      - name: Build the mirror image (retag of the pinned digest)
+      # Not a pure retag: the Dockerfile drops the entrypoint's root-stepdown
+      # helper (dead code under the chart's securityContext), remaps the
+      # postgres uid/gid to the chart's pinned 999, and applies Alpine
+      # security updates on top of the pinned digest — see its header.
+      - name: Build the mirror image (hardened build of the pinned digest)
         run: docker build -f deploy/docker/postgres-mirror.Dockerfile -t postgres-mirror:local deploy/docker
 
       # Same CVE bar as everything else this repo publishes: fixable
       # HIGH/CRITICAL fail; overrides go in .trivyignore with justification +
-      # expiry. NOTE: the source image is Bitnami *legacy* (frozen, unpatched
-      # upstream — see the Dockerfile header), so expect this gate to start
-      # failing eventually; that is the signal to switch the chart's bundled
-      # DB or make RDS the Marketplace default, not to allowlist blindly.
+      # expiry. The source is the official library/postgres image (actively
+      # maintained); a red gate here normally just means Dependabot's next
+      # digest bump is due.
       - name: Trivy image scan (publish gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:

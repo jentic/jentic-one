@@ -21,7 +21,7 @@ the verify commands linked above need nothing but the downloaded files and
 | [Docker](docker.md) | A container host and an external Postgres. The baseline every other guide builds on. |
 | [systemd](systemd.md) | The same two containers, supervised by systemd on a Linux host. |
 | [Helm](helm.md) | Kubernetes. |
-| [AWS](cloud/aws.md) | AWS-specific deployment, including the Marketplace listing. |
+| [AWS Marketplace](aws-marketplace.md) | Buying and running the listed product on EKS — prerequisites, zero-touch install, license-check behaviour. |
 
 ## Air-gapped transfer
 

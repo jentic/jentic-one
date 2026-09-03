@@ -135,3 +135,68 @@ class ClaimActorNotAllowedError(AuthServiceError):
     def __init__(self, actor_type: str) -> None:
         super().__init__(f"Actor type '{actor_type}' cannot claim agent ownership")
         self.actor_type = actor_type
+
+
+class RateLimitExceededError(AuthServiceError):
+    """Raised when a pre-auth rate limit is exceeded (429)."""
+
+    def __init__(self, retry_after: int = 1) -> None:
+        super().__init__("Too many requests")
+        self.retry_after = retry_after
+
+
+class ConsentAgentNotEligibleError(AuthServiceError):
+    """Raised when the mint-time re-check refuses a consent→agent grant.
+
+    ``OAuthGrantService.create_grant`` locks the agent row (``FOR UPDATE``)
+    and re-checks the consent predicate — exists, ``active``, owned by the
+    consenting user — INSIDE the mint transaction, closing the TOCTOU where
+    an ownership transfer commits between the consent screen's unlocked
+    validation read and the grant write. The consent flow maps this to the
+    same human error page as a failed picker validation (never an OAuth
+    redirect carrying a code, never a 500).
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' is not eligible for a consent grant")
+        self.agent_id = agent_id
+
+
+class OAuthGrantNotFoundError(AuthServiceError):
+    """Raised when an oauth_client_grants row does not exist."""
+
+    def __init__(self, grant_id: str) -> None:
+        super().__init__(f"OAuth grant '{grant_id}' not found")
+        self.grant_id = grant_id
+
+
+class OAuthGrantAccessDeniedError(AuthServiceError):
+    """Raised when a caller may not operate on an OAuth grant.
+
+    Grant ``:revoke`` is owner-or-admin (design §4.8): the consenting user
+    owns the grant; anyone else needs the admin permission. 403, not 404 —
+    the grant id is a ksuid, not a secret.
+
+    ``resource_id`` is the denied resource — a grant id on the ``:revoke``
+    path, an agent id on the per-agent listing path (the listing gate denies
+    before any grant is in hand).
+    """
+
+    def __init__(self, resource_id: str, *, message: str | None = None) -> None:
+        super().__init__(message or f"Not permitted to operate on OAuth grant '{resource_id}'")
+        self.resource_id = resource_id
+
+
+class InvalidClientMetadataError(AuthServiceError):
+    """Raised when anonymous DCR client metadata is rejected (RFC 7591 §3.2.2).
+
+    Maps to 400 ``invalid_client_metadata`` — the RFC 7591 error code for a
+    registration request whose metadata is invalid or unsupported (e.g. a
+    confidential ``token_endpoint_auth_method``, an unsupported grant type, or
+    a malformed redirect URI). The DCR front door only mints public clients
+    (phase-3a design §4.2).
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason

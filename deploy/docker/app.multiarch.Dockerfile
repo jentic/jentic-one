@@ -19,11 +19,21 @@
 # drift here only affects the multi-arch release artifact; the local build and
 # `make build-*` still use the two-file split.)
 
-# Pinned to a specific digest for reproducible builds.
-# To bump: `docker pull python:3.12-slim` / `node:22-slim` then update the
-# digests below (`docker buildx imagetools inspect <image>` prints them).
+# Pinned to specific digests for reproducible builds.
+# To bump: `docker pull python:3.12-slim` / `node:22-slim` / `ubuntu:24.04`
+# then update the digests below (`docker buildx imagetools inspect <image>`
+# prints them).
+#
+# The RUNTIME base is Ubuntu, not python:3.12-slim (Debian): AWS Marketplace's
+# scanner (Inspector) rates CVEs by NVD severity, and Debian stable carries
+# glibc CVEs it has marked no-dsa/won't-fix (e.g. CVE-2026-5450, NVD 9.8) —
+# unfixable via apt, so any Debian-based image hard-fails listing validation
+# indefinitely. Ubuntu backports those fixes to its stable glibc (noble ships
+# python3.12 natively, so the runtime contract is unchanged). The BUILDER
+# stages stay on the official python/node images — they never ship.
 ARG PYTHON_IMAGE=python:3.12-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
 ARG NODE_IMAGE=node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
 
 # UI build stage — produces ui/dist, bundled into the wheel via the
 # [tool.hatch.build.targets.wheel.force-include] "ui/dist" -> jentic_one/static.
@@ -52,16 +62,18 @@ COPY --from=ui-builder /ui/dist ui/dist
 
 RUN uv build --wheel --out-dir /build/dist
 
-FROM ${PYTHON_IMAGE} AS runtime
+FROM ${UBUNTU_IMAGE} AS runtime
 
-# Apply Debian security updates for the util-linux family (kept IN LOCKSTEP with
-# python-base.Dockerfile's runtime stage). The pinned base lags the Debian
-# archive, so it still ships util-linux 2.41-5 which Trivy flags HIGH
-# (CVE-2026-53615; fixed in 2.41.5-0+deb13u1). Upgrading just this family clears
-# the image CVE gate for every published arch without a full `apt upgrade`.
+# noble's python3.12 + venv (ensurepip) is everything the app stage needs to
+# create /opt/venv and install the wheel into it (kept IN LOCKSTEP with
+# python-base.Dockerfile's runtime stage). The upgrade picks up security
+# fixes published since the pinned digest's last upstream rebuild (Ubuntu,
+# unlike Debian stable, backports NVD-critical glibc fixes).
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
-        bsdutils libblkid1 libmount1 libsmartcols1 libuuid1 mount util-linux \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r jentic && useradd --no-log-init -r -g jentic jentic
@@ -72,9 +84,13 @@ EXPOSE 8000
 FROM runtime AS app
 
 COPY --from=builder /build/dist/*.whl /tmp/
-RUN whl="$(ls /tmp/jentic_one-*.whl)" && \
-    pip install --no-cache-dir "${whl}" && \
+# Ubuntu's system python is PEP 668 externally-managed, so the wheel lands in
+# a venv; /opt/venv/bin on PATH keeps the `python` runtime contract.
+RUN python3.12 -m venv /opt/venv && \
+    whl="$(ls /tmp/jentic_one-*.whl)" && \
+    /opt/venv/bin/pip install --no-cache-dir "${whl}" && \
     rm /tmp/*.whl
+ENV PATH="/opt/venv/bin:${PATH}"
 
 # Writable data dir for the SQLite backend. Pre-creating it owned by the runtime
 # user means a fresh Docker volume mounted here inherits jentic ownership, so the

@@ -1,0 +1,5 @@
+exit: 2
+--- stdout ---
+
+--- stderr ---
+{"actionable_step":"jentic search \"\u003cwhat you want to do\u003e\"","error":"operation \"nonexistentOp\" not found","error_code":"RESOLVE_FAILED","schema_version":"1"}

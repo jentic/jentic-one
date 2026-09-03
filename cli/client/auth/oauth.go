@@ -26,9 +26,53 @@ import (
 // while still tolerating real-world skew (the shipped CLI used 120s; impl/4.2 §4).
 const assertionTTL = 270 * time.Second
 
-// httpClient is the exchange's dedicated client: explicit timeout, never the
-// zero-timeout http.DefaultClient (rules/05).
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+// exchangeTimeout bounds a single token exchange. It is also stamped onto a
+// copy of a caller-supplied Credentials.HTTPClient that has no timeout of its
+// own, so the mint never rides a zero-timeout client (rules/05).
+const exchangeTimeout = 30 * time.Second
+
+// httpClient is the exchange's fallback client when Credentials carries no
+// environment-specific one: explicit timeout, never the zero-timeout
+// http.DefaultClient (rules/05), and never following redirects (#1207 — see
+// noFollowRedirects). Also the client behind the other hand-rolled auth-server
+// calls (Register, RevokeToken).
+var httpClient = &http.Client{Timeout: exchangeTimeout, CheckRedirect: noFollowRedirects}
+
+// noFollowRedirects is the auth leg's redirect posture (#1207): the CLI's
+// auth-server POSTs (/oauth/token, /register, /oauth/revoke) are answered
+// directly by the control plane — nothing in the CLI relies on following a
+// redirect there (browser-facing OAuth redirects happen in the operator's
+// browser, never through this client, and the register/approval wait loops
+// poll by re-attempting the exchange, not via 3xx). Following one could only
+// mislead: Go would convert the redirected POST to a body-less GET, and a
+// hostile/misconfigured middlebox could bounce the call — attribution headers
+// attached — at an arbitrary address. Surface the 3xx as the final response
+// so classifyTokenError can name it.
+func noFollowRedirects(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+// exchangeClient resolves the *http.Client a token exchange for creds goes
+// through. Credentials.HTTPClient wins when set — that is how the
+// environment's SEC-20 CA-pinned transport and the attribution hook
+// (User-Agent / session headers) reach the mint, which previously always went
+// out on the package default and so bypassed both (#1205). The mint always
+// rides a COPY (the caller's client is shared with the plane clients and must
+// not be mutated) carrying the exchange invariants: a timeout when the caller
+// set none (a zero-timeout mint could hang a whole command — rules/05), and
+// the never-follow-redirects posture (#1207), enforced here at the mint's
+// single choke point so no caller-supplied client can silently reintroduce
+// redirect-following on a token POST.
+func exchangeClient(creds Credentials) *http.Client {
+	hc := creds.HTTPClient
+	if hc == nil {
+		return httpClient
+	}
+	cp := *hc
+	if cp.Timeout == 0 {
+		cp.Timeout = exchangeTimeout
+	}
+	cp.CheckRedirect = noFollowRedirects
+	return &cp
+}
 
 // PendingError indicates the agent is registered but not yet approved: the token
 // endpoint returns 400 invalid_grant while approval is pending. Callers can
@@ -210,7 +254,7 @@ func performOAuthExchange(creds Credentials) (*TokenSet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encoding token request: %w", err)
 	}
-	resp, err := httpClient.Post(endpoint, "application/json", bytes.NewReader(reqBody))
+	resp, err := exchangeClient(creds).Post(endpoint, "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request failed: %w", err)
 	}
@@ -245,6 +289,16 @@ func performOAuthExchange(creds Credentials) (*TokenSet, error) {
 // shape ({"error": ..., "error_description": ...}) is also accepted so an
 // RFC-compliant server classifies identically.
 func classifyTokenError(resp *http.Response) error {
+	// #1207: redirects are never followed on auth calls (noFollowRedirects), so
+	// a 3xx lands here as the final response. Name it explicitly — "token
+	// exchange failed (status 302)" with an empty body would read like a server
+	// bug, when the actual problem is something between the CLI and the control
+	// plane trying to send the token POST elsewhere.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return fmt.Errorf(
+			"token endpoint answered an unexpected redirect (status %d to %q); the CLI never follows redirects on auth calls — point base_url directly at the control plane",
+			resp.StatusCode, resp.Header.Get("Location"))
+	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	var body struct {
 		Type        string `json:"type"`  // RFC 7807 problem details (the shipped backend)

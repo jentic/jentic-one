@@ -24,6 +24,8 @@ class RefreshTokenRepository:
         token_family_id: str,
         expires_at: datetime,
         created_by: str,
+        oauth_client_id: str | None = None,
+        oauth_grant_id: str | None = None,
     ) -> RefreshToken:
         token = RefreshToken(
             token_hash=token_hash,
@@ -33,6 +35,8 @@ class RefreshTokenRepository:
             token_family_id=token_family_id,
             expires_at=expires_at,
             created_by=created_by,
+            oauth_client_id=oauth_client_id,
+            oauth_grant_id=oauth_grant_id,
         )
         session.add(token)
         await session.flush()
@@ -68,6 +72,19 @@ class RefreshTokenRepository:
         )
         await session.execute(stmt)
         await session.flush()
+
+    @staticmethod
+    async def revoke_by_grant(session: AsyncSession, oauth_grant_id: str) -> int:
+        """Revoke every live refresh token minted under one consent grant (§4.6)."""
+        stmt = (
+            update(RefreshToken)
+            .where(RefreshToken.oauth_grant_id == oauth_grant_id)
+            .where(RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def delete_expired(session: AsyncSession, before: datetime) -> int:

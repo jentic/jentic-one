@@ -123,6 +123,16 @@
         "idp": {
           "$ref": "#/$defs/IdpConfig"
         },
+        "oauth_rate_limit": {
+          "$ref": "#/$defs/OAuthRateLimitConfig"
+        },
+        "platform_clients": {
+          "items": {
+            "$ref": "#/$defs/PlatformClientConfig"
+          },
+          "title": "Platform Clients",
+          "type": "array"
+        },
         "rat_ttl_seconds": {
           "default": 900,
           "title": "Rat Ttl Seconds",
@@ -900,6 +910,48 @@
       "title": "LoggingConfig",
       "type": "object"
     },
+    "McpConfig": {
+      "description": "``server.mcp`` sub-config (3a-2 seam, extended by phase-3 item 2).",
+      "properties": {
+        "broker_url": {
+          "default": "http://127.0.0.1:8100",
+          "title": "Broker Url",
+          "type": "string"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "oauth": {
+          "$ref": "#/$defs/McpOAuthConfig"
+        }
+      },
+      "title": "McpConfig",
+      "type": "object"
+    },
+    "McpOAuthConfig": {
+      "description": "Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).\n\nMinimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full\n``server.mcp`` sub-config (``server.mcp.enabled`` etc.) and extends this\nmodel in place — fields here must keep their names and defaults.",
+      "properties": {
+        "auto_approve_clients": {
+          "default": true,
+          "title": "Auto Approve Clients",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "registration_gc_days": {
+          "default": 90,
+          "title": "Registration Gc Days",
+          "type": "integer"
+        }
+      },
+      "title": "McpOAuthConfig",
+      "type": "object"
+    },
     "MetricsConfig": {
       "description": "Metrics exporter configuration.",
       "properties": {
@@ -920,6 +972,50 @@
         }
       },
       "title": "MetricsConfig",
+      "type": "object"
+    },
+    "OAuthRateLimitConfig": {
+      "description": "Pre-auth rate limit tunables for OAuth endpoints.",
+      "properties": {
+        "authorize_burst": {
+          "default": 30,
+          "title": "Authorize Burst",
+          "type": "integer"
+        },
+        "authorize_rpm": {
+          "default": 30,
+          "title": "Authorize Rpm",
+          "type": "integer"
+        },
+        "exchange_burst": {
+          "default": 60,
+          "title": "Exchange Burst",
+          "type": "integer"
+        },
+        "exchange_rpm": {
+          "default": 60,
+          "title": "Exchange Rpm",
+          "type": "integer"
+        },
+        "registration_burst": {
+          "default": 5,
+          "title": "Registration Burst",
+          "type": "integer"
+        },
+        "registration_rpm": {
+          "default": 10,
+          "title": "Registration Rpm",
+          "type": "integer"
+        },
+        "trusted_proxies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Trusted Proxies",
+          "type": "array"
+        }
+      },
+      "title": "OAuthRateLimitConfig",
       "type": "object"
     },
     "ObservabilityConfig": {
@@ -984,6 +1080,29 @@
         "client_secret"
       ],
       "title": "PipedreamProviderConfig",
+      "type": "object"
+    },
+    "PlatformClientConfig": {
+      "description": "A static first-party OAuth client (e.g. the operator SPA).\n\nPlatform clients authenticate via PKCE only — no client secret. They are\ndefined in config (not the oauth_clients DB table) because they are\ndeployment-time constants, not admin-managed dynamic registrations.",
+      "properties": {
+        "client_id": {
+          "title": "Client Id",
+          "type": "string"
+        },
+        "redirect_uris": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Redirect Uris",
+          "type": "array"
+        }
+      },
+      "required": [
+        "client_id",
+        "redirect_uris"
+      ],
+      "title": "PlatformClientConfig",
       "type": "object"
     },
     "RateLimitConfig": {
@@ -1167,6 +1286,9 @@
           "default": "0.0.0.0",
           "title": "Host",
           "type": "string"
+        },
+        "mcp": {
+          "$ref": "#/$defs/McpConfig"
         },
         "port": {
           "default": 8000,

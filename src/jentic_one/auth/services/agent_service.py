@@ -29,6 +29,8 @@ from jentic_one.auth.services.errors import (
     ToolkitBindingConflictError,
     ToolkitBindingNotFoundError,
 )
+from jentic_one.auth.services.oauth_grant_service import revoke_active_grants_for_agent
+from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
@@ -528,6 +530,17 @@ class AgentService:
         update_data: dict[str, str | None],
         identity: Identity,
     ) -> AgentView:
+        """Partially update an agent; an ``owner_id`` change is a transfer.
+
+        Ownership transfer revokes every active OAuth client grant bound to
+        the agent in the SAME transaction (G10, #1222): a grant keys its
+        ``:revoke`` predicate on the consenting user, so leaving the old
+        owner's consent live would strand a grant the new owner cannot revoke
+        self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
+        back; the new owner re-consents through the normal flow if the
+        connection is still wanted. The agent's key channel (API key, scopes,
+        toolkit bindings) is deliberately untouched.
+        """
         try:
             async with self._ctx.admin_db.transaction() as session:
                 agent = await AgentRepository.get_by_id_for_update(session, agent_id)
@@ -536,8 +549,13 @@ class AgentService:
                 if agent.status == ActorStatus.ARCHIVED:
                     raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "update")
                 before = {k: getattr(agent, k) for k in update_data}
+                owner_transferred = (
+                    "owner_id" in update_data and update_data["owner_id"] != agent.owner_id
+                )
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
                 after = {k: getattr(agent, k) for k in update_data}
+                if owner_transferred:
+                    await revoke_active_grants_for_agent(session, agent_id, identity=identity)
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
@@ -551,6 +569,44 @@ class AgentService:
                 )
         except DatabaseIntegrityError:
             raise InvalidOwnerError(update_data.get("owner_id") or "") from None
+        return AgentView.model_validate(agent)
+
+    async def update_jwks(
+        self,
+        agent_id: str,
+        *,
+        jwks: dict[str, object],
+        identity: Identity,
+    ) -> AgentView:
+        """Update an agent's JWKS (public keys for JWT-bearer authentication).
+
+        The agent must be active (not pending, disabled, or archived). The JWKS
+        is validated to ensure it contains at least one Ed25519 public key and
+        no private key material.
+        """
+        validate_jwks(jwks)
+        async with self._ctx.admin_db.transaction() as session:
+            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+            if agent is None:
+                raise ActorNotFoundError(agent_id)
+            if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
+                raise ActorNotFoundError(agent_id)
+            if agent.status != ActorStatus.ACTIVE:
+                raise InvalidTransitionError(agent_id, agent.status, "update_jwks")
+            before_jwks = agent.jwks
+            agent.jwks = jwks
+            await session.flush()
+            await record_audit(
+                session,
+                action=AuditAction.UPDATE,
+                target_type=AuditTargetType.AGENT,
+                target_id=agent_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before={"jwks": "[redacted]" if before_jwks else None},
+                after={"jwks": "[redacted]"},
+                origin=identity.origin.value,
+            )
         return AgentView.model_validate(agent)
 
     async def _check_transition(

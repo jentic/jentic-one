@@ -257,9 +257,33 @@ export { OverlaysService } from '@/shared/api/generated/services/OverlaysService
 // response model is added here. Append-only.
 export type { VersionResponse } from '@/shared/api/generated/models/VersionResponse';
 
+// OAuth client management (third-party application registrations). Append-only.
+export { OAuthClientsService } from '@/shared/api/generated/services/OAuthClientsService';
+export type { OAuthClientCreateRequest } from '@/shared/api/generated/models/OAuthClientCreateRequest';
+export type { OAuthClientCreateResponse } from '@/shared/api/generated/models/OAuthClientCreateResponse';
+export type { OAuthClientResponse } from '@/shared/api/generated/models/OAuthClientResponse';
+export type { OAuthClientRotateSecretResponse } from '@/shared/api/generated/models/OAuthClientRotateSecretResponse';
+export type { OAuthClientUpdateRequest } from '@/shared/api/generated/models/OAuthClientUpdateRequest';
+
+// Instance identity (local-MCP 2-E2, #1188). `GET /instance` self-describes
+// the backend (canonical base URL / host / locality) so the per-agent MCP
+// config card can show which instance a pasted snippet will talk to.
+// `SystemService` is already exported above; only the response model is added
+// here. Append-only.
+export type { InstanceIdentityResponse } from '@/shared/api/generated/models/InstanceIdentityResponse';
+
 // External-IdP (SSO) login. The public capability descriptor (`GET /auth/idp`)
 // tells the login page whether to show a "Continue with <provider>" button, and
 // the authorization-code + PKCE exchange (`POST /oauth/token`) yields the same
 // session bundle as password login. Append-only, like the rest.
 export { getIdpDescriptor, exchangeAuthCode } from '@/shared/api/idp';
 export type { IdpDescriptor } from '@/shared/api/idp';
+
+// OAuth consent grants (phase-3a §4.8, local-MCP 3a-5). The per-agent
+// "Connected clients" listing lives on `AgentsService.listAgentOauthGrants`
+// (already exported above); the grant kill switch (`POST
+// /oauth-grants/{id}:revoke`) and the admin cross-view (`GET
+// /admin/oauth-grants`) live on `OAuthService`. Append-only, like the rest.
+export { OAuthService } from '@/shared/api/generated/services/OAuthService';
+export type { OAuthGrantResponse } from '@/shared/api/generated/models/OAuthGrantResponse';
+export type { OAuthGrantListResponse } from '@/shared/api/generated/models/OAuthGrantListResponse';

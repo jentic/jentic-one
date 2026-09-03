@@ -179,11 +179,15 @@ at the wrong backend.
 
 ### Repointing an MCP server (or any client) at a local install
 
-The per-response backend field is added by the external Jentic MCP server; the
-`jentic-one` side of the contract is the `/instance` endpoint above. To move an
-MCP server (or the CLI) from a remote backend to a local install, update *that
-client's* backend base URL to your local `canonical_base_url` (e.g.
-`http://127.0.0.1:8000`) and re-check with `GET /instance`. `jentic-one` never
-silently resolves to a remote backend on its own — a client only reaches a
-remote backend because it is configured to.
+The per-response `backend` field is stamped by the MCP server — the local
+`jentic mcp` server (available in the `jentic` CLI from the next release)
+reads it from the `/instance` endpoint above, which is the `jentic-one` side
+of the contract. To move an MCP server (or the CLI) from a remote backend to
+a local install, update *that client's* backend base URL to your local
+`canonical_base_url` (e.g. `http://127.0.0.1:8000`) and re-check with
+`GET /instance`. For `jentic mcp` the backend comes from the context's
+environment (`base_url`/`broker_url`), so repoint the environment (or switch
+the context the MCP entry pins with `--context`). `jentic-one` never silently
+resolves to a remote backend on its own — a client only reaches a remote
+backend because it is configured to.
 

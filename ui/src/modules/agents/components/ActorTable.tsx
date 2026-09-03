@@ -32,9 +32,11 @@ import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
 	ACTIONS_FOR_STATUS,
 	ACTION_LABEL,
+	mcpClientLabel,
 	type ActorStatus,
 	type ActorUsage,
 	type AgentAction,
+	type McpLastSeen,
 } from '@/modules/agents/api';
 import { successShare } from '@/modules/agents/components/detail/shared';
 
@@ -63,6 +65,14 @@ interface ActorTableProps<T extends ActorRow> {
 	 * "unknown", not "zero" — those cells render an em-dash.
 	 */
 	usage?: Map<string, ActorUsage> | null;
+	/**
+	 * Latest MCP session per actor (local-MCP 2-E2) — renders the "Last seen
+	 * via MCP" column. Same enrichment contract as `usage`: `undefined`/`null`
+	 * (agents-only column, loading, or events permission-gated) hides the
+	 * column; an actor missing from the newest-100 events page renders an
+	 * em-dash ("no recent session known", not "never").
+	 */
+	mcpLastSeen?: Map<string, McpLastSeen> | null;
 	onAction: (item: T, action: AgentAction) => void;
 	detailHref: (item: T) => string;
 }
@@ -176,6 +186,7 @@ export function ActorTable<T extends ActorRow>({
 	emptyMessage,
 	pendingId,
 	usage,
+	mcpLastSeen,
 	onAction,
 	detailHref,
 }: ActorTableProps<T>) {
@@ -244,6 +255,28 @@ export function ActorTable<T extends ActorRow>({
 					},
 				] satisfies Column<T>[])
 			: []),
+		...(mcpLastSeen
+			? ([
+					{
+						key: 'mcp',
+						header: 'Last seen via MCP',
+						className: 'w-44 whitespace-nowrap',
+						render: (row) => {
+							const s = mcpLastSeen.get(row.id);
+							// Missing from the newest events page: unknown, not never.
+							if (!s) return <span aria-hidden>—</span>;
+							return (
+								<span className="flex flex-col leading-tight">
+									<span className="text-foreground text-xs">
+										{mcpClientLabel(s)}
+									</span>
+									{timeCell(s.startedAt)}
+								</span>
+							);
+						},
+					},
+				] satisfies Column<T>[])
+			: []),
 		{
 			key: 'approvedAt',
 			header: 'Approved',
@@ -275,6 +308,7 @@ export function ActorTable<T extends ActorRow>({
 			ariaLabel={`${kindLabel} list`}
 			renderCard={(row) => {
 				const u = usage?.get(row.id);
+				const mcp = mcpLastSeen?.get(row.id);
 				return (
 					<div className="space-y-2">
 						<div className="flex items-start justify-between gap-2">
@@ -300,6 +334,11 @@ export function ActorTable<T extends ActorRow>({
 							<span className="text-muted-foreground text-[11px]">
 								Registered {timeAgo(row.createdAt)}
 							</span>
+							{mcp && (
+								<span className="text-muted-foreground text-[11px]">
+									MCP: {mcpClientLabel(mcp)} · {timeAgo(mcp.startedAt)}
+								</span>
+							)}
 						</div>
 					</div>
 				);

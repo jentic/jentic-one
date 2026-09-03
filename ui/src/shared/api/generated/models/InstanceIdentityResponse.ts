@@ -26,6 +26,10 @@ export type InstanceIdentityResponse = {
      * Opaque digest derived from the telemetry instance id — stable per install, but not the telemetry id itself. Null when telemetry has not resolved an id (e.g. telemetry disabled).
      */
     instance_id?: (string | null);
+    /**
+     * Whether this instance serves the daemon-native Streamable HTTP MCP endpoint at /mcp (server.mcp.enabled). Lets clients (notably the UI's agent MCP card) advertise the HTTP transport only when it exists. Not sensitive: the endpoint's enabled state is observable by probing /mcp anyway.
+     */
+    mcp_enabled?: boolean;
 };
 export namespace InstanceIdentityResponse {
     /**

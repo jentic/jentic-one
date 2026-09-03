@@ -1,6 +1,6 @@
 [project]
 name = "jentic-one"
-version = "0.32.0"
+version = "0.37.4"
 description = "Jentic One"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -32,6 +32,8 @@ dependencies = [
     "cryptography>=50.0.0",
     "h2>=4.4.1",
     "opentelemetry-instrumentation-httpx>=0.44b0",
+    "python-multipart>=0.0.32",
+    "mcp>=2.1.1",
 ]
 
 [project.optional-dependencies]
@@ -87,7 +89,6 @@ dev = [
     # the dev env always installs it so the state-backend unit tests (which build
     # the redis backend) run without needing the extra enabled explicitly.
     "redis>=8.0.0",
-    "python-multipart>=0.0.32",
 ]
 
 # Conventional-commit enforcement (pure Python — no Node needed). Fires for

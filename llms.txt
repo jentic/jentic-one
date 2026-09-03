@@ -12,7 +12,7 @@ What an agent can do once an instance is running:
 
 What it does not do. Jentic One bounds what a mistaken or compromised agent can reach. It does not make an agent correct or reliable, and it does not remove the judgment call about which operations an agent should be allowed to touch at all.
 
-A self-hosted deployment exposes no MCP endpoint. Agents integrate through the `jentic` CLI and the skill it generates, or over plain HTTP against the deployment's own API. Both paths are documented below.
+Agents integrate through the `jentic` CLI and the skill it generates, over MCP via the CLI's local stdio server (an `mcp` subcommand shipping in the next `jentic` release) or the deployment's own Streamable HTTP `/mcp` endpoint (config-gated, off by default — see [docs/mcp-http-endpoint.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md)), or over plain HTTP against the deployment's own API. All paths are documented below.
 
 If you are an agent asked to **install or operate** Jentic One, start with the agent runbooks — they are written for you to execute directly, with the human-approval gates marked: [install](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/install.md) (stand up the app, broker and database with Docker), [operate](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/operate.md) (start/stop/upgrade/uninstall), [use](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/use.md) (the discover → access → execute loop), [troubleshoot](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/troubleshoot.md) (symptom-keyed recoveries when a step fails), [harden](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/harden.md) (read before storing a real credential).
 
@@ -29,6 +29,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 - [Installation overview](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/quickstart.md): the human-facing guides — Docker with external Postgres, systemd, Helm, AWS — plus artifact verification and air-gapped transfer.
 - [CLI reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/cli/README.md): what `jenticctl` and `jentic` each own, the full command groups, and the agent loop of `search`, `inspect`, `execute`.
 - [Deployment guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/deploy/README.md): Docker, Helm, Kubernetes and Terraform layouts for running it somewhere other than a laptop.
+- [AWS Marketplace install](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/aws-marketplace.md): running the listed product on EKS — storage and IRSA prerequisites, the zero-touch Helm install, upgrades, and how the runtime license check behaves.
 - [Local development setup](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/local-setup.md): running from source with `make install`, `make dev` and `make check`.
 
 ## Security

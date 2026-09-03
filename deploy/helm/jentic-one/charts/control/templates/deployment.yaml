@@ -29,12 +29,20 @@ spec:
               value: {{ $v | quote }}
 {{- end }}
 {{ include "common.config-file.env" . | indent 12 }}
+{{ include "common.app-secrets.env" . | indent 12 }}
 {{ include "common.logging-env" . | indent 12 }}
 {{ include "common.metrics-env" . | indent 12 }}
 {{ include "common.db-env" . | indent 12 }}
-{{- with (include "common.config-file.mount" . | trim) }}
+{{- $cfgMount := (include "common.config-file.mount" . | trim) }}
+{{- $encMount := (include "common.app-secrets.mount" . | trim) }}
+{{- if or $cfgMount $encMount }}
           volumeMounts:
+{{- with $cfgMount }}
 {{ . | indent 12 }}
+{{- end }}
+{{- with $encMount }}
+{{ . | indent 12 }}
+{{- end }}
 {{- end }}
           readinessProbe:
             httpGet:
@@ -55,12 +63,16 @@ spec:
         {{- end }}
       {{- $otel := .Values.global.observability.otel.enabled }}
       {{- $cfg := (include "common.config-file.volume" . | trim) }}
-      {{- if or $otel $cfg }}
+      {{- $enc := (include "common.app-secrets.volume" . | trim) }}
+      {{- if or $otel $cfg $enc }}
       volumes:
       {{- if $otel }}
 {{ include "common.otel-config-volume" . | indent 8 }}
       {{- end }}
       {{- with $cfg }}
+{{ . | indent 8 }}
+      {{- end }}
+      {{- with $enc }}
 {{ . | indent 8 }}
       {{- end }}
       {{- end }}

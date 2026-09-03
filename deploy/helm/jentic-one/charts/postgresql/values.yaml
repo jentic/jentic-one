@@ -1,0 +1,48 @@
+# Defaults for the bundled single-instance PostgreSQL. The umbrella chart's
+# `postgresql:` block (deploy/helm/jentic-one/values.yaml) overlays these —
+# keep the two in sync when adding keys.
+
+image:
+  registry: docker.io
+  # For registries that embed a namespace (e.g. the AWS Marketplace mirror),
+  # keep the split form — registry "709825985650.dkr.ecr.us-east-1.amazonaws.com",
+  # repository "jentic/one-psql". (Do NOT blank the registry and stuff
+  # the full path into repository: Helm renders it fine, but AWS Marketplace's
+  # chart validator composes refs from these exact keys and chokes on an
+  # empty registry.)
+  repository: postgres
+  # Self-hosters get the official Debian-based image. The AWS Marketplace
+  # overlay pins the hardened Alpine mirror instead
+  # (deploy/docker/postgres-mirror.Dockerfile; Dependabot keeps its digest
+  # pin fresh).
+  tag: "17.11"
+
+auth:
+  username: postgres
+  # No default password — the chart refuses to install without one (same
+  # posture as global.databases passwords; dev files: deploy/helm/values/
+  # local-*.yaml) UNLESS global.appSecrets is active, in which case the
+  # superuser password comes from the generated Secret via secretKeyRef..
+  database: jentic
+
+primary:
+  initdb:
+    # ConfigMap with *.sql scripts mounted at /docker-entrypoint-initdb.d
+    # (they run once, on first boot with an empty data dir). Empty means the
+    # umbrella chart's auto-created init ConfigMap (<release>-pg-init, see
+    # templates/pg-init-configmap.yaml in the umbrella chart).
+    scriptsConfigMap: ""
+
+persistence:
+  enabled: true
+  size: 8Gi
+  # Empty = the cluster's default StorageClass.
+  storageClass: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi

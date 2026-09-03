@@ -54,6 +54,8 @@ SERVICE_ACCOUNTS_READ = "service-accounts:read"
 SERVICE_ACCOUNTS_WRITE = "service-accounts:write"
 CONFIG_READ = "config:read"
 CONFIG_WRITE = "config:write"
+OAUTH_CLIENTS_READ = "oauth-clients:read"
+OAUTH_CLIENTS_WRITE = "oauth-clients:write"
 ORG_ADMIN = "org:admin"
 
 
@@ -96,6 +98,8 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 SERVICE_ACCOUNTS_READ,
                 CONFIG_WRITE,
                 CONFIG_READ,
+                OAUTH_CLIENTS_WRITE,
+                OAUTH_CLIENTS_READ,
             }
         ),
     ),
@@ -210,6 +214,15 @@ ALL_PERMISSIONS: dict[str, Permission] = {
         name=CONFIG_READ,
         description="Read runtime platform configuration",
     ),
+    OAUTH_CLIENTS_WRITE: Permission(
+        name=OAUTH_CLIENTS_WRITE,
+        description="Create, update, deactivate, and rotate secrets of OAuth clients",
+        implies=frozenset({OAUTH_CLIENTS_READ}),
+    ),
+    OAUTH_CLIENTS_READ: Permission(
+        name=OAUTH_CLIENTS_READ,
+        description="Read OAuth client registrations",
+    ),
     OWNER_RESOURCES_READ: Permission(
         name=OWNER_RESOURCES_READ,
         description="Read resources owned by the agent's creator (umbrella)",
@@ -294,6 +307,8 @@ __all__ = [
     "IMPLICATION_MAP",
     "JOBS_READ",
     "JOBS_WRITE",
+    "OAUTH_CLIENTS_READ",
+    "OAUTH_CLIENTS_WRITE",
     "ORG_ADMIN",
     "OVERLAYS_CONFIRM",
     "SERVICE_ACCOUNTS_READ",

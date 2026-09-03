@@ -62,7 +62,14 @@ export type StreamSeverity = 'critical' | 'error' | 'warning' | 'info';
  * the backend adds later so the rail never crashes on an unknown type.
  */
 export type StreamKind =
-	'import' | 'execution' | 'access_request' | 'credential' | 'agent' | 'catalog' | 'other';
+	| 'import'
+	| 'execution'
+	| 'access_request'
+	| 'credential'
+	| 'agent'
+	| 'catalog'
+	| 'oauth'
+	| 'other';
 
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
@@ -82,6 +89,12 @@ export type StreamTokens = {
 	name?: string;
 	version?: string;
 	overlay_id?: string;
+	// OAuth surface (phase-3a §4.8): DCR/approval events carry the client's
+	// INTERNAL id (`oauth_client_id` = the admin row's ksuid); grant events
+	// carry the grant id plus the client's PUBLIC client_id under the same
+	// `oauth_client_id` data key (the token-lineage join key).
+	oauth_client_id?: string;
+	grant_id?: string;
 };
 
 /** Conflict digests from a `catalog.update_conflicts_overlay` event's `data.conflict`. */
@@ -151,10 +164,15 @@ const KNOWN_KINDS = new Set<StreamKind>([
  * loop (an upstream spec change, an overlay conflict, an overlay deprecation),
  * so they collapse into a single `catalog` kind — one filter chip, one label,
  * one deep-link target (the affected API's Workspace detail page).
+ *
+ * `oauth_client.*` and `oauth_grant.*` likewise collapse into one `oauth` kind
+ * (phase-3a §4.8): client registration/approval and consent-grant lifecycle
+ * are two halves of the same interactive-OAuth surface.
  */
 export function kindForType(type: string): StreamKind {
 	const ns = type.split('.', 1)[0];
 	if (ns === 'overlay') return 'catalog';
+	if (ns === 'oauth_client' || ns === 'oauth_grant') return 'oauth';
 	return KNOWN_KINDS.has(ns as StreamKind) ? (ns as StreamKind) : 'other';
 }
 
@@ -170,6 +188,7 @@ export const STREAM_KIND_LABEL: Record<StreamKind, string> = {
 	access_request: 'Access request',
 	agent: 'Agent',
 	catalog: 'Catalog',
+	oauth: 'OAuth',
 	other: 'Platform',
 };
 
@@ -223,6 +242,10 @@ function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string
 		// keying on the agent would collapse two requests filed by the same
 		// agent in one burst — the normal CLI provisioning case — into one row.
 		t.tokens.access_request_id ??
+		// A grant id keys the grant-lifecycle pair; the client id keys the
+		// registration/approval pair (distinct clients → distinct rows).
+		t.tokens.grant_id ??
+		t.tokens.oauth_client_id ??
 		// Distinct registering agents still get distinct rows.
 		t.tokens.agent_id ??
 		t.tokens.trace_id ??
@@ -290,6 +313,11 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		name: stringField(data, 'name'),
 		version: stringField(data, 'version'),
 		overlay_id: stringField(data, 'overlay_id'),
+		// OAuth events (phase-3a §4.8): both halves stamp `oauth_client_id`;
+		// grant lifecycle events also carry the grant id (and an `agent_id`,
+		// picked up by the shared field above).
+		oauth_client_id: stringField(data, 'oauth_client_id'),
+		grant_id: stringField(data, 'grant_id'),
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;
@@ -369,6 +397,17 @@ type AgentStreamValue = {
 	 * stream and supersedes this optimistic flip.
 	 */
 	resolveEvent: (eventId: string) => void;
+	/**
+	 * Settle every unacknowledged actionable `oauth_client.registered` row for
+	 * one client (matched on the internal `oauth_client_id` token). The approve
+	 * arm gets this mirror for free from the `oauth_client.approved` SSE event;
+	 * a DENY emits no event (§4.8 / D7), so the deny mutation — which knows the
+	 * client id — calls this on success. The backend settles the row inside the
+	 * decision transaction either way; this only syncs the live session's local
+	 * copy so a stale "Review" prompt doesn't linger until the next backlog
+	 * fetch.
+	 */
+	settleOAuthClientRegistration: (oauthClientId: string) => void;
 	/** Fetch one older page from `GET /events?cursor=…` and append it. */
 	loadOlderEvents: () => Promise<void>;
 	canLoadOlder: boolean;
@@ -438,6 +477,19 @@ export function AgentStreamProvider({
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 	}, [queryClient]);
 
+	/**
+	 * Refresh the interactive-OAuth surfaces (Settings approval queue + client
+	 * rows with their grant counts, per-agent "Connected clients" panels). A
+	 * DCR registration, an approval decision, or a consent grant all land as
+	 * `oauth_client.*` / `oauth_grant.*` SSE events (phase-3a §4.8); without
+	 * this bridge those surfaces sat on their staleTime right after the change.
+	 */
+	const invalidateOAuthSurfaces = useCallback(() => {
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.oauthClientsRoot });
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.oauthGrantsRoot });
+		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
+	}, [queryClient]);
+
 	// Fresh mirror of `events` for callbacks that need the current list WITHOUT
 	// re-subscribing (e.g. `decide` reads a row's request id). Reading this ref
 	// avoids stale closures and avoids side-effecting inside a `setState` updater.
@@ -504,6 +556,24 @@ export function AgentStreamProvider({
 			return merged.slice(0, MAX_EVENTS);
 		});
 	}, []);
+
+	// One definition for both `oauth_client.registered` settle arms (approve
+	// via its SSE event in the live subscription below, deny via the deny
+	// mutation through the context) so the matching predicate can't drift.
+	const settleOAuthClientRegistration = useCallback(
+		(oauthClientId: string) => {
+			setEvents((prev) =>
+				prev.map((row) =>
+					row.type === 'oauth_client.registered' &&
+					row.tokens.oauth_client_id === oauthClientId &&
+					!row.acknowledged
+						? markResolved(row)
+						: row,
+				),
+			);
+		},
+		[markResolved],
+	);
 
 	// 1. Backlog seed.
 	useEffect(() => {
@@ -600,6 +670,19 @@ export function AgentStreamProvider({
 							),
 						);
 					}
+					if (
+						ev.kind === 'oauth' &&
+						ev.type === 'oauth_client.approved' &&
+						ev.tokens.oauth_client_id
+					) {
+						// The backend settles the actionable oauth_client.registered
+						// alert inside the approve/deny transaction (§4.8 / D7);
+						// mirror on local rows so the live session drops the stale
+						// "Review" prompt immediately. (A deny emits no event, so
+						// the deny mutation calls this same settle directly —
+						// see settleOAuthClientRegistration.)
+						settleOAuthClientRegistration(ev.tokens.oauth_client_id);
+					}
 					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: a filed/decided access request changes the durable
@@ -612,6 +695,8 @@ export function AgentStreamProvider({
 						invalidateApprovalSurfaces();
 					} else if (ev.kind === 'agent') {
 						invalidateAgentSurfaces();
+					} else if (ev.kind === 'oauth') {
+						invalidateOAuthSurfaces();
 					}
 				},
 				onError: () => setStatus('error'),
@@ -619,7 +704,15 @@ export function AgentStreamProvider({
 			},
 		);
 		return unsubscribe;
-	}, [live, upsert, invalidateApprovalSurfaces, invalidateAgentSurfaces, markResolved]);
+	}, [
+		live,
+		upsert,
+		invalidateApprovalSurfaces,
+		invalidateAgentSurfaces,
+		invalidateOAuthSurfaces,
+		markResolved,
+		settleOAuthClientRegistration,
+	]);
 
 	const acknowledge = useCallback(
 		async (eventId: string) => {
@@ -711,6 +804,7 @@ export function AgentStreamProvider({
 			acknowledge,
 			decide,
 			resolveEvent,
+			settleOAuthClientRegistration,
 			loadOlderEvents,
 			canLoadOlder: hasMore && cursor != null,
 			loadingOlder,
@@ -722,6 +816,7 @@ export function AgentStreamProvider({
 			acknowledge,
 			decide,
 			resolveEvent,
+			settleOAuthClientRegistration,
 			loadOlderEvents,
 			hasMore,
 			cursor,
@@ -925,7 +1020,8 @@ export type InlineActionKind =
 	| 'view_api'
 	| 'view_execution'
 	| 'view_job'
-	| 'view_trace';
+	| 'view_trace'
+	| 'view_oauth_queue';
 
 export type InlineActionSpec = {
 	kind: InlineActionKind;
@@ -989,6 +1085,10 @@ const NAV = {
 		if (!vendor || !name || !version) return null;
 		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
 	},
+	// The Settings OAuth approval queue (phase-3a §4.8/D7) — where the
+	// approve/deny verbs for a pending DCR registration live. Static target:
+	// the queue tab lists every pending client.
+	oauthQueue: () => '/settings?tab=queue',
 };
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
@@ -1011,6 +1111,12 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			// A self-registered agent awaits approval — route the operator to the
 			// agent's page (where approve/deny lives) instead of a bare Acknowledge.
 			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
+			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
+		} else if (ev.type === 'oauth_client.registered') {
+			// A DCR client registration awaiting approval (phase-3a §4.8) — route
+			// the operator to the Settings approval queue, where the D7
+			// approve/deny verbs live, alongside Acknowledge.
+			actions.push({ kind: 'view_oauth_queue', label: 'Review', href: NAV.oauthQueue });
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else if (
 			(ev.type === 'catalog.update_available' ||
@@ -1041,6 +1147,10 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 		if (!actions.some((a) => a.kind === 'view_api')) {
 			actions.push({ kind: 'view_api', label: 'View API', href: NAV.workspaceApi });
 		}
+	} else if (ev.kind === 'oauth' && ev.tokens.agent_id) {
+		// Grant lifecycle rows deep-link to the bound agent, whose "Connected
+		// clients" panel lists (and can revoke) the grant (§4.8).
+		actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
 	} else if (ev.tokens.trace_id) {
 		actions.push({ kind: 'view_trace', label: 'View trace', href: NAV.trace });
 	}
@@ -1110,6 +1220,10 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 			return NAV.agent(ev) ?? NAV.trace(ev);
 		case 'catalog':
 			return NAV.workspaceApi(ev) ?? NAV.trace(ev);
+		case 'oauth':
+			// Grant rows go to the bound agent's console (its Connected-clients
+			// panel); client registration/approval rows go to the Settings queue.
+			return ev.tokens.grant_id && ev.tokens.agent_id ? NAV.agent(ev) : NAV.oauthQueue();
 		default:
 			return NAV.trace(ev);
 	}

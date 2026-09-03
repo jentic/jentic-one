@@ -288,7 +288,7 @@ async def test_list_apis_paginates_across_boundary(
     seen: list[str] = []
     cursor: str | None = None
     for _ in range(5):  # safety bound; 3 items at limit=2 needs 2 pages
-        params: dict[str, object] = {"limit": 2}
+        params: dict[str, str | int] = {"limit": 2}
         if cursor is not None:
             params["cursor"] = cursor
         resp = authed_client.get("/apis", params=params)

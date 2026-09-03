@@ -10,6 +10,13 @@ Jentic is an API broker: you discover operations across many APIs, then execute
 them through a single authenticated gateway without managing each API's
 credentials yourself. The `jentic` CLI is the agent-facing entrypoint.
 
+The same loop is also exposed over **MCP** by the local `jentic mcp` stdio
+server — available in the `jentic` CLI from the next release; check
+`jentic mcp --help`. If your session has `jentic` MCP tools, prefer them; use
+the CLI for `setup`/`access` recovery and anything not exposed over MCP. Both
+surfaces talk to the same instance — check `backend`/`host` in the identity
+stamp on MCP tool results if in doubt.
+
 ## When to Use
 
 - You need to call a third-party API (Stripe, GitHub, Slack, …) but don't have
@@ -207,7 +214,7 @@ approving. Do the work up front:
 
 1. Read the operation surface and security schemes:
    `jentic apis operations <vendor/name/version>` and
-   `jentic inspect '<METHOD> <URL>'` show methods, paths, and the declared auth.
+   `jentic inspect <operation_id>` show methods, paths, and the declared auth.
 2. Pick `--auth` from what the spec declares (`bearer`, `api_key`, `basic`,
    `oauth2`), or `none` if the API needs no credential.
 3. Translate the user's plain-English intent into rules. "Read everything, write
@@ -312,12 +319,13 @@ jentic search "get values from a spreadsheet range" --limit 10
 jentic apis operations googleapis-com/googleapis-com-sheets/v4
 ```
 
-`search` returns JSON when piped. Each hit carries the operation's `method` and
-`url` (also encoded in its `_links.inspect` link). That `METHOD URL` pair is
-the operation's identity everywhere: pass it to `inspect` and `execute` exactly
-as the hit returned it. Don't hand-compose a URL from memory, and ignore any
-other ids in the output — the id shown by `jentic catalog show` is a spec
-artefact, not a call target.
+`search` returns JSON when piped. Each hit carries both a registry
+`operation_id` and a `_links.inspect` (a `/inspect?id=METHOD%20URL` link). Pass
+the `operation_id` straight to `inspect`/`execute` — it resolves by registry key
+— or use the `METHOD URL` pair the link decodes to. (The id shown by `jentic
+catalog show` is the spec's `operationId`; `inspect` accepts that too, via a
+fallback, but the `operation_id` from `search`/`apis operations` is the most
+direct.)
 
 If `search` returns no results, it prints a hint to run `jentic catalog search`
 / `jentic catalog import` first — that almost always means nothing relevant is
@@ -356,37 +364,38 @@ importing/searching again.
 
 ### 4. Inspect the operation's contract
 
-Resolve an operation to its parameters, schemas, and declared auth before
-calling it. Pass the `METHOD URL` pair from the search hit, quoted (it
-contains a space):
+Resolve an operation to its method, path, parameters, and schemas before
+calling it. Pass the inspect identifier from `search`/`apis operations`, or a
+`METHOD URL` pair:
 
 ```
-jentic inspect "$(jentic search 'get spreadsheet values' --json | jq -r '.data[0] | "\(.method) \(.url)"')"
+jentic inspect "$(jentic search 'get spreadsheet values' --json | jq -r '.data[0].operation_id')"
 jentic inspect 'GET https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}'
 ```
 
 On a 404, `inspect` prints the reason and a hint on stderr and exits 2 (it is
-not silent). Use the exact `method` and `url` a `search`/`apis operations` hit
-returned — a URL composed from memory or from `catalog show` output may not
-match a registered operation.
+not silent). If you passed the id from `catalog show` and it didn't resolve, use
+the `operation_id` from `search`/`apis operations`, or the `METHOD URL` pair
+that the hit's `_links.inspect` decodes to.
 
 ### 5. Execute through the broker
 
 Send the request through the Jentic broker. The broker is a transparent forward
-proxy, so the target is always `METHOD:URL` with the **full upstream URL**
-(scheme + host + path), not a host-relative path — the same method and URL the
-search hit returned:
+proxy, so the target is the **full upstream URL** (scheme + host + path), not a
+host-relative path. Reference an `operation_id`/inspect id from `search`/
+`inspect` — the CLI fills in the upstream URL for you — or pass `METHOD:URL`
+directly.
 
 ```
+jentic execute <operation_id> --query limit=10
 jentic execute GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range} --path id=ABC --path range=A1:Z10
-jentic execute GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range} --path id=ABC --path range=A1:Z10 --query majorDimension=COLUMNS
 ```
 
 **Diagnose an `execute` failure by its symptom, not the exit code alone.** A
 broker **denial** prints an `agent_directive` on stderr (exit **2**). An
 error naming DNS, TLS, timeout, or connection refused is a **transport
 failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
-operation lookup hits an unreachable control plane — with two causes:
+`operation_id` lookup hits an unreachable control plane — with two causes:
 
 > Exit **2** broadly means "this request cannot succeed **as asked**" — a
 > broker denial, a failed operation resolve, or missing local context (e.g. no
@@ -406,7 +415,7 @@ operation lookup hits an unreachable control plane — with two causes:
 ```
 jentic register --url <control-plane URL> --broker-url <broker URL>   # fills a missing broker_url
 jentic env add <env> --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force
-jentic execute <METHOD:URL> --broker-scheme http --broker-host 127.0.0.1:8100
+jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 ```
 
 - **Missing broker on a remote install (`RESOLVE_FAILED`, exit 2).** If the
@@ -450,10 +459,10 @@ jentic execute <METHOD:URL> --broker-scheme http --broker-host 127.0.0.1:8100
   refresh — they are live on approval.
 - `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>` —
   find and import APIs (import first; `search` only sees imported operations).
-- `jentic search "<query>"` → `jentic inspect '<METHOD> <URL>'` →
-  `jentic execute <METHOD:URL>` — discover, inspect, and call
-  operations through the broker (always the full upstream URL from the search
-  hit; the broker is a forward proxy, not a path router).
+- `jentic search "<query>"` → `jentic inspect <operation_id>` →
+  `jentic execute <operation_id | METHOD:URL>` — discover, inspect, and call
+  operations through the broker (use the full upstream URL; the broker is a
+  forward proxy, not a path router).
 - `jentic register` / `jentic setup` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous use).
 - `jentic doctor` — read-only self-check of THIS agent's setup (config/state
@@ -504,17 +513,20 @@ jentic execute <METHOD:URL> --broker-scheme http --broker-host 127.0.0.1:8100
   "catalog read" scopes; they're rejected.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials.** If your session also has Jentic **MCP tools**
-  (`search_apis`, `list_credentials`, `execute`, …), they may be bound to a
-  **different backend** than this CLI — typically the hosted cloud workspace
-  vs the local install — and nothing in their responses says which one
-  replied. The symptom is *silent wrong answers*, not errors: an API the user
-  just imported "doesn't exist", credentials "disappeared", or call targets
-  from one surface don't resolve on the other. Before concluding anything is
-  missing or broken, check where each surface points — `jentic context view`
-  shows this CLI's active environment/`base_url`, and `jentic api GET /instance`
-  reports which backend serves it (see "confirm which backend you're on" in step 3);
-  ask your operator which backend the MCP server was configured against —
-  and stick to one surface for the whole task.
+  (`search_apis`, `list_credentials`, `execute`, …), check which backend they
+  answer from. Tools served by the local `jentic mcp` server stamp
+  `backend`/`host` on every result — compare that against this CLI's backend.
+  Tools without the stamp (e.g. the hosted Jentic cloud platform's MCP server)
+  may be bound to a **different backend** than this CLI — typically the hosted
+  cloud workspace vs the local install. The symptom of a mismatch is *silent
+  wrong answers*, not errors: an API the user just imported "doesn't exist",
+  credentials "disappeared", or call targets from one surface don't resolve
+  on the other. Before concluding anything is missing or broken, check where
+  each surface points — `jentic context view` shows this CLI's active
+  environment/`base_url`, and `jentic api GET /instance` reports which backend
+  serves it (see "confirm which backend you're on" in step 3); for MCP tools,
+  read the identity stamp or ask your operator which backend the MCP server
+  was configured against — and stick to one surface for the whole task.
 - An `execute` failure is not always an access problem. A DNS or TLS error
   means the **broker target** is misconfigured (see step 5); connection
   refused on a **local** target usually means the instance is **stopped** —
@@ -547,10 +559,10 @@ jentic execute <METHOD:URL> --broker-scheme http --broker-host 127.0.0.1:8100
   **serve**; if the API you need isn't there, `--provision` it and wait — don't
   fire a `execute` you expect to be denied just to read the recovery directive.
   The directive is a fallback for surprises, not a discovery step.
-- Always target the exact `method` and `url` a `search`/`apis operations` hit
-  returned. The id printed by `catalog show` is a spec artefact, not a call
-  target — if a target doesn't resolve, re-run `search` and use the hit's
-  `METHOD URL` pair; don't guess URLs.
+- The `operation_id` from `search`/`apis operations` resolves directly; the id
+  from `catalog show` is the spec `operationId` (`inspect` resolves it via a
+  fallback). If one doesn't resolve, try the `METHOD URL` pair from the hit's
+  `_links.inspect` — don't guess ids.
 
 ## Verification
 

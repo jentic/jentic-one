@@ -196,3 +196,95 @@ export interface PermissionCatalogEntry {
 	implies: string[];
 	grantableByCaller: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// MCP transport visibility (local-MCP 2-E2, #1188).
+//
+// MCP is a TRANSPORT of an existing agent, not a new entity — nothing new in
+// the data model. These shapes are read straight off existing surfaces: the
+// `mcp.session_started` internal event's `data` (`GET /events`) and the
+// MCP-origin execution records (`GET /executions?origin=mcp`).
+// ---------------------------------------------------------------------------
+
+/**
+ * One MCP session recorded for an agent — a projection of the
+ * `mcp.session_started` internal event. `transport` is what the emitter knew
+ * (`stdio` today; `http` when phase 3's mounted app lands) and renders
+ * verbatim so a future value degrades gracefully. `clientName`/`clientVersion`
+ * come from the relayed MCP clientInfo and are null when the client didn't
+ * send it (a SHOULD in the MCP spec) — "client unknown", not an error.
+ */
+export interface McpSessionEntity {
+	eventId: string;
+	sessionId: string | null;
+	transport: string | null;
+	clientName: string | null;
+	clientVersion: string | null;
+	startedAt: string;
+}
+
+/** The latest MCP session per agent — the roster's "last seen via MCP" cell. */
+export interface McpLastSeen {
+	clientName: string | null;
+	clientVersion: string | null;
+	startedAt: string;
+}
+
+/** "claude-desktop 1.5.2" (or "unknown client") — one label rule everywhere. */
+export function mcpClientLabel(s: {
+	clientName: string | null;
+	clientVersion: string | null;
+}): string {
+	if (!s.clientName) return 'unknown client';
+	return s.clientVersion ? `${s.clientName} ${s.clientVersion}` : s.clientName;
+}
+
+/**
+ * The backend's self-described identity (`GET /instance`) — which install a
+ * pasted MCP snippet will talk to. `baseUrl`/`host` are '' when the operator
+ * never configured a canonical base URL; callers fall back to the browser's
+ * origin (the URL the operator is looking at IS an address of this instance).
+ */
+export interface InstanceIdentityEntity {
+	/** 'local' | 'remote' — operator-declared locality hint. */
+	backend: string;
+	baseUrl: string;
+	host: string;
+	/**
+	 * Whether the instance serves the daemon-native Streamable HTTP `/mcp`
+	 * endpoint (`server.mcp.enabled`, phase 3) — gates the config card's HTTP
+	 * variant so the UI never advertises a transport that 404s.
+	 */
+	mcpEnabled: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// OAuth consent grants (phase-3a §4.8) — the detail console's "Connected
+// clients" panel: which OAuth clients hold a live consent→agent grant.
+// ---------------------------------------------------------------------------
+
+/**
+ * One consent→agent grant (`GET /agents/{id}/oauth-grants`). `userId` is the
+ * CONSENTING user, surfaced deliberately: after an agent ownership transfer
+ * the grant stays with the original consenter (gap G10), so the panel must
+ * show who holds it, not assume the current owner does. `canRevoke` is the
+ * server-computed revoke capability for the CALLER — the revoke predicate
+ * (consenting user or write-set admin) deliberately diverges from the list
+ * predicate (agent's current owner or read-set admin), so a viewer may see a
+ * grant they cannot revoke; the card disables the button instead of offering
+ * an action that would 403.
+ */
+export interface OAuthGrantEntity {
+	id: string;
+	oauthClientId: string;
+	clientName: string | null;
+	clientOrigin: string | null;
+	userId: string;
+	agentId: string;
+	scopes: string[];
+	status: string;
+	createdAt: string;
+	revokedAt: string | null;
+	lastUsedAt: string | null;
+	canRevoke: boolean;
+}

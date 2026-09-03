@@ -7,6 +7,7 @@ import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+import { settingsHandlers } from '@/modules/settings/mocks/handlers';
 
 /**
  * Root MSW handler table.
@@ -141,6 +142,17 @@ export const handlers = [
 	http.get('/system/version', () =>
 		HttpResponse.json({ current: '0.26.0', latest: null, update_available: false }),
 	),
+	// Backend self-identity (GET /instance, unauthenticated) — the per-agent
+	// MCP config card shows which instance a pasted snippet registers against
+	// (local-MCP 2-E2). Canonical base URL configured, local install.
+	http.get('/instance', () =>
+		HttpResponse.json({
+			backend: 'local',
+			canonical_base_url: 'https://jentic.example.test',
+			host: 'jentic.example.test',
+			instance_id: 'inst_digest_1',
+		}),
+	),
 	// Feature modules append their handlers here, e.g.:
 	//   import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 	//   ...discoverHandlers,
@@ -156,6 +168,9 @@ export const handlers = [
 	...dashboardHandlers,
 	...workspaceHandlers,
 	...railEventsHandlers,
+	// Settings owns the admin OAuth-client registry (/admin/oauth-clients),
+	// including the phase-3a approval queue.
+	...settingsHandlers,
 	// Monitor owns the full observability surface (/executions, /jobs, /events
 	// + SSE, /audit). Several of these paths are ALSO mocked by the dashboard
 	// and the ambient Agent Rail for their own shell widgets; those modules

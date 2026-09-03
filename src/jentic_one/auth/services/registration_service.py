@@ -60,7 +60,7 @@ _MAX_JWKS_KEYS = 5
 _MAX_JWKS_BYTES = 8192
 
 
-def _validate_jwks(jwks: dict[str, Any]) -> None:
+def validate_jwks(jwks: dict[str, Any]) -> None:
     """Validate that JWKS contains at least one Ed25519 public key and no private material."""
     if len(json.dumps(jwks)) > _MAX_JWKS_BYTES:
         raise InvalidGrantError(f"jwks exceeds maximum size of {_MAX_JWKS_BYTES} bytes")
@@ -99,7 +99,7 @@ class RegistrationService:
         self, client_name: str, jwks: dict[str, Any], *, scope: str | None = None
     ) -> RegisterResult:
         """Register a new agent with its public key set."""
-        _validate_jwks(jwks)
+        validate_jwks(jwks)
 
         rat_plain = _generate_rat()
         rat_hash = _hash_rat(rat_plain)

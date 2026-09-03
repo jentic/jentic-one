@@ -30,6 +30,7 @@ from jentic_one.shared.web.agent_discovery import (
     shipped_skill_names,
 )
 from jentic_one.shared.web.app_factory import create_combined_app
+from jentic_one.wiring import build_default_container
 
 
 @pytest.fixture()
@@ -210,7 +211,7 @@ def test_broker_catch_all_does_not_shadow_discovery_documents(
     The discovery router is registered before the surface routers precisely so
     the broker's auth-gated catch-all cannot shadow these literal paths.
     """
-    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"]))
+    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"], app_config))
     app = create_broker_app(broker_ctx)
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get(SKILL_PATH)
@@ -227,7 +228,7 @@ def test_broker_catch_all_does_not_shadow_non_jentic_skill(
     Guards that the parameterized /skills/{name}.md route (not just the literal
     jentic path) is registered ahead of the broker's forward-proxy catch-all.
     """
-    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"]))
+    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"], app_config))
     app = create_broker_app(broker_ctx)
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get("/skills/contribute-spec-fix.md")
@@ -258,15 +259,169 @@ def test_llms_txt_quickstart_matches_backend_contract(client: TestClient) -> Non
     assert "300 seconds in the future" in body
 
 
-def test_llms_txt_disclaims_mcp_endpoint(client: TestClient) -> None:
-    """llms.txt tells agents there is no MCP endpoint on this deployment (#753).
+def test_llms_txt_advertises_mcp_server(client: TestClient) -> None:
+    """llms.txt advertises the local `jentic mcp` server and the routing rule (#1176).
 
-    Agents arriving from the Jentic cloud platform probe ``/mcp`` and then
-    misdiagnose the 404; the document must state the integration path is the
-    CLI + skill (or raw HTTP), not MCP.
+    The document must advertise MCP as the preferred surface for MCP-capable
+    runtimes (with the CLI for bootstrap/recovery), state that both surfaces
+    reach the same instance (verifiable via ``backend``/``host`` in the
+    identity stamp), and still preempt the ``/mcp``-probe misdiagnosis (#753):
+    MCP runs through the local stdio server, not an HTTP endpoint on the
+    deployment. The ``/mcp`` wording must stay accurate in *both*
+    ``server.mcp.oauth.enabled`` arms (phase-3a: enabled deployments answer a
+    401 OAuth discovery challenge there, not a 404).
     """
     body = client.get(LLMS_TXT_PATH).text
-    assert "no MCP endpoint" in body
+    assert "no MCP endpoint" not in body
+    assert "`jentic mcp`" in body
+    assert "jentic mcp --help" in body
+    # The §3.5 routing paragraph: MCP preferred, CLI for recovery, same instance.
+    assert "prefer them" in body
+    assert "`setup`/`access` recovery" in body
+    assert "same instance" in body
+    assert "`backend`/`host`" in body
+    # The /mcp probe answers 404 or the phase-3a 401 discovery challenge — the
+    # advertisement must not imply a live HTTP MCP endpoint in either arm.
+    assert "`/mcp` on the control plane serves no MCP server today" in body
+    assert "401 OAuth discovery challenge" in " ".join(body.split())
+    # The stale single-arm claim must not come back.
+    assert "still returns 404" not in body
+
+
+def test_llms_txt_advertises_http_endpoint_only_when_enabled(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """Phase-3 item 8: `server.mcp.enabled` flips the llms.txt MCP paragraph.
+
+    Enabled — on a shape actually carrying the mount (the composition root's
+    container installs it on control-plane shapes): the document advertises
+    the Streamable HTTP endpoint at ``{base}/mcp`` (bearer per request), keeps
+    the stdio server, and points stdio-only runtimes at the
+    ``mcp-remote``/``mcp-proxy`` bridge recipes.
+    Disabled (the default, pinned by ``test_llms_txt_advertises_mcp_server``):
+    the pre-phase-3 wording — a 404-answering endpoint is never advertised.
+    """
+    config_dict = dict(sample_config_dict)
+    config_dict["server"] = {"mcp": {"enabled": True}}
+    ctx = Context(AppConfig.model_validate(config_dict))
+    app = create_combined_app(ctx, ["control"], container=build_default_container(ctx))
+    client = TestClient(app, raise_server_exceptions=False)
+    body = client.get(LLMS_TXT_PATH).text
+
+    assert "http://testserver/mcp" in body
+    assert "Streamable HTTP endpoint" in body
+    assert "Authorization: Bearer" in body
+    # The disabled-arm denial wording must be gone in this arm.
+    assert "serves no MCP server today" not in body
+    # The stdio server stays advertised; stdio-only runtimes get the bridges.
+    assert "`jentic mcp`" in body
+    assert "mcp-remote" in body
+    assert "mcp-proxy" in body
+    assert "docs/mcp-http-endpoint.md" in body
+    # The routing paragraph (§3.5) is arm-independent.
+    assert "prefer them" in body
+    assert "`backend`/`host`" in body
+
+
+def test_llms_txt_config_only_enablement_does_not_advertise(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """The enabled arm is shape-gated, not config-gated: an app built without
+    the composition root's mount installer (config flag on, mount absent)
+    keeps the disabled wording — the config flag alone must never advertise a
+    URL this app answers with 404/401."""
+    config_dict = dict(sample_config_dict)
+    config_dict["server"] = {"mcp": {"enabled": True}}
+    ctx = Context(AppConfig.model_validate(config_dict))
+    app = create_combined_app(ctx, ["control"])  # default container: no mount
+    client = TestClient(app, raise_server_exceptions=False)
+    body = client.get(LLMS_TXT_PATH).text
+
+    assert "http://testserver/mcp" not in body
+    assert "Streamable HTTP endpoint" not in body
+    assert "serves no MCP server today" in body
+
+
+def test_llms_txt_auth_standalone_never_advertises_the_endpoint(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """Review L1: a standalone-auth backend sharing a `server.mcp.enabled`
+    config must not advertise ``http://<own-host>/mcp`` — that shape carries
+    only the 3a-4 challenge placeholder (404/401 on `/mcp`), never the mount.
+    The real endpoint lives on the control-plane shape (previous test)."""
+    config_dict = dict(sample_config_dict)
+    config_dict["server"] = {"mcp": {"enabled": True}}
+    config_dict["apps"] = ["auth"]
+    ctx = Context(AppConfig.model_validate(config_dict))
+    app = create_auth_app(ctx, container=build_default_container(ctx))
+    client = TestClient(app, raise_server_exceptions=False)
+    body = client.get(LLMS_TXT_PATH).text
+
+    assert "http://testserver/mcp" not in body
+    assert "Streamable HTTP endpoint" not in body
+    assert "mcp-remote" not in body
+    # The disabled arm's probe-misdiagnosis wording stays.
+    assert "serves no MCP server today" in body
+
+
+def test_llms_txt_disabled_arm_never_mentions_the_endpoint_url(client: TestClient) -> None:
+    """The disabled arm is silent about the endpoint: no URL-shaped `/mcp`
+    advertisement an agent could wire an entry to (the path only appears in
+    the probe-misdiagnosis explanation)."""
+    body = client.get(LLMS_TXT_PATH).text
+    assert "http://testserver/mcp" not in body
+    assert "Streamable HTTP endpoint" not in body
+    assert "mcp-remote" not in body
+
+
+#: The pre-phase-3 MCP paragraph, verbatim from the base branch's
+#: ``render_llms_txt`` — the golden for the disabled-arm byte-identity pin.
+_PRE_PHASE3_MCP_PARAGRAPH = """\
+This deployment is reachable over **MCP** via the local `jentic mcp` stdio
+server — available in the `jentic` CLI from the next release; check
+`jentic mcp --help`. It exposes the same discover → execute loop as the CLI
+tools against this deployment. MCP access runs through that local server, not
+an HTTP endpoint here: `/mcp` on the control plane serves no MCP server today —
+it answers either 404 or, on deployments preparing interactive OAuth, a 401
+OAuth discovery challenge — and a 401 from the broker is its auth-gated
+forward proxy, not a hidden MCP server."""
+
+
+def _enabled_mcp_paragraph(base: str) -> str:
+    """The enabled-arm MCP paragraph for ``base`` (golden for the swap pin)."""
+    return f"""\
+This deployment is reachable over **MCP** two ways. It serves a **stateless
+Streamable HTTP endpoint at {base}/mcp** (spec revision 2026-07-28):
+configure a URL-based MCP entry pointing at it and authenticate every request
+with `Authorization: Bearer <agent API key or access token>`. Alternatively,
+the local `jentic mcp` stdio server — available in the `jentic` CLI from the
+next release; check `jentic mcp --help` — spawns on the agent machine and
+talks to this deployment with the agent's registered identity. Both expose
+the same discover → execute loop as the CLI tools. Stdio-only MCP runtimes
+can reach {base}/mcp through a stdio↔HTTP bridge such as `mcp-remote` or
+`mcp-proxy` — exact entries in the
+[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md).
+A 401 from the broker host is its auth-gated forward proxy, not a
+second MCP server."""
+
+
+def test_llms_txt_disabled_arm_is_byte_identical_to_pre_phase3_render() -> None:
+    """Review N3: the disabled arm's full render is byte-identical to the
+    pre-phase-3 document — pinned by equality, not substrings.
+
+    Three properties combine into the byte-identity guarantee:
+    the kwarg default is the disabled arm (every pre-existing caller renders
+    it unchanged); the disabled arm carries the base branch's MCP paragraph
+    verbatim (the golden above); and the flag swaps exactly that paragraph
+    and nothing else, so the rest of the document is the one shared template.
+    """
+    base = "https://example.test"
+    disabled = render_llms_txt(base, assertion_max_ttl_seconds=300)
+    assert disabled == render_llms_txt(base, assertion_max_ttl_seconds=300, mcp_http_enabled=False)
+    assert _PRE_PHASE3_MCP_PARAGRAPH in disabled
+    enabled = render_llms_txt(base, assertion_max_ttl_seconds=300, mcp_http_enabled=True)
+    assert enabled == disabled.replace(_PRE_PHASE3_MCP_PARAGRAPH, _enabled_mcp_paragraph(base))
+    assert enabled != disabled
 
 
 def test_render_llms_txt_stamps_base_everywhere() -> None:

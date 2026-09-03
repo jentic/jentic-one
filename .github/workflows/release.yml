@@ -334,7 +334,7 @@ jobs:
       #   MARKETPLACE_ECR_ROLE_ARN — IAM role trusting GitHub's OIDC provider,
       #                              scoped to this repo's release workflow
       #   MARKETPLACE_ECR_IMAGE    — full repo URI from the Marketplace portal
-      #                              (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app)
+      #                              (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-app)
       #
       # configure-aws-credentials is credential-issuing: it must stay after
       # every third-party installer (same posture as the GHCR login above) and
@@ -458,17 +458,24 @@ jobs:
       # app release are always lockstep-identical. Runs LAST so a tagging hiccup
       # never blocks GoReleaser publishing the binaries. The `cli/v*` tag can't
       # match this workflow's `v*.*.*` trigger, so there's no recursive release run.
+      #
+      # Created via the REST Git Data API, NOT `git push`: GitHub refuses any
+      # git-protocol ref push from an App token once the ref's history touches
+      # .github/workflows/ ("refusing to allow a GitHub App to create or update
+      # workflow … without `workflows` permission" — a permission GITHUB_TOKEN
+      # can never be granted), which broke the v0.35.0 release. The API path
+      # only applies that check to pushes uploading workflow changes; creating
+      # a ref to a commit already on the remote is fine. Lightweight rather
+      # than annotated tag as a consequence — the Go module proxy accepts both.
       - name: Tag the CLI Go module at the release version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           CLI_TAG="cli/${GITHUB_REF_NAME}"
-          if git rev-parse -q --verify "refs/tags/${CLI_TAG}" >/dev/null; then
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${CLI_TAG}" >/dev/null 2>&1; then
             echo "${CLI_TAG} already exists — nothing to do"
           else
-            # Annotated tags need a committer identity; runners have none. Attribute
-            # to GitHub's Actions bot (matches the convention for CI-created objects).
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "${CLI_TAG}" -m "${CLI_TAG}" "${GITHUB_SHA}"
-            git push origin "${CLI_TAG}"
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${CLI_TAG}" -f sha="${GITHUB_SHA}"
           fi

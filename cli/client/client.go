@@ -56,8 +56,10 @@ type Config struct {
 	// attached verbatim (file-less / bring-your-own-token mode).
 	InjectedBearerToken string
 
-	// HTTPClient overrides the transport used by BOTH planes. Optional; a nil value
-	// uses the generated clients' default. Supply one to inject timeouts, a custom
+	// HTTPClient overrides the transport used by BOTH planes AND the RFC 7523
+	// token exchange (the mint inherits it via credentials() — #1205). Optional;
+	// a nil value uses the generated clients' default and the auth package's
+	// default exchange client. Supply one to inject timeouts, a custom
 	// CA pool (env ca_cert), or test doubles.
 	HTTPClient *http.Client
 
@@ -74,6 +76,12 @@ func (c Config) credentials() auth.Credentials {
 		IdentityName:        c.IdentityName,
 		EnvironmentName:     c.EnvironmentName,
 		InjectedBearerToken: c.InjectedBearerToken,
+		// The caller's base client rides into the RFC 7523 token exchange, so a
+		// mint honors the same custom CA pool / attribution transport as every
+		// other call on this config (#1205). Deliberately the BASE client, not
+		// the retry-wrapped one httpClient() builds: the mint is what the retry
+		// policy's 401 arm invokes, so wrapping it in that policy could recurse.
+		HTTPClient: c.HTTPClient,
 	}
 }
 

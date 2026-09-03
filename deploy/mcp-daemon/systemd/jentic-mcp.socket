@@ -1,0 +1,21 @@
+# Socket-activation unit for the Jentic MCP daemon: systemd owns the socket
+# path and spawns jentic-mcp.service on the first connection. The daemon
+# idle-exits (see the service's --idle-timeout); this unit keeps listening,
+# so the next connection respawns it — nothing lingers holding keys.
+#
+# The filesystem gate (SocketGroup + 0660) and the daemon's peer-uid check
+# (--allow-uid in the service) are independent layers: add each allowed
+# desktop user to the _jentic-mcp group AND list their uid in the service.
+
+[Unit]
+Description=Jentic MCP daemon socket
+
+[Socket]
+ListenStream=/run/jentic-mcp/mcp.sock
+SocketUser=_jentic-mcp
+SocketGroup=_jentic-mcp
+SocketMode=0660
+DirectoryMode=0755
+
+[Install]
+WantedBy=sockets.target

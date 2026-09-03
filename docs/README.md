@@ -10,7 +10,7 @@ Docs index. What Jentic One is and how it works: [repository README](../README.m
 - [Docker](installation/docker.md)
 - [systemd](installation/systemd.md)
 - [Helm](installation/helm.md)
-- [AWS](installation/cloud/aws.md)
+- [AWS Marketplace](installation/aws-marketplace.md)
 
 ## Use
 

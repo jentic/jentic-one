@@ -13,6 +13,8 @@ import type { ApiKeyInfoResponse } from '../models/ApiKeyInfoResponse';
 import type { ApiKeyResponse } from '../models/ApiKeyResponse';
 import type { ClaimRequest } from '../models/ClaimRequest';
 import type { jentic_one__auth__web__schemas__agents__DenyRequest } from '../models/jentic_one__auth__web__schemas__agents__DenyRequest';
+import type { JwksUpdateRequest } from '../models/JwksUpdateRequest';
+import type { OAuthGrantListResponse } from '../models/OAuthGrantListResponse';
 import type { ToolkitBindingListResponse } from '../models/ToolkitBindingListResponse';
 import type { ToolkitBindingResponse } from '../models/ToolkitBindingResponse';
 import type { ToolkitBindRequest } from '../models/ToolkitBindRequest';
@@ -212,6 +214,89 @@ export class AgentsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Update Agent Jwks
+     * Update an agent's JWKS (public keys for JWT-bearer authentication).
+     *
+     * The JWKS must contain at least one Ed25519 public key and must not contain
+     * any private key material. This enables the agent to authenticate via
+     * JWT-bearer assertions signed with the corresponding private key.
+     * @returns AgentResponse Successful Response
+     * @throws ApiError
+     */
+    public static updateAgentJwks({
+        agentId,
+        requestBody,
+    }: {
+        agentId: string,
+        requestBody: JwksUpdateRequest,
+    }): CancelablePromise<AgentResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/agents/{agent_id}/jwks',
+            path: {
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * List agent OAuth grants
+     * List OAuth consent grants binding clients to this agent (§4.8).
+     *
+     * The "Connected clients" surface: every grant carries the client's display
+     * name and redirect-URI origin, the granted scopes, the consenting user,
+     * and created/last-used timestamps. Allowed for the agent's owner or an
+     * admin — authorization is enforced in the service layer, mirroring the
+     * ``:revoke`` semantics.
+     * @returns OAuthGrantListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listAgentOauthGrants({
+        agentId,
+        status,
+        limit = 50,
+        cursor,
+    }: {
+        agentId: string,
+        /**
+         * Filter by grant lifecycle state.
+         */
+        status?: ('active' | 'revoked' | null),
+        limit?: number,
+        cursor?: (string | null),
+    }): CancelablePromise<OAuthGrantListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/agents/{agent_id}/oauth-grants',
+            path: {
+                'agent_id': agentId,
+            },
+            query: {
+                'status': status,
+                'limit': limit,
+                'cursor': cursor,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

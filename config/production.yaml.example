@@ -61,6 +61,10 @@ apps:
 # redirect URIs are correct.
 auth:
   canonical_base_url: "https://jentic.example.com"
+  platform_clients:
+    - client_id: "jentic-one-spa"
+      redirect_uris:
+        - "https://jentic.example.com/app/auth/callback"
 
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
 # WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
@@ -72,6 +76,19 @@ credentials:
     entries:
       - id: v1
         material: CHANGE_ME   # pragma: allowlist secret
+
+# Shared-state backend for cross-process coordination. The default (memory)
+# keeps rate limiters, consent handles, and circuit state per-process — fine
+# for a single-worker install, but a multi-worker or multi-instance deployment
+# needs Redis so the token-endpoint limiter and consent-nonce anti-replay
+# survive across workers.
+broker:
+  resilience:
+    backend:
+      backend: memory
+      # backend: redis
+      # redis_url: rediss://user:pass@redis.example.com:6379/0
+      # redis_key_prefix: jentic:prod:
 
 admin:
   auth:

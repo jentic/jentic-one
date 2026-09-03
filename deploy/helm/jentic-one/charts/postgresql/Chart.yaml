@@ -1,0 +1,12 @@
+apiVersion: v2
+name: postgresql
+description: >-
+  First-party single-instance PostgreSQL for the jentic-one umbrella chart,
+  running the official library/postgres image. Replaces the former Bitnami
+  subchart dependency: the free Bitnami images moved to the frozen
+  `bitnamilegacy` namespace in Aug 2025 and stopped receiving CVE fixes,
+  which both our Trivy publish gate and the AWS Marketplace image scan
+  reject. Dev/eval-grade by design — production deployments should use a
+  managed database (see deploy/README.md).
+type: application
+version: 0.37.4 # x-release-please-version

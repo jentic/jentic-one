@@ -42,6 +42,11 @@
 Giving an agent API access normally means giving it an API key. Jentic One removes that step.
 Register the APIs an agent may use, store the credentials once, and the agent makes its calls through the Broker. The Broker checks the agent's permissions, attaches the credential at execution time, and writes an audit record. Your agent never sees your keys.
 
+Agents integrate through the `jentic` CLI, a generated skill, the local `jentic mcp` server
+(available in the `jentic` CLI from the next release — check `jentic mcp --help`), or plain
+HTTP. Every path terminates at the credential-injecting Broker: the MCP server runs beside the
+agent as a thin client and holds no upstream credentials — those never leave your Broker.
+
 ## Quickstart
 
 ### Self-hosted (build from source)
@@ -121,7 +126,8 @@ jentic register   # connect this machine to the instance
 
 ### Managed install
 
-AWS Marketplace (*coming soon*).
+[AWS Marketplace](docs/installation/aws-marketplace.md) — buy and run the listed product on EKS
+(prerequisites, zero-touch install, license-check behaviour).
 For commercial use, get in touch: [jentic.com/contact](https://jentic.com/contact).
 
 ## How it works
@@ -160,7 +166,7 @@ without touching the key.
 
 The full index is at [docs/README.md](docs/README.md).
 
-- [Installation](docs/installation/quickstart.md) — [Docker](docs/installation/docker.md), [systemd](docs/installation/systemd.md), [Helm](docs/installation/helm.md), [AWS](docs/installation/cloud/aws.md)
+- [Installation](docs/installation/quickstart.md) — [Docker](docs/installation/docker.md), [systemd](docs/installation/systemd.md), [Helm](docs/installation/helm.md), [AWS Marketplace](docs/installation/aws-marketplace.md)
 - [First brokered call](docs/guides/first-call.md) — from a running instance to a real API response
 - [CLI](cli/README.md) — `jentic` (agent) and `jenticctl` (operator)
 - [Deploying securely](docs/security/security.md) — read before pointing an instance at a real credential

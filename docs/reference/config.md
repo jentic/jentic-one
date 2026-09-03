@@ -126,6 +126,11 @@ HTTP server settings.
 | `server.port` | integer | `8000` | `JENTIC__SERVER__PORT` |  |
 | `server.reload` | boolean | `false` | `JENTIC__SERVER__RELOAD` |  |
 | `server.backend` | "local" \| "remote" | `"local"` | `JENTIC__SERVER__BACKEND` |  |
+| `server.mcp.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__ENABLED` |  |
+| `server.mcp.broker_url` | string | `"http://127.0.0.1:8100"` | `JENTIC__SERVER__MCP__BROKER_URL` |  |
+| `server.mcp.oauth.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__OAUTH__ENABLED` |  |
+| `server.mcp.oauth.auto_approve_clients` | boolean | `true` | `JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS` |  |
+| `server.mcp.oauth.registration_gc_days` | integer | `90` | `JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS` |  |
 
 ## `observability`
 
@@ -177,6 +182,16 @@ Platform-actors OAuth surface configuration.
 | `auth.idp.exchange_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__EXCHANGE_ENDPOINT` |  |
 | `auth.idp.userinfo_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__USERINFO_ENDPOINT` |  |
 | `auth.idp.hosted_domain` | string \| null | `null` | `JENTIC__AUTH__IDP__HOSTED_DOMAIN` |  |
+| `auth.platform_clients` | list of PlatformClientConfig | — | `JENTIC__AUTH__PLATFORM_CLIENTS` |  |
+| `auth.platform_clients.<n>.client_id` | string | *required* | `JENTIC__AUTH__PLATFORM_CLIENTS__<N>__CLIENT_ID` |  |
+| `auth.platform_clients.<n>.redirect_uris` | list of string | *required* | `JENTIC__AUTH__PLATFORM_CLIENTS__<N>__REDIRECT_URIS` |  |
+| `auth.oauth_rate_limit.authorize_rpm` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_RPM` |  |
+| `auth.oauth_rate_limit.authorize_burst` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_BURST` |  |
+| `auth.oauth_rate_limit.exchange_rpm` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_RPM` |  |
+| `auth.oauth_rate_limit.exchange_burst` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_BURST` |  |
+| `auth.oauth_rate_limit.registration_rpm` | integer | `10` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM` |  |
+| `auth.oauth_rate_limit.registration_burst` | integer | `5` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST` |  |
+| `auth.oauth_rate_limit.trusted_proxies` | list of string | — | `JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` |  |
 
 ## `broker`
 

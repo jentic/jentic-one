@@ -19,8 +19,12 @@ global:
     # Marketplace does not allow floating tags like :latest).
     tag: ""
 
-  # Combined mode: the app pod serves registry/admin/control; only the app
-  # and broker deployments (and their shared image) exist.
+  # Bundled in-cluster Postgres: ON by default (decided 2026-08-26, reversing
+  # the brief RDS-only stance) — the first-party postgresql subchart runs the
+  # official library/postgres image mirrored into the listing's ECR, so a
+  # plain `helm install` is self-contained. Production buyers should still
+  # prefer RDS: set postgresql.enabled=false + global.postgresql.enabled=false
+  # and point global.databases.*.host at the endpoint instead.
   postgresql:
     enabled: true
 
@@ -29,43 +33,81 @@ global:
   # pulled from docker.io, which the Marketplace disallows. Mirror it into
   # the listing's ECR first if observability is needed.
 
-  # No database password defaults ship with the chart; set them at install:
-  #   --set global.databases.registry.password=… \
-  #   --set global.databases.control.password=…  \
-  #   --set global.databases.admin.password=…
-  # or (preferred) replace common.db-env with a Secret-backed env block —
-  # see deploy/README.md "Production secrets".
+  # Generated application secrets: the credential-encryption keyset, admin
+  # JWT secret, invite pepper, connect state secret, AND the bundled DB's
+  # role/superuser passwords — minted into a release-scoped Secret on first
+  # install and reused verbatim on upgrades, so the install is secure and
+  # functional with ZERO buyer-supplied values (none of these have safe
+  # defaults; JENTIC_ENV=production below refuses the shipped placeholders;
+  # the DB passwords are pure pod-to-pod wiring on a ClusterIP service).
+  # RDS variant: set the three global.databases.*.host values + explicit
+  # *.password values (explicit passwords always win over generated ones)
+  # and disable the bundled DB (see the postgresql blocks). Buyers managing
+  # secrets themselves: set global.appSecrets.existingSecret instead. See
+  # deploy/README.md.
+  appSecrets:
+    generate: true
+
+  # AWS Marketplace launch wiring — the listing's delivery option carries
+  # these two override parameters (values substituted by AWS at launch):
+  #   global.serviceAccount.name = ${AWSMP_SERVICE_ACCOUNT}
+  #     the buyer's (IRSA) service account the app/broker pods run under —
+  #     on EKS this carries the IAM role the entitlement gate calls AWS with
+  #   global.awsmp.licenseSecret = ${AWSMP_LICENSE_SECRET}
+  #     a Secret AWS creates at launch, mounted read-only at
+  #     /var/run/secrets/aws-marketplace/license (license-file flows)
+  # Manual installs: set serviceAccount.name + serviceAccount.create=true to
+  # have the chart create the account, then attach IAM out of band.
 
 # app and broker run the same jentic-one-app image, differentiated by the
-# JENTIC__APPS env each subchart sets. If the Marketplace portal provisions a
-# single ECR repository for the product, keep the explicit repository values
-# below identical; if it provisions one repo per name, drop the overrides and
-# let <global.image.registry>/<chart-name> resolve them instead.
+# JENTIC__APPS env. The image bakes the app roles
+# (registry,admin,control,auth), so the broker block below MUST override it —
+# the subcharts themselves don't (deploy/README.md "Helm consumption" note).
+# If the Marketplace portal provisions a single ECR repository for the
+# product, keep the explicit repository values below identical; if it
+# provisions one repo per name, drop the overrides and let
+# <global.image.registry>/<chart-name> resolve them instead.
 app:
   enabled: true
   image:
-    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
-  # Entitlement gate wiring (plan PR 4). The listing is contract-priced with
-  # dimensions `users` + `executions` (decided 2026-08-20); `contract` is the
-  # config default so only the IDs need filling in. DO NOT uncomment until the
-  # deployed image ships the entitlement config: AppConfig rejects unknown
-  # config sections (extra="forbid"), so these env vars crash older images at
-  # boot.
-  # extraEnv:
-  #   JENTIC__ENTITLEMENT__ENABLED: "true"
-  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
-  #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
-  #   JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-app"
+    # Stamped to the release version (X.Y.Z, no v — that's the tag the image
+    # is pushed to Marketplace ECR under) by marketplace-chart.yml's bake
+    # step. Empty here (falls back to global.image.tag), but the baked chart
+    # needs it explicit: AWS's validator reads tags from values.yaml
+    # literally and fails tag-less image blocks (MISSING_IMAGE_TAG).
+    tag: ""
+  # Production mode: the config loader refuses to boot with placeholder or
+  # empty values for the admin JWT secret / invite pepper / connect state
+  # secret. Safe here because global.appSecrets generates real values.
+  extraEnv:
+    JENTIC_ENV: "production"
+    # Entitlement gate (contract pricing, dimensions users + executions —
+    # decided 2026-08-20; `contract` is the config default so only the IDs are
+    # set). IDs are the RE-LISTED product's (prod-cwonumew2jeyo, created
+    # 2026-09-03 for the 12-month-only public offer — the original listing's
+    # offer terms were unfixable post-release). Enabled together with the
+    # checkout-shape/check-in fix — a release carrying this env MUST ship
+    # that client (Count+Value entitlements, CheckInLicense after checkout)
+    # or entitled buyers lock themselves out.
+    JENTIC__ENTITLEMENT__ENABLED: "true"
+    JENTIC__ENTITLEMENT__PRODUCT_CODE: "ed4bj3dbc8w2r80qtnbxbboub"
+    JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-cwonumew2jeyo"
+    JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
 
 broker:
   enabled: true
   image:
-    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
-  # extraEnv:  # same caveat as app.extraEnv above
-  #   JENTIC__ENTITLEMENT__ENABLED: "true"
-  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
-  #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
-  #   JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-app"
+    tag: ""  # stamped by the bake step — same reasoning as app.image.tag
+  extraEnv:
+    JENTIC_ENV: "production"  # same reasoning as app.extraEnv above
+    # Entitlement gate — same values and caveat as app.extraEnv above.
+    JENTIC__ENTITLEMENT__ENABLED: "true"
+    JENTIC__ENTITLEMENT__PRODUCT_CODE: "ed4bj3dbc8w2r80qtnbxbboub"
+    JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-cwonumew2jeyo"
+    JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
+    JENTIC__APPS: "broker"
 
 registry:
   enabled: false
@@ -76,25 +118,21 @@ control:
 gateway:
   enabled: false
 
-# In-cluster Postgres from the ECR-mirrored image (plan PR 6 mirrors it —
-# portal repo jentic/jentic-one-psql, created 2026-08-25).
-# RDS variant: set postgresql.enabled=false, global.postgresql.enabled=false,
-# and point global.databases.*.host at the RDS endpoint instead.
+# Bundled in-cluster Postgres from the ECR-mirrored official image (the
+# marketplace-mirror workflow pushes it). registry/repository/tag are split
+# in AWS's recommended values.yaml format — their chart validator composes
+# `<registry>/<repository>:<tag>` from these exact keys, and an empty
+# registry with the full path in repository breaks its parser (leading-`/`,
+# missing tag → INVALID_HELM_UNDECLARED_IMAGES / MISSING_VALUES_IMAGE_REFERENCE).
+# The first-party subchart's passwords come from the generated app-secrets
+# Secret (global.appSecrets above); set postgresql.auth.password explicitly
+# only to override.
 postgresql:
   enabled: true
   image:
     registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com"
-    repository: "jentic/jentic-one-psql"
-    tag: "17.2.0-debian-12-r6"
-  auth:
-    username: postgres
-    # password: set at install (--set postgresql.auth.password=…) or via
-    # auth.existingSecret; no default ships with the chart.
-    database: jentic
-  # The per-surface DB roles/schemas (registry/control/admin) must exist
-  # before the app boots — create a ConfigMap from
-  # docker/local-setup/init-schemas.sql (with real passwords) and reference
-  # it here, as the local deploy tooling does:
-  # primary:
-  #   initdb:
-  #     scriptsConfigMap: "jentic-pg-init"
+    repository: "jentic/one-psql"
+    # The Alpine mirror (deploy/docker/postgres-mirror.Dockerfile) — Alpine
+    # because AWS's scanner blocks on Debian's won't-fix glibc CVEs; the
+    # mirror workflow pushes the tag it reads from that Dockerfile's FROM pin.
+    tag: "17.11-alpine"

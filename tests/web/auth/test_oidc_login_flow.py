@@ -28,6 +28,11 @@ from cryptography.hazmat.primitives.serialization import (
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+
+# Starlette's TestClient rides httpx2 when it is installed (it is — the mcp
+# SDK depends on it): upstream-mock responses stay httpx.Response (the app's
+# own client), while TestClient calls answer httpx2 responses.
+from httpx2 import Response as ClientResponse
 from jwt.algorithms import ECAlgorithm
 from sqlalchemy import delete, select
 
@@ -45,7 +50,7 @@ from jentic_one.auth.core.idp import (
     set_default_idp_grants,
 )
 from jentic_one.auth.web.app import create_app
-from jentic_one.shared.config import IdpConfig, SigningKeyConfig
+from jentic_one.shared.config import IdpConfig, PlatformClientConfig, SigningKeyConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 from tests.web.conftest import noop_lifespan
@@ -95,6 +100,12 @@ def oidc_context(web_context: Context) -> Context:
     """web_context with the auth surface configured for the OIDC login flow."""
     auth = web_context.config.auth
     auth.canonical_base_url = CANONICAL_BASE
+    auth.platform_clients = [
+        PlatformClientConfig.model_construct(
+            client_id=CLIENT_ID,
+            redirect_uris=[CLIENT_REDIRECT],
+        ),
+    ]
     auth.id_signing = [
         SigningKeyConfig(kid=SIGNING_KID, private_key_pem=_gen_es256_pem())  # type: ignore[arg-type]
     ]
@@ -194,9 +205,9 @@ def _callback(client: TestClient, *, signed_state: str) -> str:
     return str(parse_qs(parsed.query)["code"][0])
 
 
-def _exchange(client: TestClient, *, code: str, code_verifier: str) -> Response:
+def _exchange(client: TestClient, *, code: str, code_verifier: str) -> ClientResponse:
     """Exchange the platform code + PKCE verifier at /oauth/token."""
-    resp: Response = client.post(
+    resp: ClientResponse = client.post(
         "/oauth/token",
         json={
             "grant_type": "authorization_code",

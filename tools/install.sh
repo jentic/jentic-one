@@ -170,10 +170,11 @@ GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 JENTIC_INSTALL_METHOD="${JENTIC_INSTALL_METHOD:-auto}"
 
 # JENTIC_INSTALL_BINARIES selects which binaries the download path fetches:
-#   jentic (default for downloads) the agent CLI only — most users need only this.
-#   both   also fetch jenticctl (installer/lifecycle). The from-source path always
-#          builds both regardless of this knob.
-JENTIC_INSTALL_BINARIES="${JENTIC_INSTALL_BINARIES:-jentic}"
+#   both   (default) fetch jentic (API-spec) and jenticctl (installer/lifecycle).
+#   jentic the agent CLI only — for talking to a remote jentic server without the
+#          local stack lifecycle tooling. The from-source path always builds both
+#          regardless of this knob.
+JENTIC_INSTALL_BINARIES="${JENTIC_INSTALL_BINARIES:-both}"
 
 # cosign keyless-signing identity, mirrored from docs/development/releasing.md and the Go
 # updater (cli/internal/update/download.go). Used to verify checksums.txt.sig.
@@ -568,12 +569,12 @@ fetch_source() {
 # only the "produce the binaries in $WORKDIR" step differs.
 
 # download_selected_binaries prints the binary names the download path should
-# fetch, honouring JENTIC_INSTALL_BINARIES (jentic-only default; `both` adds
-# jenticctl). Kept a function so main() and the manifest logic agree.
+# fetch, honouring JENTIC_INSTALL_BINARIES (both by default; `jentic` narrows to
+# the agent CLI only). Kept a function so main() and the manifest logic agree.
 download_selected_binaries() {
   case "$JENTIC_INSTALL_BINARIES" in
-    both) printf '%s\n%s\n' "$API_BINARY" "$CTL_BINARY" ;;
-    *)    printf '%s\n' "$API_BINARY" ;;
+    jentic) printf '%s\n' "$API_BINARY" ;;
+    *)      printf '%s\n%s\n' "$API_BINARY" "$CTL_BINARY" ;;
   esac
 }
 

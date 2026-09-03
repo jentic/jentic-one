@@ -15,6 +15,7 @@ from jentic_one.shared.config import (
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
+    AuthConfig,
     CatalogConfig,
     ConfigError,
     CredentialsConfig,
@@ -22,6 +23,7 @@ from jentic_one.shared.config import (
     EncryptionConfig,
     EntitlementConfig,
     RuntimeConfig,
+    SigningKeyConfig,
     TelemetryConfig,
     _csv_to_list,
     _deep_merge,
@@ -277,6 +279,59 @@ def test_explicit_invite_pepper_accepted_in_production():
     assert cfg.pepper.get_secret_value() == "a-real-generated-pepper"
 
 
+_LOCAL_DEV_KEY_SEC1 = """\
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIBG7o+PPPIdPqMK4RwNWnj+UaW8fZFzxw7oZD5XFqW5CoAoGCCqGSM49
+AwEHoUQDQgAElriD/rpklmqTXbUOa9uLHAB2l+qr+DoeDmmykYLGblbxs+a1qvxB
+369JIs2Ej4zMfkjBTGES38wMDs1J+PJG6g==
+-----END EC PRIVATE KEY-----"""
+
+_LOCAL_DEV_KEY_PKCS8 = """\
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgEbuj4888h0+owrhH
+A1aeP5Rpbx9kXPHDuhkPlcWpbkKhRANCAASWuIP+umSWapNdtQ5r24scAHaX6qv4
+Oh4OabKRgsZuVvGz5rWq/EHfr0kizYSPjMx+SMFMYRLfzAwOzUn48kbq
+-----END PRIVATE KEY-----"""
+
+
+def test_local_dev_signing_key_rejected_in_production_sec1():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1))
+            ]
+        )
+
+
+def test_local_dev_signing_key_rejected_in_production_pkcs8():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_PKCS8))
+            ]
+        )
+
+
+def test_local_dev_signing_kid_rejected_in_production():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev key id"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(
+                    kid="local-dev-key", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1)
+                )
+            ]
+        )
+
+
 def test_boolean_like_password_preserved_as_string(config_file: Path):
     env = {"JENTIC__DATABASES__ADMIN__PASSWORD": "true"}
     with patch.dict(os.environ, env, clear=False):
@@ -402,6 +457,38 @@ def test_apps_env_comma_separated_with_spaces(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.apps == ["registry", "admin", "control"]
+
+
+def test_mcp_oauth_config_defaults(config_file: Path):
+    """3a-2 seam (design §4.9/§8 E2): off by default, auto-approve on in OSS."""
+    config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is False
+    assert config.server.mcp.oauth.auto_approve_clients is True
+    assert config.server.mcp.oauth.registration_gc_days == 90
+
+
+def test_mcp_oauth_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__SERVER__MCP__OAUTH__ENABLED": "true",
+        "JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS": "false",
+        "JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS": "30",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is True
+    assert config.server.mcp.oauth.auto_approve_clients is False
+    assert config.server.mcp.oauth.registration_gc_days == 30
+
+
+def test_oauth_registration_rate_limit_knobs(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM": "3",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST": "2",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.registration_rpm == 3
+    assert config.auth.oauth_rate_limit.registration_burst == 2
 
 
 def test_encryption_config_defaults():

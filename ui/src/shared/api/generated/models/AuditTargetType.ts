@@ -27,4 +27,6 @@ export enum AuditTargetType {
     CREDENTIAL_BINDING = 'credential_binding',
     SESSION = 'session',
     PROVIDER_CONFIG = 'provider_config',
+    OAUTH_CLIENT = 'oauth_client',
+    OAUTH_GRANT = 'oauth_grant',
 }

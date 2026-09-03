@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
+from urllib.parse import urlparse
 
 import structlog
 import yaml
@@ -260,9 +261,62 @@ class IdpConfig(BaseModel):
     hosted_domain: str | None = None
 
 
+class PlatformClientConfig(BaseModel):
+    """A static first-party OAuth client (e.g. the operator SPA).
+
+    Platform clients authenticate via PKCE only — no client secret. They are
+    defined in config (not the oauth_clients DB table) because they are
+    deployment-time constants, not admin-managed dynamic registrations.
+    """
+
+    client_id: str
+    redirect_uris: list[str] = Field(min_length=1)
+
+    @field_validator("redirect_uris", mode="after")
+    @classmethod
+    def _validate_redirect_uris(cls, uris: list[str]) -> list[str]:
+        for uri in uris:
+            parsed = urlparse(uri)
+            if not parsed.scheme or not parsed.netloc:
+                msg = f"invalid platform redirect_uri (must be an absolute URL): {uri}"
+                raise ValueError(msg)
+            if parsed.scheme not in ("https", "http"):
+                msg = f"platform redirect_uri must use https or http: {uri}"
+                raise ValueError(msg)
+            if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
+                msg = f"http redirect_uri only allowed for localhost: {uri}"
+                raise ValueError(msg)
+        return uris
+
+
+_SPA_CLIENT_ID = "jentic-one-spa"
+_SPA_CALLBACK_PATH = "/app/auth/callback"
+
+_LOCAL_DEV_KEY_FINGERPRINT = "d35355bfb727b96b885e0ff817efd947bc5d8a88f169cabfa764932b57b3f3db"
+_LOCAL_DEV_KEY_KID = "local-dev-key"
+
+
+class OAuthRateLimitConfig(BaseModel):
+    """Pre-auth rate limit tunables for OAuth endpoints."""
+
+    authorize_rpm: int = 30
+    authorize_burst: int = 30
+    exchange_rpm: int = 60
+    exchange_burst: int = 60
+    # Anonymous dynamic client registration (POST /oauth-clients). Knobs land
+    # in 3a-1; the DCR endpoint that consumes them ships in 3a-2 (§4.2).
+    registration_rpm: int = 10
+    registration_burst: int = 5
+    trusted_proxies: list[str] = Field(default_factory=list)
+
+
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
+    # Expected shape: scheme://host[:port] with NO path. Unvalidated — a
+    # path-bearing value (e.g. https://host/jentic) silently breaks the fixed
+    # RFC 8414/9728 well-known routes: path-insertion metadata URLs derived
+    # from a path-bearing issuer are not served (root and /mcp docs alike).
     canonical_base_url: str = ""
     access_ttl_seconds: int = 3600
     refresh_ttl_seconds: int = 604800
@@ -275,6 +329,40 @@ class AuthConfig(BaseModel):
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
+    platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
+    oauth_rate_limit: OAuthRateLimitConfig = Field(default_factory=OAuthRateLimitConfig)
+
+    def model_post_init(self, __context: object) -> None:
+        """Ensure the SPA platform client is always registered.
+
+        If no platform_clients entry exists for the operator SPA and a
+        canonical_base_url is configured, synthesise one so existing
+        deployments continue to work without a config change on upgrade.
+        """
+        if os.environ.get("JENTIC_ENV", "development") == "production":
+            from jentic_one.shared.crypto.signing import signing_key_spki_fingerprint
+
+            for sk in self.id_signing:
+                if sk.kid == _LOCAL_DEV_KEY_KID:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] uses the local-dev key id "
+                        "which must not be used in production"
+                    )
+                fp = signing_key_spki_fingerprint(sk.private_key_pem.get_secret_value())
+                if fp == _LOCAL_DEV_KEY_FINGERPRINT:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] contains the local-dev "
+                        "signing key material which must not be used in production"
+                    )
+        spa_present = any(pc.client_id == _SPA_CLIENT_ID for pc in self.platform_clients)
+        if not spa_present and self.canonical_base_url:
+            base = self.canonical_base_url.rstrip("/")
+            self.platform_clients.append(
+                PlatformClientConfig(
+                    client_id=_SPA_CLIENT_ID,
+                    redirect_uris=[f"{base}{_SPA_CALLBACK_PATH}"],
+                )
+            )
 
 
 _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -797,6 +885,50 @@ class CatalogConfig(BaseModel):
     update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
+class McpOAuthConfig(BaseModel):
+    """Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).
+
+    Minimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full
+    ``server.mcp`` sub-config (``server.mcp.enabled`` etc.) and extends this
+    model in place — fields here must keep their names and defaults.
+    """
+
+    enabled: bool = False
+    """Master switch for the interactive-OAuth surface. Off (the default) the
+    anonymous DCR front door ``POST /oauth-clients`` returns a plain 404,
+    indistinguishable from not-shipped (§4.2)."""
+    auto_approve_clients: bool = True
+    """D9: auto-approve DCR registrations (``approval_status='approved'`` +
+    ``active=true`` at registration). Default **true** in OSS — self-hosted
+    single-user installs would otherwise approve their own registrations twice;
+    the enterprise overlay pins the default to ``false`` (admin queue)."""
+    registration_gc_days: int = 90
+    """Long-TTL GC policy for never-consented DCR rows (§4.2): rows are
+    GC-eligible only after this many days, and rows with any grant history are
+    never GC'd. Policy knob only — the sweep itself is not part of 3a-2."""
+
+
+class McpConfig(BaseModel):
+    """``server.mcp`` sub-config (3a-2 seam, extended by phase-3 item 2)."""
+
+    enabled: bool = False
+    """Master switch for the daemon-native Streamable HTTP ``/mcp`` endpoint
+    (phase-3 item 2). Off (the default) the mounted app answers the framework's
+    plain route-not-found 404 — unless ``oauth.enabled`` keeps the 3a-4
+    discovery-challenge behaviour alive (401 + ``WWW-Authenticate``) so OAuth
+    clients can still walk the RFC 9728 chain ahead of the endpoint being
+    turned on. Flipping this on is an explicit operator choice (master §3.3)."""
+    broker_url: str = "http://127.0.0.1:8100"
+    """Broker base URL for the MCP ``execute`` tools' server-side
+    control-plane→broker proxy hop (master §6 Q1: the broker stays MCP-free,
+    so the mounted app forwards execute calls to the broker exactly like the
+    CLI does). The default matches the local install topology (plain-HTTP
+    loopback broker on 8100); compose/split deployments set the broker
+    service's URL. Plaintext ``http://`` is refused for non-loopback hosts —
+    the caller's bearer rides this hop (SEC-1 posture)."""
+    oauth: McpOAuthConfig = Field(default_factory=McpOAuthConfig)
+
+
 class ServerConfig(BaseModel):
     """HTTP server settings."""
 
@@ -809,6 +941,7 @@ class ServerConfig(BaseModel):
     hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
     which backend they reached — not an authorization signal. Defaults to
     ``local``; the hosted platform sets ``remote`` in its own config."""
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
 
 class TelemetryConfig(BaseModel):

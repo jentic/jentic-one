@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from jentic_one.shared.events import emit_event
+from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import (
+    EVENT_TAGS,
     ErrorSource,
     EventSeverity,
+    EventTag,
     EventType,
     HostOs,
+    McpClient,
+    McpConfigRuntime,
     SpecSource,
 )
-from jentic_one.shared.telemetry.events import TelemetryEventName
+from jentic_one.shared.telemetry.events import TELEMETRY_EVENTS, TelemetryEventName
 
 
 class _RecordingSink:
@@ -139,6 +144,185 @@ async def test_invalid_tag_dropped_with_warning_event_still_emits() -> None:
     warn.assert_called_once()
     # No valid tag → forwarded with no tags.
     assert sink.records == [(TelemetryEventName.BROKER_EXECUTION_FAILED, (), None)]
+
+
+# --- Regression suite over the widened EVENT_TAGS map (lane D, #1177) ---------
+# EVENT_TAGS values are now tuples of allowed tag types; the widening touches
+# _validate_tags for every tagged event, so pin every (event, allowed-type)
+# pair: a representative member of each allowed enum must be stored + forwarded.
+
+_TAGGED_EVENT_CASES: list[tuple[str, EventTag]] = [
+    (event_type, cast("EventTag", next(iter(allowed_type))))
+    for event_type, allowed_types in sorted(EVENT_TAGS.items())
+    for allowed_type in allowed_types
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "tag"),
+    _TAGGED_EVENT_CASES,
+    ids=[f"{e}:{type(t).__name__}" for e, t in _TAGGED_EVENT_CASES],
+)
+async def test_every_tagged_event_accepts_each_allowed_tag_type(
+    event_type: str, tag: EventTag
+) -> None:
+    """Each event in EVENT_TAGS stores + forwards a member of every allowed type."""
+    sink = _RecordingSink(enabled=True)
+    create = _fake_create()
+
+    with (
+        patch("jentic_one.shared.events.EventRepository.create", create),
+        patch("jentic_one.shared.events.get_active_sink", return_value=sink),
+        patch("jentic_one.shared.events.logger.warning") as warn,
+    ):
+        await emit_event(
+            session=AsyncMock(),
+            type=event_type,
+            severity=EventSeverity.INFO,
+            summary="tagged event",
+            created_by="usr_1",
+            tags={tag},
+        )
+
+    warn.assert_not_called()
+    assert create.call_args.kwargs["data"]["tags"] == [str(tag)]
+    # Every tagged event happens to be on the telemetry allowlist today; the
+    # validated tag must ride the forwarded record.
+    assert event_type in TELEMETRY_EVENTS
+    assert sink.records == [(TELEMETRY_EVENTS[event_type], (tag,), None)]
+
+
+@pytest.mark.asyncio
+async def test_execution_failed_carries_error_source_and_origin_together() -> None:
+    """The widened map lets EXECUTION_FAILED split by both source and origin."""
+    sink = _RecordingSink(enabled=True)
+    create = _fake_create()
+
+    with (
+        patch("jentic_one.shared.events.EventRepository.create", create),
+        patch("jentic_one.shared.events.get_active_sink", return_value=sink),
+        patch("jentic_one.shared.events.logger.warning") as warn,
+    ):
+        await emit_event(
+            session=AsyncMock(),
+            type=EventType.EXECUTION_FAILED,
+            severity=EventSeverity.ERROR,
+            summary="execution failed",
+            created_by="agt_1",
+            tags={ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED, Origin.MCP},
+        )
+
+    warn.assert_not_called()
+    stored_data = create.call_args.kwargs["data"]
+    assert set(stored_data["tags"]) == {"auth_thirdparty_unauthorized", "mcp"}
+    assert len(sink.records) == 1
+    _name, forwarded, _actor = sink.records[0]
+    assert set(forwarded) == {ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED, Origin.MCP}
+
+
+@pytest.mark.asyncio
+async def test_execution_completed_carries_origin_tag() -> None:
+    """EXECUTION_COMPLETED (previously tag-less) now accepts the Origin tag."""
+    sink = _RecordingSink(enabled=True)
+    create = _fake_create()
+
+    with (
+        patch("jentic_one.shared.events.EventRepository.create", create),
+        patch("jentic_one.shared.events.get_active_sink", return_value=sink),
+    ):
+        await emit_event(
+            session=AsyncMock(),
+            type=EventType.EXECUTION_COMPLETED,
+            severity=EventSeverity.INFO,
+            summary="execution completed",
+            created_by="agt_1",
+            tags={Origin.MCP},
+        )
+
+    assert create.call_args.kwargs["data"]["tags"] == ["mcp"]
+    assert sink.records == [(TelemetryEventName.BROKER_EXECUTION, (Origin.MCP,), None)]
+
+
+@pytest.mark.asyncio
+async def test_origin_tag_dropped_on_event_that_does_not_allow_it() -> None:
+    """event_tag_dropped fallback: Origin on IMPORT_COMPLETED is discarded, event emits."""
+    sink = _RecordingSink(enabled=True)
+    create = _fake_create()
+
+    with (
+        patch("jentic_one.shared.events.EventRepository.create", create),
+        patch("jentic_one.shared.events.get_active_sink", return_value=sink),
+        patch("jentic_one.shared.events.logger.warning") as warn,
+    ):
+        await emit_event(
+            session=AsyncMock(),
+            type=EventType.IMPORT_COMPLETED,
+            severity=EventSeverity.INFO,
+            summary="import completed",
+            created_by="usr_1",
+            tags={Origin.MCP, SpecSource.CATALOG},
+        )
+
+    warn.assert_called_once()
+    # Only the allowed SpecSource tag survives; the event still emits + forwards.
+    assert create.call_args.kwargs["data"]["tags"] == ["catalog"]
+    assert sink.records == [(TelemetryEventName.SPEC_IMPORTED, (SpecSource.CATALOG,), None)]
+
+
+@pytest.mark.asyncio
+async def test_mcp_session_started_forwards_only_closed_client_tag() -> None:
+    """mcp_session_started telemetry carries the McpClient tag; data stays internal."""
+    sink = _RecordingSink(enabled=True)
+    create = _fake_create()
+
+    with (
+        patch("jentic_one.shared.events.EventRepository.create", create),
+        patch("jentic_one.shared.events.get_active_sink", return_value=sink),
+    ):
+        await emit_event(
+            session=AsyncMock(),
+            type=EventType.MCP_SESSION_STARTED,
+            severity=EventSeverity.INFO,
+            summary="MCP session started",
+            created_by="agt_1",
+            actor_id="agt_1",
+            actor_type="agent",
+            data={"session_id": "sess-1", "client_name": "Cursor IDE"},
+            tags={McpClient.CURSOR},
+        )
+
+    assert sink.records == [(TelemetryEventName.MCP_SESSION_STARTED, (McpClient.CURSOR,), "agent")]
+    # The full-fidelity clientInfo stays on the internal event's data.
+    stored_data = create.call_args.kwargs["data"]
+    assert stored_data["client_name"] == "Cursor IDE"
+    assert stored_data["tags"] == ["cursor"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_config_registered_forwards_runtime_tag() -> None:
+    sink = _RecordingSink(enabled=True)
+
+    with (
+        patch("jentic_one.shared.events.EventRepository.create", _fake_create()),
+        patch("jentic_one.shared.events.get_active_sink", return_value=sink),
+    ):
+        await emit_event(
+            session=AsyncMock(),
+            type=EventType.MCP_CONFIG_REGISTERED,
+            severity=EventSeverity.INFO,
+            summary="MCP config registered",
+            created_by="usr_1",
+            tags={McpConfigRuntime.CLAUDE_DESKTOP},
+        )
+
+    assert sink.records == [
+        (
+            TelemetryEventName.MCP_CONFIG_REGISTERED,
+            (McpConfigRuntime.CLAUDE_DESKTOP,),
+            None,
+        )
+    ]
 
 
 @pytest.mark.asyncio
