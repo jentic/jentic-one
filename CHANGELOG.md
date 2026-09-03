@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.37.5](https://github.com/jentic/jentic-one/compare/v0.37.4...v0.37.5) (2026-09-03)
+
+Hotfix release cut from v0.37.4 (not main): the AWS Marketplace re-list
+wiring only, so the new listing gets artifacts without shipping the
+in-flight 0.38.0 work.
+
+### Miscellaneous Chores
+
+* **deploy:** re-point the Marketplace overlay at the re-listed product ([#1235](https://github.com/jentic/jentic-one/issues/1235))
+
 ## [0.37.4](https://github.com/jentic/jentic-one/compare/v0.37.3...v0.37.4) (2026-08-28)
 
 
