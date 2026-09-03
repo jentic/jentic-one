@@ -80,6 +80,90 @@ def test_rejects_javascript_scheme() -> None:
         _validate_redirect_uris(["javascript:alert(1)"])
 
 
+# ---------- private-use schemes (RFC 8252 §7.1 — anonymous DCR arm only) ----------
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "cursor://anysphere.cursor-mcp/oauth/callback",
+        "com.example.app:/oauth/callback",
+        "com.example.app://callback",
+        "my-app+beta.x://cb",
+    ],
+)
+def test_private_use_scheme_rejected_on_strict_door(uri: str) -> None:
+    """Pin: admin/platform client creation never accepts a custom scheme."""
+    with pytest.raises(InvalidInputError):
+        _validate_redirect_uris([uri])
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "cursor://anysphere.cursor-mcp/oauth/callback",
+        "com.example.app:/oauth/callback",
+        "com.example.app://callback",
+        "my-app+beta.x://cb",
+    ],
+)
+def test_private_use_scheme_accepted_on_dcr_arm(uri: str) -> None:
+    """RFC 8252 §7.1: native apps redirect to a scheme they control."""
+    _validate_redirect_uris([uri], allow_private_use_schemes=True)
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "javascript:alert(1)",
+        "JAVASCRIPT:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "file:///etc/passwd",
+        "vbscript:msgbox(1)",
+        "blob:https://example.com/uuid",
+        "about:blank",
+        "chrome://settings",
+        "ws://example.com/cb",
+        "wss://example.com/cb",
+        "ftp://example.com/cb",
+    ],
+)
+def test_dangerous_schemes_rejected_even_on_dcr_arm(uri: str) -> None:
+    """The §7.1 allowance never opens browser-executable or registered schemes."""
+    with pytest.raises(InvalidInputError):
+        _validate_redirect_uris([uri], allow_private_use_schemes=True)
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        # No opaque part after the scheme — nowhere to deliver the code.
+        "cursor://",
+        "cursor:",
+        # Fragments are banned on every arm (RFC 6749 §3.1.2).
+        "cursor://anysphere.cursor-mcp/cb#fragment",
+        # No scheme at all.
+        "anysphere.cursor-mcp/cb",
+    ],
+)
+def test_malformed_private_use_uris_rejected_on_dcr_arm(uri: str) -> None:
+    with pytest.raises(InvalidInputError):
+        _validate_redirect_uris([uri], allow_private_use_schemes=True)
+
+
+def test_dcr_arm_keeps_http_loopback_only() -> None:
+    """The private-use allowance never widens http beyond the loopback hosts."""
+    _validate_redirect_uris(["http://localhost:33418/cb"], allow_private_use_schemes=True)
+    with pytest.raises(InvalidInputError, match="http redirect_uri only allowed for localhost"):
+        _validate_redirect_uris(["http://example.com/cb"], allow_private_use_schemes=True)
+
+
+def test_dcr_arm_keeps_https_authority_requirement() -> None:
+    """https URIs still need an authority on the DCR arm."""
+    with pytest.raises(InvalidInputError, match="invalid redirect_uri"):
+        _validate_redirect_uris(["https://"], allow_private_use_schemes=True)
+
+
 # ---------- verify_client_secret ----------
 
 

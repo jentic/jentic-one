@@ -106,6 +106,38 @@ def test_localhost_http_and_https_redirects_accepted(uri: str) -> None:
     _validate(redirect_uris=[uri])
 
 
+@pytest.mark.parametrize(
+    "uri",
+    [
+        # Cursor's real-world MCP OAuth callback (RFC 8252 §7.1).
+        "cursor://anysphere.cursor-mcp/oauth/callback",
+        # Reverse-DNS private-use scheme, both §7.1 shapes.
+        "com.example.app:/oauth/callback",
+        "com.example.app://callback",
+    ],
+)
+def test_private_use_scheme_redirects_accepted_on_dcr_door(uri: str) -> None:
+    """RFC 8252 §7.1: native apps (Cursor, Claude Code, …) register private-use
+    redirect schemes on this door; PKCE S256 is the compensating control."""
+    _validate(redirect_uris=[uri])
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "file:///etc/passwd",
+        "cursor://anysphere.cursor-mcp/cb#fragment",
+        "cursor://",
+    ],
+)
+def test_dangerous_or_malformed_private_use_redirects_rejected(uri: str) -> None:
+    """The §7.1 allowance keeps the denylist and well-formedness checks."""
+    with pytest.raises(InvalidClientMetadataError):
+        _validate(redirect_uris=[uri])
+
+
 # ---------- scope capping (§4.2: capped to the MCP tool-scope set) ----------
 
 

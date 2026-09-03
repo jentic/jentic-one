@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import re
 from functools import partial
 from urllib.parse import urlparse
 
@@ -37,6 +38,24 @@ logger = structlog.get_logger(__name__)
 _MAX_REDIRECT_URIS = 20
 _MAX_REDIRECT_URI_LENGTH = 2048
 
+#: Hosts for which an ``http`` redirect_uri is acceptable (RFC 8252 §7.3
+#: loopback redirects). Applies on every door — the private-use-scheme
+#: allowance never widens ``http``.
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+#: Schemes that must never be a redirect target, even where RFC 8252 §7.1
+#: private-use schemes are accepted (the anonymous DCR door): browser-
+#: executable schemes (``javascript``/``data``/``vbscript``/``blob``/
+#: ``about``), local-resource schemes (``file``/``chrome``), and registered
+#: transport schemes a native app has no business claiming as a callback
+#: (``ws``/``wss``/``ftp``). Matched case-insensitively.
+_PRIVATE_USE_SCHEME_DENYLIST = frozenset(
+    {"javascript", "data", "file", "vbscript", "blob", "about", "chrome", "ws", "wss", "ftp"}
+)
+
+#: RFC 3986 §3.1 scheme grammar: ``ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )``.
+_RFC3986_SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
+
 
 @functools.cache
 def _dummy_argon2_hash() -> str:
@@ -53,8 +72,21 @@ def _dummy_argon2_hash() -> str:
     return hash_password("dummy-timing-equalizer")
 
 
-def _validate_redirect_uris(uris: list[str]) -> None:
-    """Validate that all redirect URIs are well-formed HTTPS URLs (http only for localhost)."""
+def _validate_redirect_uris(uris: list[str], *, allow_private_use_schemes: bool = False) -> None:
+    """Validate redirect URIs: HTTPS always; http only for the loopback hosts.
+
+    ``allow_private_use_schemes=True`` is the anonymous-DCR arm (RFC 8252
+    §7.1): native apps redirect to a private-use scheme they control, e.g.
+    ``cursor://anysphere.cursor-mcp/oauth/callback`` or the reverse-DNS shape
+    ``com.example.app:/oauth/callback``, with mandatory PKCE (S256) as the
+    compensating control. On that arm the scheme must match the RFC 3986
+    scheme grammar, must not be in :data:`_PRIVATE_USE_SCHEME_DENYLIST`, and
+    the URI must carry a non-empty opaque part after the scheme. ``https``
+    and loopback-``http`` rules are identical on both arms.
+
+    Admin/platform-created clients keep the strict default: only ``https``
+    (or loopback ``http``) redirect URIs are accepted.
+    """
     if not uris:
         raise InvalidInputError("at least one redirect_uri is required")
     if len(uris) > _MAX_REDIRECT_URIS:
@@ -66,14 +98,29 @@ def _validate_redirect_uris(uris: list[str]) -> None:
                 f"redirect_uri exceeds maximum length of {_MAX_REDIRECT_URI_LENGTH}"
             )
         parsed = urlparse(uri)
-        if not parsed.scheme or not parsed.netloc:
+        scheme = parsed.scheme.lower()
+        is_web_scheme = scheme in ("https", "http")
+        # An authority (netloc) is required for https/http on every door, and
+        # for every scheme on the strict door (preserves its historic "invalid
+        # redirect_uri" rejection of opaque forms like ``javascript:alert(1)``).
+        requires_netloc = is_web_scheme or not allow_private_use_schemes
+        if not parsed.scheme or (requires_netloc and not parsed.netloc):
             raise InvalidInputError(f"invalid redirect_uri: {uri}")
         if parsed.fragment:
             raise InvalidInputError(f"redirect_uri must not contain a fragment component: {uri}")
-        if parsed.scheme not in ("https", "http"):
+        if is_web_scheme:
+            if scheme == "http" and parsed.hostname not in _LOOPBACK_HOSTS:
+                raise InvalidInputError(f"http redirect_uri only allowed for localhost: {uri}")
+            continue
+        if not allow_private_use_schemes:
             raise InvalidInputError(f"redirect_uri must use https or http: {uri}")
-        if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
-            raise InvalidInputError(f"http redirect_uri only allowed for localhost: {uri}")
+        # --- private-use (custom) scheme arm — anonymous DCR door only ---
+        if not _RFC3986_SCHEME_RE.fullmatch(parsed.scheme):
+            raise InvalidInputError(f"invalid redirect_uri scheme: {uri}")
+        if scheme in _PRIVATE_USE_SCHEME_DENYLIST:
+            raise InvalidInputError(f"redirect_uri scheme '{scheme}' is not allowed: {uri}")
+        if not parsed.netloc and not parsed.path:
+            raise InvalidInputError(f"invalid redirect_uri: {uri}")
 
 
 def _is_approved(client: OAuthClient) -> bool:
