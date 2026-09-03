@@ -160,7 +160,7 @@ _GATED_404_RESPONSE: dict[int | str, dict[str, Any]] = {
 
 
 def _mcp_authorization_server_document(base: str) -> dict[str, Any]:
-    """The /mcp-scoped RFC 8414 document, per D10 (one deliberate deviation).
+    """The /mcp-scoped RFC 8414 document, per D10 (deviation closed by G11).
 
     A *logical* second AS for the path-scoped issuer ``{base}/mcp``: the
     endpoints are shared with the root AS — only the metadata doc is scoped.
@@ -169,20 +169,21 @@ def _mcp_authorization_server_document(base: str) -> dict[str, Any]:
     secret-less client profile is advertised (``none`` + PKCE S256, D5); CIMD
     (``client_id_metadata_document_supported``) is deliberately **not**
     advertised yet — flipping it on is the §6 follow-on and non-breaking.
-    Deviation from D10: no ``revocation_endpoint`` (see the field comment).
     """
     return {
         "issuer": f"{base}/mcp",
         "authorization_endpoint": f"{base}/authorize",
         "token_endpoint": f"{base}/oauth/token",
         "registration_endpoint": f"{base}/oauth-clients",
-        # No revocation_endpoint (deliberate deviation from D10, which lists
-        # {base}/oauth/revoke): the platform's /oauth/revoke requires an
-        # authenticated platform Identity and a JSON body, so an RFC 7009
-        # public-client revoke (client_id only, form-encoded) can never
-        # succeed against it. RFC 8414 makes the field optional — omit it;
-        # public clients revoke by grant lifecycle (grant :revoke, client
-        # deactivation) until phase 3 decides otherwise.
+        # G11 closed: /oauth/revoke now carries an RFC 7009-conformant
+        # public-client arm (form-encoded, token + optional client_id lineage
+        # binding, auth method "none"), so D10's revocation_endpoint is
+        # advertised — 3a-4 had deliberately omitted it while the endpoint
+        # required an authenticated platform Identity and a JSON body.
+        # RFC 8414's implicit default for the auth-methods field is
+        # client_secret_basic, so the "none" profile must be explicit.
+        "revocation_endpoint": f"{base}/oauth/revoke",
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["none"],
         "response_types_supported": ["code"],

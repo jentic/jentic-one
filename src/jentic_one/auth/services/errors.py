@@ -200,3 +200,17 @@ class InvalidClientMetadataError(AuthServiceError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class InvalidRevocationRequestError(AuthServiceError):
+    """Raised when an RFC 7009 revocation request is malformed (G11).
+
+    Maps to 400 ``invalid_request`` (RFC 7009 §2.2.1 via RFC 6749 §5.2) — the
+    ONLY error arm of the revocation endpoint's form-encoded path: a request
+    missing the required ``token`` parameter. Invalid, unknown, foreign, and
+    already-revoked tokens are deliberately NOT errors (200 no-op, no oracle).
+    """
+
+    def __init__(self, reason: str = "token is required") -> None:
+        super().__init__(reason)
+        self.reason = reason

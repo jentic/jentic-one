@@ -132,11 +132,12 @@ def test_disabled_mcp_probe_is_plain_404_without_challenge(
 # --- the /mcp-scoped RFC 8414 document (D10) --------------------------------
 
 
-def test_mcp_as_document_matches_d10_with_revocation_deviation(
+def test_mcp_as_document_matches_d10(
     enabled_client: TestClient,
 ) -> None:
-    """The D10 document shape, minus the deliberately omitted
-    revocation_endpoint (see test_mcp_as_document_omits_revocation_endpoint)."""
+    """The full D10 document shape — including the revocation_endpoint that
+    3a-4 had deliberately omitted (G11, closed: /oauth/revoke now carries an
+    RFC 7009-conformant public-client arm)."""
     resp = enabled_client.get("/.well-known/oauth-authorization-server/mcp")
     assert resp.status_code == 200
     assert resp.json() == {
@@ -144,6 +145,8 @@ def test_mcp_as_document_matches_d10_with_revocation_deviation(
         "authorization_endpoint": f"{_BASE}/authorize",
         "token_endpoint": f"{_BASE}/oauth/token",
         "registration_endpoint": f"{_BASE}/oauth-clients",
+        "revocation_endpoint": f"{_BASE}/oauth/revoke",
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["none"],
         "response_types_supported": ["code"],
@@ -152,16 +155,16 @@ def test_mcp_as_document_matches_d10_with_revocation_deviation(
     }
 
 
-def test_mcp_as_document_omits_revocation_endpoint(enabled_client: TestClient) -> None:
-    """Deliberate deviation from D10: /oauth/revoke requires an authenticated
-    platform Identity and a JSON body, so an RFC 7009 public-client revoke
-    (client_id only, form-encoded) can never succeed against it. RFC 8414
-    makes the field optional — the /mcp doc omits it (public clients revoke by
-    grant lifecycle); the root doc's advertisement is a separate, pre-existing
-    surface pinned by the golden test."""
+def test_mcp_as_document_advertises_rfc7009_revocation(enabled_client: TestClient) -> None:
+    """G11 closed (was: a pinned deliberate omission): the /mcp doc advertises
+    ``revocation_endpoint={base}/oauth/revoke`` per D10, now that the endpoint
+    accepts the RFC 7009 public-client shape (form-encoded, token + optional
+    client_id, auth method ``none``). The auth-methods field must be explicit:
+    RFC 8414's implicit default is ``client_secret_basic``, which would
+    contradict the advertised ``none`` client profile."""
     data = enabled_client.get("/.well-known/oauth-authorization-server/mcp").json()
-    assert "revocation_endpoint" not in data
-    assert "revocation_endpoint_auth_methods_supported" not in data
+    assert data["revocation_endpoint"] == f"{_BASE}/oauth/revoke"
+    assert data["revocation_endpoint_auth_methods_supported"] == ["none"]
 
 
 def test_mcp_as_document_advertises_only_the_public_client_profile(

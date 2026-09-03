@@ -58,7 +58,7 @@ _ADMIN_READ_PERMISSIONS: frozenset[str] = GRANT_REVOKE_ADMIN_PERMISSIONS | {OAUT
 AGENT_TRANSFER_REVOCATION_REASON = "agent_ownership_transferred"
 
 
-async def _revoke_grant_and_sweep_tokens(
+async def revoke_grant_and_sweep_tokens(
     session: AsyncSession,
     grant: OAuthClientGrant,
     *,
@@ -71,10 +71,12 @@ async def _revoke_grant_and_sweep_tokens(
 ) -> bool:
     """Flip one grant row + sweep its tokens + audit + event, in the caller's session.
 
-    THE single revocation body — the manual ``:revoke`` kill switch and the
-    ownership-transfer sweep both run through here, so the token kill switch
-    and the emitted ``oauth_grant.revoked`` event can never drift between the
-    two causes. Flush-only: it joins whatever transaction the caller owns.
+    THE single revocation body — the manual ``:revoke`` kill switch, the
+    ownership-transfer sweep (G10), and the RFC 7009 refresh-token full
+    disconnect (G11, :mod:`oauth_revocation_service`) all run through here, so
+    the token kill switch and the emitted ``oauth_grant.revoked`` event can
+    never drift between the causes. Flush-only: it joins whatever transaction
+    the caller owns.
     Returns False (writing no audit/event) when the grant was already revoked;
     the token sweep re-runs regardless (idempotent belt).
     """
@@ -146,7 +148,7 @@ async def revoke_active_grants_for_agent(
     """
     grants = await OAuthClientGrantRepository.list_active_for_agent(session, agent_id)
     for grant in grants:
-        await _revoke_grant_and_sweep_tokens(
+        await revoke_grant_and_sweep_tokens(
             session,
             grant,
             actor_type=identity.actor_type,
@@ -287,7 +289,7 @@ class OAuthGrantService:
             if not viewer_can_revoke(grant.user_id, identity):
                 raise OAuthGrantAccessDeniedError(grant_id)
 
-            return await _revoke_grant_and_sweep_tokens(
+            return await revoke_grant_and_sweep_tokens(
                 session,
                 grant,
                 actor_type=identity.actor_type,

@@ -47,10 +47,19 @@ class MintResponse(BaseModel):
 
 
 class RevokeRequest(BaseModel):
-    """Revocation endpoint request (form body)."""
+    """Revocation endpoint request (RFC 7009) — JSON or form-encoded.
+
+    ``token`` is required either way. ``token_type_hint``
+    (``access_token``/``refresh_token``) is a lookup-order optimization only —
+    the server falls through both types regardless (RFC 7009 §2.1).
+    ``client_id`` belongs to the form-encoded public-client arm (G11): the
+    secret-less client's lineage binding; ignored on the bearer-authenticated
+    JSON arm, where the platform identity scopes the revocation instead.
+    """
 
     token: str = Field(json_schema_extra=SENSITIVE)
     token_type_hint: str | None = None
+    client_id: str | None = None
 
 
 class IntrospectRequest(BaseModel):
