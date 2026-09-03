@@ -334,7 +334,7 @@ jobs:
       #   MARKETPLACE_ECR_ROLE_ARN — IAM role trusting GitHub's OIDC provider,
       #                              scoped to this repo's release workflow
       #   MARKETPLACE_ECR_IMAGE    — full repo URI from the Marketplace portal
-      #                              (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app)
+      #                              (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-app)
       #
       # configure-aws-credentials is credential-issuing: it must stay after
       # every third-party installer (same posture as the GHCR login above) and
