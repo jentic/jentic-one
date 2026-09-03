@@ -62,6 +62,25 @@ class OAuthClientGrantRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def list_active_for_agent(session: AsyncSession, agent_id: str) -> list[OAuthClientGrant]:
+        """Every active grant bound to ONE agent — the transfer sweep set (G10, #1222).
+
+        An agent ownership transfer revokes all of these in the transfer's own
+        transaction, so unlike :meth:`list_grants` this is deliberately
+        unpaginated: the sweep must see the complete set or fail the transfer.
+        """
+        stmt = (
+            select(OAuthClientGrant)
+            .where(
+                OAuthClientGrant.agent_id == agent_id,
+                OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value,
+            )
+            .order_by(OAuthClientGrant.created_at.asc(), OAuthClientGrant.id.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_grants(
         session: AsyncSession,
         *,

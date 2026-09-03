@@ -17,6 +17,8 @@ from jentic_one.admin.repos import (
     OAuthClientRepository,
     UserRepository,
 )
+from jentic_one.auth.services.authorize_service import AuthorizeService
+from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
 
@@ -97,3 +99,44 @@ async def seed_client(
         )
         await session.commit()
         return client.client_id
+
+
+async def mint_grant_channel_tokens(
+    ctx: Context,
+    *,
+    user_id: str,
+    agent_id: str,
+    grant_scopes: list[str],
+    client_id: str = CLIENT_ID,
+) -> tuple[str, str, str, str | None]:
+    """Consent-approve + code issue + exchange. Returns (grant_id, at, rt, id_token).
+
+    Shared by the grant-channel and ownership-transfer suites so both mint
+    through the real consent→code→exchange path rather than seeding token
+    rows by hand.
+    """
+    grant_svc = OAuthGrantService(ctx)
+    authorize_svc = AuthorizeService(ctx)
+    grant_id = await grant_svc.create_grant(
+        user_id=user_id,
+        oauth_client_id=client_id,
+        agent_id=agent_id,
+        scopes=grant_scopes,
+        client_name="Grant Channel App",
+    )
+    code = await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=client_id,
+        redirect_uri=REDIRECT_URI,
+        code_challenge=code_challenge(CODE_VERIFIER),
+        scopes=" ".join(grant_scopes),
+        grant_id=grant_id,
+    )
+    access, refresh, id_token = await authorize_svc.exchange_code(
+        code=code,
+        code_verifier=CODE_VERIFIER,
+        redirect_uri=REDIRECT_URI,
+        client_id=client_id,
+        oauth_client_id=client_id,
+    )
+    return grant_id, access, refresh, id_token

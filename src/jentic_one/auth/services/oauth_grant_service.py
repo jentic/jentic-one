@@ -26,6 +26,7 @@ from jentic_one.admin.services.oauth_grant_admin_service import (
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
+    ConsentAgentNotEligibleError,
     OAuthGrantAccessDeniedError,
     OAuthGrantNotFoundError,
 )
@@ -34,7 +35,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OAUTH_CLIENTS_READ
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 from jentic_one.shared.pagination import Page
@@ -48,6 +49,124 @@ logger = structlog.get_logger(__name__)
 #: ``GET /admin/oauth-clients`` and the ``/admin/oauth-grants`` cross-view,
 #: so a caller who can see grants there can see them per-agent.
 _ADMIN_READ_PERMISSIONS: frozenset[str] = GRANT_REVOKE_ADMIN_PERMISSIONS | {OAUTH_CLIENTS_READ}
+
+#: The revocation cause stamped (audit ``reason`` + event ``data.reason``) on
+#: grants swept by an agent ownership transfer (G10, #1222) — distinguishes a
+#: transfer-revocation from the manual ``:revoke`` (whose audit reason stays
+#: ``"oauth grant revoked"`` and whose event data carries no ``reason`` key,
+#: following the ``OVERLAY_DEPRECATED`` cause-in-data pattern).
+AGENT_TRANSFER_REVOCATION_REASON = "agent_ownership_transferred"
+
+
+async def _revoke_grant_and_sweep_tokens(
+    session: AsyncSession,
+    grant: OAuthClientGrant,
+    *,
+    actor_type: ActorType,
+    actor_id: str,
+    origin: str | None,
+    audit_reason: str,
+    summary: str,
+    event_reason: str | None = None,
+) -> bool:
+    """Flip one grant row + sweep its tokens + audit + event, in the caller's session.
+
+    THE single revocation body — the manual ``:revoke`` kill switch and the
+    ownership-transfer sweep both run through here, so the token kill switch
+    and the emitted ``oauth_grant.revoked`` event can never drift between the
+    two causes. Flush-only: it joins whatever transaction the caller owns.
+    Returns False (writing no audit/event) when the grant was already revoked;
+    the token sweep re-runs regardless (idempotent belt).
+    """
+    newly_revoked = grant.status == OAuthGrantStatus.ACTIVE.value and (
+        await OAuthClientGrantRepository.revoke(session, grant.id)
+    )
+    swept_access = await AccessTokenRepository.revoke_by_grant(session, grant.id)
+    swept_refresh = await RefreshTokenRepository.revoke_by_grant(session, grant.id)
+    if not newly_revoked:
+        return False
+
+    await record_audit(
+        session,
+        action=AuditAction.REVOKE,
+        target_type=AuditTargetType.OAUTH_GRANT,
+        target_id=grant.id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        after={
+            "oauth_client_id": grant.oauth_client_id,
+            "agent_id": grant.agent_id,
+            "swept_access_tokens": swept_access,
+            "swept_refresh_tokens": swept_refresh,
+        },
+        reason=audit_reason,
+        origin=origin,
+    )
+    data: dict[str, object] = {
+        "grant_id": grant.id,
+        "oauth_client_id": grant.oauth_client_id,
+        "agent_id": grant.agent_id,
+        "user_id": grant.user_id,
+    }
+    if event_reason is not None:
+        data["reason"] = event_reason
+    await emit_event_best_effort(
+        session,
+        type=EventType.OAUTH_GRANT_REVOKED,
+        severity=EventSeverity.INFO,
+        summary=summary,
+        requires_action=False,
+        data=data,
+        created_by=actor_id,
+    )
+    return True
+
+
+async def revoke_active_grants_for_agent(
+    session: AsyncSession,
+    agent_id: str,
+    *,
+    identity: Identity,
+) -> int:
+    """Revoke EVERY active grant bound to ``agent_id`` — the transfer sweep (G10, #1222).
+
+    Called by ``AgentService.update_agent`` inside the ownership-transfer
+    transaction: a transferred agent must not keep grants consented by its
+    previous owner (the new owner could not revoke them self-serve — the
+    ``:revoke`` predicate keys on the consenting user). Runs the same
+    per-grant revocation body as the manual kill switch, stamped with
+    :data:`AGENT_TRANSFER_REVOCATION_REASON` and attributed to the actor
+    performing the transfer.
+
+    Deliberately NO ``viewer_can_revoke`` check: authority comes from the
+    ``agents:write`` gate on the transfer itself. Flush-only and NOT
+    best-effort — an exception propagates so a failed sweep rolls the whole
+    transfer back rather than leaving a transferred agent with live grants.
+    Returns the number of grants revoked.
+    """
+    grants = await OAuthClientGrantRepository.list_active_for_agent(session, agent_id)
+    for grant in grants:
+        await _revoke_grant_and_sweep_tokens(
+            session,
+            grant,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            origin=identity.origin.value,
+            audit_reason="oauth grant revoked: agent ownership transferred",
+            summary=(
+                f"OAuth grant {grant.id} for client '{grant.oauth_client_id}' was "
+                f"revoked because agent {agent_id} changed owner"
+            ),
+            event_reason=AGENT_TRANSFER_REVOCATION_REASON,
+        )
+    if grants:
+        logger.info(
+            "oauth_grants_revoked_on_agent_transfer",
+            agent_id=agent_id,
+            count=len(grants),
+            actor_id=identity.sub,
+        )
+    return len(grants)
 
 
 class OAuthGrantService:
@@ -67,15 +186,37 @@ class OAuthGrantService:
     ) -> str:
         """Mint an ``oauth_client_grants`` row at consent-approve (§4.4 step 3).
 
-        Collapses any prior active row for the (client, agent) pair (§4.1:
-        re-consent revokes the old row and inserts the new one — history
-        stays, exactly one active row per pair). Writes the consent audit row
-        (the pre-3a ``record_consent_decision`` shape, extended with
-        ``agent_id``/``grant_id``) and emits ``oauth_grant.created`` — grant
-        creation is deliberately loud (§4.8). Returns the new grant id.
+        Locks the agent row and re-checks the consent predicate (exists +
+        ``active`` + owned by ``user_id``) inside the mint transaction —
+        raising :class:`ConsentAgentNotEligibleError` on failure — so a
+        concurrent ownership transfer serializes against the mint instead of
+        racing it. Collapses any prior active row for the (client, agent)
+        pair (§4.1: re-consent revokes the old row and inserts the new one —
+        history stays, exactly one active row per pair). Writes the consent
+        audit row (the pre-3a ``record_consent_decision`` shape, extended
+        with ``agent_id``/``grant_id``) and emits ``oauth_grant.created`` —
+        grant creation is deliberately loud (§4.8). Returns the new grant id.
         """
 
         async def _write(session: AsyncSession) -> str:
+            # Consent-vs-transfer TOCTOU closure: the consent screen's
+            # ownership check ran in an earlier, unlocked read, so a transfer
+            # can commit in between (the consent handle stays valid for
+            # 300 s). Take the SAME row lock the transfer transaction takes
+            # (FOR UPDATE in AgentService.update_agent) and re-run the
+            # list_consentable_agents predicate here, inside the mint
+            # transaction: either the mint commits first (the transfer's
+            # sweep then revokes it) or the transfer commits first (this
+            # re-check sees the new owner/status and refuses). This lock +
+            # re-check is what makes "a LIVE grant's consenter is the
+            # agent's current owner" hold.
+            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+            if (
+                agent is None
+                or agent.status != ActorStatus.ACTIVE.value
+                or agent.owner_id != user_id
+            ):
+                raise ConsentAgentNotEligibleError(agent_id)
             prior = await OAuthClientGrantRepository.list_active_for_pair(
                 session, oauth_client_id=oauth_client_id, agent_id=agent_id
             )
@@ -146,47 +287,17 @@ class OAuthGrantService:
             if not viewer_can_revoke(grant.user_id, identity):
                 raise OAuthGrantAccessDeniedError(grant_id)
 
-            newly_revoked = grant.status == OAuthGrantStatus.ACTIVE.value and (
-                await OAuthClientGrantRepository.revoke(session, grant_id)
-            )
-            swept_access = await AccessTokenRepository.revoke_by_grant(session, grant_id)
-            swept_refresh = await RefreshTokenRepository.revoke_by_grant(session, grant_id)
-            if not newly_revoked:
-                return False
-
-            await record_audit(
+            return await _revoke_grant_and_sweep_tokens(
                 session,
-                action=AuditAction.REVOKE,
-                target_type=AuditTargetType.OAUTH_GRANT,
-                target_id=grant_id,
+                grant,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                after={
-                    "oauth_client_id": grant.oauth_client_id,
-                    "agent_id": grant.agent_id,
-                    "swept_access_tokens": swept_access,
-                    "swept_refresh_tokens": swept_refresh,
-                },
-                reason="oauth grant revoked",
                 origin=identity.origin.value,
-            )
-            await emit_event_best_effort(
-                session,
-                type=EventType.OAUTH_GRANT_REVOKED,
-                severity=EventSeverity.INFO,
+                audit_reason="oauth grant revoked",
                 summary=(
                     f"OAuth grant {grant_id} for client '{grant.oauth_client_id}' was revoked"
                 ),
-                requires_action=False,
-                data={
-                    "grant_id": grant_id,
-                    "oauth_client_id": grant.oauth_client_id,
-                    "agent_id": grant.agent_id,
-                    "user_id": grant.user_id,
-                },
-                created_by=identity.sub,
             )
-            return True
 
         revoked = await self._ctx.admin_db.run_in_transaction(_write)
         if revoked:
@@ -209,10 +320,14 @@ class OAuthGrantService:
         secrets). Items carry the §4.8 display fields (client name,
         redirect-URI origin, scopes, created, last-used, status) plus the
         consenting ``user_id`` and the viewer's per-item ``can_revoke``
-        capability, so the G10 ownership-transfer gap is visible AND
-        actionable state is honest (list keys on the agent's current owner,
-        revoke on the grant's consenting user — they diverge after a
-        transfer).
+        capability. The two predicates still differ (list keys on the agent's
+        current owner, revoke on the grant's consenting user), but a LIVE
+        grant's consenter is always the current owner — an invariant that
+        holds BECAUSE G10 (#1222) makes an ownership transfer revoke all
+        active grants in the transfer transaction AND ``create_grant`` locks
+        the agent row and re-checks ownership inside the mint transaction
+        (closing the consent-vs-transfer race). The divergence only shows on
+        revoked history rows.
         """
         async with self._ctx.admin_db.session() as session:
             agent = await AgentRepository.get_by_id(session, agent_id)

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.authorize_service import AgentConsentOption
+from jentic_one.auth.services.errors import ConsentAgentNotEligibleError
 from jentic_one.auth.web.routers import authorize
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -345,6 +346,39 @@ def test_agent_model_invalid_agent_selection_rejected(
     assert resp.status_code == 302
     assert resp.headers["location"] == "/error?error=invalid_agent_selection"
     grant_svc.create_grant.assert_not_awaited()
+    svc.issue_authorization_code.assert_not_awaited()
+
+
+@patch("jentic_one.auth.web.routers.authorize.OAuthGrantService")
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.routers.authorize.OAuthClientService")
+def test_agent_model_mint_time_refusal_renders_error_page(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+    mock_grant_cls: MagicMock,
+) -> None:
+    """The picker validation passes but the mint-time lock + re-check inside
+    ``create_grant`` refuses (agent transferred/archived in between, review
+    F1) → the same human error page as an invalid selection, no code, never
+    a 500."""
+    client, backend = _make_app()
+    _seed_consent_handle(backend)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(agents=[_agent_option()])
+    mock_authorize_cls.return_value = svc
+    grant_svc = MagicMock()
+    grant_svc.create_grant = AsyncMock(side_effect=ConsentAgentNotEligibleError("agnt_1"))
+    mock_grant_cls.return_value = grant_svc
+
+    resp = client.post(
+        "/oauth/consent",
+        data={"consent_token": _HANDLE, "action": "approve", "agent_id": "agnt_1"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/error?error=invalid_agent_selection"
+    grant_svc.create_grant.assert_awaited_once()
     svc.issue_authorization_code.assert_not_awaited()
 
 

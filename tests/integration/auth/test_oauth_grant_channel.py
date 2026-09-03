@@ -53,41 +53,7 @@ _code_challenge = seeds.code_challenge
 _seed_user = seeds.seed_user
 _seed_agent = seeds.seed_agent
 _seed_client = seeds.seed_client
-
-
-async def _mint_grant_channel_tokens(
-    ctx: Context,
-    *,
-    user_id: str,
-    agent_id: str,
-    grant_scopes: list[str],
-) -> tuple[str, str, str, str | None]:
-    """Consent-approve + code issue + exchange. Returns (grant_id, at, rt, id_token)."""
-    grant_svc = OAuthGrantService(ctx)
-    authorize_svc = AuthorizeService(ctx)
-    grant_id = await grant_svc.create_grant(
-        user_id=user_id,
-        oauth_client_id=_CLIENT_ID,
-        agent_id=agent_id,
-        scopes=grant_scopes,
-        client_name="Grant Channel App",
-    )
-    code = await authorize_svc.issue_authorization_code(
-        user_id=user_id,
-        client_id=_CLIENT_ID,
-        redirect_uri=_REDIRECT_URI,
-        code_challenge=_code_challenge(_CODE_VERIFIER),
-        scopes=" ".join(grant_scopes),
-        grant_id=grant_id,
-    )
-    access, refresh, id_token = await authorize_svc.exchange_code(
-        code=code,
-        code_verifier=_CODE_VERIFIER,
-        redirect_uri=_REDIRECT_URI,
-        client_id=_CLIENT_ID,
-        oauth_client_id=_CLIENT_ID,
-    )
-    return grant_id, access, refresh, id_token
+_mint_grant_channel_tokens = seeds.mint_grant_channel_tokens
 
 
 # --- grant table + minting -------------------------------------------------
