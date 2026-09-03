@@ -34,7 +34,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from jentic_one.auth.web.routers.discovery import _MCP_PRM_PATH
-from jentic_one.mcp.app import MCP_PRM_PATH
+from jentic_one.mcp.app import CLIENT_INFO_META_KEY, MCP_PRM_PATH, request_client_info
 from jentic_one.mcp.installer import install_mcp_mount, mcp_lifespan
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
@@ -496,7 +496,126 @@ def test_batch_with_non_preauth_method_requires_credential() -> None:
         assert resp.headers["www-authenticate"] == _CHALLENGE
 
 
-# --- observability (phase-3 item 1: traces attach to the mount) ----------------
+# --- windowed session telemetry (phase-3 item 6) -------------------------------
+
+
+_CLIENT_INFO_PARAMS = {"_meta": {CLIENT_INFO_META_KEY: {"name": "cursor", "version": "0.42"}}}
+
+
+def test_authenticated_post_schedules_the_windowed_session_emit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every authenticated POST feeds the windowed emit, clientInfo from the
+    request's own ``_meta`` (spec 2026-07-28 — no initialize to carry it)."""
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "jentic_one.mcp.app.schedule_mcp_http_session_emit",
+        lambda ctx, **kwargs: calls.append(kwargs),
+    )
+    with make_client() as client:
+        resp = client.post(
+            "/mcp",
+            json=_rpc("tools/list", _CLIENT_INFO_PARAMS),
+            headers={**_ACCEPT, "Authorization": f"Bearer {_GOOD_BEARER}"},
+        )
+        assert resp.status_code == 200
+    assert calls == [
+        {
+            "client_name": "cursor",
+            "client_version": "0.42",
+            "actor_id": "agnt_1",
+            "actor_type": "agent",
+        }
+    ]
+
+
+def test_authenticated_post_without_client_info_schedules_unknown_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """clientInfo is a SHOULD — absent degrades to client-unknown, still fed."""
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "jentic_one.mcp.app.schedule_mcp_http_session_emit",
+        lambda ctx, **kwargs: calls.append(kwargs),
+    )
+    with make_client() as client:
+        client.post(
+            "/mcp",
+            json=_rpc("tools/list"),
+            headers={**_ACCEPT, "Authorization": f"Bearer {_GOOD_BEARER}"},
+        )
+    assert calls and calls[0]["client_name"] is None
+    assert calls[0]["client_version"] is None
+
+
+def test_credential_less_and_rejected_requests_never_schedule_the_emit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No resolved identity → no key to emit under: the pre-auth arm and the
+    invalid-credential 401 both skip the telemetry hook entirely."""
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "jentic_one.mcp.app.schedule_mcp_http_session_emit",
+        lambda ctx, **kwargs: calls.append(kwargs),
+    )
+    with make_client() as client:
+        anon = client.post("/mcp", json=_rpc("tools/list", _CLIENT_INFO_PARAMS), headers=_ACCEPT)
+        assert anon.status_code == 200
+        rejected = client.post(
+            "/mcp",
+            json=_rpc("tools/list", _CLIENT_INFO_PARAMS),
+            headers={**_ACCEPT, "Authorization": "Bearer at_expired"},
+        )
+        assert rejected.status_code == 401
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        # The happy path: params._meta carrying the spec key.
+        (
+            json.dumps(_rpc("tools/call", _CLIENT_INFO_PARAMS)),
+            ("cursor", "0.42"),
+        ),
+        # Batch: the first request carrying clientInfo wins.
+        (
+            json.dumps(
+                [
+                    _rpc("ping", id_=1),
+                    _rpc("tools/list", _CLIENT_INFO_PARAMS, id_=2),
+                ]
+            ),
+            ("cursor", "0.42"),
+        ),
+        # Name without version (version is optional inside clientInfo too).
+        (
+            json.dumps(_rpc("tools/list", {"_meta": {CLIENT_INFO_META_KEY: {"name": "codex"}}})),
+            ("codex", None),
+        ),
+        # No _meta at all.
+        (json.dumps(_rpc("tools/list")), (None, None)),
+        # Malformed JSON containing the key bytes — degrades, never raises.
+        (f'{{"{CLIENT_INFO_META_KEY}": broken', (None, None)),
+        # clientInfo present but not an object.
+        (
+            json.dumps(_rpc("tools/list", {"_meta": {CLIENT_INFO_META_KEY: "cursor"}})),
+            (None, None),
+        ),
+        # Non-string name/version fields degrade to unknown, not a crash.
+        (
+            json.dumps(
+                _rpc(
+                    "tools/list",
+                    {"_meta": {CLIENT_INFO_META_KEY: {"name": 7, "version": ["x"]}}},
+                )
+            ),
+            (None, None),
+        ),
+    ],
+)
+def test_request_client_info_parsing(body: str, expected: tuple[str | None, str | None]) -> None:
+    assert request_client_info(body.encode()) == expected
 
 
 def test_otel_route_details_resolve_the_mcp_route() -> None:

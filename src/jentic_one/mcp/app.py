@@ -38,6 +38,10 @@ that owns everything the platform — not the SDK — must decide:
   resource listings are served without a credential — a client can always
   discover the tool surface before authenticating (§3.3). Everything else
   requires a resolved identity.
+- **Session telemetry** (phase-3 item 6): each authenticated POST feeds the
+  windowed ``mcp.session_started`` emit — key = (agent identity x ``_meta``
+  clientInfo x window), fire-and-forget
+  (:func:`jentic_one.shared.events.mcp_session.schedule_mcp_http_session_emit`).
 
 The resolved identity/credential ride to the tool handlers on the request's
 ASGI ``scope["state"]`` (the SDK transport attaches the Starlette ``Request``
@@ -66,7 +70,11 @@ from jentic_one.mcp.spec import served_tools
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, valid_session_id_or_none
+from jentic_one.shared.events.mcp_session import (
+    SESSION_ID_HEADER,
+    schedule_mcp_http_session_emit,
+    valid_session_id_or_none,
+)
 from jentic_one.shared.models.actors import Origin as ActorOrigin
 from jentic_one.shared.web.links import deployment_base_url
 
@@ -95,6 +103,10 @@ PRE_AUTH_METHODS = frozenset(
 #: Bound on a buffered request body. The SDK transport's own bound is 4 MiB
 #: (``max_request_body_size``); this only guards the pre-auth sniff.
 _MAX_BUFFERED_BODY = 8 << 20
+
+#: The spec 2026-07-28 ``_meta`` key an MCP client SHOULD stamp its identity
+#: under on every request (there is no ``initialize`` to carry it anymore).
+CLIENT_INFO_META_KEY = "io.modelcontextprotocol/clientInfo"
 
 
 def _framework_404() -> Response:
@@ -206,6 +218,44 @@ def _body_methods(body: bytes) -> list[str] | None:
             methods.append(method)
         return methods or None
     return None
+
+
+def request_client_info(body: bytes) -> tuple[str | None, str | None]:
+    """The ``_meta`` clientInfo (name, version) in one POST body, if any.
+
+    Spec 2026-07-28: clientInfo optionally rides each request's ``params._meta``
+    under :data:`CLIENT_INFO_META_KEY` (a SHOULD — absent means client
+    unknown). The bytes-level containment check keeps the per-request cost of
+    the common no-clientInfo case to one scan instead of a JSON parse; a
+    malformed body or a non-string field degrades to unknown, never an error
+    (telemetry must not affect serving). Batched bodies yield the first
+    request that carries one.
+    """
+    if CLIENT_INFO_META_KEY.encode() not in body:
+        return (None, None)
+    try:
+        decoded = json.loads(body)
+    except ValueError:
+        return (None, None)
+    for item in decoded if isinstance(decoded, list) else [decoded]:
+        if not isinstance(item, dict):
+            continue
+        params = item.get("params")
+        if not isinstance(params, dict):
+            continue
+        meta = params.get("_meta")
+        if not isinstance(meta, dict):
+            continue
+        client_info = meta.get(CLIENT_INFO_META_KEY)
+        if not isinstance(client_info, dict):
+            continue
+        name = client_info.get("name")
+        version = client_info.get("version")
+        return (
+            name if isinstance(name, str) else None,
+            version if isinstance(version, str) else None,
+        )
+    return (None, None)
 
 
 # ── the SDK server (stateless; handlers read identity off the request state) ──
@@ -387,6 +437,23 @@ class McpMount:
             if identity is None:
                 return _unauthorized(self.ctx, request, method)
             self._stash_call_state(scope, request, identity, credential)
+            if body is not None:
+                # Phase-3 item 6: every authenticated POST may start a
+                # (windowed) MCP session — the emit key is (agent identity x
+                # clientInfo x window), clientInfo from this request's
+                # ``_meta`` (absent → client unknown, mirroring stdio lane D).
+                # Fire-and-forget; within a window the repeat cost is one
+                # set-membership check, and distinct clientInfo keys are
+                # capped per (agent, window) so varying ``_meta`` per request
+                # cannot mint a row per request.
+                client_name, client_version = request_client_info(body)
+                schedule_mcp_http_session_emit(
+                    self.ctx,
+                    client_name=client_name,
+                    client_version=client_version,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                )
 
         if method == "GET":
             # Never reaches the SDK transport: in stateless mode its

@@ -1,5 +1,18 @@
 """``mcp.session_started`` emission — first authenticated request per MCP session.
 
+Two transports emit this event, sharing one dedupe machine (the seen/in-flight
+sets, the events-table lookup, and the partial unique index on
+``(type, data->>'session_id')``) but with different **keys**:
+
+- **stdio** (lane D, issue #1177): once per session UUID relayed by the Go
+  server — :func:`schedule_mcp_session_emit`, described below.
+- **HTTP** (phase-3 item 6): the daemon-native ``/mcp`` mount sees MCP
+  protocol traffic directly, and under spec 2026-07-28 there is no
+  ``initialize`` and no session id — clientInfo optionally rides each
+  request's ``_meta``. One long-lived daemon serves many identities, so the
+  emit key is once per (agent identity x clientInfo name/version) per
+  **window** — :func:`schedule_mcp_http_session_emit`.
+
 Local-MCP lane D (issue #1177). The stdio MCP server (Go, ``jentic mcp``)
 terminates all MCP protocol traffic; the backend only ever sees plain HTTP
 calls. Two request properties identify an MCP session:
@@ -37,8 +50,12 @@ pattern).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
+import time
+from collections.abc import Coroutine
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 from sqlalchemy.exc import IntegrityError
@@ -72,6 +89,44 @@ _MCP_UA_RE = re.compile(
 #: once-per-session-id path.
 _STDIO_TRANSPORT = "stdio"
 
+#: Transport for the mounted ``/mcp`` app's windowed emit path.
+_HTTP_TRANSPORT = "http"
+
+#: The HTTP emit window (phase-3 item 6): at most one ``mcp.session_started``
+#: per (agent identity x clientInfo name/version) per **6-hour, UTC-aligned
+#: window**. Decision + rationale (recorded in this PR, per the phase doc):
+#:
+#: - The 2-E2 per-agent sessions list is the consumer. Six hours splits a day
+#:   into at most four rows per (agent x client) — enough granularity to see
+#:   "came back this afternoon" reconnects without a busy agent spamming a
+#:   row per request (1h would allow 24/day) or a whole day collapsing into
+#:   one row that hides every reconnect (24h).
+#: - The stdio twin emits once per server process; desktop runtimes restart
+#:   the server a handful of times a working day, so hours-scale windows keep
+#:   the two transports' row volumes comparable in the same list.
+#: - Windows are **fixed UTC buckets** (``epoch // window``), not sliding
+#:   relative to the last emit: the bucket makes the dedupe key deterministic
+#:   across workers, so the existing partial unique index on
+#:   ``(type, data->>'session_id')`` enforces exactly-once per window across
+#:   the whole deployment — a sliding window cannot be expressed as a unique
+#:   key and would multiply events by worker/replica count. Worst case a
+#:   client reconnecting exactly across a bucket boundary yields two rows
+#:   minutes apart; a multi-worker deployment duplicating every window would
+#:   be strictly worse for the sessions list.
+#:
+#: A code constant, deliberately not config: the value tunes a UI list's
+#: granularity, not deployment behaviour.
+MCP_HTTP_WINDOW_SECONDS = 6 * 60 * 60
+
+#: Per-agent cap on *distinct* clientInfo dedupe keys admitted per window
+#: (review M1). Without it an authenticated agent varying ``_meta`` clientInfo
+#: per request mints one events-table row per request for the whole window —
+#: the unique index dedupes identical keys only, never distinct ones. Sixteen
+#: distinct (name, version) pairs per 6-hour bucket is far beyond any legit
+#: multi-client agent (each real client is one pair per version); past the cap
+#: the emit is skipped and a warning logged once per (agent, window).
+MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW = 16
+
 #: Longest UA-derived field persisted to event ``data``. The User-Agent is
 #: untrusted input; without a cap a hostile client could grow every
 #: ``mcp.session_started`` row by kilobytes of junk.
@@ -92,7 +147,24 @@ _SEEN_SESSIONS_MAX = 4096
 #: retries.
 _in_flight: set[str] = set()
 
+#: Cap on concurrently in-flight emits (review M1): each entry holds a
+#: background task with an open admin-DB transaction, so the transient
+#: population must not be attacker-paced. At the cap new emits are *dropped*
+#: (never cleared — clearing would orphan keys whose tasks still run): the key
+#: is not in the seen-set, so a later request retries once the backlog drains.
+#: ``_background_tasks`` adds/removes in lockstep, so this bounds both sets.
+_IN_FLIGHT_MAX = 1024
+
 _background_tasks: set[asyncio.Task[None]] = set()
+
+#: Distinct dedupe keys admitted per (agent, window) on this process (review
+#: M1) — the counter behind :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW`.
+#: A count past the cap is the "warned already" sentinel, so the log fires
+#: once per (agent, window). Bounded with the seen-set clear-on-full pattern:
+#: a clear only re-opens the cap, it never mints duplicate rows (the seen-set
+#: and the unique index still dedupe identical keys).
+_agent_window_counts: dict[tuple[str, int], int] = {}
+_AGENT_WINDOW_COUNTS_MAX = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +229,34 @@ async def record_mcp_session_started(
     treated as "already emitted". Other failures are logged and the seen-set
     is left untouched so the next request for the session retries.
     """
+    await _record_session_started(
+        ctx,
+        session_id=session_id,
+        transport=_STDIO_TRANSPORT,
+        client_name=ua.client_name,
+        client_version=ua.client_version,
+        actor_id=actor_id,
+        actor_type=actor_type,
+    )
+
+
+async def _record_session_started(
+    ctx: Context,
+    *,
+    session_id: str,
+    transport: str,
+    client_name: str | None,
+    client_version: str | None,
+    actor_id: str,
+    actor_type: str,
+) -> None:
+    """The transport-agnostic emit body shared by the stdio and HTTP paths.
+
+    ``session_id`` is whatever the transport's dedupe keys on — the relayed
+    session UUID for stdio, the synthetic per-window key for HTTP. Everything
+    else (table lookup, unique-index race tolerance, seen-set priming) is
+    identical.
+    """
     try:
         async with ctx.admin_db.transaction() as session:
             already_emitted = await EventRepository.exists_with_data_value(
@@ -166,7 +266,7 @@ async def record_mcp_session_started(
                 value=session_id,
             )
             if not already_emitted:
-                client_tag = McpClient.from_client_name(ua.client_name)
+                client_tag = McpClient.from_client_name(client_name)
                 await emit_event(
                     session,
                     type=EventType.MCP_SESSION_STARTED,
@@ -177,9 +277,9 @@ async def record_mcp_session_started(
                     actor_type=actor_type,
                     data={
                         "session_id": session_id,
-                        "transport": _STDIO_TRANSPORT,
-                        "client_name": ua.client_name,
-                        "client_version": ua.client_version,
+                        "transport": transport,
+                        "client_name": client_name,
+                        "client_version": client_version,
                     },
                     tags={client_tag},
                 )
@@ -220,18 +320,161 @@ def schedule_mcp_session_emit(
         return
     if ctx is None:
         return
+    if not _in_flight_has_room():
+        return
 
-    _in_flight.add(sid)
-    task = asyncio.create_task(
+    _spawn_emit(
+        sid,
         record_mcp_session_started(
             ctx, ua=ua, session_id=sid, actor_id=actor_id, actor_type=actor_type
-        )
+        ),
     )
+
+
+def mcp_http_window_key(
+    actor_id: str,
+    client_name: str | None,
+    client_version: str | None,
+    *,
+    now: float | None = None,
+) -> str:
+    """The HTTP emit's synthetic session id: one per (agent x client x window).
+
+    Doubles as the ``data.session_id`` the event persists, so (a) the existing
+    partial unique index enforces the once-per-window guarantee across
+    workers/replicas exactly as it enforces once-per-session-UUID for stdio,
+    and (b) the 2-E2 sessions list — which keys rows on ``session_id`` — shows
+    one meaningful row per reconnect window on a transport that has no
+    protocol session ids at all (spec 2026-07-28 removed them). The clientInfo
+    half is a short digest, not the raw strings: ``_meta`` is untrusted input
+    and the raw name/version already ride the event ``data`` capped. The
+    digest inputs are case-folded (one row per client regardless of case —
+    matching the ``McpClient`` tag's case-insensitive mapping) and
+    length-prefixed before joining, so ``("x\\ny", "z")`` and ``("x", "y\\nz")``
+    can never collide on the join delimiter.
+    """
+    fingerprint = hashlib.sha256(
+        f"{_digest_component(client_name)}\n{_digest_component(client_version)}".encode()
+    ).hexdigest()[:12]
+    window = int((time.time() if now is None else now) // MCP_HTTP_WINDOW_SECONDS)
+    return f"http:{actor_id}:{fingerprint}:{window}"
+
+
+def _digest_component(value: str | None) -> str:
+    """One unambiguous digest-input token: case-folded and length-prefixed."""
+    text = (value or "").casefold()
+    return f"{len(text)}:{text}"
+
+
+def schedule_mcp_http_session_emit(
+    ctx: Context | None,
+    *,
+    client_name: str | None,
+    client_version: str | None,
+    actor_id: str,
+    actor_type: str,
+) -> None:
+    """Fire-and-forget ``mcp.session_started`` from the mounted ``/mcp`` app.
+
+    Called on every authenticated POST the mount serves (phase-3 item 6); the
+    dedupe key is the per-window synthetic id, so within one window the fast
+    path is one set-membership check. clientInfo comes from the request's
+    ``_meta`` (``io.modelcontextprotocol/clientInfo``) and is a SHOULD — an
+    absent one still emits, degrading to client-unknown exactly like the
+    stdio path (``McpClient.OTHER`` on the wire, ``client_name: null`` in
+    ``data``). Values are capped like the UA-derived fields: they persist to
+    event ``data`` and are attacker-controlled. Distinct keys are capped per
+    (agent, window) — :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` — so an
+    agent varying clientInfo per request cannot mint a row per request.
+    """
+    if ctx is None:
+        return
+    name = client_name.strip()[:_UA_FIELD_MAX] if client_name and client_name.strip() else None
+    version = (
+        client_version.strip()[:_UA_FIELD_MAX]
+        if client_version and client_version.strip()
+        else None
+    )
+    now = time.time()
+    sid = mcp_http_window_key(actor_id, name, version, now=now)
+    if sid in _seen_sessions or sid in _in_flight:
+        return
+    if not _in_flight_has_room():
+        return
+    window = int(now // MCP_HTTP_WINDOW_SECONDS)
+    if not _admit_agent_window_key(actor_id, window):
+        return
+
+    _spawn_emit(
+        sid,
+        _record_session_started(
+            ctx,
+            session_id=sid,
+            transport=_HTTP_TRANSPORT,
+            client_name=name,
+            client_version=version,
+            actor_id=actor_id,
+            actor_type=actor_type,
+        ),
+    )
+
+
+def _in_flight_has_room() -> bool:
+    """Drop (never clear) new emits while the in-flight backlog is at the cap.
+
+    The dropped key is not in the seen-set, so a later request retries once
+    the backlog drains — bounded memory at the cost of a delayed row under a
+    flood, never a lost one.
+    """
+    if len(_in_flight) < _IN_FLIGHT_MAX:
+        return True
+    logger.debug("mcp_session_emit_dropped_in_flight_cap", in_flight=len(_in_flight))
+    return False
+
+
+def _admit_agent_window_key(actor_id: str, window: int) -> bool:
+    """Admit one more *distinct* HTTP dedupe key for this (agent, window).
+
+    Callers have already established the key is new (not seen, not in
+    flight). Past :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` the emit is
+    skipped and a warning logged once per (agent, window) — one flooding
+    agent stops minting rows while every other agent's counter is untouched.
+    A retried key (failed emit) re-counts, slightly tightening the cap for
+    that agent — acceptable for a defensive bound.
+    """
+    key = (actor_id, window)
+    count = _agent_window_counts.get(key, 0)
+    if count >= MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW:
+        if count == MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW:
+            logger.warning(
+                "mcp_http_session_client_cap_reached",
+                actor_id=actor_id,
+                window=window,
+                cap=MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW,
+            )
+            _agent_window_counts[key] = count + 1
+        return False
+    if key not in _agent_window_counts and len(_agent_window_counts) >= _AGENT_WINDOW_COUNTS_MAX:
+        _agent_window_counts.clear()
+    _agent_window_counts[key] = count + 1
+    return True
+
+
+def _spawn_emit(sid: str, record: Coroutine[Any, Any, None]) -> None:
+    """Run one emit coroutine in the background, tracked under ``sid``.
+
+    The in-flight add is synchronous, before the task is created, so two
+    concurrent first requests for one dedupe key can never both schedule.
+    Callers must have checked the seen/in-flight sets already (this always
+    schedules the coroutine it is given).
+    """
+    _in_flight.add(sid)
+    task = asyncio.create_task(record)
     _background_tasks.add(task)
 
     def _cleanup(done: asyncio.Task[None]) -> None:
         _background_tasks.discard(done)
-        # On failure the session is not in the seen-set, so dropping the
+        # On failure the key is not in the seen-set, so dropping the
         # in-flight entry lets the next request retry.
         _in_flight.discard(sid)
 

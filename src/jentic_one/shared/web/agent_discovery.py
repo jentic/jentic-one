@@ -65,6 +65,14 @@ MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 #: backend has no dependency on the un-shipped repo-root ``tools`` package.
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 
+#: The app-state attribute :func:`jentic_one.mcp.installer.install_mcp_mount`
+#: stamps on shapes that actually carry the ``/mcp`` transport (control-plane
+#: shapes only — never standalone-auth or the broker, which serve at most the
+#: 3a-4 challenge placeholder). Read by name (not imported) so this shared
+#: module keeps zero dependency on the ``jentic_one.mcp`` layer; the installer
+#: pins the attribute as its own module constant (``_STATE_ATTR``).
+_MCP_MOUNT_STATE_ATTR = "mcp_mount"
+
 _CONTENT_PACKAGE = "jentic_one.shared.web"
 _CONTENT_DIR = "content"
 
@@ -174,15 +182,50 @@ def _render_skills_section(base: str) -> str:
     return "\n".join(lines)
 
 
-def render_llms_txt(base: str, assertion_max_ttl_seconds: int) -> str:
+def render_llms_txt(
+    base: str, assertion_max_ttl_seconds: int, *, mcp_http_enabled: bool = False
+) -> str:
     """Render the llms.txt document for a deployment base URL.
 
     Follows the llms.txt convention (H1 + blockquote summary + link sections)
     and carries the agent onboarding quickstart inline, so an LLM landing on
     ``{base}/llms.txt`` needs no further out-of-band context. The ``## Skills``
     section is computed from the shipped set's frontmatter.
+
+    ``mcp_http_enabled`` advertises the daemon-native ``/mcp`` endpoint
+    (phase-3 item 8): the serving route passes ``server.mcp.enabled`` AND-ed
+    with the surface actually carrying the mount, so a disabled or absent
+    endpoint is never advertised (it answers 404, or the 3a-4 discovery
+    challenge). The enabled arm adds the endpoint paragraph (plus the
+    stdio-bridge escape hatch for stdio-only clients); the disabled arm keeps
+    the exact pre-phase-3 wording.
     """
     skills_section = _render_skills_section(base)
+    if mcp_http_enabled:
+        mcp_paragraph = f"""\
+This deployment is reachable over **MCP** two ways. It serves a **stateless
+Streamable HTTP endpoint at {base}/mcp** (spec revision 2026-07-28):
+configure a URL-based MCP entry pointing at it and authenticate every request
+with `Authorization: Bearer <agent API key or access token>`. Alternatively,
+the local `jentic mcp` stdio server — available in the `jentic` CLI from the
+next release; check `jentic mcp --help` — spawns on the agent machine and
+talks to this deployment with the agent's registered identity. Both expose
+the same discover → execute loop as the CLI tools. Stdio-only MCP runtimes
+can reach {base}/mcp through a stdio↔HTTP bridge such as `mcp-remote` or
+`mcp-proxy` — exact entries in the
+[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md).
+A 401 from the broker host is its auth-gated forward proxy, not a
+second MCP server."""
+    else:
+        mcp_paragraph = """\
+This deployment is reachable over **MCP** via the local `jentic mcp` stdio
+server — available in the `jentic` CLI from the next release; check
+`jentic mcp --help`. It exposes the same discover → execute loop as the CLI
+tools against this deployment. MCP access runs through that local server, not
+an HTTP endpoint here: `/mcp` on the control plane serves no MCP server today —
+it answers either 404 or, on deployments preparing interactive OAuth, a 401
+OAuth discovery challenge — and a 401 from the broker is its auth-gated
+forward proxy, not a hidden MCP server."""
     return f"""\
 # Jentic One
 
@@ -196,14 +239,7 @@ Agents: read the onboarding skill at {base}{SKILL_PATH} first. It is the
 canonical guide to the identity → discover → request access → execute loop —
 the same canonical guide the `jentic` CLI renders into agent runtimes.
 
-This deployment is reachable over **MCP** via the local `jentic mcp` stdio
-server — available in the `jentic` CLI from the next release; check
-`jentic mcp --help`. It exposes the same discover → execute loop as the CLI
-tools against this deployment. MCP access runs through that local server, not
-an HTTP endpoint here: `/mcp` on the control plane serves no MCP server today —
-it answers either 404 or, on deployments preparing interactive OAuth, a 401
-OAuth discovery challenge — and a 401 from the broker is its auth-gated
-forward proxy, not a hidden MCP server.
+{mcp_paragraph}
 
 If your session has `jentic` MCP tools, prefer them; use the `jentic` CLI for
 `setup`/`access` recovery and anything not exposed over MCP. Both surfaces
@@ -293,7 +329,19 @@ def get_agent_discovery_router() -> APIRouter:
     @router.get(LLMS_TXT_WELL_KNOWN_PATH, include_in_schema=False)
     async def llms_txt(request: Request, ctx: Context = Depends(get_ctx)) -> PlainTextResponse:
         base = deployment_base_url(ctx.config.auth, request)
-        body = render_llms_txt(base, ctx.config.auth.assertion_max_ttl_seconds)
+        # The enabled arm is gated on the surface actually carrying the mount,
+        # not on config alone: this router rides every standalone surface
+        # (split deployments), but the real ``/mcp`` transport is installed on
+        # control-plane shapes only. A standalone-auth/broker backend sharing
+        # a config with ``server.mcp.enabled: true`` (and no canonical base
+        # URL) would otherwise advertise ``http://<own-host>/mcp`` — a URL
+        # that very host answers with 404/401.
+        serves_mcp = getattr(request.app.state, _MCP_MOUNT_STATE_ATTR, None) is not None
+        body = render_llms_txt(
+            base,
+            ctx.config.auth.assertion_max_ttl_seconds,
+            mcp_http_enabled=ctx.config.server.mcp.enabled and serves_mcp,
+        )
         return PlainTextResponse(body, media_type=MARKDOWN_MEDIA_TYPE)
 
     return router
