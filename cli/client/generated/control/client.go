@@ -2798,12 +2798,6 @@ type RegistrationStatusResponse struct {
 	TokenEndpointAuthMethod *string   `json:"token_endpoint_auth_method,omitempty"`
 }
 
-// RevokeRequest Revocation endpoint request (form body).
-type RevokeRequest struct {
-	Token         string  `json:"token"`
-	TokenTypeHint *string `json:"token_type_hint,omitempty"`
-}
-
 // RuntimeConfig Optional per-upstream-call overrides.
 type RuntimeConfig struct {
 	Headers     *map[string]string `json:"headers,omitempty"`
@@ -3622,6 +3616,20 @@ type ConsentPageParams struct {
 	Ch string `form:"ch" json:"ch"`
 }
 
+// RevokeEndpointJSONBody defines parameters for RevokeEndpoint.
+type RevokeEndpointJSONBody struct {
+	ClientId      *string `json:"client_id,omitempty"`
+	Token         string  `json:"token"`
+	TokenTypeHint *string `json:"token_type_hint,omitempty"`
+}
+
+// RevokeEndpointFormdataBody defines parameters for RevokeEndpoint.
+type RevokeEndpointFormdataBody struct {
+	ClientId      *string `form:"client_id,omitempty" json:"client_id,omitempty"`
+	Token         string  `form:"token" json:"token"`
+	TokenTypeHint *string `form:"token_type_hint,omitempty" json:"token_type_hint,omitempty"`
+}
+
 // TokenEndpointJSONBody defines parameters for TokenEndpoint.
 type TokenEndpointJSONBody struct {
 	Assertion    *string `json:"assertion,omitempty"`
@@ -3784,7 +3792,10 @@ type IntrospectEndpointJSONRequestBody = IntrospectRequest
 type MintEndpointJSONRequestBody = MintRequest
 
 // RevokeEndpointJSONRequestBody defines body for RevokeEndpoint for application/json ContentType.
-type RevokeEndpointJSONRequestBody = RevokeRequest
+type RevokeEndpointJSONRequestBody RevokeEndpointJSONBody
+
+// RevokeEndpointFormdataRequestBody defines body for RevokeEndpoint for application/x-www-form-urlencoded ContentType.
+type RevokeEndpointFormdataRequestBody RevokeEndpointFormdataBody
 
 // TokenEndpointJSONRequestBody defines body for TokenEndpoint for application/json ContentType.
 type TokenEndpointJSONRequestBody TokenEndpointJSONBody
@@ -6112,7 +6123,25 @@ type ClientInterface interface {
 
 	// RevokeEndpointWithBody Revoke Endpoint
 	//
-	// Revoke a token (RFC 7009). Always returns 200.
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type:
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+	//   rate limited.
+	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
+	//   requires a platform bearer identity; revokes the caller's own token
+	//   (access → that token, refresh → its family). Used by `jentic logout`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6121,12 +6150,57 @@ type ClientInterface interface {
 
 	// RevokeEndpoint Revoke Endpoint
 	//
-	// Revoke a token (RFC 7009). Always returns 200.
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type:
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+	//   rate limited.
+	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
+	//   requires a platform bearer identity; revokes the caller's own token
+	//   (access → that token, refresh → its family). Used by `jentic logout`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeEndpointWithFormdataBody Revoke Endpoint
+	//
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type:
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+	//   rate limited.
+	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
+	//   requires a platform bearer identity; revokes the caller's own token
+	//   (access → that token, refresh → its family). Used by `jentic logout`.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
+	RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TokenEndpointWithBody Token Endpoint
 	//
@@ -9787,7 +9861,25 @@ func (c *Client) MintEndpoint(ctx context.Context, body MintEndpointJSONRequestB
 
 // RevokeEndpointWithBody Revoke Endpoint
 //
-// Revoke a token (RFC 7009). Always returns 200.
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type:
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+//     rate limited.
+//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
+//     requires a platform bearer identity; revokes the caller's own token
+//     (access → that token, refresh → its family). Used by `jentic logout`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9806,13 +9898,68 @@ func (c *Client) RevokeEndpointWithBody(ctx context.Context, contentType string,
 
 // RevokeEndpoint Revoke Endpoint
 //
-// Revoke a token (RFC 7009). Always returns 200.
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type:
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+//     rate limited.
+//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
+//     requires a platform bearer identity; revokes the caller's own token
+//     (access → that token, refresh → its family). Used by `jentic logout`.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeEndpointRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeEndpointWithFormdataBody Revoke Endpoint
+//
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type:
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+//     rate limited.
+//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
+//     requires a platform bearer identity; revokes the caller's own token
+//     (access → that token, refresh → its family). Used by `jentic logout`.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
+func (c *Client) RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeEndpointRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -17706,6 +17853,17 @@ func NewRevokeEndpointRequest(server string, body RevokeEndpointJSONRequestBody)
 	return NewRevokeEndpointRequestWithBody(server, "application/json", bodyReader)
 }
 
+// NewRevokeEndpointRequestWithFormdataBody calls the generic RevokeEndpoint builder with application/x-www-form-urlencoded body
+func NewRevokeEndpointRequestWithFormdataBody(server string, body RevokeEndpointFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewRevokeEndpointRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
 // NewRevokeEndpointRequestWithBody constructs an http.Request for the RevokeEndpoint method, with any body, and a specified content type
 func NewRevokeEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -21620,7 +21778,25 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeEndpointWithBodyWithResponse Revoke Endpoint
 	//
-	// Revoke a token (RFC 7009). Always returns 200.
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type:
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+	//   rate limited.
+	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
+	//   requires a platform bearer identity; revokes the caller's own token
+	//   (access → that token, refresh → its family). Used by `jentic logout`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21629,12 +21805,57 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeEndpointWithResponse Revoke Endpoint
 	//
-	// Revoke a token (RFC 7009). Always returns 200.
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type:
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+	//   rate limited.
+	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
+	//   requires a platform bearer identity; revokes the caller's own token
+	//   (access → that token, refresh → its family). Used by `jentic logout`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithResponse(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
+
+	// RevokeEndpointWithFormdataBodyWithResponse Revoke Endpoint
+	//
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type:
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+	//   rate limited.
+	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
+	//   requires a platform bearer identity; revokes the caller's own token
+	//   (access → that token, refresh → its family). Used by `jentic logout`.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
+	RevokeEndpointWithFormdataBodyWithResponse(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
 
 	// TokenEndpointWithBodyWithResponse Token Endpoint
 	//
@@ -32051,8 +32272,6 @@ type RevokeEndpointHTTPResp struct {
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -32074,11 +32293,6 @@ func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -38805,7 +39019,25 @@ func (c *ClientWithResponses) MintEndpointWithResponse(ctx context.Context, body
 
 // RevokeEndpointWithBodyWithResponse Revoke Endpoint
 //
-// Revoke a token (RFC 7009). Always returns 200.
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type:
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+//     rate limited.
+//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
+//     requires a platform bearer identity; revokes the caller's own token
+//     (access → that token, refresh → its family). Used by `jentic logout`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -38820,13 +39052,64 @@ func (c *ClientWithResponses) RevokeEndpointWithBodyWithResponse(ctx context.Con
 
 // RevokeEndpointWithResponse Revoke Endpoint
 //
-// Revoke a token (RFC 7009). Always returns 200.
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type:
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+//     rate limited.
+//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
+//     requires a platform bearer identity; revokes the caller's own token
+//     (access → that token, refresh → its family). Used by `jentic logout`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error) {
 	rsp, err := c.RevokeEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeEndpointHTTPResp(rsp)
+}
+
+// RevokeEndpointWithFormdataBodyWithResponse Revoke Endpoint
+//
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type:
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+//     rate limited.
+//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
+//     requires a platform bearer identity; revokes the caller's own token
+//     (access → that token, refresh → its family). Used by `jentic logout`.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
+func (c *ClientWithResponses) RevokeEndpointWithFormdataBodyWithResponse(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error) {
+	rsp, err := c.RevokeEndpointWithFormdataBody(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -47938,12 +48221,8 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.ApplicationproblemJSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
+	case rsp.StatusCode == 404:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -47951,6 +48230,9 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case rsp.StatusCode == 429:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail

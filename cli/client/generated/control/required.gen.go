@@ -234,7 +234,6 @@ func (RegisterResponse) RequiredFields() []string {
 	return []string{"client_id", "registration_access_token", "registration_client_uri", "status"}
 }
 func (RegistrationStatusResponse) RequiredFields() []string  { return []string{"client_id", "status"} }
-func (RevokeRequest) RequiredFields() []string               { return []string{"token"} }
 func (SearchLinksResponse) RequiredFields() []string         { return []string{"inspect"} }
 func (SearchRequest) RequiredFields() []string               { return []string{"query"} }
 func (SearchResponse) RequiredFields() []string              { return []string{"data", "has_more"} }

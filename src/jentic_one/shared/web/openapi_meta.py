@@ -831,6 +831,13 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
         # token. It still returns 401 on a missing/invalid/expired RAT
         # (RegistrationAccessDeniedError -> 401), so the 401 response stays.
         "pollStatusEndpoint",
+        # RFC 7009 token revocation (G11): dual-arm client authentication. The
+        # form-encoded arm authenticates by OAuth client_id lineage binding
+        # (public clients, auth method "none" — no platform bearer); the JSON
+        # arm keeps the pre-G11 platform-bearer contract and still 401s on a
+        # bad bearer, so the 401 response stays while the blanket BearerAuth
+        # requirement is dropped.
+        "revokeEndpoint",
     }
 )
 

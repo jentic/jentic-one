@@ -195,6 +195,12 @@ NON_IDENTITY_AUTH: dict[tuple[str, str], str] = {
         "Authenticated with the Registration-Access-Token issued at registration "
         "(RFC 7592), not a platform bearer token."
     ),
+    ("POST", "/oauth/revoke"): (
+        "Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth "
+        "client_id lineage binding (public clients, auth method 'none' — the "
+        "token is revoked only if it was issued to the supplied client_id); "
+        "JSON requests keep the platform bearer-token contract."
+    ),
 }
 
 

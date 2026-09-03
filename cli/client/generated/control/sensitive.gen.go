@@ -28,7 +28,6 @@ var SensitiveFields = map[string][]string{
 	"OAuthClientRotateSecretResponse": []string{"client_secret"},
 	"RedeemInviteRequest":             []string{"invite_token", "password"},
 	"RegisterResponse":                []string{"claim_token", "registration_access_token"},
-	"RevokeRequest":                   []string{"token"},
 	"Sigv4CreateRequest":              []string{"secret_access_key", "session_token"},
 	"Sigv4UpdateRequest":              []string{"secret_access_key", "session_token"},
 	"TokenResponse":                   []string{"access_token", "id_token", "refresh_token"},

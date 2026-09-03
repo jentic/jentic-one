@@ -8,7 +8,6 @@ import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
 import type { OAuthGrantAdminListResponse } from '../models/OAuthGrantAdminListResponse';
-import type { RevokeRequest } from '../models/RevokeRequest';
 import type { TokenResponse } from '../models/TokenResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -329,14 +328,36 @@ export class OAuthService {
     }
     /**
      * Revoke Endpoint
-     * Revoke a token (RFC 7009). Always returns 200.
+     * Revoke a token (RFC 7009). Always returns 200 for valid requests.
+     *
+     * Two client-authentication arms, negotiated on the request content type:
+     *
+     * - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+     * the shape MCP OAuth clients send, G11): `token` + optional
+     * `token_type_hint` + `client_id`. Public (secret-less) clients
+     * authenticate by client_id **lineage binding** — the call revokes
+     * anything only when the token exists and was issued to that `client_id`;
+     * everything else is a 200 no-op (no token-validity oracle). Revoking an
+     * access token kills that token only; revoking a **refresh token is a full
+     * disconnect** — every token of the consent grant AND the grant row itself
+     * die, so reconnecting requires fresh consent (deliberately beyond the
+     * RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+     * is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
+     * rate limited.
+     * - **JSON** (any other content type — the pre-G11 contract, unchanged):
+     * requires a platform bearer identity; revokes the caller's own token
+     * (access → that token, refresh → its family). Used by `jentic logout`.
      * @returns any Successful Response
      * @throws ApiError
      */
     public static revokeEndpoint({
         requestBody,
     }: {
-        requestBody: RevokeRequest,
+        requestBody: {
+            client_id?: (string | null);
+            token: string;
+            token_type_hint?: (string | null);
+        },
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
@@ -346,8 +367,9 @@ export class OAuthService {
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
-                403: `Forbidden`,
+                404: `Form-encoded (RFC 7009) requests only: interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`), so the RFC 7009 arm answers the framework's plain route-not-found 404 (gate state unobservable — same posture as the anonymous DCR door). The bearer-authenticated JSON arm is not gated.`,
                 422: `Unprocessable Entity`,
+                429: `Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (\`Retry-After\` header set).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

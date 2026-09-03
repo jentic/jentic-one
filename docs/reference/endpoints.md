@@ -319,7 +319,7 @@ _Total endpoints: **178**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | POST | `/oauth/introspect` | _any authenticated_ | any | Introspect Endpoint |
-| POST | `/oauth/revoke` | _any authenticated_ | any | Revoke Endpoint |
+| POST | `/oauth/revoke` | _any authenticated_ | any | Revoke Endpoint _(Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.)_ |
 
 ### `oauth-grants`
 
