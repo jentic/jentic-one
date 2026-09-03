@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.38.1](https://github.com/jentic/jentic-one/compare/v0.38.0...v0.38.1) (2026-09-03)
+
+Hotfix release cut from v0.38.0 (not main): the Marketplace users-only
+entitlement gate, so the listing gets the change without shipping main's
+in-flight work. Also the first release published after the ECR repo
+variables moved to the re-listed product's paths.
+
+### Miscellaneous Chores
+
+* **deploy:** gate Marketplace entitlement on the users dimension only ([#1240](https://github.com/jentic/jentic-one/issues/1240))
+
 ## [0.38.0](https://github.com/jentic/jentic-one/compare/v0.37.4...v0.38.0) (2026-09-03)
 
 
