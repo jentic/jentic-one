@@ -1834,6 +1834,9 @@ type InstanceIdentityResponse struct {
 
 	// InstanceId Opaque digest derived from the telemetry instance id — stable per install, but not the telemetry id itself. Null when telemetry has not resolved an id (e.g. telemetry disabled).
 	InstanceId *string `json:"instance_id,omitempty"`
+
+	// McpEnabled Whether this instance serves the daemon-native Streamable HTTP MCP endpoint at /mcp (server.mcp.enabled). Lets clients (notably the UI's agent MCP card) advertise the HTTP transport only when it exists. Not sensitive: the endpoint's enabled state is observable by probing /mcp anyway.
+	McpEnabled *bool `json:"mcp_enabled,omitempty"`
 }
 
 // InstanceIdentityResponseBackend Operator-declared backend locality (server.backend): 'local' for a self-hosted install on the operator's own machine/network, 'remote' for a hosted install run elsewhere. A hint, not an authorization signal; defaults to 'local'.
