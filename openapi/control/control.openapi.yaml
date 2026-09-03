@@ -5011,6 +5011,35 @@ components:
       - status
       title: RegistrationStatusResponse
       type: object
+    RevokeRequest:
+      description: |-
+        Revocation endpoint request (RFC 7009) — JSON or form-encoded.
+
+        ``token`` is required either way. ``token_type_hint``
+        (``access_token``/``refresh_token``) is a lookup-order optimization only —
+        the server falls through both types regardless (RFC 7009 §2.1).
+        ``client_id`` belongs to the form-encoded public-client arm (G11): the
+        secret-less client's lineage binding; ignored on the bearer-authenticated
+        JSON arm, where the platform identity scopes the revocation instead.
+      properties:
+        client_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Client Id
+        token:
+          title: Token
+          type: string
+          x-sensitive: true
+        token_type_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token Type Hint
+      required:
+      - token
+      title: RevokeRequest
+      type: object
     RuntimeConfig:
       description: Optional per-upstream-call overrides.
       properties:
@@ -15842,7 +15871,9 @@ paths:
       description: |-
         Revoke a token (RFC 7009). Always returns 200 for valid requests.
 
-        Two client-authentication arms, negotiated on the request content type:
+        Two client-authentication arms, negotiated on the request content type by
+        ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+        requests never reach it):
 
         - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
           the shape MCP OAuth clients send, G11): `token` + optional
@@ -15854,74 +15885,27 @@ paths:
           disconnect** — every token of the consent grant AND the grant row itself
           die, so reconnecting requires fresh consent (deliberately beyond the
           RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-          is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-          rate limited.
-        - **JSON** (any other content type — the pre-G11 contract, unchanged):
-          requires a platform bearer identity; revokes the caller's own token
-          (access → that token, refresh → its family). Used by `jentic logout`.
+          is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+          64 KiB declared body length, and per-IP rate limited; its errors speak
+          the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+        - **JSON** (any other content type — the pre-G11 contract, byte-identical
+          including 422 shapes): requires a platform bearer identity; revokes the
+          caller's own token (access → that token, refresh → its family). Used by
+          `jentic logout`.
+
+        Revocation residual: a revoked **access** token dies on the control-plane
+        resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+        may honour an already-cached verdict for up to 30 s — the same residual as
+        the UI `:revoke` kill switch and the G10 transfer sweep.
       operationId: revokeEndpoint
       requestBody:
         content:
           application/json:
             schema:
-              description: |-
-                Revocation endpoint request (RFC 7009) — JSON or form-encoded.
-
-                ``token`` is required either way. ``token_type_hint``
-                (``access_token``/``refresh_token``) is a lookup-order optimization only —
-                the server falls through both types regardless (RFC 7009 §2.1).
-                ``client_id`` belongs to the form-encoded public-client arm (G11): the
-                secret-less client's lineage binding; ignored on the bearer-authenticated
-                JSON arm, where the platform identity scopes the revocation instead.
-              properties:
-                client_id:
-                  anyOf:
-                  - type: string
-                  - type: 'null'
-                  title: Client Id
-                token:
-                  title: Token
-                  type: string
-                  x-sensitive: true
-                token_type_hint:
-                  anyOf:
-                  - type: string
-                  - type: 'null'
-                  title: Token Type Hint
-              required:
-              - token
-              title: RevokeRequest
-              type: object
+              $ref: '#/components/schemas/RevokeRequest'
           application/x-www-form-urlencoded:
             schema:
-              description: |-
-                Revocation endpoint request (RFC 7009) — JSON or form-encoded.
-
-                ``token`` is required either way. ``token_type_hint``
-                (``access_token``/``refresh_token``) is a lookup-order optimization only —
-                the server falls through both types regardless (RFC 7009 §2.1).
-                ``client_id`` belongs to the form-encoded public-client arm (G11): the
-                secret-less client's lineage binding; ignored on the bearer-authenticated
-                JSON arm, where the platform identity scopes the revocation instead.
-              properties:
-                client_id:
-                  anyOf:
-                  - type: string
-                  - type: 'null'
-                  title: Client Id
-                token:
-                  title: Token
-                  type: string
-                  x-sensitive: true
-                token_type_hint:
-                  anyOf:
-                  - type: string
-                  - type: 'null'
-                  title: Token Type Hint
-              required:
-              - token
-              title: RevokeRequest
-              type: object
+              $ref: '#/components/schemas/RevokeRequest'
         required: true
       responses:
         '200':
@@ -15930,12 +15914,7 @@ paths:
               schema: {}
           description: Successful Response
         '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
+          description: 'Form-encoded (RFC 7009) requests only: missing `token` (RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): `{"error": "invalid_request", "error_description": "..."}`.'
         '401':
           content:
             application/problem+json:
@@ -15945,6 +15924,8 @@ paths:
           description: Unauthorized
         '404':
           description: 'Form-encoded (RFC 7009) requests only: interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`), so the RFC 7009 arm answers the framework''s plain route-not-found 404 (gate state unobservable — same posture as the anonymous DCR door). The bearer-authenticated JSON arm is not gated.'
+        '413':
+          description: 'Form-encoded (RFC 7009) requests only: declared Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect).'
         '422':
           content:
             application/problem+json:
@@ -15953,7 +15934,7 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Unprocessable Entity
         '429':
-          description: 'Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (`Retry-After` header set).'
+          description: 'Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).'
         '500':
           content:
             application/problem+json:

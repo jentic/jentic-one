@@ -165,6 +165,7 @@ export type { RedeemInviteRequest } from './models/RedeemInviteRequest';
 export type { RegisterRequest } from './models/RegisterRequest';
 export type { RegisterResponse } from './models/RegisterResponse';
 export type { RegistrationStatusResponse } from './models/RegistrationStatusResponse';
+export type { RevokeRequest } from './models/RevokeRequest';
 export type { RuntimeConfig } from './models/RuntimeConfig';
 export type { SearchLinksResponse } from './models/SearchLinksResponse';
 export type { SearchRequest } from './models/SearchRequest';

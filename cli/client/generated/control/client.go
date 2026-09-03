@@ -2798,6 +2798,20 @@ type RegistrationStatusResponse struct {
 	TokenEndpointAuthMethod *string   `json:"token_endpoint_auth_method,omitempty"`
 }
 
+// RevokeRequest Revocation endpoint request (RFC 7009) — JSON or form-encoded.
+//
+// “token“ is required either way. “token_type_hint“
+// (“access_token“/“refresh_token“) is a lookup-order optimization only —
+// the server falls through both types regardless (RFC 7009 §2.1).
+// “client_id“ belongs to the form-encoded public-client arm (G11): the
+// secret-less client's lineage binding; ignored on the bearer-authenticated
+// JSON arm, where the platform identity scopes the revocation instead.
+type RevokeRequest struct {
+	ClientId      *string `json:"client_id,omitempty"`
+	Token         string  `json:"token"`
+	TokenTypeHint *string `json:"token_type_hint,omitempty"`
+}
+
 // RuntimeConfig Optional per-upstream-call overrides.
 type RuntimeConfig struct {
 	Headers     *map[string]string `json:"headers,omitempty"`
@@ -3616,20 +3630,6 @@ type ConsentPageParams struct {
 	Ch string `form:"ch" json:"ch"`
 }
 
-// RevokeEndpointJSONBody defines parameters for RevokeEndpoint.
-type RevokeEndpointJSONBody struct {
-	ClientId      *string `json:"client_id,omitempty"`
-	Token         string  `json:"token"`
-	TokenTypeHint *string `json:"token_type_hint,omitempty"`
-}
-
-// RevokeEndpointFormdataBody defines parameters for RevokeEndpoint.
-type RevokeEndpointFormdataBody struct {
-	ClientId      *string `form:"client_id,omitempty" json:"client_id,omitempty"`
-	Token         string  `form:"token" json:"token"`
-	TokenTypeHint *string `form:"token_type_hint,omitempty" json:"token_type_hint,omitempty"`
-}
-
 // TokenEndpointJSONBody defines parameters for TokenEndpoint.
 type TokenEndpointJSONBody struct {
 	Assertion    *string `json:"assertion,omitempty"`
@@ -3792,10 +3792,10 @@ type IntrospectEndpointJSONRequestBody = IntrospectRequest
 type MintEndpointJSONRequestBody = MintRequest
 
 // RevokeEndpointJSONRequestBody defines body for RevokeEndpoint for application/json ContentType.
-type RevokeEndpointJSONRequestBody RevokeEndpointJSONBody
+type RevokeEndpointJSONRequestBody = RevokeRequest
 
 // RevokeEndpointFormdataRequestBody defines body for RevokeEndpoint for application/x-www-form-urlencoded ContentType.
-type RevokeEndpointFormdataRequestBody RevokeEndpointFormdataBody
+type RevokeEndpointFormdataRequestBody = RevokeRequest
 
 // TokenEndpointJSONRequestBody defines body for TokenEndpoint for application/json ContentType.
 type TokenEndpointJSONRequestBody TokenEndpointJSONBody
@@ -6125,7 +6125,9 @@ type ClientInterface interface {
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
-	// Two client-authentication arms, negotiated on the request content type:
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
 	//
 	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 	//   the shape MCP OAuth clients send, G11): `token` + optional
@@ -6137,11 +6139,18 @@ type ClientInterface interface {
 	//   disconnect** — every token of the consent grant AND the grant row itself
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-	//   rate limited.
-	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
-	//   requires a platform bearer identity; revokes the caller's own token
-	//   (access → that token, refresh → its family). Used by `jentic logout`.
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6152,7 +6161,9 @@ type ClientInterface interface {
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
-	// Two client-authentication arms, negotiated on the request content type:
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
 	//
 	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 	//   the shape MCP OAuth clients send, G11): `token` + optional
@@ -6164,11 +6175,18 @@ type ClientInterface interface {
 	//   disconnect** — every token of the consent grant AND the grant row itself
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-	//   rate limited.
-	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
-	//   requires a platform bearer identity; revokes the caller's own token
-	//   (access → that token, refresh → its family). Used by `jentic logout`.
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6179,7 +6197,9 @@ type ClientInterface interface {
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
-	// Two client-authentication arms, negotiated on the request content type:
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
 	//
 	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 	//   the shape MCP OAuth clients send, G11): `token` + optional
@@ -6191,11 +6211,18 @@ type ClientInterface interface {
 	//   disconnect** — every token of the consent grant AND the grant row itself
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-	//   rate limited.
-	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
-	//   requires a platform bearer identity; revokes the caller's own token
-	//   (access → that token, refresh → its family). Used by `jentic logout`.
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
@@ -9863,7 +9890,9 @@ func (c *Client) MintEndpoint(ctx context.Context, body MintEndpointJSONRequestB
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
-// Two client-authentication arms, negotiated on the request content type:
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
 //
 //   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 //     the shape MCP OAuth clients send, G11): `token` + optional
@@ -9875,11 +9904,18 @@ func (c *Client) MintEndpoint(ctx context.Context, body MintEndpointJSONRequestB
 //     disconnect** — every token of the consent grant AND the grant row itself
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-//     rate limited.
-//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
-//     requires a platform bearer identity; revokes the caller's own token
-//     (access → that token, refresh → its family). Used by `jentic logout`.
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9900,7 +9936,9 @@ func (c *Client) RevokeEndpointWithBody(ctx context.Context, contentType string,
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
-// Two client-authentication arms, negotiated on the request content type:
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
 //
 //   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 //     the shape MCP OAuth clients send, G11): `token` + optional
@@ -9912,11 +9950,18 @@ func (c *Client) RevokeEndpointWithBody(ctx context.Context, contentType string,
 //     disconnect** — every token of the consent grant AND the grant row itself
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-//     rate limited.
-//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
-//     requires a platform bearer identity; revokes the caller's own token
-//     (access → that token, refresh → its family). Used by `jentic logout`.
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9937,7 +9982,9 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
-// Two client-authentication arms, negotiated on the request content type:
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
 //
 //   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 //     the shape MCP OAuth clients send, G11): `token` + optional
@@ -9949,11 +9996,18 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 //     disconnect** — every token of the consent grant AND the grant row itself
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-//     rate limited.
-//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
-//     requires a platform bearer identity; revokes the caller's own token
-//     (access → that token, refresh → its family). Used by `jentic logout`.
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
@@ -21780,7 +21834,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
-	// Two client-authentication arms, negotiated on the request content type:
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
 	//
 	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 	//   the shape MCP OAuth clients send, G11): `token` + optional
@@ -21792,11 +21848,18 @@ type ClientWithResponsesInterface interface {
 	//   disconnect** — every token of the consent grant AND the grant row itself
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-	//   rate limited.
-	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
-	//   requires a platform bearer identity; revokes the caller's own token
-	//   (access → that token, refresh → its family). Used by `jentic logout`.
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21807,7 +21870,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
-	// Two client-authentication arms, negotiated on the request content type:
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
 	//
 	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 	//   the shape MCP OAuth clients send, G11): `token` + optional
@@ -21819,11 +21884,18 @@ type ClientWithResponsesInterface interface {
 	//   disconnect** — every token of the consent grant AND the grant row itself
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-	//   rate limited.
-	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
-	//   requires a platform bearer identity; revokes the caller's own token
-	//   (access → that token, refresh → its family). Used by `jentic logout`.
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21834,7 +21906,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
 	//
-	// Two client-authentication arms, negotiated on the request content type:
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
 	//
 	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 	//   the shape MCP OAuth clients send, G11): `token` + optional
@@ -21846,11 +21920,18 @@ type ClientWithResponsesInterface interface {
 	//   disconnect** — every token of the consent grant AND the grant row itself
 	//   die, so reconnecting requires fresh consent (deliberately beyond the
 	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-	//   rate limited.
-	// - **JSON** (any other content type — the pre-G11 contract, unchanged):
-	//   requires a platform bearer identity; revokes the caller's own token
-	//   (access → that token, refresh → its family). Used by `jentic logout`.
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -32268,8 +32349,6 @@ type RevokeEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
@@ -32283,11 +32362,6 @@ type RevokeEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r RevokeEndpointHTTPResp) GetJSON200() *interface{} {
 	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
@@ -39021,7 +39095,9 @@ func (c *ClientWithResponses) MintEndpointWithResponse(ctx context.Context, body
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
-// Two client-authentication arms, negotiated on the request content type:
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
 //
 //   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 //     the shape MCP OAuth clients send, G11): `token` + optional
@@ -39033,11 +39109,18 @@ func (c *ClientWithResponses) MintEndpointWithResponse(ctx context.Context, body
 //     disconnect** — every token of the consent grant AND the grant row itself
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-//     rate limited.
-//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
-//     requires a platform bearer identity; revokes the caller's own token
-//     (access → that token, refresh → its family). Used by `jentic logout`.
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -39054,7 +39137,9 @@ func (c *ClientWithResponses) RevokeEndpointWithBodyWithResponse(ctx context.Con
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
-// Two client-authentication arms, negotiated on the request content type:
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
 //
 //   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 //     the shape MCP OAuth clients send, G11): `token` + optional
@@ -39066,11 +39151,18 @@ func (c *ClientWithResponses) RevokeEndpointWithBodyWithResponse(ctx context.Con
 //     disconnect** — every token of the consent grant AND the grant row itself
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-//     rate limited.
-//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
-//     requires a platform bearer identity; revokes the caller's own token
-//     (access → that token, refresh → its family). Used by `jentic logout`.
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -39087,7 +39179,9 @@ func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, bo
 //
 // Revoke a token (RFC 7009). Always returns 200 for valid requests.
 //
-// Two client-authentication arms, negotiated on the request content type:
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
 //
 //   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
 //     the shape MCP OAuth clients send, G11): `token` + optional
@@ -39099,11 +39193,18 @@ func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, bo
 //     disconnect** — every token of the consent grant AND the grant row itself
 //     die, so reconnecting requires fresh consent (deliberately beyond the
 //     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
-//     is gated by `server.mcp.oauth.enabled` (plain 404 when off) and per-IP
-//     rate limited.
-//   - **JSON** (any other content type — the pre-G11 contract, unchanged):
-//     requires a platform bearer identity; revokes the caller's own token
-//     (access → that token, refresh → its family). Used by `jentic logout`.
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -48207,12 +48308,8 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.JSON200 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
+	case rsp.StatusCode == 400:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ProblemDetail
@@ -48222,6 +48319,9 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		response.ApplicationproblemJSON401 = &dest
 
 	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
 		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:

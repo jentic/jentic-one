@@ -265,11 +265,14 @@ async def test_unknown_token_is_200(
 async def test_missing_token_is_400_invalid_request(
     integration_context: Context, clean_grants: None, mcp_oauth_enabled: None
 ) -> None:
-    """The endpoint's only 400 (RFC 7009 §2.2.1 invalid_request)."""
+    """The endpoint's only 400 — RFC 6749 §5.2 dialect per RFC 7009 §2.2.1."""
     async with _web_client(_make_app(integration_context)) as client:
         resp = await client.post(_REVOKE_PATH, data={"client_id": _CLIENT_ID})
     assert resp.status_code == 400
-    assert resp.json()["type"] == "invalid_request"
+    assert resp.json() == {
+        "error": "invalid_request",
+        "error_description": "token is required",
+    }
 
 
 # --- the gate + rate limit ------------------------------------------------------

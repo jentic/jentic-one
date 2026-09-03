@@ -74,6 +74,17 @@ def _rate_limit_response_hook(
     return response
 
 
+def record_rate_limited_request(path: str) -> None:
+    """Bump the rate-limited-requests metric for a 429 built outside this handler.
+
+    The RFC 7009 form arm of ``POST /oauth/revoke`` reshapes its 429 into the
+    RFC 6749 §5.2 error dialect in the router (it must not answer Problem
+    Details), bypassing :func:`_rate_limit_response_hook` — this keeps the
+    metric consistent across both paths.
+    """
+    _rate_limit_counter.add(1, {"path": path})
+
+
 service_error_handler = make_service_error_handler(
     _ERROR_MAP, response_hook=_rate_limit_response_hook
 )
