@@ -59,7 +59,8 @@ the same credential shapes every REST route accepts:
 The agent detail page's **MCP tab** renders this snippet pre-filled for each
 agent when the instance serves `/mcp` (the variant is hidden otherwise). The
 same page lists the agent's MCP sessions: on this transport a "session" row
-is emitted once per client per rolling window (hours-scale), since spec
+is emitted once per client per fixed six-hour UTC window (a reconnect
+straddling a window boundary can yield two rows minutes apart), since spec
 2026-07-28 has no protocol-level sessions to count.
 
 Scopes and audit are identical to REST: the endpoint enforces the same
@@ -94,7 +95,12 @@ identity, scopes, and audit per call).
 ```
 
 The env-var indirection is deliberate: several runtimes mangle spaces in
-`args`, and it keeps the key out of the (often synced) config file body.
+`args` (the no-space `Header:${VAR}` form is `mcp-remote`'s own recommended
+workaround), and the expanded header never shows up in `argv`/process
+listings. The key still lives in this config file's `env` block; to keep it
+out of the file entirely, use `mcp-remote`'s `--header-file <path>` (one
+`Name: value` line per header) and store the file outside your synced
+config.
 
 > **Caveat — plaintext `~/.mcp-auth`.** `mcp-remote` is an OAuth-capable
 > bridge and caches any tokens it negotiates **in plaintext under the
@@ -108,9 +114,11 @@ The env-var indirection is deliberate: several runtimes mangle spaces in
 
 [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) in client mode
 bridges a stdio runtime to a Streamable HTTP server — pass
-`--transport=streamablehttp` (its default is SSE) and the bearer as a
-header. The endpoint is stateless server-side, so no session flags are
-needed on the client leg:
+`--transport=streamablehttp` (its default is SSE) and the bearer via the
+`API_ACCESS_TOKEN` environment variable, which `mcp-proxy` reads natively
+and sends as `Authorization: Bearer <token>` (keeping the key out of `argv`
+and process listings, like the `mcp-remote` recipe above). The endpoint is
+stateless server-side, so no session flags are needed on the client leg:
 
 ```json
 {
@@ -119,9 +127,9 @@ needed on the client leg:
       "command": "mcp-proxy",
       "args": [
         "--transport=streamablehttp",
-        "--headers", "Authorization", "Bearer <agent-api-key>",
         "https://your-jentic-host/mcp"
-      ]
+      ],
+      "env": { "API_ACCESS_TOKEN": "<agent-api-key>" }
     }
   }
 }

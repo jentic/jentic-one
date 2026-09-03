@@ -34,9 +34,11 @@ def _clear_seen_sessions():
     """Isolate the module-level dedupe state per test."""
     mcp_session._seen_sessions.clear()
     mcp_session._in_flight.clear()
+    mcp_session._agent_window_counts.clear()
     yield
     mcp_session._seen_sessions.clear()
     mcp_session._in_flight.clear()
+    mcp_session._agent_window_counts.clear()
 
 
 def _fake_ctx() -> MagicMock:
@@ -456,6 +458,30 @@ def test_http_window_key_is_deterministic_and_axis_sensitive() -> None:
     )
 
 
+def test_http_window_key_join_is_collision_free() -> None:
+    """The name/version join is unambiguous: an embedded delimiter in one
+    field can never make two distinct (name, version) pairs share a key."""
+    assert mcp_http_window_key("agnt_a", "x\ny", "z", now=_FROZEN_NOW) != mcp_http_window_key(
+        "agnt_a", "x", "y\nz", now=_FROZEN_NOW
+    )
+    # The length prefix itself cannot be spoofed by a crafted field value.
+    assert mcp_http_window_key("agnt_a", "1:a", "b", now=_FROZEN_NOW) != mcp_http_window_key(
+        "agnt_a", "1", ":ab", now=_FROZEN_NOW
+    )
+
+
+def test_http_window_key_case_folds_client_info() -> None:
+    """The key case-folds like the McpClient tag: one row per client per
+    window regardless of the case the client stamps its name/version with."""
+    assert mcp_http_window_key("agnt_a", "Cursor", "1.0", now=_FROZEN_NOW) == mcp_http_window_key(
+        "agnt_a", "cursor", "1.0", now=_FROZEN_NOW
+    )
+    # The agent axis is an opaque identifier — never folded.
+    assert mcp_http_window_key("agnt_A", "cursor", "1.0", now=_FROZEN_NOW) != mcp_http_window_key(
+        "agnt_a", "cursor", "1.0", now=_FROZEN_NOW
+    )
+
+
 @pytest.mark.asyncio
 async def test_http_emit_carries_transport_and_windowed_session_id() -> None:
     """The HTTP event: synthetic per-window session id, transport http, full
@@ -603,3 +629,125 @@ async def test_http_window_keys_ride_the_bounded_seen_set() -> None:
     assert mcp_http_window_key("agnt_abc", "cursor", "0.42", now=_FROZEN_NOW) in (
         mcp_session._seen_sessions
     )
+
+
+# --- per-agent distinct-key cap (review M1) --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_http_per_agent_distinct_key_cap_enforced() -> None:
+    """An agent varying clientInfo per request mints at most the capped number
+    of rows per window — beyond that, emission is skipped (and the row-per-
+    request minting the review flagged is impossible)."""
+    cap = mcp_session.MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        for i in range(cap + 10):
+            _schedule_http(_fake_ctx(), client_name=f"flood-client-{i}")
+        await _run_scheduled_tasks()
+
+    assert emit.await_count == cap
+    # Already-admitted keys keep short-circuiting on the seen-set — the cap
+    # never blocks a legitimately emitted client's repeats.
+    with _freeze_time(), exists_p, emit_p as emit_again:
+        _schedule_http(_fake_ctx(), client_name="flood-client-0")
+        await _run_scheduled_tasks()
+    assert emit_again.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_http_cap_is_per_agent_not_global() -> None:
+    """One flooding agent exhausting its cap leaves every other agent's
+    emission untouched."""
+    cap = mcp_session.MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        for i in range(cap + 5):
+            _schedule_http(_fake_ctx(), actor_id="agnt_flood", client_name=f"variant-{i}")
+        _schedule_http(_fake_ctx(), actor_id="agnt_ok", client_name="cursor")
+        await _run_scheduled_tasks()
+
+    actors = [c.kwargs["actor_id"] for c in emit.call_args_list]
+    assert actors.count("agnt_flood") == cap
+    assert actors.count("agnt_ok") == 1
+
+
+@pytest.mark.asyncio
+async def test_http_legit_multi_client_agent_under_cap_unaffected() -> None:
+    """A real agent with a handful of distinct clients emits one row each —
+    the cap only exists for pathological per-request variation."""
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        for name in ("cursor", "claude", "codex"):
+            _schedule_http(_fake_ctx(), client_name=name)
+        await _run_scheduled_tasks()
+
+    assert emit.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_http_cap_resets_on_the_next_window() -> None:
+    """The cap is per (agent, window): a new UTC bucket admits the agent again."""
+    cap = mcp_session.MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW
+    exists_p, emit_p = _patch_emit()
+    with exists_p, emit_p as emit:
+        with _freeze_time(_FROZEN_NOW):
+            for i in range(cap + 1):
+                _schedule_http(_fake_ctx(), client_name=f"variant-{i}")
+            await _run_scheduled_tasks()
+        with _freeze_time(_FROZEN_NOW + MCP_HTTP_WINDOW_SECONDS):
+            _schedule_http(_fake_ctx(), client_name="cursor")
+            await _run_scheduled_tasks()
+
+    assert emit.await_count == cap + 1
+
+
+def test_http_cap_logs_once_per_agent_window() -> None:
+    """Crossing the cap logs a single warning; further skips are silent."""
+    cap = mcp_session.MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW
+    window = int(_FROZEN_NOW // MCP_HTTP_WINDOW_SECONDS)
+    for _ in range(cap):
+        assert mcp_session._admit_agent_window_key("agnt_abc", window)
+    with patch.object(mcp_session.logger, "warning") as warn:
+        assert not mcp_session._admit_agent_window_key("agnt_abc", window)
+        assert not mcp_session._admit_agent_window_key("agnt_abc", window)
+    warn.assert_called_once()
+
+
+def test_agent_window_counts_are_bounded() -> None:
+    """The per-(agent, window) counter dict rides the seen-set clear-on-full
+    pattern — a long-lived process fed unique agents can't grow it unbounded."""
+    window = int(_FROZEN_NOW // MCP_HTTP_WINDOW_SECONDS)
+    for i in range(mcp_session._AGENT_WINDOW_COUNTS_MAX):
+        mcp_session._agent_window_counts[(f"agnt_{i}", window)] = 1
+    assert mcp_session._admit_agent_window_key("agnt_one_more", window)
+    # The full dict was cleared before admitting the new entry.
+    assert mcp_session._agent_window_counts == {("agnt_one_more", window): 1}
+
+
+@pytest.mark.asyncio
+async def test_in_flight_cap_drops_new_emits_on_both_transports() -> None:
+    """At the in-flight cap new emits are dropped (bounded memory), never
+    cleared — the key stays retryable once the backlog drains."""
+    for i in range(mcp_session._IN_FLIGHT_MAX):
+        mcp_session._in_flight.add(f"backlog-{i}")
+
+    exists_p, emit_p = _patch_emit()
+    with _freeze_time(), exists_p, emit_p as emit:
+        _schedule_http(_fake_ctx())
+        with patch(
+            "jentic_one.shared.events.mcp_session.record_mcp_session_started",
+            new_callable=AsyncMock,
+        ) as stdio_record:
+            _schedule(_fake_ctx())
+        await _run_scheduled_tasks()
+
+    emit.assert_not_awaited()
+    stdio_record.assert_not_awaited()
+    assert not mcp_session._background_tasks
+    # Nothing was remembered, so both keys retry once the backlog drains.
+    mcp_session._in_flight.clear()
+    with _freeze_time(), exists_p, emit_p as emit_retry:
+        _schedule_http(_fake_ctx())
+        await _run_scheduled_tasks()
+    emit_retry.assert_awaited_once()

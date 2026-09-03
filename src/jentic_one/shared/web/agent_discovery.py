@@ -65,6 +65,14 @@ MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 #: backend has no dependency on the un-shipped repo-root ``tools`` package.
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 
+#: The app-state attribute :func:`jentic_one.mcp.installer.install_mcp_mount`
+#: stamps on shapes that actually carry the ``/mcp`` transport (control-plane
+#: shapes only — never standalone-auth or the broker, which serve at most the
+#: 3a-4 challenge placeholder). Read by name (not imported) so this shared
+#: module keeps zero dependency on the ``jentic_one.mcp`` layer; the installer
+#: pins the attribute as its own module constant (``_STATE_ATTR``).
+_MCP_MOUNT_STATE_ATTR = "mcp_mount"
+
 _CONTENT_PACKAGE = "jentic_one.shared.web"
 _CONTENT_DIR = "content"
 
@@ -184,11 +192,13 @@ def render_llms_txt(
     ``{base}/llms.txt`` needs no further out-of-band context. The ``## Skills``
     section is computed from the shipped set's frontmatter.
 
-    ``mcp_http_enabled`` mirrors ``server.mcp.enabled`` (phase-3 item 8): with
-    the daemon-native ``/mcp`` endpoint on, the MCP paragraph advertises it
-    (plus the stdio-bridge escape hatch for stdio-only clients); with it off,
-    the document keeps the exact pre-phase-3 wording — a disabled endpoint is
-    never advertised (it answers 404, or the 3a-4 discovery challenge).
+    ``mcp_http_enabled`` advertises the daemon-native ``/mcp`` endpoint
+    (phase-3 item 8): the serving route passes ``server.mcp.enabled`` AND-ed
+    with the surface actually carrying the mount, so a disabled or absent
+    endpoint is never advertised (it answers 404, or the 3a-4 discovery
+    challenge). The enabled arm adds the endpoint paragraph (plus the
+    stdio-bridge escape hatch for stdio-only clients); the disabled arm keeps
+    the exact pre-phase-3 wording.
     """
     skills_section = _render_skills_section(base)
     if mcp_http_enabled:
@@ -319,10 +329,18 @@ def get_agent_discovery_router() -> APIRouter:
     @router.get(LLMS_TXT_WELL_KNOWN_PATH, include_in_schema=False)
     async def llms_txt(request: Request, ctx: Context = Depends(get_ctx)) -> PlainTextResponse:
         base = deployment_base_url(ctx.config.auth, request)
+        # The enabled arm is gated on the surface actually carrying the mount,
+        # not on config alone: this router rides every standalone surface
+        # (split deployments), but the real ``/mcp`` transport is installed on
+        # control-plane shapes only. A standalone-auth/broker backend sharing
+        # a config with ``server.mcp.enabled: true`` (and no canonical base
+        # URL) would otherwise advertise ``http://<own-host>/mcp`` — a URL
+        # that very host answers with 404/401.
+        serves_mcp = getattr(request.app.state, _MCP_MOUNT_STATE_ATTR, None) is not None
         body = render_llms_txt(
             base,
             ctx.config.auth.assertion_max_ttl_seconds,
-            mcp_http_enabled=ctx.config.server.mcp.enabled,
+            mcp_http_enabled=ctx.config.server.mcp.enabled and serves_mcp,
         )
         return PlainTextResponse(body, media_type=MARKDOWN_MEDIA_TYPE)
 

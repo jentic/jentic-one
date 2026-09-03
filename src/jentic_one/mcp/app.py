@@ -443,7 +443,9 @@ class McpMount:
                 # clientInfo x window), clientInfo from this request's
                 # ``_meta`` (absent → client unknown, mirroring stdio lane D).
                 # Fire-and-forget; within a window the repeat cost is one
-                # set-membership check.
+                # set-membership check, and distinct clientInfo keys are
+                # capped per (agent, window) so varying ``_meta`` per request
+                # cannot mint a row per request.
                 client_name, client_version = request_client_info(body)
                 schedule_mcp_http_session_emit(
                     self.ctx,

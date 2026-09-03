@@ -118,6 +118,15 @@ _HTTP_TRANSPORT = "http"
 #: granularity, not deployment behaviour.
 MCP_HTTP_WINDOW_SECONDS = 6 * 60 * 60
 
+#: Per-agent cap on *distinct* clientInfo dedupe keys admitted per window
+#: (review M1). Without it an authenticated agent varying ``_meta`` clientInfo
+#: per request mints one events-table row per request for the whole window —
+#: the unique index dedupes identical keys only, never distinct ones. Sixteen
+#: distinct (name, version) pairs per 6-hour bucket is far beyond any legit
+#: multi-client agent (each real client is one pair per version); past the cap
+#: the emit is skipped and a warning logged once per (agent, window).
+MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW = 16
+
 #: Longest UA-derived field persisted to event ``data``. The User-Agent is
 #: untrusted input; without a cap a hostile client could grow every
 #: ``mcp.session_started`` row by kilobytes of junk.
@@ -138,7 +147,24 @@ _SEEN_SESSIONS_MAX = 4096
 #: retries.
 _in_flight: set[str] = set()
 
+#: Cap on concurrently in-flight emits (review M1): each entry holds a
+#: background task with an open admin-DB transaction, so the transient
+#: population must not be attacker-paced. At the cap new emits are *dropped*
+#: (never cleared — clearing would orphan keys whose tasks still run): the key
+#: is not in the seen-set, so a later request retries once the backlog drains.
+#: ``_background_tasks`` adds/removes in lockstep, so this bounds both sets.
+_IN_FLIGHT_MAX = 1024
+
 _background_tasks: set[asyncio.Task[None]] = set()
+
+#: Distinct dedupe keys admitted per (agent, window) on this process (review
+#: M1) — the counter behind :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW`.
+#: A count past the cap is the "warned already" sentinel, so the log fires
+#: once per (agent, window). Bounded with the seen-set clear-on-full pattern:
+#: a clear only re-opens the cap, it never mints duplicate rows (the seen-set
+#: and the unique index still dedupe identical keys).
+_agent_window_counts: dict[tuple[str, int], int] = {}
+_AGENT_WINDOW_COUNTS_MAX = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +320,8 @@ def schedule_mcp_session_emit(
         return
     if ctx is None:
         return
+    if not _in_flight_has_room():
+        return
 
     _spawn_emit(
         sid,
@@ -319,13 +347,23 @@ def mcp_http_window_key(
     one meaningful row per reconnect window on a transport that has no
     protocol session ids at all (spec 2026-07-28 removed them). The clientInfo
     half is a short digest, not the raw strings: ``_meta`` is untrusted input
-    and the raw name/version already ride the event ``data`` capped.
+    and the raw name/version already ride the event ``data`` capped. The
+    digest inputs are case-folded (one row per client regardless of case —
+    matching the ``McpClient`` tag's case-insensitive mapping) and
+    length-prefixed before joining, so ``("x\\ny", "z")`` and ``("x", "y\\nz")``
+    can never collide on the join delimiter.
     """
     fingerprint = hashlib.sha256(
-        f"{client_name or ''}\n{client_version or ''}".encode()
+        f"{_digest_component(client_name)}\n{_digest_component(client_version)}".encode()
     ).hexdigest()[:12]
     window = int((time.time() if now is None else now) // MCP_HTTP_WINDOW_SECONDS)
     return f"http:{actor_id}:{fingerprint}:{window}"
+
+
+def _digest_component(value: str | None) -> str:
+    """One unambiguous digest-input token: case-folded and length-prefixed."""
+    text = (value or "").casefold()
+    return f"{len(text)}:{text}"
 
 
 def schedule_mcp_http_session_emit(
@@ -345,7 +383,9 @@ def schedule_mcp_http_session_emit(
     absent one still emits, degrading to client-unknown exactly like the
     stdio path (``McpClient.OTHER`` on the wire, ``client_name: null`` in
     ``data``). Values are capped like the UA-derived fields: they persist to
-    event ``data`` and are attacker-controlled.
+    event ``data`` and are attacker-controlled. Distinct keys are capped per
+    (agent, window) — :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` — so an
+    agent varying clientInfo per request cannot mint a row per request.
     """
     if ctx is None:
         return
@@ -355,8 +395,14 @@ def schedule_mcp_http_session_emit(
         if client_version and client_version.strip()
         else None
     )
-    sid = mcp_http_window_key(actor_id, name, version)
+    now = time.time()
+    sid = mcp_http_window_key(actor_id, name, version, now=now)
     if sid in _seen_sessions or sid in _in_flight:
+        return
+    if not _in_flight_has_room():
+        return
+    window = int(now // MCP_HTTP_WINDOW_SECONDS)
+    if not _admit_agent_window_key(actor_id, window):
         return
 
     _spawn_emit(
@@ -371,6 +417,47 @@ def schedule_mcp_http_session_emit(
             actor_type=actor_type,
         ),
     )
+
+
+def _in_flight_has_room() -> bool:
+    """Drop (never clear) new emits while the in-flight backlog is at the cap.
+
+    The dropped key is not in the seen-set, so a later request retries once
+    the backlog drains — bounded memory at the cost of a delayed row under a
+    flood, never a lost one.
+    """
+    if len(_in_flight) < _IN_FLIGHT_MAX:
+        return True
+    logger.debug("mcp_session_emit_dropped_in_flight_cap", in_flight=len(_in_flight))
+    return False
+
+
+def _admit_agent_window_key(actor_id: str, window: int) -> bool:
+    """Admit one more *distinct* HTTP dedupe key for this (agent, window).
+
+    Callers have already established the key is new (not seen, not in
+    flight). Past :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` the emit is
+    skipped and a warning logged once per (agent, window) — one flooding
+    agent stops minting rows while every other agent's counter is untouched.
+    A retried key (failed emit) re-counts, slightly tightening the cap for
+    that agent — acceptable for a defensive bound.
+    """
+    key = (actor_id, window)
+    count = _agent_window_counts.get(key, 0)
+    if count >= MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW:
+        if count == MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW:
+            logger.warning(
+                "mcp_http_session_client_cap_reached",
+                actor_id=actor_id,
+                window=window,
+                cap=MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW,
+            )
+            _agent_window_counts[key] = count + 1
+        return False
+    if key not in _agent_window_counts and len(_agent_window_counts) >= _AGENT_WINDOW_COUNTS_MAX:
+        _agent_window_counts.clear()
+    _agent_window_counts[key] = count + 1
+    return True
 
 
 def _spawn_emit(sid: str, record: Coroutine[Any, Any, None]) -> None:
