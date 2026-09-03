@@ -383,26 +383,17 @@ def _make_pre_g11_client(*, verify_token: object = _verify_ok) -> TestClient:
     return TestClient(app)
 
 
-_JSON_ARM_PROBE_MATRIX: list[tuple[str, dict[str, object]]] = [
-    ("valid body", {"json": {"token": "at_x"}}),
-    ("valid body + hint", {"json": {"token": "rt_x", "token_type_hint": "refresh_token"}}),
-    ("missing token field", {"json": {"not_token": "x"}}),
-    ("token wrong type", {"json": {"token": 5}}),
-    ("null token", {"json": {"token": None}}),
-    (
-        "malformed json",
-        {"content": b"{nope", "headers": {"Content-Type": "application/json"}},
-    ),
-    ("empty body", {"content": b"", "headers": {"Content-Type": "application/json"}}),
-    (
-        "json array body",
-        {"content": b"[1, 2]", "headers": {"Content-Type": "application/json"}},
-    ),
-    (
-        "text/plain json bytes",
-        {"content": b'{"token": "at_x"}', "headers": {"Content-Type": "text/plain"}},
-    ),
-    ("no content-type json bytes", {"content": b'{"token": "at_x"}'}),
+_JSON_ARM_PROBE_MATRIX: list[tuple[str, dict[str, object] | None, bytes | None, dict[str, str]]] = [
+    ("valid body", {"token": "at_x"}, None, {}),
+    ("valid body + hint", {"token": "rt_x", "token_type_hint": "refresh_token"}, None, {}),
+    ("missing token field", {"not_token": "x"}, None, {}),
+    ("token wrong type", {"token": 5}, None, {}),
+    ("null token", {"token": None}, None, {}),
+    ("malformed json", None, b"{nope", {"Content-Type": "application/json"}),
+    ("empty body", None, b"", {"Content-Type": "application/json"}),
+    ("json array body", None, b"[1, 2]", {"Content-Type": "application/json"}),
+    ("text/plain json bytes", None, b'{"token": "at_x"}', {"Content-Type": "text/plain"}),
+    ("no content-type json bytes", None, b'{"token": "at_x"}', {}),
 ]
 
 
@@ -416,13 +407,16 @@ def test_json_arm_matches_pre_g11_route_byte_for_byte(mock_token_svc_cls: MagicM
         for bearer_name, verify in (("good bearer", _verify_ok), ("bad bearer", _verify_reject)):
             legacy = _make_pre_g11_client(verify_token=verify)
             current = _make_client(oauth_enabled=gate, verify_token=verify)
-            for shape_name, kwargs in _JSON_ARM_PROBE_MATRIX:
-                headers = dict(kwargs.get("headers", {}))  # type: ignore[arg-type]
+            for shape_name, json_body, content, extra_headers in _JSON_ARM_PROBE_MATRIX:
+                headers = dict(extra_headers)
                 if bearer_name == "good bearer":
                     headers["Authorization"] = "Bearer at_valid"
-                call = {k: v for k, v in kwargs.items() if k != "headers"}
-                old = legacy.post("/oauth/revoke", headers=headers, **call)  # type: ignore[arg-type]
-                new = current.post("/oauth/revoke", headers=headers, **call)  # type: ignore[arg-type]
+                if json_body is not None:
+                    old = legacy.post("/oauth/revoke", json=json_body, headers=headers)
+                    new = current.post("/oauth/revoke", json=json_body, headers=headers)
+                else:
+                    old = legacy.post("/oauth/revoke", content=content, headers=headers)
+                    new = current.post("/oauth/revoke", content=content, headers=headers)
                 label = f"{shape_name} / {bearer_name} / gate={'on' if gate else 'off'}"
                 assert new.status_code == old.status_code, label
                 assert new.content == old.content, label
