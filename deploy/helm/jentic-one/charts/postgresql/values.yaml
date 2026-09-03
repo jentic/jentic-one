@@ -6,7 +6,7 @@ image:
   registry: docker.io
   # For registries that embed a namespace (e.g. the AWS Marketplace mirror),
   # keep the split form — registry "709825985650.dkr.ecr.us-east-1.amazonaws.com",
-  # repository "jentic/jentic-one-psql". (Do NOT blank the registry and stuff
+  # repository "jentic/one-psql". (Do NOT blank the registry and stuff
   # the full path into repository: Helm renders it fine, but AWS Marketplace's
   # chart validator composes refs from these exact keys and chokes on an
   # empty registry.)

@@ -1125,9 +1125,14 @@ values are sensitive; the trust policy below is what protects the role):
 | Variable | Value |
 | -------- | ----- |
 | `MARKETPLACE_ECR_ROLE_ARN` | The IAM role below, e.g. `arn:aws:iam::<seller-account-id>:role/jentic-one-marketplace-publish` |
-| `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app` |
-| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql` — the bundled-DB mirror of the official `postgres` image (the first-party `charts/postgresql` subchart). Needs the repo's ARN in the role policy below |
-| `MARKETPLACE_ECR_CHART` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one` — the Helm chart as an OCI artifact (the listing's deployment-template URI). The final path segment **must equal the chart name** (`jentic-one`): `helm push` derives it from `Chart.yaml` |
+| `MARKETPLACE_ECR_IMAGE` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-app` |
+| `MARKETPLACE_ECR_POSTGRES` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-psql` — the bundled-DB mirror of the official `postgres` image (the first-party `charts/postgresql` subchart). Needs the repo's ARN in the role policy below |
+| `MARKETPLACE_ECR_CHART` | `709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one` — the Helm chart as an OCI artifact (the listing's deployment-template URI). The final path segment **must equal the chart name** (`jentic-one`): `helm push` derives it from `Chart.yaml` |
+
+These paths belong to the re-listed product (`prod-cwonumew2jeyo`, created
+2026-09-03 — a fresh listing was the only way to fix the public offer's
+locked pricing terms); the original listing's `jentic/jentic-one-*` repos are
+retired with it.
 
 Once set:
 
@@ -1249,9 +1254,9 @@ portal (`aws-marketplace` actions may be required by newer portal setups; add
         "ecr:DescribeImages"
       ],
       "Resource": [
-        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-app",
-        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one-psql",
-        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/jentic-one"
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/one-app",
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/one-psql",
+        "arn:aws:ecr:us-east-1:709825985650:repository/jentic/charts/jentic-one"
       ]
     }
   ]

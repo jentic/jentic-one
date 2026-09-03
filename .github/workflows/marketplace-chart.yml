@@ -16,7 +16,7 @@
 # publishing") are set, so forks and pre-listing releases skip cleanly:
 #   MARKETPLACE_ECR_ROLE_ARN — IAM role trusting GitHub's OIDC provider
 #   MARKETPLACE_ECR_CHART    — full chart repo URI from the Marketplace portal
-#                              (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one).
+#                              (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one).
 #                              The final path segment MUST equal the chart
 #                              name (`helm push` derives it from Chart.yaml).
 #

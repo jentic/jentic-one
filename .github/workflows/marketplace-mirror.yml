@@ -13,7 +13,7 @@
 # skip cleanly):
 #   MARKETPLACE_ECR_ROLE_ARN     — IAM role trusting GitHub's OIDC provider
 #   MARKETPLACE_ECR_POSTGRES     — full mirror repo URI from the portal
-#                                  (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-psql)
+#                                  (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-psql)
 #
 # Tag contract: pushes the source tag (matching the Helm values pin) and the
 # source digest as a tag suffix — tags float, digests pin, same as the app
