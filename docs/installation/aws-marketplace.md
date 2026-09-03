@@ -77,7 +77,7 @@ aws ecr get-login-password --region us-east-1 \
     709825985650.dkr.ecr.us-east-1.amazonaws.com
 
 helm install jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
   --version <version> --namespace jentic-one --create-namespace \
   --set global.serviceAccount.name=jentic-one \
   --set global.awsmp.licenseSecret=<from-launch-page>
@@ -95,7 +95,7 @@ mismatch (including `localhost` vs `127.0.0.1`) fails with `invalid_grant`
 
 ```bash
 helm upgrade jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
   --version <version> -n jentic-one --reuse-values \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=https://jentic.example.com
 ```
@@ -147,7 +147,7 @@ overrides:
 
 ```bash
 helm upgrade jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
   --version <new-version> -n jentic-one --reset-values \
   --set global.serviceAccount.name=jentic-one \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=<url>
