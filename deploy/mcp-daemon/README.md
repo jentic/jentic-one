@@ -24,6 +24,9 @@ holding keys — the init system respawns it on the next connection.
 # 1. A dedicated service user; its home holds the context config + keys.
 sudo useradd --system --home-dir /var/lib/jentic-mcp --create-home \
     --shell /usr/sbin/nologin _jentic-mcp
+# useradd honors login.defs (HOME_MODE is 0755 on Debian-family) — make the
+# key custody structural, not dependent on per-file modes alone:
+sudo chmod 700 /var/lib/jentic-mcp
 
 # 2. Provision the context the daemon will serve (as the service user).
 sudo -u _jentic-mcp XDG_CONFIG_HOME=/var/lib/jentic-mcp/config \
@@ -51,7 +54,8 @@ check are independent layers, and both must pass.
 ## Install (macOS, launchd)
 
 ```sh
-sudo sysadminctl -addAccount _jentic-mcp ... # or dscl; a role account with its own home
+sudo sysadminctl -addUser _jentic-mcp ... # a role account with its own home (or dscl)
+sudo chmod 700 /var/lib/jentic-mcp        # or wherever the account's home landed
 sudo cp launchd/com.jentic.mcp.plist /Library/LaunchDaemons/
 # Edit the marked EDIT lines (binary path, context, allowed uids), then:
 sudo launchctl bootstrap system /Library/LaunchDaemons/com.jentic.mcp.plist
@@ -61,6 +65,17 @@ launchd holds the socket at `/var/run/jentic-mcp.sock` and spawns the daemon
 on the first connection in inetd **wait** mode (the daemon adopts the
 listening socket on fd 0 via `--from-launchd`); after the idle-exit, launchd
 resumes holding it.
+
+**The macOS socket is world-connectable (`SockPathMode` 0666) by design.**
+launchd creates the socket as `root:wheel` before switching to `UserName`,
+and `launchd.plist(5)` offers no `SockPathOwner`/`SockPathGroup` — a 0660
+socket would admit nobody but root. So on macOS there is **no filesystem
+permission layer**: the daemon's per-connection peer-credential check
+(`--allow-uid`) is the gate, and it fails closed for every uid off the
+list. That is a sound posture — the peer-cred check is kernel-asserted and
+evaluated on every connection — but it means the `--allow-uid` list is the
+ONLY thing standing between a local uid and the daemon; keep it tight. (On
+Linux, `SocketGroup` + 0660 remains an additional, independent layer.)
 
 ## Key custody
 

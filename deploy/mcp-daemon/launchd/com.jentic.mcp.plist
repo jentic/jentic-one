@@ -52,7 +52,16 @@
 			<key>SockPathName</key>
 			<string>/var/run/jentic-mcp.sock</string>
 			<key>SockPathMode</key>
-			<integer>432</integer><!-- 0660: group-connectable; peer-uid check still applies -->
+			<integer>438</integer>
+			<!-- 438 = 0666, and that is deliberate: launchd creates the
+			     socket as root:wheel BEFORE setuid-ing to UserName, and
+			     launchd.plist(5) has no SockPathOwner/SockPathGroup key —
+			     a 0660 socket would be connectable by nobody but root,
+			     locking out the very desktop uids this daemon serves. On
+			     macOS the filesystem-mode layer therefore does not exist;
+			     the gate is the daemon's per-connection peer-credential
+			     check (LOCAL_PEERCRED against the "allow-uid" list above),
+			     which fails closed on every connection it cannot verify. -->
 		</dict>
 	</dict>
 

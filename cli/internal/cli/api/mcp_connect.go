@@ -304,7 +304,9 @@ func (r *mcpRelay) writeErrorFor(frame []byte, message string) {
 
 // mcpConnectE is the `--connect` entrypoint: build the pump against the
 // resolved target and run it on this process's stdio until the client hangs
-// up. It deliberately touches no config, no state dir, and no key material.
+// up. It deliberately touches no config, no state dir, and no key material —
+// the logger it receives defaults to stderr (openMCPRelayLogger); only an
+// explicit --log-file makes the relay write anywhere on disk.
 // Frames go to a.Out — the bootstrap-captured stdout seam — never a raw fd.
 func (a *app) mcpConnectE(ctx context.Context, opts *mcpRelayOptions, logger *slog.Logger) error {
 	relay, err := newMCPRelay(opts, a.Out, logger)

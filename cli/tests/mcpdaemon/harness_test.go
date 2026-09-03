@@ -29,6 +29,17 @@ var (
 	errBuild  error
 )
 
+// TestMain removes the built binary's temp dir when the run ends —
+// buildOnce outlives any single test's t.Cleanup, so without this every
+// `go test` run leaked one dir with a ~30MB binary on CI runners.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if builtBin != "" {
+		_ = os.RemoveAll(filepath.Dir(builtBin))
+	}
+	os.Exit(code)
+}
+
 // jenticBin builds the real `jentic` binary once per test run.
 func jenticBin(t *testing.T) string {
 	t.Helper()

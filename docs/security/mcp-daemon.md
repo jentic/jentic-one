@@ -31,7 +31,8 @@ agent runtime ── stdio ── jentic mcp --connect unix:///run/jentic-mcp/mc
   (parity with the control plane's mounted `/mcp`).
 - **The relay** (`jentic mcp --connect <url>`) is a dumb stdio↔HTTP pump
   for runtimes that only speak stdio. It reads no config, touches no state
-  dir, and holds no keys — byte in, byte out.
+  dir, and holds no keys — byte in, byte out. Its log defaults to stderr;
+  an explicit `--log-file` is the only thing that makes it write to disk.
 
 ## Per-context key custody
 
@@ -81,11 +82,18 @@ disables) without a request in flight — so a socket-activated unit spawns it
 on the first connection and nothing lingers holding keys in memory:
 
 - **systemd**: the socket unit owns the path; the daemon inherits it via
-  `LISTEN_FDS`. If the unit hands over a socket the flag posture would have
-  refused to bind (say, a non-loopback `ListenStream` without TLS+token),
-  the daemon fails closed at startup.
+  `LISTEN_FDS` (honoring the full sd_listen_fds protocol: a missing or
+  mismatched `LISTEN_PID` means no activation, and the variables are
+  scrubbed after adoption). If the unit hands over a socket the flag
+  posture would have refused to bind — the wrong socket *family* (a unix
+  socket for a TCP posture or vice versa: the auth gate follows the flags,
+  so family mismatches are refused in both directions), or a non-loopback
+  `ListenStream` without TLS+token — the daemon fails closed at startup.
 - **launchd**: inetd *wait* mode; the daemon adopts the listening socket on
-  fd 0 via `--from-launchd`.
+  fd 0 via `--from-launchd`, with the same startup re-validation. Note the
+  macOS socket file is world-connectable by design (launchd cannot chown
+  it); the per-connection peer-uid check is the gate there — see the
+  template README.
 
 Templates for both, with the dedicated-service-user setup, are in
 [`deploy/mcp-daemon/`](../../deploy/mcp-daemon/README.md).

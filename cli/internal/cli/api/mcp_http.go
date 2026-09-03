@@ -31,6 +31,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -162,17 +163,29 @@ func resolveMCPBindPosture(opts *mcpHTTPOptions) (*mcpBindPosture, error) {
 }
 
 // readMCPTokenFile loads the shared-secret token TCP callers must present.
-// The file is refused when group/world-accessible — a readable token would
-// silently void the boundary the daemon exists to draw.
+// The file is opened once and the OPEN fd is fstat-ed — the mode and owner
+// checked are provably those of the bytes read (no stat-then-read swap
+// window). Group/world-accessible modes are refused (a readable token would
+// silently void the boundary the daemon exists to draw), and so is a file
+// owned by any uid other than the daemon's own or root — a 0600 file that
+// belongs to someone else is their token, not this daemon's.
 func readMCPTokenFile(path string) ([]byte, error) {
-	info, err := os.Stat(path)
+	f, err := os.Open(path) //nolint:gosec // the operator-chosen --token-file, not untrusted input.
+	if err != nil {
+		return nil, fmt.Errorf("reading --token-file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("reading --token-file: %w", err)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("--token-file %s is group/world-accessible (mode %04o) — chmod it to 0600", path, info.Mode().Perm())
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // the operator-chosen --token-file, not untrusted input.
+	if err := checkTokenFileOwner(path, info); err != nil {
+		return nil, err
+	}
+	raw, err := io.ReadAll(f)
 	if err != nil {
 		return nil, fmt.Errorf("reading --token-file: %w", err)
 	}
@@ -181,6 +194,19 @@ func readMCPTokenFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("--token-file %s is empty", path)
 	}
 	return token, nil
+}
+
+// checkTokenFileOwner refuses a token file owned by a foreign uid. On
+// platforms without unix ownership (windows) there is nothing to assert.
+func checkTokenFileOwner(path string, info os.FileInfo) error {
+	uid, ok := fileOwnerUID(info)
+	if !ok {
+		return nil
+	}
+	if self := os.Getuid(); uid != uint32(self) && uid != 0 { //nolint:gosec // getuid is non-negative on unix.
+		return fmt.Errorf("--token-file %s is owned by uid %d, not this process's uid %d or root — refusing a foreign-owned token", path, uid, self)
+	}
+	return nil
 }
 
 // hostIsLoopback reports whether a --listen host can only be reached from
@@ -283,7 +309,7 @@ func resolveMCPListener(posture *mcpBindPosture, opts *mcpHTTPOptions, logger *s
 		logger.Info("inherited the launchd inetd-wait listener")
 		return ln, true, nil
 	}
-	if ln, err := systemdListener(os.Getpid(), os.Getenv); err != nil {
+	if ln, err := systemdListener(os.Getpid(), os.Getenv, func(key string) { _ = os.Unsetenv(key) }); err != nil {
 		return nil, false, err
 	} else if ln != nil {
 		logger.Info("inherited the systemd socket-activation listener")
@@ -294,10 +320,16 @@ func resolveMCPListener(posture *mcpBindPosture, opts *mcpHTTPOptions, logger *s
 		if err := removeStaleSocket(posture.addr); err != nil {
 			return nil, false, err
 		}
-		if err := os.MkdirAll(filepath.Dir(posture.addr), 0o700); err != nil {
-			return nil, false, fmt.Errorf("creating the socket dir: %w", err)
+		if err := ensureSocketDir(filepath.Dir(posture.addr)); err != nil {
+			return nil, false, err
 		}
+		// Bind under a restrictive umask so the socket NEVER exists with a
+		// mode looser than 0600 — a bind-then-chmod would leave a window in
+		// which any local uid could connect (the peer-cred check would still
+		// hold, but the file mode is documented as an independent layer).
+		oldMask := setUmask(0o177)
 		ln, err := net.Listen("unix", posture.addr)
+		setUmask(oldMask)
 		if err != nil {
 			return nil, false, fmt.Errorf("binding the unix socket %s: %w", posture.addr, err)
 		}
@@ -318,23 +350,55 @@ func resolveMCPListener(posture *mcpBindPosture, opts *mcpHTTPOptions, logger *s
 }
 
 // checkActivatedListener fails closed when the init system handed us a
-// listener the flag posture would have refused to bind: a non-loopback TCP
-// socket still requires the TLS+token opt-ins.
+// listener the flag posture would have refused to bind. The auth gate
+// (peer-cred wrap vs token) is selected from the FLAG posture, so the
+// inherited socket's family must MATCH that posture — a mismatch either
+// serves a unix socket with the peer-cred gate never applied (auth
+// downgrade) or wraps a TCP listener in a peer-cred check that fails every
+// accept (a silently bricked service). Both directions are startup errors.
 func checkActivatedListener(ln net.Listener, posture *mcpBindPosture) error {
-	addr, ok := ln.Addr().(*net.TCPAddr)
-	if !ok {
-		return nil // unix socket — peer-cred auth applies regardless of who bound it
-	}
-	if addr.IP != nil && !addr.IP.IsLoopback() && !addr.IP.IsUnspecified() {
-		// A specific non-loopback IP.
-		if !posture.useTLS || len(posture.token) == 0 {
-			return fmt.Errorf("the activated socket binds non-loopback %s: the unit must also pass --allow-non-loopback with --tls-cert/--tls-key and --token-file", addr)
+	switch addr := ln.Addr().(type) {
+	case *net.UnixAddr:
+		if posture.network != "unix" {
+			return fmt.Errorf("the activated listener is a unix socket (%s) but the flags resolve to tcp %s — the peer-cred gate the socket needs is only applied in the unix posture; align the unit's ListenStream/Sockets with the daemon's flags", addr, posture.addr)
 		}
-	}
-	if addr.IP == nil || addr.IP.IsUnspecified() {
-		if !posture.useTLS || len(posture.token) == 0 {
-			return fmt.Errorf("the activated socket binds all interfaces (%s): the unit must also pass --allow-non-loopback with --tls-cert/--tls-key and --token-file", addr)
+	case *net.TCPAddr:
+		if posture.network != "tcp" {
+			return fmt.Errorf("the activated listener is tcp (%s) but the flags resolve to the unix socket %s — the peer-cred gate cannot apply to TCP; align the unit's ListenStream/Sockets with the daemon's flags (and pass --listen with --token-file for a TCP unit)", addr, posture.addr)
 		}
+		if addr.IP != nil && !addr.IP.IsLoopback() && !addr.IP.IsUnspecified() {
+			// A specific non-loopback IP.
+			if !posture.useTLS || len(posture.token) == 0 {
+				return fmt.Errorf("the activated socket binds non-loopback %s: the unit must also pass --allow-non-loopback with --tls-cert/--tls-key and --token-file", addr)
+			}
+		}
+		if addr.IP == nil || addr.IP.IsUnspecified() {
+			if !posture.useTLS || len(posture.token) == 0 {
+				return fmt.Errorf("the activated socket binds all interfaces (%s): the unit must also pass --allow-non-loopback with --tls-cert/--tls-key and --token-file", addr)
+			}
+		}
+	default:
+		return fmt.Errorf("the activated listener's address type %T is neither unix nor tcp — this daemon serves those two transports only", ln.Addr())
+	}
+	return nil
+}
+
+// ensureSocketDir prepares the socket's parent directory: created 0700 when
+// absent; a PRE-existing dir keeps its mode (MkdirAll ignores it), so it is
+// re-checked — group/world-WRITABLE without the sticky bit is refused (any
+// local uid could swap the socket path), and anything the operator owns is
+// left to traversal-only looseness because the socket file itself is bound
+// 0600 with no window (see the umask dance at the bind site).
+func ensureSocketDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating the socket dir: %w", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("checking the socket dir: %w", err)
+	}
+	if info.Mode().Perm()&0o022 != 0 && info.Mode()&os.ModeSticky == 0 {
+		return fmt.Errorf("socket dir %s is group/world-writable (mode %04o) without the sticky bit — another uid could replace the socket; chmod the dir or choose a private one", dir, info.Mode().Perm())
 	}
 	return nil
 }

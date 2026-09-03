@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -223,6 +225,39 @@ func TestMCPRelay_UnwrapsSSE(t *testing.T) {
 	}
 	if !strings.Contains(lines[0], "notifications/progress") || !strings.Contains(lines[1], `"result"`) {
 		t.Errorf("frames = %v, want progress then result", lines)
+	}
+}
+
+// TestOpenMCPRelayLogger_DefaultTouchesNoStateDir pins the relay's
+// no-state-by-default contract (F5): a bare --connect run logs to stderr and
+// never creates the state dir; --log-file remains the explicit opt-in.
+func TestOpenMCPRelayLogger_DefaultTouchesNoStateDir(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	logger, closeLog, err := openMCPRelayLogger("")
+	if err != nil {
+		t.Fatalf("openMCPRelayLogger: %v", err)
+	}
+	logger.Info("relay log line")
+	closeLog()
+	entries, err := os.ReadDir(stateHome)
+	if err != nil {
+		t.Fatalf("read state home: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the relay's default logger must touch no state dir, created %v", entries)
+	}
+
+	path := filepath.Join(t.TempDir(), "relay.log")
+	logger, closeLog, err = openMCPRelayLogger(path)
+	if err != nil {
+		t.Fatalf("openMCPRelayLogger with --log-file: %v", err)
+	}
+	logger.Info("relay log line")
+	closeLog()
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("--log-file must still opt into a file sink: %v", err)
 	}
 }
 

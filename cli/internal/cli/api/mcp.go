@@ -21,6 +21,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -71,9 +72,10 @@ func newMCPCmd(app *app) *cobra.Command {
 			"deploy/mcp-daemon/ for the systemd/launchd templates.\n\n" +
 			"--connect <url> turns this process into the credential-less stdio relay for\n" +
 			"stdio-only clients: frames are pumped to the daemon over Streamable HTTP.\n" +
-			"Against a local unix socket the relay holds no key material at all; against\n" +
-			"a remote https daemon it forwards the short-lived bearer from\n" +
-			"$JENTIC_MCP_BEARER or --bearer-file, never persisting it.",
+			"The relay reads no config and touches no state dir — its log goes to stderr\n" +
+			"unless --log-file is set. Against a local unix socket it holds no key\n" +
+			"material at all; against a remote https daemon it forwards the short-lived\n" +
+			"bearer from $JENTIC_MCP_BEARER or --bearer-file, never persisting it.",
 		Args: cobra.NoArgs,
 		Annotations: map[string]string{
 			// The MCP client owns this process's lifetime (one process per
@@ -87,7 +89,7 @@ func newMCPCmd(app *app) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&opts.readOnly, "read-only", false, "serve only tools annotated read-only")
 	cmd.Flags().StringSliceVar(&opts.excludeTools, "exclude-tools", nil, "tool names to withhold from the client (repeatable or comma-separated)")
-	cmd.Flags().StringVar(&opts.logFile, "log-file", "", "server log file (default: <XDG state dir>/jentic/logs/mcp.log)")
+	cmd.Flags().StringVar(&opts.logFile, "log-file", "", "server log file (default: <XDG state dir>/jentic/logs/mcp.log; with --connect the default is stderr — the relay touches no state dir unless this is set)")
 	cmd.Flags().Int64Var(&opts.maxResultBytes, "max-result-bytes", defaultMaxResultBytes,
 		"hard cap on a relayed response body in a tool result; larger bodies are truncated with {truncated, total_bytes, execution_id}")
 
@@ -129,15 +131,20 @@ func newMCPCmd(app *app) *cobra.Command {
 func (a *app) mcpE(cmd *cobra.Command, opts *mcpOptions) error {
 	aud := ux.FromContext(cmd.Context())
 
-	logger, closeLog, err := openMCPLogger(opts.logFile)
-	if err != nil {
+	if err := checkMCPModeFlags(cmd.Flags()); err != nil {
 		return reportCoded(aud, err)
 	}
-	defer closeLog()
 
 	// --connect: this process is the credential-less relay, not a server —
-	// no tool surface, no state resolution, no key material.
+	// no tool surface, no state resolution, no key material. Its log
+	// defaults to stderr (not the state-dir file) so a bare relay run
+	// genuinely touches no state dir; --log-file opts back into a file.
 	if opts.relay.url != "" {
+		logger, closeLog, err := openMCPRelayLogger(opts.logFile)
+		if err != nil {
+			return reportCoded(aud, err)
+		}
+		defer closeLog()
 		if err := a.mcpConnectE(cmd.Context(), &opts.relay, logger); err != nil &&
 			!errors.Is(err, context.Canceled) && !isClientDisconnect(err) {
 			logger.Error("mcp relay exited", "error", redactedErr(err))
@@ -145,6 +152,12 @@ func (a *app) mcpE(cmd *cobra.Command, opts *mcpOptions) error {
 		}
 		return nil
 	}
+
+	logger, closeLog, err := openMCPLogger(opts.logFile)
+	if err != nil {
+		return reportCoded(aud, err)
+	}
+	defer closeLog()
 
 	srv := newMCPServer(a, version, opts, logger)
 	// Every control-plane client built during this session composes the
@@ -189,6 +202,32 @@ func (a *app) mcpE(cmd *cobra.Command, opts *mcpOptions) error {
 	return nil
 }
 
+// checkMCPModeFlags refuses mode-scoped flags without their mode flag.
+// Cobra wires the mutual exclusions (--http/--connect, --socket/--listen),
+// but nothing else requires the mode flag itself — and a daemon flag that is
+// silently dropped (say, --token-file on a stdio run) would contradict the
+// daemon's otherwise refuse-everything posture.
+func checkMCPModeFlags(flags *pflag.FlagSet) error {
+	httpMode, _ := flags.GetBool("http")
+	connectURL, _ := flags.GetString("connect")
+
+	if !httpMode {
+		for _, name := range []string{
+			"socket", "listen", "token-file", "tls-cert", "tls-key",
+			"allow-non-loopback", "allow-unauthenticated", "allow-origin",
+			"allow-uid", "idle-timeout", "from-launchd",
+		} {
+			if flags.Changed(name) {
+				return fmt.Errorf("--%s requires --http", name)
+			}
+		}
+	}
+	if connectURL == "" && flags.Changed("bearer-file") {
+		return errors.New("--bearer-file requires --connect")
+	}
+	return nil
+}
+
 // isClientDisconnect reports whether the session ended because the peer went
 // away: a clean stdin EOF, the SDK's connection-closed sentinel, or the
 // jsonrpc2 "server is closing" abort (an EOF that arrived with calls still in
@@ -222,6 +261,19 @@ func openMCPLogger(path string) (*slog.Logger, func(), error) {
 	}
 	logger := slog.New(slog.NewJSONHandler(f, nil))
 	return logger, func() { _ = f.Close() }, nil
+}
+
+// openMCPRelayLogger is the --connect log sink: --log-file when given, else
+// stderr — NOT the state-dir default file. The relay's contract is that a
+// bare `jentic mcp --connect …` reads no config and touches no state dir
+// (nothing sensitive is ever logged: the bearer appears only as a boolean),
+// and the default log sink must not be the thing that breaks it. stderr is
+// the MCP-conventional place for a spawned server's diagnostics.
+func openMCPRelayLogger(path string) (*slog.Logger, func(), error) {
+	if path == "" {
+		return slog.New(slog.NewJSONHandler(os.Stderr, nil)), func() {}, nil
+	}
+	return openMCPLogger(path)
 }
 
 // discardLogger is the fallback sink for tests and for callers that pass no

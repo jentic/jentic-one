@@ -21,21 +21,43 @@ import (
 // at fd 3.
 const listenFDsStart = 3
 
+// activationEnvVars are the sd_listen_fds protocol variables — scrubbed
+// after adoption (sd_listen_fds's unset_environment) so nothing this
+// process might ever spawn inherits a stale claim to fd 3.
+var activationEnvVars = []string{"LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"}
+
+// activationListenerFromFD is listenerFromFD, swappable by tests so the
+// adoption path can be pinned without donating a real fd 3.
+var activationListenerFromFD = listenerFromFD
+
 // systemdListener returns the socket-activation listener when systemd
 // provided one, nil when the environment carries no (valid, for-this-pid)
 // activation vars, and an error for a malformed or multi-socket handoff.
-func systemdListener(pid int, getenv func(string) string) (net.Listener, error) {
+//
+// Per the sd_listen_fds protocol, LISTEN_PID is not optional: a missing or
+// mismatched LISTEN_PID means the vars are NOT addressed to this process
+// (a stray LISTEN_FDS inherited from a shell profile or a leaky supervisor
+// must never make the daemon adopt whatever fd 3 happens to be). Once the
+// vars are consumed, they are scrubbed via unsetenv.
+func systemdListener(pid int, getenv func(string) string, unsetenv func(string)) (net.Listener, error) {
 	fdsRaw := getenv("LISTEN_FDS")
 	if fdsRaw == "" {
 		return nil, nil
 	}
-	if pidRaw := getenv("LISTEN_PID"); pidRaw != "" {
-		envPid, err := strconv.Atoi(pidRaw)
-		if err != nil || envPid != pid {
-			// Activation vars addressed to another process — ignore them.
-			return nil, nil //nolint:nilerr // not addressed to us is "no activation", not a failure.
-		}
+	envPid, err := strconv.Atoi(getenv("LISTEN_PID"))
+	if err != nil || envPid != pid {
+		// Absent, malformed, or addressed to another process — not for us;
+		// "no activation" rather than a failure.
+		return nil, nil
 	}
+	// The vars are addressed to this process: consume them regardless of
+	// whether adoption succeeds (a failed adoption is a startup error, and
+	// the claim on fd 3 must not outlive this call either way).
+	defer func() {
+		for _, key := range activationEnvVars {
+			unsetenv(key)
+		}
+	}()
 	nfds, err := strconv.Atoi(fdsRaw)
 	if err != nil || nfds < 1 {
 		return nil, fmt.Errorf("systemd socket activation: LISTEN_FDS=%q is not a positive integer", fdsRaw)
@@ -43,7 +65,7 @@ func systemdListener(pid int, getenv func(string) string) (net.Listener, error) 
 	if nfds > 1 {
 		return nil, fmt.Errorf("systemd socket activation passed %d sockets; this daemon serves exactly one — declare one ListenStream per unit", nfds)
 	}
-	return listenerFromFD(listenFDsStart, "systemd activation socket")
+	return activationListenerFromFD(listenFDsStart, "systemd activation socket")
 }
 
 // launchdListener returns the inetd-wait listening socket launchd passes on
