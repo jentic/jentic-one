@@ -33,6 +33,7 @@ dependencies = [
     "h2>=4.4.1",
     "opentelemetry-instrumentation-httpx>=0.44b0",
     "python-multipart>=0.0.32",
+    "mcp>=2.1.1",
 ]
 
 [project.optional-dependencies]

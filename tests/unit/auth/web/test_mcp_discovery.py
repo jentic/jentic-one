@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from jentic_one.auth.web import app as auth_app
 from jentic_one.auth.web.routers import discovery
+from jentic_one.mcp.installer import install_mcp_challenge_placeholder
 from jentic_one.shared.config import AuthConfig, ServerConfig
 from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
@@ -85,6 +86,12 @@ def _make_client(
     server.mcp.oauth.enabled = oauth_enabled
     mock_ctx.config.server = server
     app.state.ctx = mock_ctx
+    # Phase 3: an auth surface WITHOUT control (this test app's shape) carries
+    # the 3a-4 challenge placeholder — exactly what the composition root
+    # (build_default_container) installs on that shape, so these 44 pins test
+    # the real wiring: the discovery pointers land on the challenge, never a
+    # dangling 404, while the real transport stays control-plane-only (§6 Q1).
+    install_mcp_challenge_placeholder(app, mock_ctx)
     return TestClient(app)
 
 

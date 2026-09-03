@@ -21,12 +21,13 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
-from jentic_one.shared.config import load_config
+from jentic_one.shared.config import AppConfig, load_config
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
 from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
+from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
@@ -48,11 +49,17 @@ SURFACE_DB_DEPS: dict[str, set[str]] = {
 SURFACES_NEEDING_AUTH: set[str] = {"admin", "control", "registry", "broker"}
 
 
-def _expand_allowed_dbs(apps: list[str]) -> set[str]:
+def _expand_allowed_dbs(apps: list[str], config: AppConfig) -> set[str]:
     """Expand surface list into the full set of required DB names."""
     allowed = set(apps)
     for surface in apps:
         allowed |= SURFACE_DB_DEPS.get(surface, set())
+    # The /mcp mount's search/inspect/catalog tools call the registry services
+    # in-process (phase-3 item 1), so a control-plane process serving the
+    # mount needs the registry DB even when the registry surface itself is
+    # deployed elsewhere. Gated on the flag: with MCP off nothing widens.
+    if "control" in apps and config.server.mcp.enabled:
+        allowed.add("registry")
     return allowed
 
 
@@ -60,16 +67,25 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
     """Build the appropriate FastAPI application based on enabled surfaces."""
     if "broker" in apps and len(apps) > 1:
         raise RuntimeError("broker must run as the sole surface; do not bundle it with others")
+    container = build_default_container(ctx)
     if len(apps) == 1:
         surface = apps[0]
         mod = importlib.import_module(SURFACE_MODULES[surface])
-        app: FastAPI = mod.create_app(ctx)
+        # Standalone control carries the composition container so the /mcp
+        # mount (installer + session-manager lifespan) rides it; standalone
+        # auth carries it for the 3a-4 /mcp challenge placeholder (the
+        # discovery pointers it serves must not dangle) — the other surfaces
+        # keep their own default wiring.
+        if surface in ("control", "auth"):
+            app: FastAPI = mod.create_app(ctx, container=container)
+        else:
+            app = mod.create_app(ctx)
         if surface in SURFACES_NEEDING_AUTH and not hasattr(app.state, "verify_token"):
             _install_auth_verifier(app, ctx)
         if surface == "broker" and ctx.is_db_allowed("registry"):
             _install_broker_registry_resolver(app, ctx)
         return app
-    app = create_combined_app(ctx, apps)
+    app = create_combined_app(ctx, apps, container=container)
     if "broker" in apps and ctx.is_db_allowed("registry"):
         _install_broker_registry_resolver(app, ctx)
     return app
@@ -90,7 +106,7 @@ def create_app() -> FastAPI:
     configure_tracing(_service_name(), config.observability.tracing)
     configure_metrics(_service_name(), config.observability.metrics)
     apps = config.apps
-    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(apps))
+    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(apps, config))
     return _build_app(ctx, apps)
 
 
@@ -138,7 +154,7 @@ def _serve() -> None:
     configure_tracing(_service_name(), config.observability.tracing)
     configure_metrics(_service_name(), config.observability.metrics)
     apps = config.apps
-    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(apps))
+    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(apps, config))
     app = _build_app(ctx, apps)
     uvicorn.run(
         app,

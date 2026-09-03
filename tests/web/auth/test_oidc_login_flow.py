@@ -28,6 +28,11 @@ from cryptography.hazmat.primitives.serialization import (
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+
+# Starlette's TestClient rides httpx2 when it is installed (it is — the mcp
+# SDK depends on it): upstream-mock responses stay httpx.Response (the app's
+# own client), while TestClient calls answer httpx2 responses.
+from httpx2 import Response as ClientResponse
 from jwt.algorithms import ECAlgorithm
 from sqlalchemy import delete, select
 
@@ -200,9 +205,9 @@ def _callback(client: TestClient, *, signed_state: str) -> str:
     return str(parse_qs(parsed.query)["code"][0])
 
 
-def _exchange(client: TestClient, *, code: str, code_verifier: str) -> Response:
+def _exchange(client: TestClient, *, code: str, code_verifier: str) -> ClientResponse:
     """Exchange the platform code + PKCE verifier at /oauth/token."""
-    resp: Response = client.post(
+    resp: ClientResponse = client.post(
         "/oauth/token",
         json={
             "grant_type": "authorization_code",

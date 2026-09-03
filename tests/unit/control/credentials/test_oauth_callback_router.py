@@ -21,7 +21,10 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from httpx import Response
+
+# Starlette's TestClient rides httpx2 when it is installed (it is — the mcp
+# SDK depends on it), so client responses are httpx2 types here.
+from httpx2 import Response
 
 from jentic_one.control.services.credentials.connect_service import (
     ConnectFlowError,

@@ -911,8 +911,18 @@
       "type": "object"
     },
     "McpConfig": {
-      "description": "``server.mcp`` sub-config (minimal 3a-2 seam; phase-3 item 2 extends it).",
+      "description": "``server.mcp`` sub-config (3a-2 seam, extended by phase-3 item 2).",
       "properties": {
+        "broker_url": {
+          "default": "http://127.0.0.1:8100",
+          "title": "Broker Url",
+          "type": "string"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
         "oauth": {
           "$ref": "#/$defs/McpOAuthConfig"
         }

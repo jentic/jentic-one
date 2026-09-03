@@ -925,6 +925,9 @@ export async function fetchInstanceIdentity(): Promise<InstanceIdentityEntity> {
 			backend: res.backend,
 			baseUrl: res.canonical_base_url,
 			host: res.host,
+			// Older backends predate the field; absent means the endpoint
+			// doesn't exist there either, so hiding the HTTP variant is right.
+			mcpEnabled: res.mcp_enabled ?? false,
 		};
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to load the instance identity.');

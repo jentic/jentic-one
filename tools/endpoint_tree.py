@@ -100,7 +100,7 @@ def _build_broker_app() -> FastAPI:
     from jentic_one.shared.context import Context
 
     config = load_config()
-    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(["broker"]))
+    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(["broker"], config))
     return create_app(ctx)
 
 

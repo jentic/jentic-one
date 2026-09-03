@@ -9,13 +9,14 @@ Two discovery surfaces live here:
   MCP-scoped documents below.
 - The **/mcp-scoped** documents (phase-3a §4.7, D10): a path-scoped RFC 8414
   doc for the logical issuer ``{base}/mcp`` plus the RFC 9728
-  protected-resource doc (path-scoped and a root alias), and the ``/mcp``
-  401 challenge that starts the discovery chain. All are gated by
+  protected-resource doc (path-scoped and a root alias). All are gated by
   ``server.mcp.oauth.enabled`` — off (the default) they answer the
   framework's plain route-not-found 404, so the *gate state* is unobservable.
   (The *build* still shows routing-level tells — 405+``Allow`` on
   non-registered methods, the slash redirect, the doc paths in the live
-  OpenAPI schema — identical in both gate arms; pinned by tests.)
+  OpenAPI schema — identical in both gate arms; pinned by tests.) The ``/mcp``
+  401 challenge that starts the discovery chain moved to the phase-3 mounted
+  MCP app (``jentic_one.mcp``) together with the path itself.
 """
 
 from __future__ import annotations
@@ -276,32 +277,12 @@ async def oauth_protected_resource(
     return _mcp_protected_resource_document(base)
 
 
-@mcp_router.api_route(
-    "/mcp",
-    # The full common method set, not just the streamable-HTTP verbs
-    # (GET/POST/DELETE): auth precedes method semantics on a protected
-    # resource, the phase-3 mounted ASGI app will cover all methods anyway,
-    # and registering them now keeps the disabled arm's answer a uniform 404
-    # (no 405 + Allow method tell on the resource path itself; review F3/F4).
-    methods=["GET", "POST", "DELETE", "HEAD", "OPTIONS", "PUT", "PATCH"],
-    include_in_schema=False,
-)
-async def mcp_resource_challenge(request: Request, ctx: Context = Depends(get_ctx)) -> Response:
-    """The RFC 9728 discovery-chain entry point at the MCP resource path (§4.7).
-
-    Phase 3 mounts the actual MCP app here; until then this placeholder owns
-    the ``/mcp`` path so an unauthenticated (or any) probe answers ``401`` with
-    ``WWW-Authenticate: Bearer resource_metadata="…"`` — exactly what a
-    spec-following MCP client needs to start discovery. When the mounted app
-    lands it replaces this route and keeps the same challenge contract on
-    missing/invalid bearers. Schema-hidden: it is a protocol seam, not a
-    control-plane API operation. Gated with the documents by
-    ``server.mcp.oauth.enabled`` — off, the path 404s exactly as today.
-    """
-    base = deployment_base_url(ctx.config.auth, request)
-    headers = {"WWW-Authenticate": f'Bearer resource_metadata="{base}{_MCP_PRM_PATH}"'}
-    if request.method == "HEAD":
-        # HEAD carries the same status and headers as GET but no body
-        # (RFC 9110 §9.3.2).
-        return Response(status_code=401, headers=headers)
-    return JSONResponse(status_code=401, content={"detail": "Unauthorized"}, headers=headers)
+# The ``/mcp`` path itself is owned by the phase-3 mounted MCP app
+# (``jentic_one.mcp``, installed on control-plane app shapes by the
+# composition root), which took the 3a-4 placeholder's challenge contract
+# with it: a probe without a valid bearer answers 401 with
+# ``WWW-Authenticate: Bearer resource_metadata="{base}{_MCP_PRM_PATH}"``
+# whenever this discovery surface is enabled, and the framework's plain 404
+# when both gates are off. The pointer path stays single-sourced:
+# ``jentic_one.mcp.app.MCP_PRM_PATH`` must equal ``_MCP_PRM_PATH`` (pinned by
+# ``tests/unit/mcp/test_mount_gate.py``).

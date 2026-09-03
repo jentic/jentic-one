@@ -14,7 +14,7 @@ import {
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
-import { SHOW_HTTP_VARIANT } from '@/modules/agents/components/detail/McpPanel';
+import { showHttpVariant } from '@/modules/agents/components/detail/McpPanel';
 import AgentDetailPage from '@/modules/agents/pages/AgentDetailPage';
 
 function renderDetail(agentId: string) {
@@ -620,7 +620,7 @@ describe('AgentDetailPage', () => {
 		).toBeInTheDocument();
 	});
 
-	it('unconditionally hides the HTTP variant in phase 2 (test-pinned)', async () => {
+	it('hides the HTTP variant when the instance does not serve /mcp', async () => {
 		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
@@ -628,13 +628,44 @@ describe('AgentDetailPage', () => {
 		await user.click(screen.getByRole('tab', { name: 'MCP' }));
 		await screen.findByText('Connect via MCP');
 
-		// The pin itself: `server.mcp` doesn't exist until phase 3 — flipping
-		// this constant before the backend capability lands would advertise a
-		// transport that 404s. Un-hiding is a deliberate phase-3 follow-up.
-		expect(SHOW_HTTP_VARIANT).toBe(false);
+		// The default /instance fixture predates `mcp_enabled` (an older
+		// backend); the mapper must treat the absent field as disabled — an
+		// advertised transport that 404s would be a lie. The predicate is the
+		// single gate the card renders through.
+		expect(showHttpVariant(undefined)).toBe(false);
+		expect(showHttpVariant(false)).toBe(false);
 		expect(screen.queryByText(/Streamable HTTP/i)).not.toBeInTheDocument();
 		// No URL-based server entry is offered anywhere on the card.
 		expect(screen.queryByText(/"url"/)).not.toBeInTheDocument();
+	});
+
+	it('renders the Streamable HTTP variant when the instance serves /mcp', async () => {
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					mcp_enabled: true,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
+
+		// The url-variant snippet points at this instance's /mcp with a bearer
+		// placeholder — per-request auth, no CLI needed on the agent machine.
+		const snippet = await screen.findByText(/Streamable HTTP/i);
+		expect(snippet).toBeInTheDocument();
+		expect(
+			screen.getByText(/"url": "https:\/\/jentic\.example\.test\/mcp"/),
+		).toBeInTheDocument();
+		expect(screen.getByText(/Bearer <agent-api-key>/)).toBeInTheDocument();
 	});
 
 	it('lists MCP sessions with client / transport / started — never "connected"', async () => {
