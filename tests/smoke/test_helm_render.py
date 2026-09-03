@@ -205,8 +205,8 @@ def test_render_marketplace_entitlement_env() -> None:
     assert result.returncode == 0, result.stderr
     out = result.stdout
     assert out.count("name: JENTIC__ENTITLEMENT__ENABLED") == 2  # app + broker
-    assert out.count('value: "dwhxz1v53k58ew6pr7qzieumd"') == 2  # product code
-    assert out.count('value: "prod-dd2p2s65dysv6"') == 2  # product ID (SKU)
+    assert out.count('value: "ed4bj3dbc8w2r80qtnbxbboub"') == 2  # product code
+    assert out.count('value: "prod-cwonumew2jeyo"') == 2  # product ID (SKU)
     assert out.count('value: "users,executions"') == 2
 
 

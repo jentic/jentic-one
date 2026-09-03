@@ -70,7 +70,7 @@ global:
 app:
   enabled: true
   image:
-    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-app"
     # Stamped to the release version (X.Y.Z, no v — that's the tag the image
     # is pushed to Marketplace ECR under) by marketplace-chart.yml's bake
     # step. Empty here (falls back to global.image.tag), but the baked chart
@@ -84,33 +84,30 @@ app:
     JENTIC_ENV: "production"
     # Entitlement gate (contract pricing, dimensions users + executions —
     # decided 2026-08-20; `contract` is the config default so only the IDs are
-    # set). IDs verified against the live listing 2026-08-28. Enabled together
-    # with the checkout-shape/check-in fix — a release carrying this env MUST
-    # ship that client (Count+Value entitlements, CheckInLicense after
-    # checkout) or entitled buyers lock themselves out.
+    # set). IDs are the RE-LISTED product's (prod-cwonumew2jeyo, created
+    # 2026-09-03 for the 12-month-only public offer — the original listing's
+    # offer terms were unfixable post-release). Enabled together with the
+    # checkout-shape/check-in fix — a release carrying this env MUST ship
+    # that client (Count+Value entitlements, CheckInLicense after checkout)
+    # or entitled buyers lock themselves out.
     JENTIC__ENTITLEMENT__ENABLED: "true"
-    JENTIC__ENTITLEMENT__PRODUCT_CODE: "dwhxz1v53k58ew6pr7qzieumd"
-    JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-dd2p2s65dysv6"
+    JENTIC__ENTITLEMENT__PRODUCT_CODE: "ed4bj3dbc8w2r80qtnbxbboub"
+    JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-cwonumew2jeyo"
     JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
 
 broker:
   enabled: true
   image:
-    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one-app"
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/one-app"
     tag: ""  # stamped by the bake step — same reasoning as app.image.tag
   extraEnv:
     JENTIC_ENV: "production"  # same reasoning as app.extraEnv above
     # Entitlement gate — same values and caveat as app.extraEnv above.
     JENTIC__ENTITLEMENT__ENABLED: "true"
-    JENTIC__ENTITLEMENT__PRODUCT_CODE: "dwhxz1v53k58ew6pr7qzieumd"
-    JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-dd2p2s65dysv6"
+    JENTIC__ENTITLEMENT__PRODUCT_CODE: "ed4bj3dbc8w2r80qtnbxbboub"
+    JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-cwonumew2jeyo"
     JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
     JENTIC__APPS: "broker"
-  # Entitlement wiring — same caveat as app above:
-  #   JENTIC__ENTITLEMENT__ENABLED: "true"
-  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product code from the portal>"
-  #   JENTIC__ENTITLEMENT__LICENSE_SKU: "<product ID from the portal>"
-  #   JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
 
 registry:
   enabled: false
@@ -134,7 +131,7 @@ postgresql:
   enabled: true
   image:
     registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com"
-    repository: "jentic/jentic-one-psql"
+    repository: "jentic/one-psql"
     # The Alpine mirror (deploy/docker/postgres-mirror.Dockerfile) — Alpine
     # because AWS's scanner blocks on Debian's won't-fix glibc CVEs; the
     # mirror workflow pushes the tag it reads from that Dockerfile's FROM pin.
