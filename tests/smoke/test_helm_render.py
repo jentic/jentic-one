@@ -207,7 +207,12 @@ def test_render_marketplace_entitlement_env() -> None:
     assert out.count("name: JENTIC__ENTITLEMENT__ENABLED") == 2  # app + broker
     assert out.count('value: "ed4bj3dbc8w2r80qtnbxbboub"') == 2  # product code
     assert out.count('value: "prod-cwonumew2jeyo"') == 2  # product ID (SKU)
-    assert out.count('value: "users,executions"') == 2
+    # Gate on `users` ONLY: the public card is buyer-configurable (constraints
+    # locked loosen-only), so the price rides users with executions at $0 —
+    # requiring both dimensions would reject every self-service public buyer,
+    # and a $0 executions-only cart must NOT mint a valid license.
+    assert out.count('value: "users"') == 2
+    assert "users,executions" not in out
 
 
 @pytest.mark.smoke
