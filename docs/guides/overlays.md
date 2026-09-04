@@ -92,13 +92,3 @@ the notification (`POST /catalog/{api_id}:snooze`, requires `events:write`). Sno
 pins the accepted upstream digest; a *newer* upstream digest automatically re-lights
 the badge, so a real new change is never hidden. `jentic catalog outdated
 --include-snoozed` lists muted entries.
-
-## Invariants (summary)
-
-- The served spec always equals the API's current revision.
-- A confirm never silently discards a prior overlay's effect — it materializes over
-  it (cumulative).
-- Adopting an upstream change over a live overlay is operator-gated and attributed;
-  it never happens silently.
-- Rollback restores exactly the revision an overlay superseded; it does not unwind a
-  stack.

@@ -59,8 +59,8 @@ severity, it can mention that in the body; the assistant will confirm it.
 
 ## Contributing Code
 
-Ready to open a pull request? The rest of this guide covers local setup, the
-development workflow, and the conventions the project enforces.
+The rest of this guide covers contributing code: local setup, the development
+workflow, and the checks a pull request has to pass.
 
 ## Getting Started
 

@@ -111,7 +111,7 @@ aren't there:
 
 1. **No enforced boundary *between* agent identities.** There is one shared agent
    Unix user, and every identity exported to the account lives in that one
-   account's home. Any agent launched through `jentic run` — under any context —
+   account's home. Any agent launched through `jentic run`, under any context,
    runs as that same uid and can therefore read **every** identity in the shared
    home (all keys, tokens, and registrations), not just the one it was launched
    with. Contexts/identities are an *identity-selection* convenience, **not** a
@@ -231,7 +231,7 @@ sudo setfacl -R -m u:"$USER":rwX "$AGENT_HOME_DIR" && sudo setfacl -R -d -m u:"$
 
 Because per-session confinement (below) is the actual isolation guarantee, an
 account that can never be launched under confinement would be a dead end. So the
-moment the operator opts into isolation — **before** the first `sudo` runs —
+moment the operator opts into isolation, **before** the first `sudo` runs,
 `setup`/`wizard` checks that this machine has what the model needs and,
 crucially, treats a missing prerequisite as *non-blocking for everything else*:
 

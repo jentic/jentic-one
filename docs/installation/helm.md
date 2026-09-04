@@ -230,12 +230,11 @@ annotations are covered in the
    automatically; against an external database, re-run migrations first
    (see above).
 
-Generated secrets are never rotated by an upgrade — rotating would orphan
-everything already encrypted and revoke live sessions. `helm uninstall`
-intentionally keeps the `jentic-app-secrets` Secret (and the Postgres PVC)
-so stored credentials survive a reinstall; delete the namespace to remove
-everything. Migrations apply forward; prefer rolling forward to a fixed
-release — the full contract:
+Generated secrets are never rotated by an upgrade, and `helm uninstall`
+intentionally keeps the `jentic-app-secrets` Secret (and the Postgres PVC) so
+stored credentials survive a reinstall — the why is under [Secrets](#secrets);
+delete the namespace to remove everything. Migrations apply forward; prefer
+rolling forward to a fixed release — the full contract:
 [docs/operations/upgrades.md](../operations/upgrades.md).
 
 ## Troubleshooting

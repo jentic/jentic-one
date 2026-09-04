@@ -87,11 +87,10 @@ No passwords or further configuration are required at install time.
 
 ## Post-install: set the canonical base URL
 
-Required before agents can connect. Set it to the URL your agents will reach
-the app at (your ingress or load-balancer URL). Agent token exchange compares
-this value byte-for-byte against the `--url` agents register with — a
-mismatch (including `localhost` vs `127.0.0.1`) fails with `invalid_grant`
-*after* the agent is approved:
+Required before agents can connect — set it to the URL your agents will reach
+the app at (your ingress or load-balancer URL). Why the value must match what
+agents register with byte-for-byte (including the `localhost` vs `127.0.0.1`
+trap): [Helm guide, step 3](helm.md#3-set-the-canonical-base-url).
 
 ```bash
 helm upgrade jentic-one \

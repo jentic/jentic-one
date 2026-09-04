@@ -21,8 +21,8 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 | Binary | Area | Commands | What you get |
 | ------ | ---- | -------- | ------------ |
 | `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up jentic-one locally (source venv **or** Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
-| `jentic` | **Identity & access** | `register` · `setup` · `logout` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. (The old `profile` command was removed — use `context`; run `jentic migrate` to bring a legacy `~/.jentic` profile store across.) |
-| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds. |
+| `jentic` | **Identity & access** | `register` · `setup` · `logout` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. |
+| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry (revisions, operations, promote/archive, spec download) with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds. |
 | `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
 | `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
 | `jentic` | **Administration** | `admin` · `theme` | `admin config providers` manages the platform's credential-provider configuration; `theme` sets the persisted color theme. |
@@ -43,7 +43,7 @@ building, onboarding, and operating; it does not duplicate per-flag docs.
 #    brings the server up on http://127.0.0.1:8000:
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 
-# 2. Connect this machine — that's it. `register` defaults to the local install
+# 2. Connect this machine. `register` defaults to the local install
 #    (http://127.0.0.1:8000) and seeds the local broker for you, so just confirm:
 jentic register
 ```
@@ -106,7 +106,7 @@ JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=jentic \
 
 This downloads the released archive for your OS/arch from the GitHub Releases
 page, **verifies its `sha256`** against `checksums.txt` (fail-closed — a
-mismatch aborts and installs nothing), and — when `cosign` is on your `PATH` —
+mismatch aborts and installs nothing), and, when `cosign` is on your `PATH`,
 **verifies the release signature** too (absent `cosign` is a loud warning, never
 a silent skip). No Go toolchain, no clone, no compile.
 
@@ -476,7 +476,7 @@ Use `--skip-build` to only generate config (no image build, compose file,
 migrate, or start) and print the next-step commands.
 
 Secrets (the credential-encryption key, admin JWT secret, invite pepper, connect
-state secret, and — for a managed Docker Postgres — a random database password)
+state secret, and, for a managed Docker Postgres, a random database password)
 are generated on first install and written into the config with `0600` perms —
 never prompted for. On reinstall they are **reused** from your existing config
 by default so previously-encrypted data stays readable; pass `--fresh-secrets`
@@ -611,7 +611,7 @@ After onboarding:
 ```bash
 jentic context view      # what am I pointing at?
 jentic doctor            # paths / identity / token / reachability self-check
-jentic catalog           # you're in business
+jentic catalog           # browse the API catalog
 ```
 
 To work against several installs, add more environments and switch contexts:
@@ -627,66 +627,9 @@ State lives in the XDG layout (see below): the config in
 `~/.config/jentic/config.yaml`, keys/tokens per (identity, environment) in
 `~/.local/state/jentic/` (0600).
 
-### Legacy `~/.jentic` profile stores (migrate to use them)
+## XDG layout (`~/.config/jentic`) — where `jentic` keeps state
 
-Machines with an existing `~/.jentic` profile store from a pre-activation CLI
-are **read-only** to this release until you run `jentic migrate`, which copies
-the profile(s) into the XDG context model (leaving `~/.jentic` intact apart from
-a `MIGRATED` marker). It also adopts a legacy local-agent `agent_account:`
-record from `~/.jentic/config.yaml` into `~/.config/jentic/agent-account.yaml`
-(as does the first `jentic run`/`jentic reset` write, so localagent keeps no
-state in `~/.jentic`). Until you migrate, non-exempt commands stop and point you
-at `jentic migrate` (see the migrate gate). The V1 `register --profile` /
-`--base-url` onboarding flow has been **removed** in the activation release —
-there is no in-place V1 register/logout/status; migrate first, then use the V2
-`context` / `env` / `identity` commands.
-
-```bash
-jentic migrate                       # copy legacy profiles → XDG contexts (named after each profile)
-jentic context list                  # see the migrated contexts
-jentic context use <name>            # activate one
-jentic doctor                        # verify identity + reachability
-```
-
-Legacy profiles are stored under `~/.jentic/profiles/<name>/` with `0600` perms:
-
-```
-~/.jentic/profiles/<name>/
-├── profile.yaml   # base_url, agent_id, agent_name, kid, registration token
-├── agent.key      # Ed25519 private key (PEM, 0600)
-└── tokens.json    # access/refresh tokens + expiry (0600)
-```
-
-## Config file (`~/.jentic/config.yaml`) — legacy / POC only
-
-> **Legacy.** This file belongs to the pre-activation `~/.jentic` layer. The V2
-> CLI resolves everything from the XDG store (see "XDG layout" below); in
-> particular `jentic execute` reads the broker from the active environment's
-> `broker_url`, **not** from `broker.scheme`/`broker.host` here. This section is
-> retained only to describe what a migrated legacy file may contain.
-
-Pre-activation settings were persisted in `~/.jentic/config.yaml`, organized
-into sections:
-
-```yaml
-# ~/.jentic/config.yaml  (legacy)
-base_url: http://127.0.0.1:8000   # control plane (auth surface) for register/tokens
-default_profile: default          # profile used when --profile is omitted (V1)
-broker:
-  scheme: http                    # http or https  (POC forward target; logged only)
-  host: 127.0.0.1:8100            # bare host[:port], no scheme (scheme lives above)
-```
-
-The legacy `broker` block was a POC-only forward target (recorded, not used by
-V2 execute). For V2, set the broker on the environment instead:
-`jentic env add <env> --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force`.
-
-## XDG layout (`~/.config/jentic`) — the V2 model
-
-The sections above describe the **legacy** `~/.jentic` layout, which keeps
-working until you migrate. The V2 CLI stores its state per the XDG Base
-Directory spec, and `jentic migrate` copies a legacy profile store into it
-(leaving `~/.jentic` untouched apart from a `MIGRATED` marker):
+The `jentic` agent CLI stores its state per the XDG Base Directory spec:
 
 ```
 ~/.config/jentic/config.yaml         # environments, identities, contexts, active_context, theme
@@ -695,7 +638,7 @@ Directory spec, and `jentic migrate` copies a legacy profile store into it
 ~/.cache/jentic/                     # disposable caches
 ```
 
-`config.yaml` here is a different document from the legacy one: it declares
+`config.yaml` declares
 **environments** (control-plane `base_url` and an optional `broker_url` — the
 latter is never derived from `base_url`, but `jentic register` seeds it for a
 loopback install), **identities** (agent keypairs), and **contexts** binding an
@@ -731,3 +674,36 @@ export JENTIC_BROKER_URL=https://broker.jentic.example.com      # required for e
 fail-closes with `RESOLVE_FAILED` (it never falls back to the local default
 for a remote control plane). All three are required for a working remote
 data-plane loop; the control-plane commands need only the first two.
+
+## Appendix — the legacy `~/.jentic` store (pre-activation CLIs)
+
+Machines with an existing `~/.jentic` profile store from a pre-activation CLI
+are **read-only** to this release until you run `jentic migrate`, which copies
+the profile(s) into the XDG context model (leaving `~/.jentic` intact apart
+from a `MIGRATED` marker). It also adopts a legacy local-agent
+`agent_account:` record from `~/.jentic/config.yaml` into
+`~/.config/jentic/agent-account.yaml` (as does the first
+`jentic run`/`jentic reset` write, so localagent keeps no state in
+`~/.jentic`). Until you migrate, non-exempt commands stop and point you at
+`jentic migrate`. There is no in-place V1 `register --profile` / `--base-url`
+flow; migrate first, then use the `context` / `env` / `identity` commands.
+
+```bash
+jentic migrate                       # copy legacy profiles → XDG contexts (named after each profile)
+jentic context list                  # see the migrated contexts
+jentic context use <name>            # activate one
+jentic doctor                        # verify identity + reachability
+```
+
+What `migrate` reads, all under `~/.jentic/` at `0600`:
+
+- `profiles/<name>/` — `profile.yaml` (base_url, agent identity, kid,
+  registration token), `agent.key` (Ed25519 PEM), `tokens.json` (cached
+  tokens).
+- `config.yaml` — legacy CLI settings (`base_url`, `default_profile`). Its
+  `broker:` block was a pre-V2 forward target and is ignored by V2
+  `jentic execute`, which reads the active environment's `broker_url` instead —
+  set it with `jentic env add <env> --url … --broker-url … --force`.
+
+The rest of `~/.jentic` belongs to `jenticctl`
+(see [Onboarding](#onboarding-jenticctl-install)).

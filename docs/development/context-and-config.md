@@ -1,8 +1,8 @@
 # Context and configuration
 
-## Overview
-
-The `jentic_one.shared` package provides the foundational configuration and context system. All modules (broker, control) consume these shared components.
+How a deployment's configuration is loaded and how it reaches code: the
+`jentic_one.shared` package owns both the config model and the `Context`
+object every surface consumes.
 
 ## Configuration
 
@@ -29,7 +29,9 @@ databases:
     name: control_db
 ```
 
-All other fields have sensible defaults (localhost:5432, pool sizes, etc.).
+All other fields default to a local single-host shape (`localhost:5432`, pool
+sizes, etc.) — the generated [config reference](../reference/config.md) lists
+every default.
 
 ### Secret handling
 

@@ -164,7 +164,7 @@ grant flow:
 
 The confinement layer exists because the ACL layer has a structural gap.
 
-**Symptom.** Grant `~/a` and the agent could — without confinement — also reach
+**Symptom.** Grant `~/a` and the agent could, without confinement, also reach
 `~/b`, a sibling it was never granted, whenever `~/b` happens to be
 world-readable.
 
@@ -256,7 +256,7 @@ Why the operator needs it:
   existing entries** (not just inherited onto future ones), the operator can
   overwrite the previous launch's now-agent-owned files on the next export.
 
-This grant is **additive and idempotent** — re-applying only ever widens — so it
+This grant is **additive and idempotent** (re-applying only ever widens), so it
 is re-asserted on the account-reuse path where a prior `reset` may have left a
 stale, too-narrow ACE. Ownership of the home tree itself is reclaimed to the agent
 (`chown -Rf`) on every setup, best-effort (a macOS home carries SIP/TCC-protected
