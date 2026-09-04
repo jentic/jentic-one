@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+import secrets
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
@@ -26,29 +27,42 @@ from jentic_one.shared.state.factory import StateBackendConfig
 
 _logger = structlog.get_logger(__name__)
 
-# Sentinel value shipped in default configs; rejected as an actual secret in
-# production by the validators below. Defined once so the literal lives in a
-# single place (and the secrets scanner only has to allow it here).
-_DEFAULT_SECRET_PLACEHOLDER = "CHANGE-ME-IN-PRODUCTION"  # pragma: allowlist secret
+# Per-process cache of dev-generated secrets, keyed by dotted config path.
+# Keeps repeated config loads within one process (tests, re-reads) signing
+# with the same key, while never persisting a secret-shaped literal anywhere:
+# shipped images must not contain default credentials (AWS Marketplace
+# container policy — their scanner flags hardcoded defaults even when a
+# production guard would reject them at boot).
+_EPHEMERAL_DEV_SECRETS: dict[str, SecretStr] = {}
 
 
-def _require_production_secret(value: SecretStr, *, field_path: str) -> None:
-    """Reject the shipped placeholder (or a blank value) as a real secret in prod.
+def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretStr:
+    """Return the configured secret, or mint a per-process one for dev.
 
-    A single guard for the admin ``jwt_secret`` / invite ``pepper``: both ship the
-    same ``_DEFAULT_SECRET_PLACEHOLDER`` in default configs and must be replaced
-    before running in production. Treats both the literal placeholder and an
-    empty/whitespace value as unsafe. Only fires when ``JENTIC_ENV=production`` so
-    development/test keep working with the default. ``field_path`` is the
-    dotted config key surfaced in the error (e.g. ``admin.auth.jwt_secret``).
+    A single guard for every scalar secret the app cannot safely default
+    (admin ``jwt_secret``, invite ``pepper``, connect ``state_secret``). The
+    shipped default for all of them is empty:
+
+    - ``JENTIC_ENV=production``: an empty/whitespace value is a hard
+      ``ConfigError`` — the install path (jenticctl install, the Helm chart's
+      generated Secret) provides real values, so a blank reaching production
+      means that step was skipped.
+    - development/test: generate a random per-process secret so the app still
+      boots with zero configuration. Cached per ``field_path`` so repeated
+      loads in one process agree; deliberately NOT persisted, so restarts
+      rotate it (dev sessions ending on restart beats shipping a known key).
     """
-    secret = value.get_secret_value()
-    is_unsafe = secret == _DEFAULT_SECRET_PLACEHOLDER or not secret.strip()
-    if is_unsafe and os.environ.get("JENTIC_ENV", "development") == "production":
+    if value.get_secret_value().strip():
+        return value
+    if os.environ.get("JENTIC_ENV", "development") == "production":
         raise ConfigError(
             f"{field_path} must be explicitly configured in production "
             "(jenticctl install generates one automatically)"
         )
+    if field_path not in _EPHEMERAL_DEV_SECRETS:
+        _EPHEMERAL_DEV_SECRETS[field_path] = SecretStr(secrets.token_urlsafe(32))
+        _logger.info("generated ephemeral dev secret", field_path=field_path)
+    return _EPHEMERAL_DEV_SECRETS[field_path]
 
 
 class ConfigError(Exception):
@@ -186,7 +200,7 @@ class ObservabilityConfig(BaseModel):
 class AdminAuthConfig(BaseModel):
     """Admin authentication settings."""
 
-    jwt_secret: SecretStr = SecretStr(_DEFAULT_SECRET_PLACEHOLDER)
+    jwt_secret: SecretStr = SecretStr("")
     jwt_ttl_seconds: int = Field(default=3600, gt=0)
     # Absolute cap on a web session: `POST /auth/refresh` re-mints the login
     # JWT (sliding session) only while `now - auth_time` stays inside this
@@ -196,8 +210,10 @@ class AdminAuthConfig(BaseModel):
     failed_login_lockout_seconds: int = 900
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> AdminAuthConfig:
-        _require_production_secret(self.jwt_secret, field_path="admin.auth.jwt_secret")
+    def _require_or_generate_secret_in_dev(self) -> AdminAuthConfig:
+        self.jwt_secret = _require_or_generate_secret(
+            self.jwt_secret, field_path="admin.auth.jwt_secret"
+        )
         return self
 
     @model_validator(mode="after")
@@ -213,11 +229,11 @@ class AdminInviteConfig(BaseModel):
     """Admin invite token settings."""
 
     ttl_days: int = 7
-    pepper: SecretStr = SecretStr(_DEFAULT_SECRET_PLACEHOLDER)
+    pepper: SecretStr = SecretStr("")
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> AdminInviteConfig:
-        _require_production_secret(self.pepper, field_path="admin.invite.pepper")
+    def _require_or_generate_secret_in_dev(self) -> AdminInviteConfig:
+        self.pepper = _require_or_generate_secret(self.pepper, field_path="admin.invite.pepper")
         return self
 
 
@@ -441,17 +457,14 @@ ProviderConfig = Annotated[
 class ConnectConfig(BaseModel):
     """Configuration for the OAuth connect flow."""
 
-    state_secret: SecretStr = SecretStr("change-me-in-production")
+    state_secret: SecretStr = SecretStr("")
     state_ttl_seconds: int = 600
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> ConnectConfig:
-        if self.state_secret.get_secret_value() == "change-me-in-production":
-            env = os.environ.get("JENTIC_ENV", "development")
-            if env == "production":
-                raise ConfigError(
-                    "credentials.connect.state_secret must be explicitly configured in production"
-                )
+    def _require_or_generate_secret_in_dev(self) -> ConnectConfig:
+        self.state_secret = _require_or_generate_secret(
+            self.state_secret, field_path="credentials.connect.state_secret"
+        )
         return self
 
 

@@ -18,6 +18,7 @@ from jentic_one.shared.config import (
     AuthConfig,
     CatalogConfig,
     ConfigError,
+    ConnectConfig,
     CredentialsConfig,
     EgressConfig,
     EncryptionConfig,
@@ -155,11 +156,34 @@ def test_numeric_password_preserved_as_string(config_file: Path):
     assert config.databases.registry.password.get_secret_value() == "123456"
 
 
-def test_default_jwt_secret_allowed_in_development():
-    """The placeholder jwt_secret is fine for local dev (the common case)."""
+def test_default_jwt_secret_generated_in_development():
+    """With no jwt_secret configured, dev mints a random per-process secret.
+
+    The shipped default is empty — images must not contain a secret-shaped
+    literal (AWS Marketplace container policy) — so zero-config local dev
+    relies on this generation. It must be non-empty and stable across repeated
+    config loads in one process, or every re-read would invalidate sessions.
+    """
     with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
-        cfg = AdminAuthConfig()
-    assert cfg.jwt_secret.get_secret_value() == "CHANGE-ME-IN-PRODUCTION"
+        first = AdminAuthConfig()
+        second = AdminAuthConfig()
+    generated = first.jwt_secret.get_secret_value()
+    assert generated.strip()
+    assert generated == second.jwt_secret.get_secret_value()
+
+
+def test_generated_dev_secrets_differ_per_field():
+    """The dev generator must not reuse one value across different secrets.
+
+    jwt_secret / pepper / state_secret have different blast radii; a shared
+    value would let one surface forge another's artifacts (e.g. sign an admin
+    JWT with the connect state secret).
+    """
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        jwt = AdminAuthConfig().jwt_secret.get_secret_value()
+        pepper = AdminInviteConfig().pepper.get_secret_value()
+        state = ConnectConfig().state_secret.get_secret_value()
+    assert len({jwt, pepper, state}) == 3
 
 
 def test_default_jwt_secret_rejected_in_production():
@@ -277,6 +301,27 @@ def test_explicit_invite_pepper_accepted_in_production():
     with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
         cfg = AdminInviteConfig(pepper=SecretStr("a-real-generated-pepper"))
     assert cfg.pepper.get_secret_value() == "a-real-generated-pepper"
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_connect_state_secret_rejected_in_production(blank: str):
+    """The connect state_secret gets the same fail-closed posture as the rest.
+
+    It signs the OAuth connect state; running production with a generated
+    per-process value would break multi-replica deployments silently, so a
+    missing value must be a boot error, not a fallback.
+    """
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match=r"credentials\.connect\.state_secret"),
+    ):
+        ConnectConfig(state_secret=SecretStr(blank))
+
+
+def test_explicit_connect_state_secret_accepted_in_production():
+    with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
+        cfg = ConnectConfig(state_secret=SecretStr("a-real-generated-state-secret"))
+    assert cfg.state_secret.get_secret_value() == "a-real-generated-state-secret"
 
 
 _LOCAL_DEV_KEY_SEC1 = """\
