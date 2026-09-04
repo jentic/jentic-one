@@ -257,7 +257,7 @@ export class AgentsService {
     }
     /**
      * List agent OAuth grants
-     * List OAuth consent grants binding clients to this agent (§4.8).
+     * List OAuth consent grants binding clients to this agent.
      *
      * The "Connected clients" surface: every grant carries the client's display
      * name and redirect-URI origin, the granted scopes, the consenting user,

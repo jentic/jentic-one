@@ -5,8 +5,8 @@ Pins the four ``server.mcp.enabled`` x ``server.mcp.oauth.enabled`` arms:
 ====================  =====================  =======================================
 ``mcp.enabled``       ``mcp.oauth.enabled``  ``/mcp`` answers
 ====================  =====================  =======================================
-off (default)         off (default)          the framework's plain 404 (as before 3a-4)
-off                   on                     the 3a-4 discovery challenge, verbatim
+off (default)         off (default)          the framework's plain 404 (as pre-placeholder)
+off                   on                     the placeholder's discovery challenge, verbatim
 on                    off                    401 bare ``Bearer`` without a credential
 on                    on                     401 + ``resource_metadata`` pointer
 ====================  =====================  =======================================
@@ -14,8 +14,8 @@ on                    on                     401 + ``resource_metadata`` pointer
 plus the mount-owned request checks on the enabled arms: strict ``Origin``
 validation (403 on spoof), the pre-auth whitelist (``tools/list`` without a
 credential), bearer resolution through the app-state ``verify_token`` (the
-same superset verifier the REST routes use — including 3a-3 grant-channel
-bearers), and the F7 sub-path fall-through (``/mcp/.well-known/…`` keeps
+same superset verifier the REST routes use — including grant-channel
+bearers), and the sub-path fall-through (``/mcp/.well-known/…`` keeps
 answering the plain 404 in every arm).
 """
 
@@ -44,7 +44,7 @@ from jentic_one.shared.models.actors import Origin
 _BASE = "https://auth.example.com"
 _CHALLENGE = f'Bearer resource_metadata="{_BASE}/.well-known/oauth-protected-resource/mcp"'
 
-#: the method set the 3a-4 placeholder pinned (review F3/F4): the challenge
+#: the method set the placeholder pinned: the challenge
 #: precedes method semantics, and the disabled arm answers a uniform 404.
 _MCP_METHODS = ("GET", "POST", "DELETE", "HEAD", "OPTIONS", "PUT", "PATCH")
 
@@ -124,7 +124,7 @@ def test_all_off_is_plain_404_on_every_method(method: str) -> None:
             assert resp.json() == {"detail": "Not Found"}
 
 
-# --- arm 2: oauth on, endpoint off — the 3a-4 placeholder contract, verbatim -
+# --- arm 2: oauth on, endpoint off — the placeholder contract, verbatim ------
 
 
 @pytest.mark.parametrize("method", _MCP_METHODS)
@@ -231,7 +231,7 @@ def test_authenticated_get_is_405_and_never_reaches_the_sse_arm() -> None:
 
 def test_credential_less_get_stays_401_not_405() -> None:
     """Auth precedes method semantics: an unauthenticated GET keeps answering
-    the 401 challenge (the 3a-4 contract), never a method tell."""
+    the 401 challenge (the placeholder contract), never a method tell."""
     with make_client(oauth_enabled=True) as client:
         resp = client.get("/mcp", headers={"Accept": "text/event-stream"})
         assert resp.status_code == 401
@@ -388,7 +388,7 @@ def test_origin_check_precedes_auth() -> None:
         assert resp.status_code == 403
 
 
-# --- sub-path fall-through (review F7) ----------------------------------------
+# --- sub-path fall-through --------------------------------------------------
 
 _UNSERVED_SUBPATHS = (
     "/mcp/.well-known/openid-configuration",
@@ -416,14 +416,14 @@ def test_subpaths_answer_the_plain_404_in_every_arm(
 def test_trailing_slash_redirect_tell_is_preserved(mcp_enabled: bool) -> None:
     """`/mcp/` keeps the placeholder-era redirect_slashes 307 to `/mcp` in
     every arm — the mount registers the exact path, so Starlette's slash
-    handling is unchanged (the 3a-4 tests pinned this tell as build-level)."""
+    handling is unchanged (the placeholder tests pinned this tell as build-level)."""
     with make_client(mcp_enabled=mcp_enabled, oauth_enabled=True) as client:
         resp = client.get("/mcp/", follow_redirects=False)
         assert resp.status_code == 307
         assert resp.headers["location"].endswith("/mcp")
 
 
-# --- grant-channel bearer resolution (3a-3) -----------------------------------
+# --- grant-channel bearer resolution ------------------------------------------
 
 
 def test_grant_channel_bearer_resolves_through_verify_token() -> None:

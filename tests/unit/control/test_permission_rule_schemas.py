@@ -74,7 +74,7 @@ def test_toolkit_rule_rejects_empty_path(mode: str) -> None:
 
 
 def test_toolkit_condition_less_allow_still_rejected() -> None:
-    # Guard predates #751 but must survive the refactor onto the shared base.
+    # A condition-less ``allow`` must be rejected by the shared base (#751).
     with pytest.raises(ValidationError):
         TKPermissionRuleSchema(effect="allow")
 

@@ -2,10 +2,9 @@
  * OperationDetail — shared, presentational per-operation drill-down.
  *
  * Renders the method + path, summary/description, a Parameters table, and an
- * Authentication table resolved from a `security_schemes` map. Originally lived
- * in the discover module (ported from jentic-mini's `OperationInspectContent`);
- * promoted to `shared/ui` so both Discover (catalog preview) and Workspace
- * (spec-derived) operation views render operations identically.
+ * Authentication table resolved from a `security_schemes` map. Lives in
+ * `shared/ui` so both Discover (catalog preview) and Workspace (spec-derived)
+ * operation views render operations identically.
  *
  * Neutral by design: it accepts a plain {@link OperationDetailData} shape and a
  * `securitySchemes` record, so callers can project their own API types (the

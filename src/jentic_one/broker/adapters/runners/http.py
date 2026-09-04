@@ -1,7 +1,7 @@
-"""The default HTTP ``UpstreamRunner`` (RN-0) over a single shared client.
+"""The default HTTP ``UpstreamRunner`` over a single shared client.
 
-Infrastructure adapter: it owns the transport. §04 (PR-B) folds the shared
-bounded ``httpx.AsyncClient`` in here (the RN-0 alignment note in §04/§11) — the
+Infrastructure adapter: it owns the transport. The shared bounded
+``httpx.AsyncClient`` folds in here — the
 client is **injected**, never constructed per-request, so there is one pool per
 process shared by the sync handler and the async worker.
 
@@ -135,7 +135,7 @@ class HttpRunner(UpstreamRunner):
         self._max_response_bytes = max_response_bytes
 
     def capabilities(self) -> RunnerCapabilities:
-        """HTTP supports the full envelope: async, idempotency, retries (§11 RN-0.2)."""
+        """HTTP supports the full envelope: async, idempotency, retries."""
         return HTTP_RUNNER_CAPABILITIES
 
     @staticmethod
@@ -175,7 +175,7 @@ class HttpRunner(UpstreamRunner):
                     await resp.aclose()
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 # Connect-phase failure: no request bytes reached the upstream, so
-                # a retry is safe for ANY method (§09 E4.1). ConnectTimeout
+                # a retry is safe for ANY method. ConnectTimeout
                 # subclasses both ConnectError and TimeoutException — handle it
                 # here, before the generic timeout branch.
                 span.record_exception(exc)
@@ -252,7 +252,7 @@ class HttpRunner(UpstreamRunner):
 
     @contextlib.asynccontextmanager
     async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
-        """Open the upstream response and stream it without buffering (§08 E2.4).
+        """Open the upstream response and stream it without buffering.
 
         Holds the upstream ``httpx`` response open only for the ``async with``
         body: ``client.stream`` is itself a context manager, so when the caller's

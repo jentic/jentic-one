@@ -1,7 +1,7 @@
 /**
  * ApiDetailSheet — slide-over detail for a Discover API entity.
  *
- * Two views inside one sheet (jentic-mini parity):
+ * Two views inside one sheet:
  *   - summary: API identity (vendor icon, name, status pill, github link), the
  *     markdown `info.description`, and the filterable operations list.
  *   - operation: a drill-down for one clicked operation (method/path, summary,

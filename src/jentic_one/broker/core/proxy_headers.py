@@ -56,7 +56,7 @@ def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> 
     forwarding/topology headers. Injected auth headers win on conflict.
 
     ``Cookie`` is intentionally **not** special-cased here: a cookie-located
-    credential is merged explicitly at the call site (§02b) by appending to the
+    credential is merged explicitly at the call site by appending to the
     forwarded ``Cookie`` rather than overwriting it.
     """
     out = {
@@ -89,7 +89,7 @@ def passthrough_response_headers(upstream: Mapping[str, str]) -> dict[str, str]:
 
 
 def passthrough_streaming_headers(upstream: Mapping[str, str]) -> dict[str, str]:
-    """Filter upstream response headers for the **raw streaming** passthrough (§08 E2.4).
+    """Filter upstream response headers for the **raw streaming** passthrough.
 
     The streaming path forwards the upstream body byte-for-byte via ``aiter_raw``
     (still-compressed), so — unlike the buffered path — ``content-encoding`` is

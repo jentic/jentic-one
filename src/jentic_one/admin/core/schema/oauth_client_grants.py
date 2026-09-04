@@ -1,4 +1,4 @@
-"""OAuthClientGrant ORM model — the consent→agent binding (phase-3a D3, §4.4).
+"""OAuthClientGrant ORM model — the consent→agent binding.
 
 A row is minted at consent time for ``consent_model='agent'`` clients: it binds
 one OAuth client (by its PUBLIC ``client_id`` string — the same join key the
@@ -6,7 +6,7 @@ token-lineage columns carry) to exactly ONE of the consenting user's
 admin-approved agents, with the D2-intersected scope set frozen at consent.
 Tokens exchanged from a grant-bearing authorization code resolve to
 actor=AGENT and carry ``oauth_grant_id`` lineage; both resolvers re-check this
-row's ``status`` live on every verdict (§4.5-4.6), so revoking the grant is an
+row's ``status`` live on every verdict, so revoking the grant is an
 independent kill switch beside client-deactivate and agent-disable.
 """
 

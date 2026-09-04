@@ -1,9 +1,9 @@
 // Package prompt holds the shared, brand-themed interactive form helpers used
 // across the whole CLI (both the jentic and jenticctl trees). They are pure UI
 // wrappers over charmbracelet/huh + the brand theme — they carry NO installer
-// logic, so living here (rather than in internal/install, where they used to
-// sit) is what lets the jentic tree build interactive prompts without importing
-// any operator/installer package (the 06 §1 / 07 §3 airgap; impl/1.1 §1a).
+// logic, so living here (rather than in internal/install) is what lets the
+// jentic tree build interactive prompts without importing any
+// operator/installer package (the 06 §1 / 07 §3 airgap; impl/1.1 §1a).
 //
 // Every interactive form/input/confirm in the CLI must be built through these
 // constructors so selectors, prompt glyph, and quit keys stay identical

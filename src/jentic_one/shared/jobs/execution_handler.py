@@ -1,7 +1,7 @@
 """Execution job handler — runs async upstream calls through the shared pipeline.
 
-The handler is the async half of "one pipeline, two callers" (§00 / §05 / §11
-RN-0.3): it does **not** issue its own ``httpx`` calls. It resolves credentials
+The handler is the async half of "one pipeline, two callers": it does **not**
+issue its own ``httpx`` calls. It resolves credentials
 (via the injected ``CredentialInjector``), applies them to the outbound
 URL/headers exactly like the sync router's ``_apply_injection`` (headers **and**
 query **and** cookies — an ``apiKey in: query``/``cookie`` credential is never
@@ -313,7 +313,7 @@ def _apply_injection(upstream_url: str, injection: InjectedAuth) -> AppliedAuth:
     are substituted into the URL template, query-param credentials are merged
     into the URL query, and cookie credentials into a ``Cookie`` header, so an
     ``apiKey in: query`` / ``apiKey in: cookie`` credential is applied rather
-    than silently dropped (the pre-RN-0 worker applied none of these).
+    than silently dropped.
     """
     if injection.server_variables:
         upstream_url = apply_server_variables(upstream_url, injection.server_variables)

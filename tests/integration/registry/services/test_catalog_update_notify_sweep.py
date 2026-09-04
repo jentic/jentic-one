@@ -279,7 +279,7 @@ async def test_outdated_clears_when_upstream_reverts_to_served(
 ) -> None:
     """An upstream revert to the served content must drop the API out of the outdated set.
 
-    Regression for the stuck-badge revert path (ren-jentic M1): ``_probe_one`` never
+    Regression for the stuck-badge revert path: ``_probe_one`` never
     lowers ``last_notified_digest`` on a no-change probe (correct, for event dedupe), but
     the read surface (``outdated_api_ids`` / ``outdated_spec_urls``) keys off that same
     field. So without a fix, this sequence stuck the badge permanently:

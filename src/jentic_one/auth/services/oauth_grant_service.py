@@ -1,7 +1,7 @@
-"""Consent→agent grant lifecycle service (phase-3a design §4.4, §4.6, §4.8).
+"""Consent→agent grant lifecycle service.
 
 Owns the ``oauth_client_grants`` rows: minting at consent-approve (with the
-§4.1 pair-collapse), and the per-grant kill switch (``:revoke`` + token
+(client, agent) pair-collapse), and the per-grant kill switch (``:revoke`` + token
 sweep). Token *resolution* gates live in :mod:`token_service` and the broker
 resolver — this service is the write side.
 """
@@ -42,7 +42,7 @@ from jentic_one.shared.pagination import Page
 
 logger = structlog.get_logger(__name__)
 
-#: Read-side admin set (§4.8 listings): the ``:revoke`` write pair
+#: Read-side admin set (grant listings): the ``:revoke`` write pair
 #: (:data:`GRANT_REVOKE_ADMIN_PERMISSIONS` — the single revoke-predicate
 #: definition, shared with ``viewer_can_revoke``) plus the read-only half of
 #: the client-lifecycle permission pair — the same permission that gates
@@ -186,18 +186,18 @@ class OAuthGrantService:
         scopes: list[str],
         client_name: str | None = None,
     ) -> str:
-        """Mint an ``oauth_client_grants`` row at consent-approve (§4.4 step 3).
+        """Mint an ``oauth_client_grants`` row at consent-approve.
 
         Locks the agent row and re-checks the consent predicate (exists +
         ``active`` + owned by ``user_id``) inside the mint transaction —
         raising :class:`ConsentAgentNotEligibleError` on failure — so a
         concurrent ownership transfer serializes against the mint instead of
         racing it. Collapses any prior active row for the (client, agent)
-        pair (§4.1: re-consent revokes the old row and inserts the new one —
+        pair (re-consent revokes the old row and inserts the new one —
         history stays, exactly one active row per pair). Writes the consent
         audit row (the pre-3a ``record_consent_decision`` shape, extended
         with ``agent_id``/``grant_id``) and emits ``oauth_grant.created`` —
-        grant creation is deliberately loud (§4.8). Returns the new grant id.
+        grant creation is deliberately loud. Returns the new grant id.
         """
 
         async def _write(session: AsyncSession) -> str:
@@ -257,7 +257,7 @@ class OAuthGrantService:
                     f"access through agent {agent_id}"
                 ),
                 # Consent WAS the decision — user-visible notification, not an
-                # inbox item awaiting action (§4.8).
+                # inbox item awaiting action.
                 requires_action=False,
                 data={
                     "grant_id": grant.id,
@@ -273,7 +273,7 @@ class OAuthGrantService:
         return await self._ctx.admin_db.run_in_transaction(_write)
 
     async def revoke_grant(self, grant_id: str, *, identity: Identity) -> None:
-        """The per-grant kill switch (§4.6): row ``revoked`` + token sweep.
+        """The per-grant kill switch: row ``revoked`` + token sweep.
 
         Owner (the consenting user) or admin only. Revokes the grant row and
         every live access/refresh token stamped with this ``oauth_grant_id``
@@ -314,12 +314,12 @@ class OAuthGrantService:
         limit: int = 50,
         cursor: str | None = None,
     ) -> Page[OAuthGrantView]:
-        """The per-agent "Connected clients" listing (§4.8).
+        """The per-agent "Connected clients" listing.
 
         Owner-or-admin, mirroring ``revoke_grant``'s semantics on the read
         side: the agent's owner sees their agent's grants; anyone else needs
         an admin permission (403, not 404 — agent ids are ksuids, not
-        secrets). Items carry the §4.8 display fields (client name,
+        secrets). Items carry the display fields (client name,
         redirect-URI origin, scopes, created, last-used, status) plus the
         consenting ``user_id`` and the viewer's per-item ``can_revoke``
         capability. The two predicates still differ (list keys on the agent's

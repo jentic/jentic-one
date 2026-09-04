@@ -26,11 +26,10 @@ const LongRunningAnnotation = "long-running"
 // construct the Audience -> ENFORCE FENCING -> inject Audience + ActiveState into
 // the context. It preserves the existing banner/nudge side effects.
 //
-// SCOPE (Phase 2): this enforces fencing and makes the Audience/ActiveState
-// available in the context; the shipped commands still render through the legacy
-// output path (the strangler-fig cutover to aud.Render is Phase 3). Resolution
-// failures are non-fatal for everything except an explicit fenced-in-agent-mode
-// block, so V1 behavior is preserved on un-migrated machines.
+// SCOPE: this enforces fencing and makes the Audience/ActiveState available in
+// the context. Resolution failures are non-fatal for everything except an
+// explicit fenced-in-agent-mode block, so machines with no XDG config still
+// work and config-creating commands stay bootstrap-safe.
 func installInterceptor(app *App, root *cobra.Command) {
 	// agentTimeout bounds a single control-plane call in non-interactive mode so a
 	// wedged server can't hang an agent forever (F3, review round-3 #7 /
@@ -52,15 +51,15 @@ func installInterceptor(app *App, root *cobra.Command) {
 	}
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Preserve the shipped banner + update nudge (previously PersistentPreRun).
+		// Preserve the shipped banner + update nudge.
 		app.banner(cmd)
 		app.maybeNudgeUpdate(cmd)
 
 		// 1. Resolve active state (SDK + legacy adapter). On failure, degrade to a
-		// default state rather than aborting — Phase 2 must not regress V1 for users
-		// with no XDG config, and config-creating commands are bootstrap-safe. The
-		// --context/--mode/--theme root flags land in Phase 3; the env fallbacks
-		// ($JENTIC_CONTEXT here, $JENTIC_MODE inside resolveMode) keep working when
+		// default state rather than aborting — users with no XDG config must not be
+		// blocked, and config-creating commands are bootstrap-safe. The
+		// --context/--mode/--theme root flags take precedence; the env fallbacks
+		// ($JENTIC_CONTEXT here, $JENTIC_MODE inside resolveMode) apply when
 		// the flags are unset.
 		contextOverride := flagValue(cmd, "context")
 		if contextOverride == "" {

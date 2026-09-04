@@ -101,18 +101,16 @@ class CreateRevisionStage(BasePipelineStage):
                 # only skip when the current revision belongs to the very overlay this job
                 # materializes. The previous overlay revision is still archived below either
                 # way (retained in the chain).
-                # Capture race (backend review S2, tracked): this reads api.current_revision_id
+                # Capture race: this reads api.current_revision_id
                 # at *worker* time. The service guards live.current_revision_id ==
                 # confirmed_revision_id before enqueue, but if an authorized catalog re-import
-                # (A4b) lands between enqueue and this (async) ingest, current is no longer this
+                # lands between enqueue and this (async) ingest, current is no longer this
                 # overlay's revision → _is_self_rematerialize won't match → we'd capture the new
                 # current as the superseded target, moving the rollback target off the clean
-                # base. This window is inherent to the existing async-materialize design (confirm
-                # has the same shape) and is not newly introduced by D1; the conservative
-                # fail-closed direction (capture rather than skip) means the worst case is a
-                # rollback target that points at a still-valid revision, never a stripped one.
-                # See spec-flywheel-tracker.md (Flow-3 deferred: worker re-assert of the
-                # pre-enqueue confirmed revision before deciding capture).
+                # base. This window is inherent to the async-materialize design (confirm
+                # has the same shape); the conservative fail-closed direction (capture rather
+                # than skip) means the worst case is a rollback target that points at a
+                # still-valid revision, never a stripped one.
                 api = await ApiRepository.get_by_id(ctx.session, api_id)
                 if (
                     api is not None

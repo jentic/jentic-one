@@ -8,14 +8,12 @@ import (
 )
 
 // configWriterAllowlist names the files permitted to call os.WriteFile /
-// os.Rename against config/state/key material (impl/0.0 §1E). The V2 target set
-// is client/config/writer.go, client/auth/tokens.go, client/auth/keys.go. Until
-// those land, the shipped atomic writers below are the legitimate owners. As
-// the migration moves each writer, update this list — an unlisted writer is a
-// test failure, which is the point: it stops an agent hand-rolling a
-// flock-bypassing writer that corrupts config.yaml under concurrent registration.
+// os.Rename against config/state/key material (impl/0.0 §1E). An unlisted
+// writer is a test failure, which is the point: it stops an agent hand-rolling
+// a flock-bypassing writer that corrupts config.yaml under concurrent
+// registration.
 var configWriterAllowlist = map[string]bool{
-	// V2 targets (Phase 1) — listed ahead of time so they pass on arrival.
+	// V2 writers.
 	"client/config/writer.go": true,
 	"client/auth/tokens.go":   true,
 	"client/auth/keys.go":     true,

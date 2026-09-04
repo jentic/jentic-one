@@ -1,6 +1,6 @@
 """Anonymous OAuth-client Dynamic Client Registration service (RFC 7591 subset).
 
-Phase-3a design §4.2 (D1/D6/D8/D9): the front door behind ``POST
+The anonymous-DCR design (D1/D6/D8/D9): the front door behind ``POST
 /oauth-clients``. It writes **public** (secret-less, PKCE-only) rows into the
 same ``oauth_clients`` registry the admin CRUD manages — always
 ``consent_model='agent'`` and ``registration_source='dcr'``. Rows land
@@ -40,7 +40,7 @@ from jentic_one.shared.models.oauth_clients import (
 )
 from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
-#: RFC 7591 grant types this door accepts (§4.2). Anything else is rejected —
+#: RFC 7591 grant types this door accepts. Anything else is rejected —
 #: notably ``client_credentials`` and the jwt-bearer grant, which belong to
 #: confidential clients and agents respectively.
 _ALLOWED_GRANT_TYPES: frozenset[str] = frozenset({"authorization_code", "refresh_token"})
@@ -48,7 +48,7 @@ _ALLOWED_GRANT_TYPES: frozenset[str] = frozenset({"authorization_code", "refresh
 #: The auth-code flow is the only supported response type (RFC 7591 default).
 _ALLOWED_RESPONSE_TYPES: frozenset[str] = frozenset({"code"})
 
-#: Audit/event attribution for anonymous registrations. The design (§4.2) says
+#: Audit/event attribution for anonymous registrations. The design says
 #: "actor = system", but the "system" actor notion has been removed from the
 #: codebase (tests/arch/test_no_system_actor.py) — mirror the agent DCR
 #: endpoint (registration_service.py), which attributes anonymous
@@ -80,7 +80,7 @@ class DcrRegisterResult:
 
 
 def _cap_scopes(scope: str | None) -> list[str]:
-    """Cap the client-claimed ``scope`` to the MCP tool-scope set (§4.2).
+    """Cap the client-claimed ``scope`` to the MCP tool-scope set.
 
     A DCR client's ``allowed_scopes`` ceiling is never unrestricted: no
     ``scope`` claim means the full MCP tool-scope set, and a claim is
@@ -91,7 +91,7 @@ def _cap_scopes(scope: str | None) -> list[str]:
     ceiling ``[]`` is falsy, and the admin view layer collapses it to ``None``
     — the platform-client "no allowlist" sentinel — which would skip the
     /authorize scope check entirely and make the client *unrestricted*, the
-    exact opposite of the §4.2 ceiling. Never store ``[]``.
+    exact opposite of the scope ceiling. Never store ``[]``.
     """
     if scope is None or not scope.strip():
         return sorted(MCP_TOOL_SCOPES)
@@ -112,7 +112,7 @@ def _validate_metadata(
     grant_types: list[str] | None,
     response_types: list[str] | None,
 ) -> None:
-    """Reject unsupported RFC 7591 metadata (design §4.2 accepted subset)."""
+    """Reject unsupported RFC 7591 metadata (only the accepted subset passes)."""
     if (
         token_endpoint_auth_method is not None
         and token_endpoint_auth_method != TokenEndpointAuthMethod.NONE.value
@@ -241,7 +241,7 @@ class OAuthDcrService:
         async def _write(session: AsyncSession) -> tuple[OAuthClient, bool]:
             if software_id:
                 # D8 dedupe via the (software_id, redirect_uris_fingerprint)
-                # index (§4.1); the fetched rows' exact URI sets are re-checked
+                # index; the fetched rows' exact URI sets are re-checked
                 # because the fingerprint is a hash (collision guard). Among
                 # multiple exact matches (double-register race) prefer
                 # approved > pending > denied, then oldest — `min` is stable

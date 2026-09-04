@@ -26,7 +26,7 @@ class RevisionPinOutcome(StrEnum):
 
     A neutral, transport-free enum so the resolver (which lives in ``registry/``)
     never leaks registry exception types across the architecture boundary — the
-    broker maps each outcome to its own domain exception (§10).
+    broker maps each outcome to its own domain exception.
     """
 
     RESOLVED = "resolved"
@@ -72,7 +72,7 @@ class RegistryResolverProtocol(Protocol):
         rev_label: str,
         identity: Identity,
     ) -> RevisionPinResult:
-        """Translate a ``vendor:name:version=rev_…`` pin to a ``revision_id`` (§10).
+        """Translate a ``vendor:name:version=rev_…`` pin to a ``revision_id``.
 
         Performs the in-process lookup + access-rule check and returns a neutral
         :class:`RevisionPinResult`; it never raises a registry-specific exception
@@ -93,9 +93,8 @@ class TokenResolverProtocol(Protocol):
 class RuleEvaluation:
     """Outcome of a permission-rule evaluation with just enough context to explain a deny.
 
-    ``allowed`` is the same signal the pre-#578 bare-bool evaluator emitted.
-    ``rules_loaded`` distinguishes two very different deny paths that used to
-    collapse into one bare 403 (#578): a zero-length pool (nothing matched
+    ``rules_loaded`` distinguishes two very different deny paths (#578): a
+    zero-length pool (nothing matched
     because there was nothing to match — wrong vendor, unbound credential,
     empty binding, misconfigured store) vs a non-empty pool where no rule
     happened to match. The router turns this into a two-variant detail
@@ -214,7 +213,7 @@ class IdempotencyClaim:
 class IdempotencyStore(Protocol):
     """Cross-instance idempotency: claim a key, then store the final response.
 
-    The concrete implementation (§07) is backed by an ``AtomicStore`` so claims
+    The concrete implementation is backed by an ``AtomicStore`` so claims
     are atomic across broker instances.
     """
 
@@ -235,19 +234,19 @@ class TelemetrySink(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Transport-neutral runner value objects (RN-0.1)
+# Transport-neutral runner value objects
 #
-# These types are the *transport-neutral* foundation for the pluggable upstream
-# runners roadmap (design: ``docs/design/designs/broker/impl/11-pluggable-runners.md``).
-# They are deliberately **not** HTTP-shaped: the web layer maps an HTTP method to a
-# neutral :class:`Verb`, headers travel in ``metadata`` as an ``HttpRunner`` detail,
-# and ``code`` is a normalised result code rather than "an HTTP status".
+# These types are the *transport-neutral* foundation for pluggable upstream
+# runners. They are deliberately **not** HTTP-shaped: the web layer maps an HTTP
+# method to a neutral :class:`Verb`, headers travel in ``metadata`` as an
+# ``HttpRunner`` detail, and ``code`` is a normalised result code rather than
+# "an HTTP status".
 #
-# RN-0.1 lands these alongside the existing HTTP-shaped
+# They live alongside the existing HTTP-shaped
 # ``broker/adapters/runners/base.py`` objects (``RunnerRequest``/``RunnerResult``/
-# ``UpstreamRunner``), which stay live and unchanged. The incremental migration of
-# the live runner path onto :class:`PluggableUpstreamRunner` (registry, capability
-# gating, the decorator envelope) is deferred to later §11 sub-PRs.
+# ``UpstreamRunner``), which the live runner path still uses; migrating that path
+# onto :class:`PluggableUpstreamRunner` (registry, capability gating, the
+# decorator envelope) is future work.
 # ---------------------------------------------------------------------------
 
 
@@ -310,7 +309,7 @@ class UpstreamResult:
 
 @dataclass(frozen=True, slots=True)
 class RunnerCapabilities:
-    """What a runner can do — used by later sub-PRs to gate the execution envelope."""
+    """What a runner can do — gates which execution-envelope layers may wrap it."""
 
     verbs: frozenset[Verb]
     credential_types: frozenset[CredentialType]
@@ -323,13 +322,13 @@ class RunnerCapabilities:
 
 @runtime_checkable
 class EgressPolicy(Protocol):
-    """Minimal placeholder for the scheme-aware egress policy (RN-1.1, deferred).
+    """Minimal placeholder for the scheme-aware egress policy (future work).
 
     The real ``EgressPolicy`` (per-runner allowed schemes, host allowlists,
-    private-IP/metadata blocking, DNS pinning) is built in RN-1.1 on top of §08/E2.
-    RN-0.1 only needs a type for the :meth:`PluggableUpstreamRunner.validate_target`
-    signature; this defines just the ``check`` shape so the protocol is mypy-strict
-    clean without prematurely building the full policy.
+    private-IP/metadata blocking, DNS pinning) builds on the shared egress guard.
+    For now only the :meth:`PluggableUpstreamRunner.validate_target` signature
+    needs a type; this defines just the ``check`` shape so the protocol is
+    mypy-strict clean without prematurely building the full policy.
     """
 
     def check(self, target: Target) -> None: ...
@@ -337,19 +336,20 @@ class EgressPolicy(Protocol):
 
 @runtime_checkable
 class PluggableUpstreamRunner(Protocol):
-    """Transport-neutral, pooled upstream runner (RN-0.1 foundation protocol).
+    """Transport-neutral, pooled upstream runner (foundation protocol).
 
     This is the neutral successor to the HTTP-shaped
-    ``broker/adapters/runners/base.py::UpstreamRunner``; that one stays live and is
-    migrated onto this shape in a later §11 sub-PR. Runners are **long-lived pooled
+    ``broker/adapters/runners/base.py::UpstreamRunner``; that one is still what
+    the live path uses — migrating it onto this shape is future work. Runners are
+    **long-lived pooled
     objects** — ``startup()``/``aclose()`` own the connection lifecycle — and apply
     the credential **inside** :meth:`run` (HTTP sets a per-request header; MQTT/FTP
     authenticate at connection establishment).
 
     ``credential`` is typed ``object | None`` for now: the concrete resolved-credential
     type lives in ``broker/services/credentials`` and ``shared`` must not import
-    ``broker`` (layering, enforced by ``tests/arch/test_module_boundaries.py``). The
-    credential-application slice that tightens this type lands in a later sub-PR.
+    ``broker`` (layering, enforced by ``tests/arch/test_module_boundaries.py``);
+    tightening this type is future work.
     """
 
     name: str

@@ -107,7 +107,7 @@ class EventType:
     # lane-D plan): this constant + the tag enum land first.
     MCP_CONFIG_REGISTERED = "mcp.config_registered"
 
-    # --- Interactive OAuth for MCP clients (phase 3a, design §4.8) --------
+    # --- Interactive OAuth for MCP clients --------
     # Emitted by the anonymous DCR front door (POST /oauth-clients) when a new
     # client row lands in the registry. requires_action=True when the row lands
     # `pending` (an admin must approve/deny it); auto-approved rows (D9) emit
@@ -116,14 +116,14 @@ class EventType:
     # Emitted by the admin `:approve` verb (D7) — including re-approval of a
     # previously denied client. Internal-only, like OAUTH_CLIENT_REGISTERED.
     OAUTH_CLIENT_APPROVED = "oauth_client.approved"
-    # Emitted at consent-approve for a `consent_model='agent'` client (§4.4
-    # step 3): a fresh `oauth_client_grants` row binds the client to one of the
-    # consenting user's agents. Grant creation is deliberately LOUD (the master
-    # §3.3 loud-attachment counter) — it surfaces as a user-visible
+    # Emitted at consent-approve for a `consent_model='agent'` client: a
+    # fresh `oauth_client_grants` row binds the client to one of the
+    # consenting user's agents. Grant creation is deliberately LOUD (the
+    # loud-attachment posture) — it surfaces as a user-visible
     # notification, not just an audit row. requires_action=False: consent WAS
     # the decision. Internal-only: not on the telemetry allowlist.
     OAUTH_GRANT_CREATED = "oauth_grant.created"
-    # Emitted by grant `:revoke` (§4.6/§4.8) — the per-grant kill switch. The
+    # Emitted by grant `:revoke` — the per-grant kill switch. The
     # sweep of `oauth_grant_id`-stamped token rows rides in the same
     # transaction. Internal-only, like OAUTH_GRANT_CREATED.
     OAUTH_GRANT_REVOKED = "oauth_grant.revoked"

@@ -180,7 +180,8 @@ def test_status_table_maps_taxonomy() -> None:
 
 
 def test_status_table_maps_credential_errors() -> None:
-    # Regression: these previously fell through to a bare BrokerError -> 500.
+    # These must map to specific statuses, not fall through to a bare
+    # BrokerError -> 500.
     assert STATUS_BY_ERROR[CredentialNotProvisionedError] == 424
     assert STATUS_BY_ERROR[CredentialUndecryptableError] == 424
     assert STATUS_BY_ERROR[CredentialNeedsReconnectError] == 401

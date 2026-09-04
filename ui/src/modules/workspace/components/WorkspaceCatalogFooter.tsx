@@ -1,6 +1,6 @@
 /**
  * WorkspaceCatalogFooter — quiet, single-line catalog CTA at the very bottom of
- * the Workspace page. Faithful port of jentic-mini's footer: the user came here
+ * the Workspace page. The user came here
  * for *their* APIs; if they didn't find one, the public catalog is one click
  * away in Discover — but we deliberately don't shove a second feed at them.
  */

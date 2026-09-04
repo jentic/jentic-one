@@ -35,17 +35,15 @@ func runSkill(t *testing.T, args ...string) (*Cmd, string) {
 }
 
 // TestBareSkillShowsHelpAndWritesNothing pins UX-20: bare `jentic skill` must
-// behave like every other group parent — print help, mutate NOTHING — instead
-// of the old alias to `skill init`, which non-interactively wrote SKILL.md into
-// every detected operator home with no confirmation. Writes now live only under
-// the explicit `skill init` subcommand.
+// behave like every other group parent — print help, mutate NOTHING. Writes
+// live only under the explicit `skill init` subcommand.
 func TestBareSkillShowsHelpAndWritesNothing(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Chdir(tmp)
 
-	// Pre-create a detectable operator home so the OLD behavior would have
-	// written into it — proving the new behavior does not.
+	// Pre-create a detectable operator home so an unwanted write would have
+	// somewhere to land — proving bare `jentic skill` writes nothing into it.
 	if err := os.MkdirAll(filepath.Join(tmp, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -460,8 +460,8 @@ def test_apps_env_comma_separated_with_spaces(config_file: Path):
 
 
 def test_mcp_oauth_config_defaults(config_file: Path):
-    """3a-2 seam (design §4.9/§8 E2), D9 as amended: off by default, and
-    approval-first — auto-approve is an explicit opt-in, false by default."""
+    """MCP OAuth seam, D9 as amended: off by default, and approval-first —
+    auto-approve is an explicit opt-in, false by default."""
     config = load_config(config_file)
     assert config.server.mcp.oauth.enabled is False
     assert config.server.mcp.oauth.auto_approve_clients is False

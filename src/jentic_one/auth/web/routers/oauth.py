@@ -143,7 +143,7 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
     backend = _get_auth_backend(request)
-    # Own bucket namespace (the 3a-2 fix-wave pattern, see the DCR door's
+    # Own bucket namespace (the fix-wave pattern, see the DCR door's
     # `oauth-registration` limiter): this limiter keys on the bare IP, and the
     # shared store would otherwise hand it the same bucket as another
     # bare-IP-keyed limiter with different rate/burst params. Keyed on IP
@@ -403,7 +403,7 @@ async def _rfc7009_form_arm(request: Request) -> Response:
     """
     ctx: Context = request.app.state.ctx
     # Gate first, before the size cap, the rate limiter, and body parsing,
-    # mirroring the DCR front door (§4.2): a disabled arm answers the
+    # mirroring the DCR front door: a disabled arm answers the
     # framework's own route-not-found body, and neither a 413, a 429, nor a
     # 400 may reveal the gate is on.
     if not ctx.config.server.mcp.oauth.enabled:

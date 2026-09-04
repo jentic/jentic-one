@@ -1,10 +1,10 @@
-"""Integration tests for the OAuth client approval lifecycle (phase 3a-1).
+"""Integration tests for the OAuth client approval lifecycle.
 
 Exercises OAuthClientService against a real database (PostgreSQL or SQLite —
-no mocking): public secret-less creation, the D7 approve/deny lifecycle with
+no mocking): public secret-less creation, the approve/deny lifecycle with
 audit rows, the list approval_status filter, redirect-URI fingerprint
-maintenance (§4.1/D8), and the migration back-compat server defaults (rows
-inserted via raw SQL omitting the 3a columns read ``approved`` +
+maintenance, and the migration back-compat server defaults (rows
+inserted via raw SQL omitting the approval-lifecycle columns read ``approved`` +
 ``client_secret_basic`` from the migration's server_default clauses).
 """
 
@@ -121,7 +121,7 @@ async def test_admin_create_public_client_has_no_secret(
 async def test_deny_and_reapprove_lifecycle_with_audit(
     integration_context: Context, clean_oauth_clients: None
 ) -> None:
-    """Deny fails the client closed everywhere, is audited, and is reversible (D7)."""
+    """Deny fails the client closed everywhere, is audited, and is reversible."""
     ctx = integration_context
     svc = OAuthClientService(ctx)
     created = await svc.create(name="lifecycle-app", redirect_uris=_REDIRECT_URIS, identity=_ADMIN)
@@ -174,11 +174,11 @@ async def test_approval_queue_filter_works_without_include_inactive(
 ) -> None:
     """The approval-queue query (`?approval_status=pending|denied`) must not
     silently return [] under the default active-only filter — pending/denied
-    rows are active=false by construction (D7, PR #1218 MINOR-4)."""
+    rows are active=false by construction (PR #1218 MINOR-4)."""
     ctx = integration_context
     svc = OAuthClientService(ctx)
 
-    # Seed a pending row the way the 3a-2 DCR door will (service verbs only
+    # Seed a pending row the way the DCR door will (service verbs only
     # move between approved and denied).
     async with ctx.admin_db.transaction() as session:
         pending = await OAuthClientRepository.create(
@@ -208,7 +208,7 @@ async def test_update_cannot_activate_a_denied_row(
     integration_context: Context, clean_oauth_clients: None
 ) -> None:
     """PATCH active=true on a denied row is rejected (409-shaped ConflictError);
-    :approve is the only recovery path (D7, PR #1218 MAJOR-2)."""
+    :approve is the only recovery path (PR #1218 MAJOR-2)."""
     svc = OAuthClientService(integration_context)
     created = await svc.create(name="gated-app", redirect_uris=_REDIRECT_URIS, identity=_ADMIN)
     await svc.deny(created.id, identity=_ADMIN)
@@ -227,7 +227,7 @@ async def test_update_cannot_activate_a_denied_row(
 async def test_token_minted_while_approved_stops_resolving_after_deny(
     integration_context: Context, clean_oauth_clients: None
 ) -> None:
-    """The auth-surface resolver leg of the D7 gate (PR #1218 MAJOR-1): a
+    """The auth-surface resolver leg of the approval gate (PR #1218 MAJOR-1): a
     token issued while the client was approved must stop resolving once the
     row is denied — even if ``active`` is then force-set true directly in the
     DB (the state PATCH can no longer manufacture)."""
@@ -268,7 +268,7 @@ async def test_token_minted_while_approved_stops_resolving_after_deny(
 async def test_redirect_uris_fingerprint_maintained_on_create_and_update(
     integration_context: Context, clean_oauth_clients: None
 ) -> None:
-    """§4.1: the D8 dedupe fingerprint is written on create and kept in sync
+    """The dedupe fingerprint is written on create and kept in sync
     whenever redirect_uris changes."""
     ctx = integration_context
     svc = OAuthClientService(ctx)
@@ -288,18 +288,18 @@ async def test_redirect_uris_fingerprint_maintained_on_create_and_update(
             await session.execute(select(OAuthClient).where(OAuthClient.id == created.id))
         ).scalar_one()
         assert row.redirect_uris_fingerprint == redirect_uris_fingerprint(new_uris)
-        # Order-insensitive: the reversed set is the same fingerprint (D8).
+        # Order-insensitive: the reversed set is the same fingerprint.
         assert row.redirect_uris_fingerprint == redirect_uris_fingerprint(list(reversed(new_uris)))
 
 
 async def test_pre_3a_row_reads_migration_defaults(
     integration_context: Context, clean_oauth_clients: None
 ) -> None:
-    """A row inserted via raw SQL omitting every 3a-1 column (the shape of a
+    """A row inserted via raw SQL omitting every approval-lifecycle column (the shape of a
     pre-upgrade row) must read ``approved`` + ``client_secret_basic`` etc.
     Raw ``text()`` SQL bypasses the ORM's Python-side ``default=`` values, so
     this actually exercises the ``server_default`` clauses the migration
-    installed — the upgrade back-compat contract (§4.1, design §9)."""
+    installed — the upgrade back-compat contract."""
     ctx = integration_context
     async with ctx.admin_db.transaction() as session:
         dialect = session.get_bind().dialect.name
@@ -339,6 +339,6 @@ async def test_pre_3a_row_reads_migration_defaults(
     assert row.registration_source == "admin"
     assert row.software_id is None
     # Pre-3a rows carry no fingerprint until their redirect_uris are next
-    # written; they have no software_id either, so they never dedupe (§4.1).
+    # written; they have no software_id either, so they never dedupe.
     assert row.redirect_uris_fingerprint is None
     assert row.active is True

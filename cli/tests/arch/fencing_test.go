@@ -17,10 +17,8 @@ import (
 // because without it a subcommand's own PersistentPreRunE would silently disable
 // the fencing hook for its whole subtree.
 //
-// This test was DORMANT until the fencing machinery (clitree.MustBeFenced) shipped
-// in Phase 2; it now walks the constructed command tree and asserts the contract.
-// As Phase 3 adds context/env/identity commands, they extend clitree.MustBeFenced
-// and this test covers them automatically.
+// This test walks the constructed command tree and asserts the contract;
+// commands added to clitree.MustBeFenced are covered automatically.
 func Test1C_SecurityFencing(t *testing.T) {
 	if len(clitree.MustBeFenced) == 0 {
 		t.Fatal("clitree.MustBeFenced is empty; the canonical fence set must list every host-mutating command")

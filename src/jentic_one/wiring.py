@@ -9,7 +9,7 @@ Its jobs are injecting a concrete ``RegistryResolverProtocol`` (the registry's
 in-process ``RegistryService``) onto the broker app, so the broker can resolve
 upstream URLs to operations without importing ``jentic_one.registry`` — and
 carrying the ``/mcp`` mount (``jentic_one.mcp``) onto control-plane app shapes
-via the container seam (phase 3). Swapping an implementation later (e.g. an
+via the container seam. Swapping an implementation later (e.g. an
 HTTP-backed resolver) is a change here only — the surfaces are unaffected.
 """
 
@@ -84,12 +84,12 @@ def build_default_container(ctx: Context) -> AppContainer:
     extra routers, then calls the same app factories with the resulting container.
 
     Control-plane shapes (``"control" in ctx.config.apps``) additionally carry
-    the ``/mcp`` mount's installer + session-manager lifespan (phase-3 item 1;
-    master §6 Q1 — the mount never rides the broker). The mount itself is
+    the ``/mcp`` mount's installer + session-manager lifespan
+    (the mount never rides the broker). The mount itself is
     request-time gated by ``server.mcp.enabled``, so carrying it on every
     eligible shape adds no observable surface while the flag is off.
 
-    Shapes serving the auth surface WITHOUT control instead carry the 3a-4
+    Shapes serving the auth surface WITHOUT control instead carry the discovery
     challenge placeholder on ``/mcp``: they serve the RFC 8414/9728 discovery
     documents, so the ``resource_metadata`` pointers must keep landing on the
     discovery-chain 401 challenge (never a dangling 404) even though the real

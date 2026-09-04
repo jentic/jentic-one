@@ -68,7 +68,7 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 #: The app-state attribute :func:`jentic_one.mcp.installer.install_mcp_mount`
 #: stamps on shapes that actually carry the ``/mcp`` transport (control-plane
 #: shapes only — never standalone-auth or the broker, which serve at most the
-#: 3a-4 challenge placeholder). Read by name (not imported) so this shared
+#: discovery challenge placeholder). Read by name (not imported) so this shared
 #: module keeps zero dependency on the ``jentic_one.mcp`` layer; the installer
 #: pins the attribute as its own module constant (``_STATE_ATTR``).
 _MCP_MOUNT_STATE_ATTR = "mcp_mount"
@@ -192,13 +192,13 @@ def render_llms_txt(
     ``{base}/llms.txt`` needs no further out-of-band context. The ``## Skills``
     section is computed from the shipped set's frontmatter.
 
-    ``mcp_http_enabled`` advertises the daemon-native ``/mcp`` endpoint
-    (phase-3 item 8): the serving route passes ``server.mcp.enabled`` AND-ed
+    ``mcp_http_enabled`` advertises the daemon-native ``/mcp`` endpoint:
+    the serving route passes ``server.mcp.enabled`` AND-ed
     with the surface actually carrying the mount, so a disabled or absent
-    endpoint is never advertised (it answers 404, or the 3a-4 discovery
+    endpoint is never advertised (it answers 404, or the discovery
     challenge). The enabled arm adds the endpoint paragraph (plus the
     stdio-bridge escape hatch for stdio-only clients); the disabled arm keeps
-    the exact pre-phase-3 wording.
+    the plain wording with no MCP paragraph.
     """
     skills_section = _render_skills_section(base)
     if mcp_http_enabled:

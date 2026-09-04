@@ -1,13 +1,13 @@
-"""``RetryRunner`` — idempotency-aware upstream retry as a runner decorator (§09 E4.1).
+"""``RetryRunner`` — idempotency-aware upstream retry as a runner decorator.
 
-Part of the composable execution envelope (plan.md RN-0 / §11): retry is a
+Part of the composable execution envelope: retry is a
 **decorator** around the breaker-wrapped transport, not an inline branch in the
 handler. It sits *outside* the :class:`CircuitBreakerRunner` (every attempt flows
 through the breaker, so a tripped breaker fast-fails the next attempt instead of
 burning the retry budget) and *inside* the :class:`DeadlineRunner` (the overall
 wall-clock budget bounds the whole loop, including the backoff sleeps).
 
-**Retryability is gated by the failure *phase*, not just the method (§09 E4.1):**
+**Retryability is gated by the failure *phase*, not just the method:**
 
 - A connect-phase failure (``BrokerError.pre_send`` — no request bytes hit the
   wire) is safe to retry for **any** method, including a key-less ``POST``: the

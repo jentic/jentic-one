@@ -49,7 +49,7 @@ class AccessToken(AuditableMixin, AdminBase):
     # client logins (the SPA), agent JWKS assertions, and service account auth.
     # Used to invalidate tokens when an admin deactivates the issuing client.
     oauth_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    # Grant-channel lineage (D4, §4.5): set alongside oauth_client_id when the
+    # Grant-channel lineage (D4): set alongside oauth_client_id when the
     # token was minted through a consent→agent grant. Resolvers re-check the
     # grant row live (missing/revoked → fail closed) and intersect the verdict
     # scopes with the grant's scopes; grant :revoke sweeps rows by this column.

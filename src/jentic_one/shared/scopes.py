@@ -41,8 +41,8 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
 # ``apis:write`` is included so an agent can request the broader ability to
 # import, update, and delete arbitrary API definitions (URL/inline import via
 # ``POST /apis``) and have a human approve it. Importing an already-cataloged
-# API is now a default agent capability via ``catalog:import`` (in
-# ``DEFAULT_AGENT_SCOPES``), so agents no longer need to file a request just to
+# API is a default agent capability via ``catalog:import`` (in
+# ``DEFAULT_AGENT_SCOPES``), so agents don't need to file a request just to
 # run ``jentic catalog import``. ``apis:write`` is deliberately NOT in
 # ``DEFAULT_AGENT_SCOPES``: the agent must file the request and an owner must
 # approve it.
@@ -59,11 +59,11 @@ GRANTABLE_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES) | {"apis:writ
 OIDC_PASSTHROUGH_SCOPES: frozenset[str] = frozenset({"openid", "email", "profile"})
 
 # Server-side cap for the `scope` a client claims at the anonymous DCR front
-# door (POST /oauth-clients, phase-3a design §4.2): a DCR-registered client's
+# door (POST /oauth-clients): a DCR-registered client's
 # `allowed_scopes` ceiling is always ⊆ this set — never unrestricted. It is the
-# master-plan §3.2 MCP tool surface expressed as scopes, which is exactly the
+# MCP tool surface expressed as scopes, which is exactly the
 # default agent baseline: DCR clients are `consent_model='agent'` (D6), so a
 # grant's effective scopes are further intersected with the bound agent's live
-# scopes at consent (3a-3). The 3a-4 discovery documents (`scopes_supported`)
+# scopes at consent. The OAuth discovery documents (`scopes_supported`)
 # must advertise this same set.
 MCP_TOOL_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES)

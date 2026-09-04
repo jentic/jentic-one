@@ -585,8 +585,7 @@ class ToolkitService:
                     effective_permissions,
                     created_by=identity.sub,
                 )
-            # Read the effective rules once inside the same transaction —
-            # the router previously did this in a follow-up call.
+            # Read the effective rules once inside the same transaction.
             rules = await ToolkitPermissionRepository.list_rules(session, toolkit_id, credential_id)
 
         warnings: tuple[BindingWarning, ...] = ()

@@ -1,4 +1,4 @@
-"""SQLite integration matrix for RFC 7009 token revocation (G11, phase 3).
+"""SQLite integration matrix for RFC 7009 token revocation.
 
 End-to-end over the real web route (``POST /oauth/revoke``, form-encoded arm)
 against real grant-channel tokens minted through the consent→code→exchange
@@ -300,7 +300,7 @@ async def test_form_arm_is_rate_limited_in_its_own_bucket(
     integration_context: Context, clean_grants: None, mcp_oauth_enabled: None
 ) -> None:
     """Over-quota form requests answer 429 + Retry-After (namespaced per-IP
-    bucket, the 3a-2 fix-wave pattern)."""
+    bucket, matching the DCR-door pattern)."""
     ctx = integration_context
     app = _make_app(ctx)
     # Pin a 1-request bucket on the app-state cache the route consults.
@@ -325,7 +325,7 @@ async def test_form_arm_is_rate_limited_in_its_own_bucket(
 async def test_json_arm_bearer_self_revoke_contract_intact(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """The pre-G11 contract (the `jentic logout` shape): JSON body + bearer,
+    """The legacy JSON+bearer contract (the `jentic logout` shape): JSON body + bearer,
     revoking the caller's own access token — 200, token dead. Works with the
     MCP OAuth gate OFF (it is not part of that surface)."""
     ctx = integration_context

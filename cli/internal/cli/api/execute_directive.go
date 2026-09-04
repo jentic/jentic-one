@@ -6,9 +6,9 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
-// The agent_directive type and its parsing moved to the UX-free core
-// (ux.Directive / agentops.ParseAgentDirective); the styled rendering moved
-// into ux (the sole terminal gatekeeper — plan 0.2: command code no longer
+// The agent_directive type and its parsing live in the UX-free core
+// (ux.Directive / agentops.ParseAgentDirective); the styled rendering lives
+// in ux (the sole terminal gatekeeper — plan 0.2: command code never
 // composes stderr text itself). These two thin methods keep the stream choice
 // (a.Err) here, where the app owns its writers.
 

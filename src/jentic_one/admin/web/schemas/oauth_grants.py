@@ -1,4 +1,4 @@
-"""OAuth grant response schemas for the admin web layer (phase-3a §4.8)."""
+"""OAuth grant response schemas for the admin web layer."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 package api
 
 // mcp.go is the `jentic mcp` command: a Model Context Protocol server over
-// stdio (local-MCP phase 1, PR 1-A). The command registers through the root
+// stdio (local-MCP phase 1). The command registers through the root
 // like every other leaf, so it inherits --context/$JENTIC_CONTEXT, the
 // interceptor's state injection, fencing, and the migrate gate — it never
 // re-implements state resolution. stdout is the JSON-RPC wire: nothing but

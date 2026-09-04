@@ -1,9 +1,8 @@
 /**
  * CardStatusPill — "Imported" vs "Available" badge (+ optional "Update available").
  *
- * A small, self-contained presentational pill. Mirrors jentic-mini's
- * CardStatusPill visual language (emerald filled for imported, neutral outline
- * for available) so the Discover grid reads identically. Keyed off the catalog
+ * A small, self-contained presentational pill (emerald filled for imported,
+ * neutral outline for available). Keyed off the catalog
  * entry's `registered` flag — the single source of truth under D-005a. A
  * registered entry with an upstream spec update also gets a warning-styled
  * "Update available" badge, matching the Workspace ApiCard signal.

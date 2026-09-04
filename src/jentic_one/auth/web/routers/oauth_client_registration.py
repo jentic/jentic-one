@@ -1,6 +1,6 @@
 """Anonymous OAuth-client Dynamic Client Registration endpoint (RFC 7591 subset).
 
-``POST /oauth-clients`` — the phase-3a §4.2 front door (D1). Anonymous by
+``POST /oauth-clients`` — the anonymous-DCR front door (D1). Anonymous by
 design: RFC 7591 initial access tokens were considered-and-rejected for the
 GUI-client path (flagship MCP clients register anonymously; the boundary lives
 at admin approval + consent, not registration). The endpoint is instead:
@@ -9,7 +9,7 @@ at admin approval + consent, not registration). The endpoint is instead:
   route-handler level, **before** body parsing, validation, and the rate-limit
   dependency, so every request against a disabled door — well-formed,
   malformed, or over-quota — gets the same plain 404 a build without the
-  route would return (indistinguishable from not-shipped, §4.2);
+  route would return (indistinguishable from not-shipped);
 - rate limited per-IP (``registration_rpm``/``registration_burst``) in its own
   bucket namespace (it must not share quota with /authorize's bare-IP bucket);
 - only able to mint **public** (secret-less, PKCE-only) rows that land
@@ -95,7 +95,7 @@ class _Rfc7591Route(APIRoute):
             ctx: Context = request.app.state.ctx
             if not ctx.config.server.mcp.oauth.enabled:
                 # Mirror the framework's route-not-found body exactly so the
-                # gate state stays unobservable (§4.2). Runs before rate
+                # gate state stays unobservable. Runs before rate
                 # limiting and body validation: a 429 or 422 would reveal the
                 # gate is on.
                 return JSONResponse(status_code=404, content={"detail": "Not Found"})
@@ -192,7 +192,7 @@ async def register_oauth_client_endpoint(
     ctx: Context = Depends(get_ctx),
     dcr_svc: OAuthDcrService = Depends(get_oauth_dcr_service),
 ) -> OAuthClientRegistrationResponse:
-    """Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+    """Register a public OAuth client anonymously (RFC 7591 subset).
 
     Returns 201 with the new ``client_id``, or 200 with the **existing** row's
     ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match

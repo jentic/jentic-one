@@ -5,8 +5,7 @@
  * pending → approve), not manual creation, so the empty fleet teaches exactly
  * that. Raw POST /register requires an Ed25519 JWKS, which no one can type by
  * hand — the CLI generates the keypair and performs DCR, so the snippet points
- * at `jentic register` targeting THIS instance (phase 5 of the agents-rebuild
- * plan).
+ * at `jentic register` targeting THIS instance.
  */
 import { Terminal } from 'lucide-react';
 import { Card, CardBody, CodeSnippet } from '@/shared/ui';

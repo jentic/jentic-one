@@ -1,7 +1,7 @@
 """Shared helpers for the auth surface's pre-auth rate limiters.
 
-Promoted from ``authorize.py`` (which previously owned them as privates) so
-the anonymous DCR registration router and /authorize derive the caller IP and
+Shared so the anonymous DCR registration router and /authorize derive the
+caller IP and
 reach the shared-state backend the same way, without cross-router imports of
 underscore-private names.
 """

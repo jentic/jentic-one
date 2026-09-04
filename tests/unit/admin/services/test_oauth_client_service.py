@@ -312,7 +312,7 @@ async def test_verify_client_secret_rejects_unapproved_client(
     mock_verify: MagicMock,
     approval_status: str,
 ) -> None:
-    """The D7 gate: pending/denied clients fail even with the correct secret,
+    """The approval gate: pending/denied clients fail even with the correct secret,
     and the dummy verify still runs (timing-uniform)."""
     ctx = _make_ctx()
     client_row = MagicMock()
@@ -465,7 +465,7 @@ async def test_token_auth_confidential_row_with_null_hash_fails_closed(
 ) -> None:
     """An invariant-violating row (confidential method, NULL hash) must NOT be
     treated as a public client: no-secret and with-secret both fail closed,
-    and the with-secret path keeps the argon2 timing profile (§4.1)."""
+    and the with-secret path keeps the argon2 timing profile."""
     ctx = _make_ctx()
     mock_repo.get_by_client_id = AsyncMock(
         return_value=_client_row(auth_method="client_secret_basic", secret_hash=None)
@@ -516,7 +516,7 @@ async def test_token_auth_unapproved_client_fails_closed(
     supplied_secret: str | None,
     approval_status: str,
 ) -> None:
-    """Pending/denied clients cannot authenticate — public or confidential (D7)."""
+    """Pending/denied clients cannot authenticate — public or confidential."""
     ctx = _make_ctx()
     mock_repo.get_by_client_id = AsyncMock(
         return_value=_client_row(
@@ -765,7 +765,7 @@ async def test_update_empty_scopes_is_deny_all(
     assert kwargs["allowed_scopes"] == []
 
 
-# ---------- update: PATCH cannot manufacture denied/pending + active (D7) ----------
+# ---------- update: PATCH cannot manufacture denied/pending + active ----------
 
 
 @pytest.mark.parametrize("approval_status", ["pending", "denied"])
@@ -775,7 +775,7 @@ async def test_update_rejects_activation_of_unapproved_client(
     mock_repo: MagicMock, mock_audit: AsyncMock, approval_status: str
 ) -> None:
     """PATCH active=true on a non-approved row is a state-machine conflict:
-    :approve is the only path back to active (D7, PR #1218 MAJOR-2)."""
+    :approve is the only path back to active (PR #1218 MAJOR-2)."""
     ctx = _make_transactional_ctx()
     mock_repo.get_by_id = AsyncMock(
         return_value=_full_row(approval_status=approval_status, active=False)
@@ -813,7 +813,7 @@ async def test_update_allows_reactivation_of_approved_client(
     mock_repo: MagicMock, _mock_audit: AsyncMock
 ) -> None:
     """The kill-switch round trip: approved + deactivated → PATCH active=true
-    re-enables (the D7 'approved → deactivated → reactivated' leg)."""
+    re-enables (the 'approved → deactivated → reactivated' leg)."""
     ctx = _make_transactional_ctx()
     mock_repo.get_by_id = AsyncMock(return_value=_full_row(active=False))
     mock_repo.update = AsyncMock(return_value=_full_row(active=True))
@@ -948,7 +948,7 @@ async def test_create_rejects_unknown_consent_model() -> None:
         )
 
 
-# ---------- approve / deny lifecycle (D7) ----------
+# ---------- approve / deny lifecycle ----------
 
 
 @patch("jentic_one.admin.services.oauth_client_service.record_audit", new_callable=AsyncMock)
@@ -1006,7 +1006,7 @@ async def test_deny_sets_status_inactive_and_audits_reason(
 async def test_deny_then_approve_is_reversible(
     mock_repo: MagicMock, _mock_audit: AsyncMock
 ) -> None:
-    """Deny keeps the row; a later approve restores approved+active (D7)."""
+    """Deny keeps the row; a later approve restores approved+active."""
     ctx = _make_transactional_ctx()
     mock_repo.get_by_id = AsyncMock(return_value=_full_row(approval_status="denied", active=False))
     mock_repo.set_approval_status = AsyncMock(return_value=_full_row())
@@ -1030,7 +1030,7 @@ async def test_approve_missing_client_raises(mock_repo: MagicMock) -> None:
 
 # ---------- list_all approval_status filter ----------
 #
-# The list/get read paths also fold in the §4.8 active-grant counts, so the
+# The list/get read paths also fold in the active-grant counts, so the
 # grant repo is patched alongside the client repo (returning no counts).
 
 
@@ -1057,7 +1057,7 @@ async def test_list_all_passes_approval_status_filter(
 async def test_list_all_pending_or_denied_filter_implies_include_inactive(
     mock_repo: MagicMock, mock_grant_repo: MagicMock, approval_status: str
 ) -> None:
-    """Pending/denied rows are active=false by construction (D7); the approval
+    """Pending/denied rows are active=false by construction; the approval
     queue must not need the caller to also pass include_inactive=true."""
     ctx = _make_ctx()
     mock_repo.list_all = AsyncMock(return_value=[])

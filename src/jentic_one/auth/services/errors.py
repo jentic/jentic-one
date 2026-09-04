@@ -173,7 +173,7 @@ class OAuthGrantNotFoundError(AuthServiceError):
 class OAuthGrantAccessDeniedError(AuthServiceError):
     """Raised when a caller may not operate on an OAuth grant.
 
-    Grant ``:revoke`` is owner-or-admin (design §4.8): the consenting user
+    Grant ``:revoke`` is owner-or-admin: the consenting user
     owns the grant; anyone else needs the admin permission. 403, not 404 —
     the grant id is a ksuid, not a secret.
 
@@ -193,8 +193,7 @@ class InvalidClientMetadataError(AuthServiceError):
     Maps to 400 ``invalid_client_metadata`` — the RFC 7591 error code for a
     registration request whose metadata is invalid or unsupported (e.g. a
     confidential ``token_endpoint_auth_method``, an unsupported grant type, or
-    a malformed redirect URI). The DCR front door only mints public clients
-    (phase-3a design §4.2).
+    a malformed redirect URI). The DCR front door only mints public clients.
     """
 
     def __init__(self, reason: str) -> None:

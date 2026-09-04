@@ -1,4 +1,4 @@
-"""Unit tests for the dual-arm ``POST /oauth/revoke`` route (RFC 7009, G11).
+"""Unit tests for the dual-arm ``POST /oauth/revoke`` route (RFC 7009).
 
 Route-level concerns only (the service semantics are pinned in
 ``tests/unit/auth/test_oauth_revocation_service.py`` and the SQLite matrix in
@@ -6,10 +6,10 @@ Route-level concerns only (the service semantics are pinned in
 negotiation between the two arms (owned by ``_RevocationRoute``), the
 ``server.mcp.oauth.enabled`` gate on the form arm (plain 404, before the size
 cap, rate limiting, and parsing — the DCR-door posture), the form arm's
-RFC 6749 §5.2 error dialect (400/413/429 — review F2/F3), the namespaced
+RFC 6749 §5.2 error dialect (400/413/429), the namespaced
 per-IP rate limit, and the pre-G11 JSON+bearer contract staying byte-identical
-including every 422 body and the 422/401 precedence (review F1 — pinned
-against a live replica of the pre-G11 route, the review's probe ported).
+including every 422 body and the 422/401 precedence (pinned
+against a live replica of the pre-G11 route).
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _make_client(
     return TestClient(app)
 
 
-# --- the gate on the form arm (matches the DCR front door, §4.2) -------------
+# --- the gate on the form arm (matches the DCR front door) -------------------
 
 
 @patch("jentic_one.auth.web.routers.oauth.OAuthRevocationService")
@@ -168,7 +168,7 @@ def test_form_arm_missing_token_is_400_rfc6749_dialect(mock_svc_cls: MagicMock) 
 @patch("jentic_one.auth.web.routers.oauth.OAuthRevocationService")
 def test_form_arm_oversized_body_is_413(mock_svc_cls: MagicMock) -> None:
     """Declared-length bodies beyond the 64 KiB raw cap are refused before
-    parsing (the DCR door's belt, review F3) — same §5.2 dialect."""
+    parsing (the DCR door's belt) — same §5.2 dialect."""
     client = _make_client()
     resp = client.post(
         "/oauth/revoke",
@@ -186,7 +186,7 @@ def test_form_arm_oversized_body_is_413(mock_svc_cls: MagicMock) -> None:
 @patch("jentic_one.auth.web.routers.oauth.OAuthRevocationService")
 def test_form_arm_needs_no_authorization_header(mock_svc_cls: MagicMock) -> None:
     """Public clients authenticate by client_id lineage binding — the form arm
-    must never demand a platform bearer (that was G11's original blocker)."""
+    must never demand a platform bearer."""
     mock_svc_cls.return_value.revoke_client_token = AsyncMock()
     client = _make_client(verify_token=_verify_reject)
 
@@ -197,10 +197,9 @@ def test_form_arm_needs_no_authorization_header(mock_svc_cls: MagicMock) -> None
 
 @patch("jentic_one.auth.web.routers.oauth.OAuthRevocationService")
 def test_form_arm_rate_limit_answers_429_with_retry_after(mock_svc_cls: MagicMock) -> None:
-    """Own namespaced per-IP bucket (`oauth-revocation`), 3a-2 fix-wave
-    pattern: over-quota answers 429 + Retry-After — body pinned to the
-    RFC 6749 §5.2 dialect (`slow_down`, RFC 8628 §3.5), not Problem Details
-    (review F2)."""
+    """Own namespaced per-IP bucket (`oauth-revocation`), matching the
+    DCR-door pattern: over-quota answers 429 + Retry-After — body pinned to the
+    RFC 6749 §5.2 dialect (`slow_down`, RFC 8628 §3.5), not Problem Details."""
     mock_svc_cls.return_value.revoke_client_token = AsyncMock()
     client = _make_client(rate_limit=OAuthRateLimitConfig(exchange_rpm=1, exchange_burst=1))
 
@@ -283,7 +282,7 @@ def test_json_arm_missing_token_422_body_pinned(mock_token_svc_cls: MagicMock) -
 def test_json_arm_malformed_json_422_body_pinned(mock_token_svc_cls: MagicMock) -> None:
     """Syntactically invalid JSON keeps the framework's ``json_invalid`` shape
     (``loc: ["body", pos]``, ``msg: "JSON decode error"``, ``input: {}``) —
-    the exact pre-G11 bytes (review F1)."""
+    the exact pre-G11 bytes."""
     client = _make_client()
 
     resp = client.post(
@@ -327,7 +326,7 @@ def test_json_arm_empty_body_422_body_pinned(mock_token_svc_cls: MagicMock) -> N
 
 @patch("jentic_one.auth.web.routers.oauth.TokenService")
 def test_json_arm_syntax_error_beats_bad_bearer(mock_token_svc_cls: MagicMock) -> None:
-    """Pre-G11 precedence, restored (review F1): FastAPI parses the raw JSON
+    """Pre-G11 precedence, restored: FastAPI parses the raw JSON
     body BEFORE dependencies, so syntactically invalid JSON answers 422 even
     alongside a missing/bad bearer — never 401."""
     client = _make_client(verify_token=_verify_reject)
@@ -355,14 +354,14 @@ def test_json_arm_schema_error_with_bad_bearer_is_401(mock_token_svc_cls: MagicM
 
 # --- pre-G11 equivalence probe (the review's probe, ported) -------------------
 #
-# The adversarial review (F1) diffed the pre-G11 route against the G11 route
+# The adversarial review diffed the pre-G11 route against the shipped route
 # across a request-shape matrix and found the hand-parsed JSON arm drifting on
 # every 422. This ports that probe: a byte-for-byte replica of the pre-G11
 # endpoint (its exact signature — native body validation + bearer dependency)
 # runs beside the shipped route, and every JSON-arm shape must produce the
 # same status AND the same body bytes under both gate states. Form-encoded
 # shapes are deliberately out of matrix: they now select the RFC 7009 arm
-# (review F7 — accepted liberalization; pre-G11 they were 422 rejects).
+# (an accepted liberalization; pre-G11 they were 422 rejects).
 
 
 def _make_pre_g11_client(*, verify_token: object = _verify_ok) -> TestClient:
@@ -400,7 +399,7 @@ _JSON_ARM_PROBE_MATRIX: list[tuple[str, dict[str, object] | None, bytes | None, 
 @patch("jentic_one.auth.web.routers.oauth.TokenService")
 def test_json_arm_matches_pre_g11_route_byte_for_byte(mock_token_svc_cls: MagicMock) -> None:
     """Every JSON-arm shape x {good, bad bearer} x {gate on, off} answers the
-    exact status and body bytes the pre-G11 native route produced (review F1)."""
+    exact status and body bytes the pre-G11 native route produced."""
     mock_token_svc_cls.return_value.revoke = AsyncMock()
 
     for gate in (True, False):

@@ -16,7 +16,7 @@ DEFAULT_CACHE_TTL_SECONDS = 30
 # Hard ceiling on cached token verdicts. The key is a fixed-width sha256 digest,
 # but without a bound a flood of *unique* garbage tokens would balloon the
 # negative cache and OOM the instance — the cache meant to *save* work would
-# become the attack vector (§05 R3/R2.1). LRU eviction keeps the footprint
+# become the attack vector. LRU eviction keeps the footprint
 # bounded regardless of input cardinality.
 DEFAULT_MAX_CACHE_ENTRIES = 10_000
 

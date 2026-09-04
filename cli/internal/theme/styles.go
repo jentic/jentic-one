@@ -10,15 +10,15 @@ import (
 
 // Styles is the palette-bound set of semantic role styles every CLI surface
 // renders through. It is the single seam that turns a runtime-resolved Palette
-// into the lipgloss.Style roles that used to be fixed package-level vars in
-// theme.go — so `--theme light`/`no-color` actually re-tint help, search,
+// into semantic lipgloss.Style roles
+// — so `--theme light`/`no-color` actually re-tint help, search,
 // doctor, status, the wizard, and the logo instead of always emitting the
 // dark-brand hex. Build one with Palette.Styles() (or StylesFromContext) at the
 // top of a command and read st.Heading/st.Command/… instead of theme.Heading/….
 //
 // The role→slot mapping is fixed here so every surface agrees; the dark palette
-// (registry.go) carries slot values equal to the historical fixed tokens, so a
-// dark Styles() reproduces the previous output byte-for-byte (guarded by a
+// (registry.go) carries the fixed brand tokens, so a
+// dark Styles() output is byte-stable (guarded by a
 // golden test).
 type Styles struct {
 	Heading lipgloss.Style // section titles                (Primary, bold)

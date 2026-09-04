@@ -426,7 +426,7 @@ async def test_disable_mid_life_kills_token_after_cache_ttl(
     assert resolved.sub == "agnt_opaque"
 
 
-# --- D7 approval gate at the broker resolver (PR #1218 MAJOR-1) -------------
+# --- client approval gate at the broker resolver (PR #1218 MAJOR-1) ---------
 
 
 async def _seed_oauth_client_row(

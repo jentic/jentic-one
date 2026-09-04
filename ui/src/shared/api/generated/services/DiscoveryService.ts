@@ -44,7 +44,7 @@ export class DiscoveryService {
     }
     /**
      * OAuth authorization server metadata for the MCP resource
-     * RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+     * RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
      *
      * RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
      * the issuer `{base}/mcp` named by the protected-resource document. It
@@ -70,7 +70,7 @@ export class DiscoveryService {
     }
     /**
      * OAuth protected resource metadata (root alias for the MCP resource)
-     * Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+     * Root-path alias of the MCP protected-resource document.
      *
      * Compatibility fallback for clients that probe the root
      * `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -78,7 +78,7 @@ export class DiscoveryService {
      * because this deployment has exactly one OAuth-protected resource, so the
      * root and path-scoped documents are the same body.
      *
-     * Two acknowledged trades (§4.7, review F6):
+     * Two acknowledged trades:
      *
      * - RFC 9728 §3 says this well-known path corresponds to resource identifier
      * ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
@@ -88,7 +88,7 @@ export class DiscoveryService {
      * what the alias exists to satisfy. That is the intended trade.
      * - The alias squats the deployment's only root PRM slot: a future non-MCP
      * protected resource at ``{base}`` cannot get its own root document
-     * without breaking this fallback. Phase 3's mount must re-confirm the
+     * without breaking this fallback. The mounted MCP app must re-confirm the
      * "exactly one OAuth-protected resource" premise before adding one.
      * @returns any Successful Response
      * @throws ApiError
@@ -108,7 +108,7 @@ export class DiscoveryService {
     }
     /**
      * OAuth protected resource metadata for the MCP resource
-     * RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+     * RFC 9728 protected-resource metadata for `{base}/mcp`.
      *
      * Names the /mcp-scoped authorization server and the MCP tool scopes. The
      * same body is also served at the root well-known path for clients that

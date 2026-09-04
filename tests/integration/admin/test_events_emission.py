@@ -216,7 +216,7 @@ async def test_emit_declared_event_round_trips(
     severity: EventSeverity,
     requires_action: bool,
 ) -> None:
-    """The three previously-unimplemented event types persist and filter correctly."""
+    """These event types persist and filter correctly."""
     async with admin_db.transaction() as session:
         event_id = await emit_event(
             session,

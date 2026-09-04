@@ -97,8 +97,8 @@ class EffectsRepository:
             #    benign idempotent hit; OR
             #  - a foreign-key violation because the toolkit/credential was
             #    deleted between pre-validation and this write (a same-/cross-tx
-            #    TOCTOU race). Here no row exists, and previously a bare `assert`
-            #    turned that into an AssertionError → HTTP 500.
+            #    TOCTOU race). Here no row exists — a bare `assert` would turn
+            #    that into an AssertionError → HTTP 500.
             existing = await ToolkitBindingRepository.get(session, toolkit_id, credential_id)
             if existing is not None:
                 return existing.id, True

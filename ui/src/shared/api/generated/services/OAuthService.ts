@@ -16,7 +16,7 @@ import { request as __request } from '../core/request';
 export class OAuthService {
     /**
      * List OAuth grants
-     * List consent→agent grants across all clients and agents (§4.8).
+     * List consent→agent grants across all clients and agents.
      *
      * The admin cross-view over the grant registry: filter by client, agent,
      * consenting user, or status. Each item carries the client's display name
@@ -150,7 +150,7 @@ export class OAuthService {
     }
     /**
      * Revoke OAuth grant
-     * Revoke a consent→agent grant — one of the three §4.6 kill radii.
+     * Revoke a consent→agent grant — one of the three revocation kill radii.
      *
      * Allowed for the grant's owner (the consenting user) or an admin. Marks
      * the grant ``revoked`` and revokes every outstanding access/refresh token
@@ -247,7 +247,7 @@ export class OAuthService {
      * parameters (user_id, email, scopes, redirect_uri) live server-side and
      * can't be tampered with or captured from browser history/proxy logs.
      *
-     * ``agent_id`` is posted only by the §4.4 agent-picker variant
+     * ``agent_id`` is posted only by the agent-picker variant
      * (``consent_model='agent'`` clients); it is validated and the scope math
      * recomputed entirely server-side — the browser's selection is never
      * trusted.

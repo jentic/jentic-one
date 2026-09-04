@@ -10,7 +10,7 @@
 #              run) and asserts on pure helper functions.
 #   2. Contract — invokes install.sh through the shells the README promises
 #              (`sh`, `dash`, `bash`) to prove the re-exec guard works and the
-#              script no longer dies on bash-only syntax. Kept hermetic with a
+#              script doesn't die on bash-only syntax. Kept hermetic with a
 #              minimal PATH so it fails fast at the prereq check — no network,
 #              no build, no writes to the real ~/.jentic.
 #

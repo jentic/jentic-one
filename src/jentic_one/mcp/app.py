@@ -1,21 +1,21 @@
 """The mounted ``/mcp`` ASGI app: gate, Origin check, bearer auth, transport.
 
-Phase-3 items 1+3: a **stateless** Streamable HTTP endpoint (spec revision
+A **stateless** Streamable HTTP endpoint (spec revision
 2026-07-28 — no session state, no ``Mcp-Session-Id``, connection-independent
 ``tools/list``) built on the official ``mcp`` SDK's low-level ``Server`` +
 ``StreamableHTTPSessionManager(stateless=True)``, wrapped in a thin ASGI gate
 that owns everything the platform — not the SDK — must decide:
 
 - **The config gate.** ``server.mcp.enabled`` off keeps the path answering
-  exactly what 3a-4 shipped: the framework's plain route-not-found 404 — or,
+  the framework's plain route-not-found 404 — or,
   when ``server.mcp.oauth.enabled`` is on, the RFC 9728 discovery challenge
-  (401 + ``WWW-Authenticate: Bearer resource_metadata=…``) the 3a-4
+  (401 + ``WWW-Authenticate: Bearer resource_metadata=…``) the challenge
   placeholder owned. The four on/off arms are pinned by tests
   (``tests/unit/mcp/test_mount_gate.py``).
 - **Sub-path fall-through.** Only ``/mcp`` itself is served — the installer
   registers an exact-path ``Route``, never a prefix ``Mount``, so every
-  sub-path (notably the ``/mcp/.well-known/…`` discovery probe variants
-  review F7 pinned) keeps answering the framework's plain 404 in every arm
+  sub-path (notably the ``/mcp/.well-known/…`` discovery probe variants,
+  pinned by tests) keeps answering the framework's plain 404 in every arm
   and clients keep landing on the served RFC 8414 path-insertion documents.
 - **Strict Origin validation** (spec §security, DNS-rebinding): a request
   carrying an ``Origin`` that is neither the config-derived canonical origin
@@ -27,18 +27,18 @@ that owns everything the platform — not the SDK — must decide:
 - **Bearer auth** reusing the identity-resolution LOGIC — the app-state
   ``verify_token`` the auth surface installs (``make_superset_verifier``),
   which resolves ``jak_``/``sak_`` API keys, ``at_`` access tokens (including
-  3a-3's grant-channel bearers: actor=agent with ``oauth_grant_id``, resolved
+  grant-channel bearers: actor=agent with ``oauth_grant_id``, resolved
   through the same gates as every REST call) — NOT the ``get_current_identity``
   FastAPI dependency: a Starlette mount is a separate ASGI app, so parent
   route dependencies never run here. A missing/invalid credential answers the
-  same 401 challenge contract as 3a-4 (the ``resource_metadata`` pointer riding
+  same 401 challenge contract as the placeholder (the ``resource_metadata`` pointer riding
   only when the OAuth discovery surface is on to serve it).
 - **The pre-auth whitelist**: ``tools/list``, the SDK's legacy ``initialize``
   fallback (+ ``notifications/initialized``), ``ping``, and the public
   resource listings are served without a credential — a client can always
-  discover the tool surface before authenticating (§3.3). Everything else
+  discover the tool surface before authenticating. Everything else
   requires a resolved identity.
-- **Session telemetry** (phase-3 item 6): each authenticated POST feeds the
+- **Session telemetry**: each authenticated POST feeds the
   windowed ``mcp.session_started`` emit — key = (agent identity x ``_meta``
   clientInfo x window), fire-and-forget
   (:func:`jentic_one.shared.events.mcp_session.schedule_mcp_http_session_emit`).
@@ -82,12 +82,12 @@ from jentic_one.shared.web.links import deployment_base_url
 #: must stay in lockstep with ``auth/web/routers/discovery._MCP_PRM_PATH``.
 MCP_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
 
-#: JSON-RPC methods served WITHOUT a credential (§3.3): discovery of the tool
+#: JSON-RPC methods served WITHOUT a credential: discovery of the tool
 #: surface, the spec's ping, the legacy-``initialize`` fallback pair, and the
 #: public resource listings. ``resources/read`` is deliberately NOT here: no
 #: resources are served yet, so pre-declaring it would hand a future resource
 #: registration a pre-auth ride nobody re-reviewed — when the public skill
-#: resources land (§3.3), add it back alongside a pin that the readable set
+#: resources land, add it back alongside a pin that the readable set
 #: stays public-only.
 PRE_AUTH_METHODS = frozenset(
     {
@@ -110,14 +110,14 @@ CLIENT_INFO_META_KEY = "io.modelcontextprotocol/clientInfo"
 
 
 def _framework_404() -> Response:
-    """Mirror the framework's route-not-found body exactly (the 3a-4 posture)."""
+    """Mirror the framework's route-not-found body exactly (the disabled-arm posture)."""
     return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
 
 def challenge_header(ctx: Context, request: Request) -> str:
     """The ``WWW-Authenticate`` challenge for this deployment's gate arms.
 
-    With the OAuth discovery surface on, the exact 3a-4 contract:
+    With the OAuth discovery surface on, the exact challenge contract:
     ``Bearer resource_metadata="{base}{PRM}"`` — the RFC 9728 pointer a
     spec-following client walks. With it off there is no discovery document to
     point at (it 404s), so the challenge is a bare ``Bearer``: bearer-only
@@ -131,7 +131,7 @@ def challenge_header(ctx: Context, request: Request) -> str:
 
 
 def _unauthorized(ctx: Context, request: Request, method: str) -> Response:
-    """The 401 challenge, preserving 3a-4's shape (HEAD: headers, no body)."""
+    """The 401 challenge, preserving the placeholder's shape (HEAD: headers, no body)."""
     headers = {"WWW-Authenticate": challenge_header(ctx, request)}
     if method == "HEAD":
         return Response(status_code=401, headers=headers)
@@ -162,7 +162,7 @@ def origin_allowed(ctx: Context, request: Request) -> bool:
     Absent ``Origin`` passes (non-browser clients never send one). A present
     one must match a trusted set derived from **server config only**: the
     canonical base URL's origin (``auth.canonical_base_url`` — the same source
-    the 3a-4 discovery documents build their absolute URLs from), or a
+    the discovery documents build their absolute URLs from), or a
     loopback/localhost origin for local dev. ``null`` and unparseable origins
     fail.
 
@@ -287,9 +287,9 @@ def _auth_required_error() -> Exception:
 def build_mcp_server(ctx: Context) -> Server[Any]:
     """Assemble the low-level SDK server for this deployment.
 
-    Tools come from the pinned phase-1 spec (``jentic_one.mcp.spec``);
+    Tools come from the pinned tool-surface spec (``jentic_one.mcp.spec``);
     ``tools/list`` is connection-independent (stateless — the same list for
-    every caller, §3.3 pre-auth). Resource listings are served empty until the
+    every caller). Resource listings are served empty until the
     skill-resources slice lands.
     """
 
@@ -346,13 +346,13 @@ def _package_version() -> str:
 
 
 class McpChallengePlaceholder:
-    """The 3a-4 placeholder contract for shapes serving auth WITHOUT control.
+    """The challenge-placeholder contract for shapes serving auth WITHOUT control.
 
-    The real mount rides control-plane shapes only (master §6 Q1), but the
+    The real mount rides control-plane shapes only, but the
     RFC 8414/9728 discovery documents ride the auth surface — a standalone
     auth deployment would serve the discovery documents while answering plain
     404 on ``/mcp`` itself, leaving the ``resource_metadata`` pointers
-    dangling. This restores exactly what the 3a-4 placeholder shipped on the
+    dangling. This preserves exactly what the placeholder ships on the
     auth surface: with ``server.mcp.oauth.enabled`` every probe answers the
     discovery-chain 401 challenge; without it, the framework's plain 404.
     Never a transport — the resource itself lives where control lives.
@@ -408,7 +408,7 @@ class McpMount:
 
         if not server_cfg.enabled:
             if server_cfg.oauth.enabled:
-                # The 3a-4 placeholder contract, verbatim: any probe answers
+                # The challenge-placeholder contract, verbatim: any probe answers
                 # the discovery-chain 401 challenge.
                 return _unauthorized(self.ctx, request, method)
             return _framework_404()
@@ -438,7 +438,7 @@ class McpMount:
                 return _unauthorized(self.ctx, request, method)
             self._stash_call_state(scope, request, identity, credential)
             if body is not None:
-                # Phase-3 item 6: every authenticated POST may start a
+                # Every authenticated POST may start a
                 # (windowed) MCP session — the emit key is (agent identity x
                 # clientInfo x window), clientInfo from this request's
                 # ``_meta`` (absent → client unknown, mirroring stdio lane D).
@@ -486,7 +486,7 @@ class McpMount:
 
         Delegates to the app-state ``verify_token`` (the superset verifier the
         auth surface installs) so every platform token shape — jak_/sak_ keys,
-        ``at_`` access tokens including 3a-3 grant-channel bearers — resolves
+        ``at_`` access tokens including grant-channel bearers — resolves
         through exactly the gates the REST routes apply. Any failure is an
         invalid credential (401 challenge), mirroring ``resolve_identity``.
         """

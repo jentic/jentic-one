@@ -1,6 +1,6 @@
 /**
  * ConnectedClientsCard — the OAuth clients holding a live consent→agent grant
- * on THIS agent (phase-3a §4.8): the loud-attachment counter made visible
+ * on THIS agent: the loud-attachment counter made visible
  * per-agent, in the GitHub/Google "authorized apps" grammar.
  *
  * Each row shows the client (name + redirect-URI origin), the granted scopes,

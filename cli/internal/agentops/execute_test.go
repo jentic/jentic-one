@@ -25,7 +25,7 @@ import (
 // The two tests below cover Do's dial-level transport branch — the one execute
 // branch no golden can pin (a real dial failure's error string embeds an
 // ephemeral port and OS-specific text, never byte-stable), so it is asserted
-// here by fields (PR #1179 review #1). Both use POST without an
+// here by fields. Both use POST without an
 // Idempotency-Key so the broker transport's idempotent-retry backoff
 // (client/transport.go) gives the dial exactly one attempt instead of
 // sleeping through three.

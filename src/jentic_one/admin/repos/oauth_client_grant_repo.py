@@ -12,7 +12,7 @@ from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
 
 class OAuthClientGrantRepository:
-    """Data access layer for consent→agent grant rows (phase-3a D3, §4.4)."""
+    """Data access layer for consent→agent grant rows."""
 
     @staticmethod
     async def create(
@@ -43,7 +43,7 @@ class OAuthClientGrantRepository:
     async def list_active_for_pair(
         session: AsyncSession, *, oauth_client_id: str, agent_id: str
     ) -> list[OAuthClientGrant]:
-        """Active grants for one (client, agent) pair — the §4.1 collapse set.
+        """Active grants for one (client, agent) pair — the pair-collapse set.
 
         The consent service revokes every row returned here before inserting
         the fresh grant, so exactly one active row per pair survives while
@@ -92,7 +92,7 @@ class OAuthClientGrantRepository:
         cursor_created_at: datetime | None = None,
         cursor_id: str | None = None,
     ) -> list[OAuthClientGrant]:
-        """List grant rows for the §4.8 surfaces, newest first.
+        """List grant rows for the grant listing surfaces, newest first.
 
         Filterable by any combination of agent, client (public ``client_id``
         string — the token-lineage join key, D3), consenting user, and status.
@@ -129,7 +129,7 @@ class OAuthClientGrantRepository:
 
     @staticmethod
     async def count_active_by_client(session: AsyncSession) -> dict[str, int]:
-        """Active-grant counts keyed by public ``client_id`` (§4.8 per-client count)."""
+        """Active-grant counts keyed by public ``client_id`` (per-client count)."""
         stmt = (
             select(OAuthClientGrant.oauth_client_id, func.count())
             .where(OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value)

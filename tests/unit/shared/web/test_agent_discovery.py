@@ -268,19 +268,19 @@ def test_llms_txt_advertises_mcp_server(client: TestClient) -> None:
     identity stamp), and still preempt the ``/mcp``-probe misdiagnosis (#753):
     MCP runs through the local stdio server, not an HTTP endpoint on the
     deployment. The ``/mcp`` wording must stay accurate in *both*
-    ``server.mcp.oauth.enabled`` arms (phase-3a: enabled deployments answer a
+    ``server.mcp.oauth.enabled`` arms (enabled deployments answer a
     401 OAuth discovery challenge there, not a 404).
     """
     body = client.get(LLMS_TXT_PATH).text
     assert "no MCP endpoint" not in body
     assert "`jentic mcp`" in body
     assert "jentic mcp --help" in body
-    # The §3.5 routing paragraph: MCP preferred, CLI for recovery, same instance.
+    # The routing paragraph: MCP preferred, CLI for recovery, same instance.
     assert "prefer them" in body
     assert "`setup`/`access` recovery" in body
     assert "same instance" in body
     assert "`backend`/`host`" in body
-    # The /mcp probe answers 404 or the phase-3a 401 discovery challenge — the
+    # The /mcp probe answers 404 or the OAuth-enabled 401 discovery challenge — the
     # advertisement must not imply a live HTTP MCP endpoint in either arm.
     assert "`/mcp` on the control plane serves no MCP server today" in body
     assert "401 OAuth discovery challenge" in " ".join(body.split())
@@ -347,7 +347,7 @@ def test_llms_txt_auth_standalone_never_advertises_the_endpoint(
 ) -> None:
     """Review L1: a standalone-auth backend sharing a `server.mcp.enabled`
     config must not advertise ``http://<own-host>/mcp`` — that shape carries
-    only the 3a-4 challenge placeholder (404/401 on `/mcp`), never the mount.
+    only the challenge placeholder (404/401 on `/mcp`), never the mount.
     The real endpoint lives on the control-plane shape (previous test)."""
     config_dict = dict(sample_config_dict)
     config_dict["server"] = {"mcp": {"enabled": True}}

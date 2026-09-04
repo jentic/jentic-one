@@ -50,7 +50,7 @@ def test_mcp_events_on_telemetry_allowlist() -> None:
 
 
 def test_oauth_client_event_types_registered() -> None:
-    """The 3a-2 OAuth-client lifecycle events (design §4.8) are in ALL."""
+    """The OAuth-client lifecycle events are in ALL."""
     assert EventType.OAUTH_CLIENT_REGISTERED == "oauth_client.registered"
     assert EventType.OAUTH_CLIENT_APPROVED == "oauth_client.approved"
     assert EventType.OAUTH_CLIENT_REGISTERED in EventType.ALL

@@ -107,7 +107,7 @@ class ServicesConfig(BaseModel):
 
 
 class WorkerConfig(BaseModel):
-    """Background job-worker durability knobs (§09 E4.2).
+    """Background job-worker durability knobs.
 
     The worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``
     from claim), and processes it. A job left ``RUNNING`` past that deadline by a
@@ -125,7 +125,7 @@ class WorkerConfig(BaseModel):
     # Backoff before a failed job becomes claimable again: min(base * 2**(n-1), max).
     retry_backoff_base_s: float = 2.0
     retry_backoff_max_s: float = 60.0
-    # Bounded wait for in-flight jobs to finish on graceful drain (§09 E4.3); past
+    # Bounded wait for in-flight jobs to finish on graceful drain; past
     # this the worker stops claiming and lets the still-RUNNING job be reclaimed
     # via its visibility timeout after restart (no work dropped).
     drain_timeout_s: float = 25.0
@@ -303,8 +303,7 @@ class OAuthRateLimitConfig(BaseModel):
     authorize_burst: int = 30
     exchange_rpm: int = 60
     exchange_burst: int = 60
-    # Anonymous dynamic client registration (POST /oauth-clients). Knobs land
-    # in 3a-1; the DCR endpoint that consumes them ships in 3a-2 (§4.2).
+    # Anonymous dynamic client registration (POST /oauth-clients).
     registration_rpm: int = 10
     registration_burst: int = 5
     trusted_proxies: list[str] = Field(default_factory=list)
@@ -478,12 +477,12 @@ class ControlSurfaceConfig(BaseModel):
 
 
 class UpstreamClientConfig(BaseModel):
-    """Bounds for the single shared outbound ``httpx.AsyncClient`` (§04, PR-B).
+    """Bounds for the single shared outbound ``httpx.AsyncClient``.
 
     The timeouts are httpx semantics: ``read_timeout_s`` is the *between-bytes*
     gap timeout (per read), **not** a whole-stream cap — a trickle that keeps
     sending under the limit can hold a pool slot open. The overall transfer
-    deadline is owned by the response-streaming guard (§08/E2.4), not here.
+    deadline is owned by the response-streaming guard, not here.
     """
 
     connect_timeout_s: float = 5.0
@@ -510,18 +509,18 @@ class UpstreamClientConfig(BaseModel):
             "multipart/form-data": 50 * 1024 * 1024,
         }
     )
-    # Response-side counterpart to the request-body cap (§08 E2.4). The runner
+    # Response-side counterpart to the request-body cap. The runner
     # enforces this *mid-stream* while reading the upstream body, aborting the
     # connection the moment it's exceeded so a hostile/large upstream can't OOM
     # the instance. 0 disables the cap (unbounded — not recommended).
     max_response_bytes: int = 10 * 1024 * 1024
     # Stream the upstream response straight through to the client instead of
-    # whole-buffering it (§08 E2.4). On by default; applies only to the sync
+    # whole-buffering it. On by default; applies only to the sync
     # proxy path with no Idempotency-Key (idempotent requests + the async worker
     # keep buffering, since replay/persistence need the full body). Disable to
     # force the buffered path everywhere.
     stream_passthrough_enabled: bool = True
-    # Whole-stream transfer deadline for a streamed response (§08 E2.4). Unlike
+    # Whole-stream transfer deadline for a streamed response. Unlike
     # ``read_timeout_s`` (a between-bytes gap), this bounds the *total* time the
     # body may take to transfer, so a steady trickle — or a slow client draining
     # the proxied body — can't pin the upstream connection/pool slot forever. The
@@ -531,13 +530,13 @@ class UpstreamClientConfig(BaseModel):
 
 
 class RateLimitConfig(BaseModel):
-    """Per-caller token-bucket rate limit (§05 R2).
+    """Per-caller token-bucket rate limit.
 
     Keyed on the resolved ``actor_id`` and enforced in a post-auth dependency
     (the actor isn't known at admission time, so this can't be a plain
     pre-auth middleware). The token bucket itself lives on the shared-state
     backend (``RateLimitStore``); with the memory backend the limit is
-    per-instance, with Redis (§06) it is cluster-wide — no call-site change.
+    per-instance, with Redis it is cluster-wide — no call-site change.
     """
 
     enabled: bool = True
@@ -548,7 +547,7 @@ class RateLimitConfig(BaseModel):
 
 
 class CircuitBreakerConfig(BaseModel):
-    """Per-upstream circuit breaker (§05 R5.1).
+    """Per-upstream circuit breaker.
 
     Counts failures/totals per rolling ``window_s`` on the shared-state
     backend's atomic counters; when the failure ratio crosses
@@ -568,7 +567,7 @@ class CircuitBreakerConfig(BaseModel):
 
 
 class RetryConfig(BaseModel):
-    """Idempotency-aware upstream retry (§09 E4.1).
+    """Idempotency-aware upstream retry.
 
     The ``RetryRunner`` decorator retries a failed attempt **only** when it is
     safe to do so: a connect-phase failure (no bytes on the wire) is retryable
@@ -601,7 +600,7 @@ def _csv_to_list(value: Any) -> list[str]:
 
 
 class EgressConfig(BaseModel):
-    """Outbound SSRF/egress policy for upstream calls (§08 E2).
+    """Outbound SSRF/egress policy for upstream calls.
 
     Defaults are **strict** (both lists empty) — identical to the historical
     hard-coded behaviour: every private range and the cloud-metadata host are
@@ -625,7 +624,7 @@ class EgressConfig(BaseModel):
     )
     # Pin the outbound connection to the IP validated at connect time, closing the
     # DNS-rebinding TOCTOU between pre-request validation and the runner's own
-    # resolution (§08 E2). On by default; disable only to debug egress issues.
+    # resolution. On by default; disable only to debug egress issues.
     dns_pinning_enabled: bool = True
 
     @field_validator("allowed_private_subnets")
@@ -640,11 +639,11 @@ class EgressConfig(BaseModel):
 
 
 class BrokerResilienceConfig(BaseModel):
-    """Resilience envelope: admission (§04 R1) + rate limit / circuit (§05).
+    """Resilience envelope: admission + rate limit / circuit.
 
     The shared-state ``backend`` selection drives *both* the rate limiter and
-    the circuit breaker (memory default; Redis is cluster-wide, §06). Queue
-    backpressure / async-credential / retention knobs land in a later §05 slice.
+    the circuit breaker (memory default; Redis is cluster-wide). Queue
+    backpressure / async-credential / retention knobs are future work.
     """
 
     max_in_flight: int = 200
@@ -657,8 +656,8 @@ class BrokerResilienceConfig(BaseModel):
     # a single healthy slow attempt isn't pre-empted by the envelope deadline.
     request_deadline_s: float = 30.0
     # Fraction of ``max_in_flight`` at/above which ``/ready`` reports unready so
-    # the LB drains this instance *before* it hits the hard admission shed wall
-    # (§05 R5.2). Kept < 1.0 for that headroom.
+    # the LB drains this instance *before* it hits the hard admission shed wall.
+    # Kept < 1.0 for that headroom.
     readiness_saturation_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
     upstream: UpstreamClientConfig = Field(default_factory=UpstreamClientConfig)
     backend: StateBackendConfig = Field(default_factory=StateBackendConfig)
@@ -668,7 +667,7 @@ class BrokerResilienceConfig(BaseModel):
 
 
 class IdempotencyConfig(BaseModel):
-    """``Idempotency-Key`` replay store (§07, PR-E/1 slim).
+    """``Idempotency-Key`` replay store.
 
     Sync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory
     default; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim
@@ -679,7 +678,7 @@ class IdempotencyConfig(BaseModel):
     a duplicate side-effect; only byte-for-byte body replay is dropped).
 
     Compliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,
-    async same-``job_id`` replay, and at-rest encryption are later §07 slices.
+    async same-``job_id`` replay, and at-rest encryption are future work.
     """
 
     enabled: bool = True
@@ -733,7 +732,7 @@ class TrustedIssuerConfig(BaseModel):
 
 
 class JwtVerificationConfig(BaseModel):
-    """Hardened inbound-JWT verification for the broker edge (§08 E1).
+    """Hardened inbound-JWT verification for the broker edge.
 
     When ``trusted_issuers`` is non-empty the broker verifies self-contained JWTs
     against the issuers' published JWKS (asymmetric, key-rotation-aware) and
@@ -777,7 +776,7 @@ class BrokerConfig(BaseModel):
 
     upstream_timeout_s: float = 30.0
     resolve_cache_ttl_seconds: float = 3.0
-    # Short TTL (seconds) for the per-instance toolkit-derivation cache (§05 R3).
+    # Short TTL (seconds) for the per-instance toolkit-derivation cache.
     # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
     # double hit is served from cache for header-less requests. Agent/credential
     # bindings change infrequently, so a short TTL bounds revocation staleness
@@ -786,7 +785,7 @@ class BrokerConfig(BaseModel):
     # Authorization correctness never depends on the cache — it is a latency
     # optimization over the authoritative DB lookup. 0 disables it.
     toolkit_cache_ttl_s: float = 3.0
-    # Short TTL (seconds) for the per-instance permission-rule cache (§05 R3).
+    # Short TTL (seconds) for the per-instance permission-rule cache.
     # Caches the ordered toolkit_permission_rules per toolkit_id. Same staleness
     # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
     rule_cache_ttl_s: float = 3.0
@@ -794,18 +793,18 @@ class BrokerConfig(BaseModel):
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
     jobs_api_base_url: str | None = None
-    # Shared secret for the self-contained-JWT path (PR-A2, §03). None disables
+    # Shared secret for the self-contained-JWT path. None disables
     # the JWT path entirely (opaque tokens only). The minimal verifier is HS256
-    # signature + exp; TODO(§08/E1) hardens (JWKS, iss/aud, alg allowlist) before
+    # signature + exp; TODO hardens (JWKS, iss/aud, alg allowlist) before
     # this is enabled in production.
     jwt_secret: SecretStr | None = None
-    # Hardened inbound-JWT verification (§08 E1): trusted-issuer JWKS, iss/aud/nbf
+    # Hardened inbound-JWT verification: trusted-issuer JWKS, iss/aud/nbf
     # + clock-skew, strict asymmetric alg allowlist. When trusted_issuers is set
     # it supersedes the HS256 jwt_secret path for self-contained JWTs.
     jwt_verification: JwtVerificationConfig = Field(default_factory=JwtVerificationConfig)
     # Public base URL of the account-linking/provisioning UI. When set, a 424
     # (credential not provisioned) carries a `prompt_human` directive with a
-    # `provisioning_url` the agent can relay to the user (§02b). None keeps the
+    # `provisioning_url` the agent can relay to the user. None keeps the
     # directive but omits the URL. The URL is non-secret (where to *go* to
     # provision, never the credential itself).
     account_linking_base_url: str | None = None
@@ -886,17 +885,17 @@ class CatalogConfig(BaseModel):
 
 
 class McpOAuthConfig(BaseModel):
-    """Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).
+    """Interactive-OAuth settings for the MCP surface.
 
-    Minimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full
-    ``server.mcp`` sub-config (``server.mcp.enabled`` etc.) and extends this
-    model in place — fields here must keep their names and defaults.
+    Minimal seam: the full ``server.mcp`` sub-config (``server.mcp.enabled``
+    etc.) extends this model in place — fields here must keep their names and
+    defaults.
     """
 
     enabled: bool = False
     """Master switch for the interactive-OAuth surface. Off (the default) the
     anonymous DCR front door ``POST /oauth-clients`` returns a plain 404,
-    indistinguishable from not-shipped (§4.2)."""
+    indistinguishable from not-shipped."""
     auto_approve_clients: bool = False
     """D9 (amended): auto-approve DCR registrations (``approval_status='approved'``
     + ``active=true`` at registration). Default **false** everywhere —
@@ -905,24 +904,24 @@ class McpOAuthConfig(BaseModel):
     an explicit opt-in for deployments that accept self-registered clients
     without review (e.g. self-hosted single-user installs)."""
     registration_gc_days: int = 90
-    """Long-TTL GC policy for never-consented DCR rows (§4.2): rows are
+    """Long-TTL GC policy for never-consented DCR rows: rows are
     GC-eligible only after this many days, and rows with any grant history are
-    never GC'd. Policy knob only — the sweep itself is not part of 3a-2."""
+    never GC'd. Policy knob only — no sweep runs yet."""
 
 
 class McpConfig(BaseModel):
-    """``server.mcp`` sub-config (3a-2 seam, extended by phase-3 item 2)."""
+    """``server.mcp`` sub-config."""
 
     enabled: bool = False
-    """Master switch for the daemon-native Streamable HTTP ``/mcp`` endpoint
-    (phase-3 item 2). Off (the default) the mounted app answers the framework's
-    plain route-not-found 404 — unless ``oauth.enabled`` keeps the 3a-4
+    """Master switch for the daemon-native Streamable HTTP ``/mcp`` endpoint.
+    Off (the default) the mounted app answers the framework's
+    plain route-not-found 404 — unless ``oauth.enabled`` keeps the
     discovery-challenge behaviour alive (401 + ``WWW-Authenticate``) so OAuth
     clients can still walk the RFC 9728 chain ahead of the endpoint being
-    turned on. Flipping this on is an explicit operator choice (master §3.3)."""
+    turned on. Flipping this on is an explicit operator choice."""
     broker_url: str = "http://127.0.0.1:8100"
     """Broker base URL for the MCP ``execute`` tools' server-side
-    control-plane→broker proxy hop (master §6 Q1: the broker stays MCP-free,
+    control-plane→broker proxy hop (the broker stays MCP-free,
     so the mounted app forwards execute calls to the broker exactly like the
     CLI does). The default matches the local install topology (plain-HTTP
     loopback broker on 8100); compose/split deployments set the broker

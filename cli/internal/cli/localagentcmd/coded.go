@@ -14,8 +14,8 @@ import "github.com/jentic/jentic-one/cli/internal/cli/ux"
 // localagentcmd sits above the leaves, so importing ux is allowed by the
 // layering gate (the api/cmdcore trees do the same).
 
-// confinementUnavailableErr is the AGT-24 emitter for CONFINEMENT_UNAVAILABLE —
-// the one closed code that previously had zero producers. `run` refuses to
+// confinementUnavailableErr is the AGT-24 emitter for CONFINEMENT_UNAVAILABLE.
+// `run` refuses to
 // launch an unconfined session, so a machine without sandbox-exec/bwrap is a
 // hard, non-retryable stop the agent must surface distinctly (not a generic
 // exit 1). detail carries the per-prereq reasons already assembled by the

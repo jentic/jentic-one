@@ -135,7 +135,7 @@ def test_callback_uri_keeps_resolved_path() -> None:
     assert result == "https://app.example.com/oauth/callback"
 
 
-# ---------- /authorize client validation: the D7 approval gate ----------
+# ---------- /authorize client validation: the approval gate ----------
 
 
 def _client_view(*, active: bool = True, approval_status: str = "approved") -> OAuthClientView:
@@ -185,7 +185,7 @@ async def test_authorize_validation_approval_gate(
     active: bool, approval_status: str, expected: bool
 ) -> None:
     """Pending/denied clients fail /authorize validation on the existing error
-    path even when active and the redirect_uri matches (D7 fails closed)."""
+    path even when active and the redirect_uri matches (fails closed)."""
     view = _client_view(active=active, approval_status=approval_status)
     with patch("jentic_one.auth.web.routers.authorize.OAuthClientService") as mock_svc_cls:
         mock_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=view)

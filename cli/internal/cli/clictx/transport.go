@@ -1,6 +1,6 @@
 package clictx
 
-// transport.go is the exported transport-hook seam (local-MCP phase 1, PR 1-A).
+// transport.go is the exported transport-hook seam (local-MCP phase 1).
 // A long-lived embedder of the CLI (the `jentic mcp` server) needs to decorate
 // every control-plane request with process-level attribution headers
 // (User-Agent, the per-process X-Jentic-Session-Id fallback) without owning

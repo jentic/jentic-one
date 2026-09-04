@@ -205,7 +205,7 @@ func siblingContextInEnv(envName, currentContext string) string {
 
 // printNextSteps teaches the core discover -> inspect -> execute workflow after a
 // successful register. Bare `jentic register` on an already-configured machine
-// used to (in V1) reopen onboarding; now it just re-mints, so this block is what
+// just re-mints, so this block is what
 // makes "what do I do now?" obvious — a few copy-pasteable examples plus the
 // pointer to full help, in place of a bare "Ready:" line.
 func (a *App) printNextSteps(st theme.Styles) {

@@ -1,4 +1,4 @@
-"""Integration tests for the phase-3a grant channel (design §4.4-§4.6, §9).
+"""Integration tests for the OAuth grant channel.
 
 Covers the consent→agent binding end-to-end at the service layer: grant
 minting with the D2 scope intersection, grant-bearing code exchange minting
@@ -62,7 +62,7 @@ _mint_grant_channel_tokens = seeds.mint_grant_channel_tokens
 async def test_grant_row_defaults_and_collapse(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """Grant defaults (ksuid `ocg`, status=active, timestamps) + the §4.1
+    """Grant defaults (ksuid `ocg`, status=active, timestamps) + the
     pair-collapse: re-consent revokes the prior active row for the pair."""
     user_id = await _seed_user(integration_context, "usr_g_defaults")
     agent_id = await _seed_agent(integration_context, owner_id=user_id, scopes=["apis:read"])
@@ -109,8 +109,8 @@ async def test_grant_row_defaults_and_collapse(
 async def test_grant_exchange_mints_agent_actor_with_lineage_and_no_id_token(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """§4.5: a grant-bearing code mints actor=AGENT with BOTH lineage columns
-    stamped, no id_token (D11), and touches the grant's last_used_at."""
+    """A grant-bearing code mints actor=AGENT with BOTH lineage columns
+    stamped, no id_token, and touches the grant's last_used_at."""
     user_id = await _seed_user(integration_context, "usr_g_exchange")
     agent_id = await _seed_agent(integration_context, owner_id=user_id, scopes=["apis:read"])
     await _seed_client(integration_context, allowed_scopes=["apis:read"])
@@ -196,7 +196,7 @@ async def test_plain_code_keeps_user_actor_and_id_token(
 async def test_exchange_fails_closed_on_revoked_grant_or_inactive_agent(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """§4.5: every leg is re-checked at exchange — a grant revoked (or agent
+    """Every leg is re-checked at exchange — a grant revoked (or agent
     disabled) inside the code TTL must not mint tokens."""
     user_id = await _seed_user(integration_context, "usr_g_exch_gate")
     agent_id = await _seed_agent(integration_context, owner_id=user_id, scopes=["apis:read"])
@@ -233,7 +233,7 @@ async def test_exchange_fails_closed_on_revoked_grant_or_inactive_agent(
 async def test_resolution_honors_quadruple_scope_intersection(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """§4.5: effective scopes = token snapshot ∩ agent live grants ∩ client
+    """Effective scopes = token snapshot ∩ agent live grants ∩ client
     ceiling ∩ grant scopes — on both resolvers. Narrowing the agent's live
     grants after mint narrows the effective set without a re-mint."""
     user_id = await _seed_user(integration_context, "usr_g_quad")
@@ -302,7 +302,7 @@ async def test_grant_scopes_cap_agent_live_scopes(
         assert resolved.permissions == ["apis:read"]
 
 
-# --- the three kill radii (§4.6), on BOTH resolvers -------------------------
+# --- the three kill radii, on BOTH resolvers --------------------------------
 
 
 async def test_kill_radius_grant_revoke(integration_context: Context, clean_grants: None) -> None:
@@ -334,7 +334,7 @@ async def test_kill_radius_grant_revoke(integration_context: Context, clean_gran
     broker_resolved = await broker.resolve_access_token(access)
     assert broker_resolved is not None and broker_resolved.active is False
     assert (await token_svc.introspect(access))["active"] is False
-    # The grant gate folds into refresh-token introspection too (review F-4).
+    # The grant gate folds into refresh-token introspection too.
     assert (await token_svc.introspect(refresh))["active"] is False
     with pytest.raises(InvalidGrantError):
         await token_svc.refresh(refresh, client_id=_CLIENT_ID)
@@ -437,7 +437,7 @@ async def test_refresh_rotation_recheck_and_lineage_propagation(
     assert resolved is not None and resolved.oauth_grant_id == grant_id
 
     # Simulate a sweep miss: revoke ONLY the grant row, then un-revoke the
-    # rotated refresh token's revoked_at so the §4.5 re-check is the only
+    # rotated refresh token's revoked_at so the exchange-time grant re-check is the only
     # thing standing between a revoked grant and fresh tokens.
     async with integration_context.admin_db.session() as session:
         await OAuthClientGrantRepository.revoke(session, grant_id)
