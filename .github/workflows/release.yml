@@ -20,7 +20,7 @@
 #   4. release       — GoReleaser builds the signed, checksummed jenticctl +
 #                      jentic binaries (cosign keyless via OIDC + syft SBOMs) and
 #                      pushes the Homebrew cask. This is the install (see
-#                      docs/releasing.md). Needs gate + smoke + publish-image so
+#                      docs/development/releasing.md). Needs gate + smoke + publish-image so
 #                      a release never half-ships (binaries without the image).
 #
 # Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
