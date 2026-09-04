@@ -23,7 +23,19 @@ class OAuthClientRegistrationRequest(BaseModel):
     # Client-claimed and untrusted (phishing) — consent UIs render the
     # redirect-URI origin prominently, never the name alone (§4.2).
     client_name: str = Field(min_length=1, max_length=255)
-    redirect_uris: list[str] = Field(min_length=1, max_length=20)
+    # Native MCP clients are RFC 8252 apps: alongside https (always) and
+    # loopback http, §7.1 private-use schemes (e.g. ``cursor://…``,
+    # ``com.example.app:/…``) are accepted on this door — PKCE S256 is the
+    # compensating control. Dangerous schemes (javascript/data/file/…) are
+    # rejected; admin-created clients stay https-or-loopback-http only.
+    redirect_uris: list[str] = Field(
+        min_length=1,
+        max_length=20,
+        description="1-20 redirect URIs. `https` always; `http` for loopback "
+        "hosts only; RFC 8252 §7.1 private-use (custom) schemes are accepted "
+        "for native apps (browser-executable and other dangerous schemes are "
+        "rejected).",
+    )
     token_endpoint_auth_method: str | None = Field(
         default=None,
         description="Must be 'none' if supplied — this endpoint only registers "

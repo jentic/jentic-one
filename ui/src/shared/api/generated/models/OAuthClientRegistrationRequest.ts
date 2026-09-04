@@ -15,6 +15,9 @@ export type OAuthClientRegistrationRequest = {
      * Subset of ['authorization_code', 'refresh_token'].
      */
     grant_types?: (Array<string> | null);
+    /**
+     * 1-20 redirect URIs. `https` always; `http` for loopback hosts only; RFC 8252 §7.1 private-use (custom) schemes are accepted for native apps (browser-executable and other dangerous schemes are rejected).
+     */
     redirect_uris: Array<string>;
     /**
      * Only ['code'] is supported.

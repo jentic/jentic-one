@@ -136,7 +136,11 @@ def _validate_metadata(
                 f"unsupported response_types: {sorted(unsupported)} (allowed: ['code'])"
             )
     try:
-        _validate_redirect_uris(redirect_uris)
+        # RFC 8252 §7.1: native apps (this door's clientele) may claim a
+        # private-use redirect scheme; PKCE (S256, mandatory on the public-
+        # client flow) is the compensating control. The admin door keeps the
+        # strict https-or-loopback-http default.
+        _validate_redirect_uris(redirect_uris, allow_private_use_schemes=True)
     except InvalidInputError as exc:
         # The canonical validator is admin-tier; translate to the auth taxonomy
         # so the auth surface's error handler maps it (invalid_client_metadata).
