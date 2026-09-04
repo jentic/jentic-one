@@ -37,7 +37,7 @@ configuration — that is **not** a hidden MCP server behind auth; it is the
 broker's credential-injecting forward proxy rejecting the request, like it
 would any other unauthenticated path. Only configure a *URL-based* MCP entry
 against a deployment whose operator has enabled the endpoint — see
-[mcp-http-endpoint.md](../mcp-http-endpoint.md) for enabling it, client
+[mcp-http-endpoint.md](mcp-http-endpoint.md) for enabling it, client
 snippets, and stdio-bridge recipes for runtimes that cannot use URL entries.
 
 The supported integration paths for agents are:
@@ -55,7 +55,7 @@ The supported integration paths for agents are:
    not exposed over MCP — both talk to the same instance (check
    `backend`/`host` in the identity stamp). Where the operator has enabled
    the hosted `/mcp` endpoint, a URL-based entry with the agent's API key is
-   the CLI-less alternative ([mcp-http-endpoint.md](../mcp-http-endpoint.md)).
+   the CLI-less alternative ([mcp-http-endpoint.md](mcp-http-endpoint.md)).
 3. **Raw HTTP.** For runtimes without the CLI, every deployment self-describes
    at `GET /llms.txt`: dynamic client registration, token exchange, discovery,
    access requests, and brokered execution.

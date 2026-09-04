@@ -53,7 +53,7 @@ allow. See `docs/security/security.md` before using real credentials.
   not orchestrate.
 - A self-hosted deployment serves an HTTP MCP endpoint (`/mcp`) only when its operator enabled
   it (`server.mcp.enabled`, off by default — see
-  [docs/mcp-http-endpoint.md](docs/mcp-http-endpoint.md)). Otherwise integrate through the
+  [docs/guides/mcp-http-endpoint.md](docs/guides/mcp-http-endpoint.md)). Otherwise integrate through the
   `jentic` CLI, the skill it generates, the CLI's local MCP stdio server (an `mcp` subcommand
   shipping in the next `jentic` release), or plain HTTP against the deployment's own API.
 - A running instance serves `/llms.txt` and `/.well-known/llms.txt` with that deployment's base

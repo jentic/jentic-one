@@ -213,7 +213,7 @@ talks to this deployment with the agent's registered identity. Both expose
 the same discover → execute loop as the CLI tools. Stdio-only MCP runtimes
 can reach {base}/mcp through a stdio↔HTTP bridge such as `mcp-remote` or
 `mcp-proxy` — exact entries in the
-[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md).
+[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/mcp-http-endpoint.md).
 A 401 from the broker host is its auth-gated forward proxy, not a
 second MCP server."""
     else:

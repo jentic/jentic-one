@@ -317,7 +317,7 @@ def test_llms_txt_advertises_http_endpoint_only_when_enabled(
     assert "`jentic mcp`" in body
     assert "mcp-remote" in body
     assert "mcp-proxy" in body
-    assert "docs/mcp-http-endpoint.md" in body
+    assert "docs/guides/mcp-http-endpoint.md" in body
     # The routing paragraph (§3.5) is arm-independent.
     assert "prefer them" in body
     assert "`backend`/`host`" in body
@@ -400,7 +400,7 @@ talks to this deployment with the agent's registered identity. Both expose
 the same discover → execute loop as the CLI tools. Stdio-only MCP runtimes
 can reach {base}/mcp through a stdio↔HTTP bridge such as `mcp-remote` or
 `mcp-proxy` — exact entries in the
-[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md).
+[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/mcp-http-endpoint.md).
 A 401 from the broker host is its auth-gated forward proxy, not a
 second MCP server."""
 
