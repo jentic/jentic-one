@@ -39,7 +39,8 @@ ways:
 - **Raw SQL at a named seam** — when the control plane must write an
   admin-DB row (approving an access request binds a toolkit to an agent),
   `control/repos/effects_repo.py` uses raw SQL rather than importing admin's
-  ORM models.
+  ORM models. The [worked example below](#a-request-layer-by-layer) traces
+  this seam in action.
 
 ## The layers inside a surface
 
@@ -80,6 +81,34 @@ their own rows, and an operator holding a delegation scope
 filters in; repos apply them; neither knows the other's internals. See
 [identity and authorization](identity-and-authorization.md) for the scope
 model these filters implement.
+
+### A request, layer by layer
+
+`POST /access-requests/{id}:decide` — an operator approving an agent's
+access request — exercises every rule above, including the cross-database
+seam:
+
+1. **`web/`** — the router (`control/web/routers/access_requests.py`)
+   declares its auth dependency, receives the resolved `Identity`, converts
+   the body to plain data, and calls `AccessRequestService.decide()`. No DB
+   import, no business logic; a failure surfaces as an RFC 9457 problem
+   detail.
+2. **`services/`** — `decide()` builds the identity's access filters, opens
+   `control_db.transaction()`, and applies the decision plus the
+   control-side effects (credential→toolkit binds) **atomically** in that
+   one transaction.
+3. **`repos/`** — `AccessRequestRepository.get(session, id, filters=…)`
+   applies the filters it was handed. It never sees the `Identity` that
+   produced them.
+4. **The cross-database seam** — an approved toolkit bind or scope grant
+   must land in the *admin* DB, which the control transaction cannot span.
+   So `decide()` commits phase 1, then drives the admin-DB writes through
+   `EffectsRepository` (raw SQL, idempotent `ON CONFLICT`), and acks them
+   back into the control DB. An un-acked item is the retry marker:
+   re-calling `decide()` reconciles instead of erroring, so a crash between
+   the two phases leaves no orphaned grants. This is the
+   no-cross-database-foreign-keys rule (see [data model](data-model.md))
+   showing up as control flow.
 
 ## Facade rules (one home per concern)
 

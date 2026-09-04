@@ -29,6 +29,26 @@ the human it belongs to.
 Agent identity is asymmetric — the platform never holds the agent's private
 key:
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant G as Agent
+    participant AU as Auth surface
+    participant DB as Admin DB
+    actor O as Operator (human)
+
+    G->>G: generate Ed25519 keypair (private key never leaves the agent)
+    G->>AU: register (RFC 7591): metadata + JWKS (public key only)
+    AU->>DB: create agent, status PENDING
+    AU-->>G: client_id
+    O->>AU: approve (or deny) the registration
+    AU->>DB: PENDING → ACTIVE
+    G->>AU: token exchange (RFC 7523): JWT assertion signed with private key
+    AU->>AU: verify against registered JWKS (jti single-use, ≤ 5 min)
+    AU->>DB: mint + record opaque access/refresh pair
+    AU-->>G: tokens
+```
+
 1. **Register** (`auth/` surface, RFC 7591/7592 dynamic client
    registration): the agent submits metadata plus a JWKS containing at least
    one **Ed25519** public key (`registration_service.py` rejects anything
