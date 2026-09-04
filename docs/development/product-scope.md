@@ -39,20 +39,11 @@ conversation, **not** a product issue (`README.md` Enterprise section, `SUPPORT.
 
 ## What's in scope (the product is about this)
 
-The runtime surfaces (from the public code / `README.md`):
-
-- **Broker** — stateless credential-injecting HTTP proxy; the data plane. One
-  upstream call per execution (single-call interceptor pipeline), run as its own
-  service.
-- **Registry** — catalogue of registered APIs (immutable revisions, operations,
-  security schemes, servers); **APIs only**. Operator/agent spec fixes are applied as
-  [overlays](../guides/overlays.md) (see the stacking contract + update loop there).
-- **Control** — credential storage + toolkit/credential bindings + access-request
-  lifecycle.
-- **Admin** — operator accounts, role-based permissions/access grants, async jobs,
-  append-only audit log, execution telemetry; serves the operator UI.
-- **Auth** — agent self-registration, token minting, OAuth client, service accounts,
-  and identity/`/me` discovery.
+The five runtime surfaces — **broker** (credential-injecting data plane),
+**registry** (API catalog), **control** (credentials, toolkits, access
+requests), **admin** (operators, jobs, audit, UI), and **auth** (agent
+registration and tokens). What each one owns, and how they fit together, is
+documented in [docs/architecture/](../architecture/README.md).
 
 Plus the supporting surfaces that make the above usable: **shared** infra, the
 **CLI** (`jenticctl` lifecycle + `jentic` agent/catalog/execute), **install /

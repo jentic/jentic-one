@@ -220,6 +220,24 @@ make build && sudo install -m 0755 jenticctl jentic /usr/local/bin/
 export PATH="$PWD:$PATH"
 ```
 
+### Internal architecture
+
+Where to look when changing the CLI (each package's doc comment carries the
+detail):
+
+| Package | Owns |
+| ------- | ---- |
+| `internal/cli` | Command trees: `api` (the `jentic` tree), `ctl`/`ctlcmd` (`jenticctl`), `cmdcore` (shared command plumbing), `binder` (flag/form building from the OpenAPI spec), `apispec` (parsing the vendored control spec), `clictx`, `prompt`, `ux`, `localagentcmd`. |
+| `internal/agentops` | The UX-free execute/inspect core both binaries share. |
+| `internal/agentkey` | The agent's Ed25519 identity key: generation, storage, assertion signing. |
+| `internal/config` | Filesystem paths (XDG layout) and default settings. |
+| `internal/install` | The `jenticctl install` onboarding wizard. |
+| `internal/localagent` | OS-level primitives behind `jentic run` — see [its README](internal/localagent/README.md). |
+| `internal/mcpcfg` | Writing the `jentic mcp` server entry into supported agent configs. |
+| `internal/skillgen` | Rendering the canonical agent skill. |
+| `internal/serverinfo`, `internal/proc`, `internal/update`, `internal/theme` | Server probing, process helpers, `jenticctl update`, colour theme. |
+| `pkg/core`, `pkg/clitree` | The public composition seam for building your own CLI binary — see [Extending Jentic One](../docs/development/extending-jentic-one.md). |
+
 ## Supported platforms
 
 The `jentic` and `jenticctl` binaries are pure-Go and build/run on **Linux**,

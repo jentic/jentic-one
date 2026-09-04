@@ -1,0 +1,107 @@
+# Surfaces and layering
+
+How `src/jentic_one/` is organized, and the import rules that keep it that
+way. The rules are not aspirational: each one is pinned by a test in
+[`tests/arch/`](../../tests/arch/), so a violating import fails CI.
+
+## The five surfaces
+
+Each surface is a package that owns its routes, services, and data access:
+
+```
+src/jentic_one/
+├── registry/   # API catalog        (core/ ingest/ repos/ scoping/ services/ web/)
+├── control/    # credentials layer  (core/ repos/ scoping/ services/ web/)
+├── admin/      # operators & ops    (core/ repos/ scoping/ services/ web/)
+├── auth/       # identity & tokens  (core/ repos/ services/ web/)
+├── broker/     # execution plane    (adapters/ core/ repos/ services/ web/)
+├── shared/     # cross-surface library code (no surface imports)
+├── mcp/        # the /mcp mount (installed via wiring, rides the control surface)
+├── integrations/  # optional integrations (aws_marketplace license gate)
+├── migrations/ # one Alembic env, three version trees
+├── wiring.py   # the composition root — the only module allowed to cross surfaces
+└── __main__.py # process entrypoint
+```
+
+**Surfaces never import each other.** Every forbidden edge has a dedicated
+test in `tests/arch/test_module_boundaries.py`
+(`test_broker_does_not_import_control`, `test_control_does_not_import_admin`,
+…, `test_shared_does_not_import_auth`). Cross-surface needs are met three
+ways:
+
+- **`shared/`** — config, `Context`, the DB session layer, the `Broker`
+  protocol, jobs, events, audit, scopes, telemetry. `shared/` imports no
+  surface (also enforced).
+- **`wiring.py`** — the composition root, deliberately outside every surface
+  package so it may import several of them. It builds the `AppContainer` and
+  the in-process seams (for example `InProcessRegistryResolver`, which lets
+  the broker resolve operations without importing `jentic_one.registry`).
+- **Raw SQL at a named seam** — when the control plane must write an
+  admin-DB row (approving an access request binds a toolkit to an agent),
+  `control/repos/effects_repo.py` uses raw SQL rather than importing admin's
+  ORM models.
+
+## The layers inside a surface
+
+```
+web/       FastAPI routers + dependencies. HTTP in, HTTP out.
+services/  Use-cases. Own transactions and authorization decisions.
+repos/     Data access. SQLAlchemy queries; auth-agnostic.
+core/      Domain: ORM models (core/schema/), errors, pure logic.
+scoping/   Row-level visibility filters (registry, control, admin only).
+```
+
+Dependencies point downward only: `web → services → repos → core`. The rules,
+and the test that enforces each:
+
+| Rule | Enforced by |
+| ---- | ----------- |
+| Web never touches the DB or SQLAlchemy | `test_web_layer.py::test_web_no_direct_db_imports` |
+| Web never imports a repository | `test_web_layer.py::test_web_no_repository_imports` (and `test_web_handlers_use_services_not_repos`) |
+| Handlers get `Context` via `Depends(get_ctx)`, never construct it | `test_web_layer.py::test_web_no_direct_context_construction` |
+| Every non-health router declares an auth dependency | `test_web_layer.py::test_web_routers_require_auth` |
+| Errors are RFC 9457 problem details, not `HTTPException` | `test_web_layer.py::test_web_uses_problem_details_not_http_exception` |
+| Only `core/schema/` and `repos/` may import DB internals | `test_no_direct_db.py` |
+| Repos are auth-agnostic (never import `Identity`) | `test_scoping_boundary.py::test_repos_do_not_import_identity` |
+| A surface's `scoping/filters.py` sees only its own ORM models | `test_scoping_boundary.py::test_scoping_modules_only_import_own_surface_models` |
+| Every scoped model is covered by its surface's filters | `test_scoping_coverage.py` |
+| Admin ORM models inherit `AdminBase` only | `test_admin_base_usage.py` |
+| Admin services never import SQLAlchemy | `test_admin_services_no_sqlalchemy.py` |
+| Transactions via `DatabaseSession.transaction()`, no manual commit | `test_no_manual_commit.py` |
+| One Alembic head per database tree | `test_migration_single_head.py` |
+
+### The `scoping/` packages
+
+`registry/`, `control/`, and `admin/` each carry a `scoping/filters.py` whose
+`build_access_filters(identity, model)` returns the WHERE clauses a repo
+applies for row-level visibility: `org:admin` sees everything, an owner sees
+their own rows, and an operator holding a delegation scope
+(`owner:<resource>:read`) sees the rows of the agents they own. Services pass the
+filters in; repos apply them; neither knows the other's internals. See
+[identity and authorization](identity-and-authorization.md) for the scope
+model these filters implement.
+
+## Facade rules (one home per concern)
+
+Several cross-cutting concerns are forced through a single module, each with
+its own arch test:
+
+| Concern | Single home | Test |
+| ------- | ----------- | ---- |
+| Encryption primitives (`cryptography`) | `shared/crypto/encryption.py` | `test_encryption_facade.py` |
+| JWKS key operations | `shared/auth/jwks.py` | `test_jwks_single_source.py` |
+| Metrics exporters | `shared/metrics.py` | `test_metrics_facade.py` |
+| Tracing/OTel instrumentation | `shared/tracing.py` | `test_tracing_facade.py` |
+| Upstream HTTP transport | `broker/adapters/runners/http.py` (the `UpstreamRunner` seam) | `test_broker_runner_seam.py` |
+| Structured logging (no stdlib `logging`) | `shared/logging.py` (structlog) | `test_no_stdlib_logging.py` |
+
+The full `tests/arch/` suite also carries the drift guards for generated
+artifacts (OpenAPI, endpoint tree, config schema/reference, skills, install
+docs) — run `make test-arch` to execute everything.
+
+## Related
+
+- [Composition and processes](composition-and-processes.md) — how the
+  packages above are assembled into running processes.
+- [Broker execution](broker-execution.md) — the layering applied to the one
+  surface that talks to the outside world.

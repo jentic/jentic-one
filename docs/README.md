@@ -8,6 +8,8 @@ What Jentic One is and how it works: [repository README](../README.md).
   [Secure](#secure) for the security posture.
 - **Keeping it healthy** (upgrades, backups, monitoring) → [Operate](#operate).
 - **Using it** (connecting agents, brokering calls) → [Use](#use).
+- **Understanding how it's built** (surfaces, processes, data model) →
+  [Understand](#understand).
 - **Developing on it** (spinning it up from source, extending the code) →
   [Develop](#develop).
 - **You are an AI agent executing a task** → [agent runbooks](agent/README.md)
@@ -67,6 +69,15 @@ Agent runbook: [use](agent/use.md) — discover → request access → execute, 
 - [Deploying Jentic One securely](security/security.md) — threat model and the deployment-tier ladder
 - [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options (including `jentic run`)
 - Agent runbook: [harden](agent/harden.md) — posture checks as executable steps
+
+## Understand
+
+- [Architecture overview](architecture/README.md) — the five surfaces, two processes, three databases, one diagram
+- [Surfaces and layering](architecture/surfaces-and-layering.md) — how the code is organized and the import rules that keep it that way
+- [Composition and processes](architecture/composition-and-processes.md) — boot sequence, `JENTIC__APPS`, deployment topologies, background work
+- [Broker execution](architecture/broker-execution.md) — the life of a brokered call: pipeline, resilience, egress, credential injection
+- [Data model](architecture/data-model.md) — three databases, no cross-database foreign keys, immutable revisions
+- [Identity and authorization](architecture/identity-and-authorization.md) — actors, tokens, scopes, and the default-deny chain
 
 ## Develop
 

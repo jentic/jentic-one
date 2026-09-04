@@ -7,7 +7,9 @@ stock distribution.
 
 This guide is the unified composition story: how the seams fit together and the
 order in which an integrator wires them. Each seam is also documented at its
-definition — this page links them into one workflow.
+definition — this page links them into one workflow. For the concepts the seams
+plug into (the surfaces, the `AppContainer` composition root, the broker's
+"one pipeline, two callers" rule), see [docs/architecture/](../architecture/README.md).
 
 ## The seams at a glance
 

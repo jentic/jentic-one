@@ -132,6 +132,9 @@ On each call the Broker checks the agent's permissions, attaches the stored cred
 forwards the request, and writes an audit record. The credential is added inside the Broker,
 after the permission check, and is never returned to the caller.
 
+For the next level of detail — the five surfaces, the process shapes, the broker's
+execution pipeline, and the data model — see [docs/architecture/](docs/architecture/README.md).
+
 ## Why we built Jentic One
 
 Agents are getting API access the worst way we know how: keys pasted into env vars,
