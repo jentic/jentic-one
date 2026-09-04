@@ -6,6 +6,7 @@ What Jentic One is and how it works: [repository README](../README.md).
 
 - **Installing and running it** (admin) → [Install](#install), then
   [Secure](#secure) for the security posture.
+- **Keeping it healthy** (upgrades, backups, monitoring) → [Operate](#operate).
 - **Using it** (connecting agents, brokering calls) → [Use](#use).
 - **Developing on it** (spinning it up from source, extending the code) →
   [Develop](#develop).
@@ -19,12 +20,22 @@ overview → one scoped guide → [generated reference](#reference-generated--ne
 
 - [Installation overview](installation/quickstart.md) — artifacts, verification, air-gapped transfer
 - [Platform support](installation/platform-support.md) — what runs on Linux / macOS / Windows / WSL2
-- [Agent runbooks](agent/README.md) — install/operate/use/harden guides written for an AI agent to execute
+- [Windows](installation/windows.md) — the WSL2 + native-CLI path, step by step
 - [CLI binaries](installation/cli.md) — `jentic` / `jenticctl` download matrix and verification
 - [Docker](installation/docker.md)
 - [systemd](installation/systemd.md)
 - [Helm](installation/helm.md)
 - [AWS Marketplace](installation/aws-marketplace.md)
+- Agent runbook: [install](agent/install.md) — the same install, written for an AI agent to execute
+
+## Operate
+
+- [Operating Jentic One](operations/README.md) — the day-2 map
+- [Monitoring & logs](operations/monitoring.md) — health endpoints, log sinks, executions and the audit trail, metrics
+- [Upgrades](operations/upgrades.md) — the version/migration contract, per-install pointers
+- [Backup & restore](operations/backup-restore.md) — what a restorable backup must contain
+- [Troubleshooting](agent/troubleshoot.md) — failure catalogue (written for agents; the fixes are the same for you)
+- Agent runbook: [operate](agent/operate.md) — status/logs/upgrade/uninstall as executable steps
 
 ## Use
 
@@ -48,10 +59,13 @@ Integrate apps:
 - [Register an OAuth client](guides/oauth-clients.md) — third-party apps authenticating users through Jentic One
 - [CLI README](../cli/README.md) — the full `jentic` / `jenticctl` command surface
 
+Agent runbook: [use](agent/use.md) — discover → request access → execute, as executable steps.
+
 ## Secure
 
 - [Deploying Jentic One securely](security/security.md) — threat model and the deployment-tier ladder
 - [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options (including `jentic run`)
+- Agent runbook: [harden](agent/harden.md) — posture checks as executable steps
 
 ## Develop
 

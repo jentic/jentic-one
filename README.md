@@ -49,8 +49,8 @@ agent as a thin client and holds no upstream credentials — those never leave y
 
 ## Quickstart
 
-Every path below runs on Linux and macOS; on Windows, see the
-[platform support matrix](docs/installation/platform-support.md).
+Every path below runs on Linux and macOS; on Windows, follow the
+[Windows guide](docs/installation/windows.md) (WSL2 + native `jentic.exe`).
 
 ### Self-hosted (build from source)
 

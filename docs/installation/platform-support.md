@@ -18,6 +18,8 @@ anything not listed as tested should be treated as best-effort.
 
 ## Windows in practice
 
+Step-by-step path: [windows.md](windows.md). The shape:
+
 - **Running the server:** use Docker Desktop (which runs Linux containers via
   its WSL2 backend) and follow [docker.md](docker.md) unchanged. Building or
   running the server natively is unsupported.

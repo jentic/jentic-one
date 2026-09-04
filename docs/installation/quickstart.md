@@ -19,6 +19,7 @@ the verify commands linked above need nothing but the downloaded files and
 | Guide | Use when |
 | ----- | -------- |
 | [Platform support](platform-support.md) | Checking what runs on Linux / macOS / Windows / WSL2 before you start. |
+| [Windows](windows.md) | Windows host — WSL2 for the server, native `jentic.exe` for the agent side. |
 | [Docker](docker.md) | A container host and an external Postgres. The baseline every other guide builds on. |
 | [systemd](systemd.md) | The same two containers, supervised by systemd on a Linux host. |
 | [Helm](helm.md) | Kubernetes. |
@@ -42,4 +43,5 @@ the verify commands linked above need nothing but the downloaded files and
 Register each agent host against the instance (`jentic register --url … --broker-url …`,
 see the [CLI README](../../cli/README.md#usage)), then make the
 [first brokered call](../guides/first-call.md). Before pointing anything at a real
-credential, read the [security hardening guide](../security/security.md).
+credential, read the [security hardening guide](../security/security.md). Day-2
+(monitoring, upgrades, backups) lives in [operations](../operations/README.md).
