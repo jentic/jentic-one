@@ -934,7 +934,7 @@
       "description": "Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).\n\nMinimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full\n``server.mcp`` sub-config (``server.mcp.enabled`` etc.) and extends this\nmodel in place — fields here must keep their names and defaults.",
       "properties": {
         "auto_approve_clients": {
-          "default": true,
+          "default": false,
           "title": "Auto Approve Clients",
           "type": "boolean"
         },

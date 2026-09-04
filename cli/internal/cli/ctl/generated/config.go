@@ -1386,7 +1386,7 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["auto_approve_clients"]; !ok || v == nil {
-		plain.AutoApproveClients = true
+		plain.AutoApproveClients = false
 	}
 	if v, ok := raw["enabled"]; !ok || v == nil {
 		plain.Enabled = false
