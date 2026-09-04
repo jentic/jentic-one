@@ -277,14 +277,125 @@ async def test_dedupe_different_redirect_set_creates_new_row(
     assert second.client_id != first.client_id
 
 
-async def test_no_software_id_never_dedupes(dcr_context: Context, clean_dcr_tables: None) -> None:
-    """Without a software_id every register creates a fresh row."""
+async def test_no_software_id_same_name_and_redirect_set_dedupes(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """G13 (#1251): a software_id-less client (Cursor, mcp-remote) retrying
+    registration re-attaches to its existing row via the (client_name +
+    redirect set) fallback key — the awaiting-approval retry loop must not
+    mint a fresh pending row (34 duplicate 'Cursor' rows observed live in
+    one morning). Redirect-URI order must not matter."""
     svc = OAuthDcrService(dcr_context)
-    first = await svc.register(client_name="anon", redirect_uris=_REDIRECT_URIS)
-    second = await svc.register(client_name="anon", redirect_uris=_REDIRECT_URIS)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    second = await svc.register(client_name="Cursor", redirect_uris=list(reversed(_REDIRECT_URIS)))
 
-    assert first.created is True and second.created is True
+    assert first.created is True
+    assert second.created is False
+    assert second.client_id == first.client_id
+
+    async with dcr_context.admin_db.session() as session:
+        rows = (await session.execute(select(OAuthClient))).scalars().all()
+    assert len(rows) == 1
+    # No second actionable alert for the dedupe hit — the queue stays clean.
+    events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)
+    assert len(events) == 1
+
+
+async def test_no_software_id_different_name_creates_new_row(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """The fallback key is (name + redirect set), never the redirect set
+    alone: two distinct software_id-less clients sharing redirect URIs
+    (e.g. the same well-known loopback port) stay distinct rows."""
+    svc = OAuthDcrService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    second = await svc.register(client_name="MCP CLI Proxy", redirect_uris=_REDIRECT_URIS)
+
+    assert second.created is True
     assert second.client_id != first.client_id
+
+
+async def test_no_software_id_different_redirect_set_creates_new_row(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """Never dedupe on client_name alone — a differing redirect set is a new
+    registration (the fingerprint guarantees an approved row's redirect_uris
+    are never silently widened by a re-register)."""
+    svc = OAuthDcrService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    second = await svc.register(client_name="Cursor", redirect_uris=["http://localhost:9999/other"])
+
+    assert second.created is True
+    assert second.client_id != first.client_id
+
+
+async def test_no_software_id_dedupe_preserves_row_state(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """A fallback-key dedupe hit is read-only: the stored row keeps its
+    pending status, inactive flag, name, and redirect set verbatim — a
+    re-registration never resets the approval lifecycle."""
+    svc = OAuthDcrService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    second = await svc.register(
+        client_name="Cursor",
+        redirect_uris=list(reversed(_REDIRECT_URIS)),
+        scope="apis:read",
+    )
+
+    assert second.created is False
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    assert row.approval_status == OAuthClientApprovalStatus.PENDING.value
+    assert row.active is False
+    assert row.name == "Cursor"
+    assert row.redirect_uris == _REDIRECT_URIS
+    assert row.allowed_scopes == sorted(MCP_TOOL_SCOPES)
+
+
+async def test_no_software_id_reattach_to_approved_row_keeps_it_approved(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """Continuity across a client cache loss: a re-register against an
+    *approved* software_id-less row returns the same client_id, still
+    approved and active — no fresh approval, no fresh consent. Adopting the
+    row discloses only the (public, RFC 6749 §2.2) client_id: public clients
+    hold no secret (PKCE per flow) and consent stays per-grant."""
+    svc = OAuthDcrService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    await OAuthClientService(dcr_context).approve(row.id, identity=_ADMIN)
+
+    second = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+
+    assert second.created is False
+    assert second.client_id == first.client_id
+    refreshed = await _row_by_client_id(dcr_context, first.client_id)
+    assert refreshed.approval_status == OAuthClientApprovalStatus.APPROVED.value
+    assert refreshed.active is True
+
+
+async def test_dedupe_key_spaces_never_cross_match(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """Adversarial guard: the software_id key space and the fallback name key
+    space are disjoint. A software_id-less registration replaying an existing
+    row's name + redirect set must not adopt a row registered *with* a
+    software_id, and a software_id-bearing registration must not adopt a
+    software_id-less row of the same name + redirect set."""
+    svc = OAuthDcrService(dcr_context)
+    with_sid = await svc.register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
+    )
+
+    without_sid = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    assert without_sid.created is True
+    assert without_sid.client_id != with_sid.client_id
+
+    other_sid = await svc.register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.evil.other"
+    )
+    assert other_sid.created is True
+    assert other_sid.client_id not in {with_sid.client_id, without_sid.client_id}
 
 
 async def test_approve_verb_emits_event_and_settles_registration_alert(

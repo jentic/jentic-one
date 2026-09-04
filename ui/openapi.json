@@ -28515,7 +28515,7 @@
     },
     "/oauth-clients": {
       "post": {
-        "description": "Register a public OAuth client anonymously (RFC 7591 subset).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match\n(D8). No client_secret is ever issued here and no registration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
+        "description": "Register a public OAuth client anonymously (RFC 7591 subset).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact dedupe match (D8, extended per G13/#1251):\n(``software_id`` + redirect-URI set), falling back to (``client_name`` +\nredirect-URI set) for registrations without a ``software_id`` — so a\npending client's awaiting-approval retry loop re-attaches instead of\nminting duplicate rows. No client_secret is ever issued here and no\nregistration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
         "operationId": "registerOauthClientEndpoint",
         "requestBody": {
           "content": {
