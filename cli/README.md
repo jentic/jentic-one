@@ -7,7 +7,7 @@ CLI stores its config/state in the **XDG layout** (`~/.config/jentic`,
 `~/.local/state/jentic` — see the XDG section below).
 
 - **`jenticctl`** — the **installer / lifecycle** CLI. It **installs and operates
-  jentic-one locally**: stand up a deployment (source venv **or** Docker) and
+  Jentic One locally**: stand up a deployment (source venv or Docker) and
   manage the running app (health, start/stop, logs, updates, teardown).
 - **`jentic`** — the **agent** CLI. It manages **agent identities**,
   **discovers and imports APIs** from the public catalog, inspects operations,
@@ -20,7 +20,7 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 
 | Binary | Area | Commands | What you get |
 | ------ | ---- | -------- | ------------ |
-| `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up jentic-one locally (source venv **or** Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
+| `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up Jentic One locally (source venv or Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
 | `jentic` | **Identity & access** | `register` · `setup` · `logout` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. |
 | `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry (revisions, operations, promote/archive, spec download) with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds. |
 | `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
@@ -35,7 +35,7 @@ building, onboarding, and operating; it does not duplicate per-flag docs.
 
 **New here?** Two paths, depending on where the Jentic server lives:
 
-**Local install** (stand up jentic-one on your own machine, then connect to it):
+**Local install** (stand up Jentic One on your own machine, then connect to it):
 
 ```bash
 # 1. Install the CLI + stand up the local stack. The one-liner installs the
@@ -134,32 +134,10 @@ follow-up (`jenticctl install --defaults`) instead of blocking on a wizard.
 
 Grab the archive for your platform from the
 [Releases page](https://github.com/jentic/jentic-one/releases), then verify and
-install it yourself:
-
-```bash
-VER=0.38.2; OS=linux; ARCH=amd64            # adjust for your platform (darwin/arm64, …)
-BASE="https://github.com/jentic/jentic-one/releases/download/v${VER}"
-curl -fsSLO "${BASE}/jentic_${VER}_${OS}_${ARCH}.tar.gz"
-curl -fsSLO "${BASE}/checksums.txt"
-curl -fsSLO "${BASE}/checksums.txt.sig"
-curl -fsSLO "${BASE}/checksums.txt.pem"
-
-# Verify the signature over the checksum file (keyless / Fulcio identity):
-cosign verify-blob \
-  --certificate checksums.txt.pem \
-  --signature checksums.txt.sig \
-  --certificate-identity-regexp '^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*$' \
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  checksums.txt
-
-# Verify the archive's checksum, then install:
-sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 -c …
-tar xzf "jentic_${VER}_${OS}_${ARCH}.tar.gz"
-sudo install jentic /usr/local/bin/
-```
-
-`jenticctl` ships as its own archive (`jenticctl_${VER}_${OS}_${ARCH}.tar.gz`) —
-download and install it the same way if you need the local stack.
+install it yourself. The full recipe — `cosign verify-blob` over
+`checksums.txt`, the sha256 check, the install step, and the separate
+`jenticctl` archive — is in
+[docs/installation/cli.md → Verify](../docs/installation/cli.md#verify).
 
 **Windows.** `jentic` ships a Windows build as
 `jentic_${VER}_windows_amd64.zip` (and `_arm64`). Download it from the
@@ -358,7 +336,7 @@ or override the broker per call: `jentic execute <op> --broker-scheme http --bro
 ## Onboarding (`jenticctl install`)
 
 `jenticctl install` is an interactive wizard (colored, keyboard-selectable menus
-with sensible defaults) that helps you stand up the **jentic-one app**. It asks
+with sensible defaults) that helps you stand up the **Jentic One app**. It asks
 how you want to deploy and configure the platform, **generates** a
 `jentic-one.yaml`, and then performs the install for you — either a local
 virtualenv (the **Run locally** path) or a containerized docker-compose stack

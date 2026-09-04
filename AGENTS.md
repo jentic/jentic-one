@@ -34,14 +34,17 @@ allow. See `docs/security/security.md` before using real credentials.
    `http://127.0.0.1:8000`, and prompt for it on an interactive terminal.)
    Report the wait to the user: on a single-operator install they are the operator, and they
    approve the agent in the UI at `/app`.
-2. If no admin account exists yet, point the user to `/setup` (browser) or `jenticctl setup`
+2. If no admin account exists yet, point the user to `/app/setup` (browser) or `jenticctl setup`
    (terminal). This is a one-time step.
 3. Import an API from https://github.com/jentic/jentic-public-apis (e.g. `httpbin.org`, used in
    step 6), or register a private OpenAPI description of the user's own service.
 4. Store a credential for that API, once. It is encrypted at rest and is never returned.
 5. Request access: `jentic access request --toolkit <vendor/name>` files a reviewable request;
    granting is always a human action. The operator binds the agent to a toolkit — access is
-   default-deny, and a rule-less binding still blocks everything.
+   default-deny, and a rule-less binding still blocks everything. A freshly imported API has no
+   toolkit yet, so a bare `--toolkit` request for it is denied — file
+   `jentic access request --provision <vendor/name>` instead, which describes the whole path
+   (toolkit, credential, rules, binding) for the operator to fulfil.
 6. `jentic execute GET:https://httpbin.org/get --json` runs a call through the Broker with the
    credential injected. Give `execute` the operation's full upstream URL (as returned by
    `jentic search`/`jentic inspect`) or its operation_id — the Broker is a forward proxy, not a
@@ -54,8 +57,8 @@ allow. See `docs/security/security.md` before using real credentials.
 - A self-hosted deployment serves an HTTP MCP endpoint (`/mcp`) only when its operator enabled
   it (`server.mcp.enabled`, off by default — see
   [docs/guides/mcp-http-endpoint.md](docs/guides/mcp-http-endpoint.md)). Otherwise integrate through the
-  `jentic` CLI, the skill it generates, the CLI's local MCP stdio server (an `mcp` subcommand
-  shipping in the next `jentic` release), or plain HTTP against the deployment's own API.
+  `jentic` CLI, the skill it generates, the CLI's local MCP stdio server
+  (`jentic mcp`), or plain HTTP against the deployment's own API.
 - A running instance serves `/llms.txt` and `/.well-known/llms.txt` with that deployment's base
   URL. Once an instance exists, prefer those over this file for anything at runtime.
 - Never print, log or echo a stored credential. The Broker does not return them.

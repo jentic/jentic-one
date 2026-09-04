@@ -6,7 +6,7 @@ conventions the project enforces).
 
 ---
 
-## Filing an Issue
+## Filing an issue
 
 The fastest way to help is to tell us what broke, confused you, or is missing.
 
@@ -46,7 +46,7 @@ command you ran) — you're never blocked from filing, and you stay in the loop.
 maintainer steps in only when the assistant flags an issue as needing a human. You
 never have to set labels yourself; in fact, on a public repo you can't.
 
-## Filing an Issue with an AI Agent
+## Filing an issue with an AI agent
 
 If you use an AI coding agent to file issues on your behalf, keep it simple: have it
 write a clear, faithful issue through one of the two forms above, with the **exact
@@ -57,12 +57,12 @@ severity, it can mention that in the body; the assistant will confirm it.
 
 ---
 
-## Contributing Code
+## Contributing code
 
 The rest of this guide covers contributing code: local setup, the development
 workflow, and the checks a pull request has to pass.
 
-## Getting Started
+## Getting started
 
 1. Install [uv](https://docs.astral.sh/uv/) — `brew install uv` (or see the uv docs).
 2. Clone the repository.
@@ -87,7 +87,7 @@ workflow, and the checks a pull request has to pass.
 See [deploy/README.md](deploy/README.md) for the build architecture and
 common build tasks.
 
-## Development Workflow
+## Development workflow
 
 ### Branching
 
@@ -96,7 +96,7 @@ common build tasks.
   `refactor/…`, `chore/…`.
 - Keep branches focused on a single change.
 
-### Making Changes
+### Making changes
 
 1. Write code following the conventions enforced by the architecture tests
    (`make test-arch`); [docs/architecture/surfaces-and-layering.md](docs/architecture/surfaces-and-layering.md)
@@ -123,13 +123,13 @@ Contributions are accepted under the [Developer Certificate of Origin](https://d
 Sign off every commit with `git commit -s`, which adds a `Signed-off-by` line
 certifying you have the right to submit the change under the project's license.
 
-### Pull Requests
+### Pull requests
 
 - Describe *what* changed and *why*.
 - CI must pass: lint, type check (mypy strict), tests, and architecture tests.
 - Keep PRs focused and reviewable — prefer smaller, incremental changes.
 
-## Code of Conduct
+## Code of conduct
 
 This project follows the Jentic
 [Code of Conduct](https://github.com/jentic/.github/blob/main/CODE_OF_CONDUCT.md).
@@ -161,12 +161,25 @@ make test-smoke         # liveness against running services
   `make stop-fixtures`).
 - Use synthetic/fabricated data in tests — never real credentials or data.
 
-## Architecture & Conventions
+## Architecture & conventions
 
 The codebase is a modular monolith with **AST-enforced module boundaries**
 (`make test-arch`). Generated artifacts
 (OpenAPI spec, endpoint reference, CLI reference) are produced by `make openapi`
 / `make endpoints` / `make cli-reference` and should not be hand-edited.
+
+## Documentation
+
+- New docs live under `docs/` — [docs/README.md](docs/README.md) maps the
+  sections (install, operate, use, secure, understand, develop, reference).
+- Link every new doc from its section README or `docs/README.md`; an
+  architecture test fails on docs the index cannot reach.
+- `docs/reference/` is **generated — never hand-edit**. Regenerate with
+  `make config-reference` (config.md), `make endpoints` (endpoints.md/.json);
+  the CLI reference is `make cli-reference` (ui/public/cli-reference.json).
+- Any referential fact in prose — a command, path, port, or URL — should be
+  covered by an arch gate (`tests/arch/`) or quoted from a generated file, so
+  it fails CI when the code changes instead of silently going stale.
 
 ## Security
 

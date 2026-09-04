@@ -35,7 +35,7 @@ flowchart TB
         Api --> ApiRevision
         ApiRevision --> Operation
         ApiRevision --> SecurityScheme
-        ApiRevision --> Overlay
+        Api --> Overlay
     end
 
     subgraph cdb [control]
@@ -84,7 +84,7 @@ API-key/basic/OAuth/SigV4 material, encrypted at rest via the
 `shared/crypto/encryption.py` facade). A `Toolkit` groups permission rules
 (`ToolkitPermissionRule` — the default-deny allowlist the broker evaluates)
 with credential bindings. `AccessRequest`/`AccessRequestItem` implement the
-approval flow; `ToolkitKey` and `CustomerApiKey` are bearer-key rows for
+approval flow; `ToolkitKey` and `CustomerAPIKey` are bearer-key rows for
 [toolkit-scoped access](../guides/credentials-and-toolkits.md).
 
 ### Admin — identity and operations

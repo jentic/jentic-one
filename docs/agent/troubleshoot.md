@@ -56,6 +56,25 @@ the image, then retry. Digest pinning and cosign verification:
 - The volume **pre-existed** (reinstall): do **not** remove it — it may hold
   real data. Stop and report the migration error to the human.
 
+## `address already in use` on port 8000 or 8100 at start
+
+`docker compose … up` fails because another process (or another container)
+already listens on a published port. Diagnose — find what holds the port:
+
+```bash
+lsof -iTCP:8000 -sTCP:LISTEN -n -P
+lsof -iTCP:8100 -sTCP:LISTEN -n -P
+docker ps --filter publish=8000 --filter publish=8100
+```
+
+Fix: stop the conflicting process (or `docker stop <container>`) and re-run
+`docker compose -p jentic -f ~/.jentic/docker-compose.yaml up -d`. If the
+port must stay taken, change the published host port in
+`~/.jentic/docker-compose.yaml` (the left side of `"127.0.0.1:8000:8000"`) —
+but note the app port is part of `auth.canonical_base_url`, so registered
+agents and the URLs you hand the human change with it. Prefer freeing the
+port.
+
 ## App or broker never becomes healthy
 
 A cold start (first boot, empty database) can take tens of seconds — poll,
@@ -92,13 +111,39 @@ control-plane URL. Re-register with both URLs.
 The database must live on a named volume, not a host bind mount — Docker
 Desktop's file sharing lacks the locking semantics SQLite needs.
 
+## Database connection lost/refused at runtime (Postgres shape)
+
+The app or broker starts returning errors and the logs show connection
+refused/reset to `db:5432`. Diagnose — check the `db` container and probe it
+directly:
+
+```bash
+docker compose -p jentic -f ~/.jentic/docker-compose.yaml ps
+docker compose -p jentic -f ~/.jentic/docker-compose.yaml logs db
+docker compose -p jentic -f ~/.jentic/docker-compose.yaml exec db pg_isready -U postgres -d jentic
+```
+
+Fix, by what you find:
+
+- `db` exited or unhealthy (OOM-killed, host reboot):
+  `docker compose -p jentic -f ~/.jentic/docker-compose.yaml restart db`,
+  then confirm `pg_isready` answers and the app recovers.
+- Auth failures in the logs (`password authentication failed`): `PGPASS` in
+  `~/.jentic/.env` no longer matches the password the `jentic_db-data`
+  volume was initialised with — restore the original value; never "fix" it
+  by changing `POSTGRES_PASSWORD` (it only applies at first initialisation).
+- `pg_isready` fine but the app still fails: recreate the app/broker so they
+  rejoin the compose network —
+  `docker compose -p jentic -f ~/.jentic/docker-compose.yaml up -d --force-recreate app broker`.
+
 ## No human available at the first-admin gate (CI, fleet installs)
 
 An operator can create the first admin non-interactively, password piped on
-stdin (never argv):
+stdin (never argv). Replace `__ADMIN_PASSWORD__` with a value sourced from
+your secret store or CI secret — never a literal in a script or transcript:
 
 ```bash
-docker compose -p jentic -f ~/.jentic/docker-compose.yaml \
+printf '%s' "__ADMIN_PASSWORD__" | docker compose -p jentic -f ~/.jentic/docker-compose.yaml \
   run --rm -T app python -m jentic_one create-admin --email <email>
 ```
 

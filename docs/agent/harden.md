@@ -60,8 +60,8 @@ exposure vector in past audits.
   still read the files afterwards. Enforcement requires a separate OS user or
   machine (the rule above).
 - `~/.jentic` must stay `0700` — it is the host-side wall around a
-  world-readable config (`0644`, the container's uid 999 must read it) and a
-  world-writable logs dir.
+  world-readable config (`0644`, the container's non-root user must read it)
+  and a world-writable logs dir.
 - The four generated secrets and the encryption key never appear in argv,
   chat, or logs. Passwords (`create-admin`, `reset-password`) are piped on
   stdin, never flags.

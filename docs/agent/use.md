@@ -16,7 +16,7 @@ jentic access whoami                   # 1. what your bindings already SERVE
 jentic catalog search "<capability>"   # 2. find an importable API (public catalog)
 jentic catalog import <vendor/name>    #    import it into the local registry
 jentic search "<what you want to do>"  # 3. find the operation — each hit gives its METHOD and URL
-jentic inspect 'GET https://api.example.com/v1/things/{id}'   # 4. params, schemas, auth
+jentic inspect GET:https://api.example.com/v1/things/{id}     # 4. params, schemas, auth
 jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 5. call it through the broker
 ```
 
@@ -83,7 +83,7 @@ jentic access request --provision coincap-io/coincap-io \
 jentic search "get current asset price"
 
 # 5. Inspect, then execute with that exact METHOD + URL
-jentic inspect 'GET https://rest.coincap.io/v3/assets/{id}'
+jentic inspect GET:https://rest.coincap.io/v3/assets/{id}
 jentic execute GET:https://rest.coincap.io/v3/assets/{id} --path id=bitcoin
 ```
 

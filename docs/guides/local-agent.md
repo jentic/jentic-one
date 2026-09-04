@@ -3,7 +3,7 @@
 This is the operator guide to the **local-agent sandbox**: launching a CLI coding
 agent (Claude Code, Codex, Cursor's `cursor-agent`, Hermes) as its **own
 unprivileged Unix user**, so a compromised or prompt-injected agent cannot read
-your SSH keys, browser session, cloud credentials, or the jentic-one credential
+your SSH keys, browser session, cloud credentials, or the Jentic One credential
 store.
 
 It covers the flow and day-to-day usage with examples. For the security design
@@ -89,7 +89,7 @@ Launching claude as alice-local-agent in /Users/alice/projects/my-app (confined)
 From then on that directory opens without a prompt.
 
 > **No isolated account?** `jentic run` still works: it launches the agent
-> directly **as you** — no sandbox — and prints a one-time warning telling you
+> directly **as you** (no sandbox) and prints a one-time warning telling you
 > so. Run `jentic setup` to get the isolated setup.
 
 ## What `jentic setup` sets up

@@ -70,9 +70,12 @@ inject its own via `app.state.broker` / `app.state.broker_factory`, and
 
 ## The resilience stack
 
-`build_runner` (`broker/services/execution/pipeline.py`) composes the
-outbound call as a decorator chain over one shared `httpx.AsyncClient`
-(all in `broker/adapters/runners/`):
+The outbound call is a decorator chain over one shared `httpx.AsyncClient`
+(the runners live in `broker/adapters/runners/`), composed in two stages:
+the broker app lifespan (`broker/web/app.py`) wraps the transport with the
+SigV4 signer and the optional circuit breaker, then `build_runner`
+(`broker/services/execution/pipeline.py`) adds the retry loop and the
+outermost deadline:
 
 ```
 DeadlineRunner( RetryRunner( CircuitBreakerRunner( SigV4SigningRunner( HttpRunner ))))

@@ -43,7 +43,7 @@ the resource listings). A `GET`/`HEAD` that offers **no** credential answers
 caller ever gets a stream here, and the MCP SDK reads the 405 as "no stream
 offered" without starting an OAuth flow — which keeps OAuth-capable bridges
 from launching spurious concurrent login flows against the probe. A request
-that presents a credential — valid, expired, or garbage — keeps the standard
+that presents a credential (valid, expired, or garbage) keeps the standard
 401-challenge contract on every method.
 
 ## Connecting an HTTP-capable MCP client

@@ -10,28 +10,40 @@ Each surface is a package that owns its routes, services, and data access:
 
 ```
 src/jentic_one/
-├── registry/   # API catalog        (core/ ingest/ repos/ scoping/ services/ web/)
+├── registry/   # API catalog        (core/ ingest/ repos/ scoping/ services/ web/ pagination.py)
 ├── control/    # credentials layer  (core/ repos/ scoping/ services/ web/)
 ├── admin/      # operators & ops    (core/ repos/ scoping/ services/ web/)
 ├── auth/       # identity & tokens  (core/ repos/ services/ web/)
 ├── broker/     # execution plane    (adapters/ core/ repos/ services/ web/)
-├── shared/     # cross-surface library code (no surface imports)
+├── shared/     # cross-surface library code
 ├── mcp/        # the /mcp mount (installed via wiring, rides the control surface)
 ├── integrations/  # optional integrations (aws_marketplace license gate)
+├── testing/    # public compliance bases (BaseBrokerComplianceTest et al.), shipped in the wheel
 ├── migrations/ # one Alembic env, three version trees
-├── wiring.py   # the composition root — the only module allowed to cross surfaces
+├── wiring.py   # the composition root — builds the cross-surface seams
 └── __main__.py # process entrypoint
 ```
 
-**Surfaces never import each other.** Every forbidden edge has a dedicated
-test in `tests/arch/test_module_boundaries.py`
+**Surfaces do not import each other**, with one sanctioned seam. Every
+forbidden edge has a dedicated test in
+`tests/arch/test_module_boundaries.py`
 (`test_broker_does_not_import_control`, `test_control_does_not_import_admin`,
-…, `test_shared_does_not_import_auth`). Cross-surface needs are met three
-ways:
+…, `test_shared_does_not_import_auth`). The seam:
+`broker/services/credentials/` imports control's OAuth provider and token
+repo to refresh expired tokens during injection
+(`broker/services/credentials/refresh.py`), and
+`test_broker_does_not_import_control` excludes exactly that path. All other
+cross-surface needs are met three ways:
 
 - **`shared/`** — config, `Context`, the DB session layer, the `Broker`
-  protocol, jobs, events, audit, scopes, telemetry. `shared/` imports no
-  surface (also enforced).
+  protocol, jobs, events, audit, scopes, telemetry. Its independence is
+  enforced only in specific directions: `shared/` never imports `broker`,
+  never imports `auth`, and never imports `admin.core.permissions`
+  (`test_module_boundaries.py`). It does reach other surfaces where it
+  assembles them — `shared/web/app_factory.py` imports registry's
+  `ImportHandler`, `shared/auth/verify.py` builds admin's
+  `PermissionService`, and `shared/release_check.py` reuses registry's
+  catalog fetcher.
 - **`wiring.py`** — the composition root, deliberately outside every surface
   package so it may import several of them. It builds the `AppContainer` and
   the in-process seams (for example `InProcessRegistryResolver`, which lets

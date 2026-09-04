@@ -1,10 +1,25 @@
 # Installation
 
-Production installs run from released artifacts only: the published container image and the two Go CLI binaries. Nothing is built from source on the target hosts, and once the artifacts are inside your network nothing needs outbound internet access.
+Production installs run from released artifacts only: the published container image and the two Go CLI binaries. Nothing is built from source on the target hosts. Outbound internet access is needed to fetch and verify the artifacts; at runtime the defaults make two low-volume outbound calls, each with a disable knob (see the table below) — with those off, an install inside your network needs no outbound access.
 
 > Evaluating first? The five-minute SQLite trial — no Postgres, three
 > `docker run`s — is the [README quickstart](../../README.md#quickstart).
 > This section is the production path.
+
+## Outbound connections
+
+| When | Destination | Purpose | Disable |
+| ---- | ----------- | ------- | ------- |
+| Install time | `ghcr.io` | Pull the container image | Air-gapped transfer (below) |
+| Install time | `github.com` | Download CLI release archives | Air-gapped transfer (below) |
+| Install time | Sigstore (Fulcio/Rekor) | `cosign` signature verification | Verify on a connected machine, transfer verified artifacts |
+| Runtime (default **on**) | `api.github.com` | "Update available" release check | `release_check.enabled: false` |
+| Runtime (default **on**) | `raw.githubusercontent.com` (`catalog.manifest_url`) | Public API catalog manifest refresh + update sweep | `catalog.manifest_max_age_seconds: 0` and `catalog.update_check_interval_seconds: 0` |
+| Runtime (default **off**) | `api.jentic.com` | Anonymous product telemetry | Off unless `telemetry.enabled: true` |
+
+(Defaults verified against [`docs/reference/config.md`](../reference/config.md).
+Brokered API calls go wherever your imported APIs point — that egress is the
+product.)
 
 ## The artifacts
 

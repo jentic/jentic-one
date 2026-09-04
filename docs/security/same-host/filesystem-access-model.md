@@ -112,7 +112,7 @@ Two consequences worth stating plainly:
 ### Danger classification — two ban classes, and banned paths cannot be granted
 
 Before offering **Allow**, `jentic run` classifies the target into one of three
-outcomes (`localagent.Classify`). Crucially, **a banned path offers no "grant
+outcomes (`localagent.Classify`). A banned path offers **no "grant
 anyway" option at all** — the interactive prompt lists only *Open in the agent's
 home* and *Cancel*, `--allow-dir` hard-refuses, and there is no typed-confirmation
 escape hatch. The two ban classes differ only in *which* paths they cover:

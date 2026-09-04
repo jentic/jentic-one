@@ -49,6 +49,10 @@ scoop bucket add jentic https://github.com/jentic/scoop-bucket
 scoop install jentic
 ```
 
+`winget` resolves the package only after Microsoft accepts the manifest
+submission for a release — "No package found matching input criteria" means
+use the Scoop bucket above instead.
+
 Manual `.zip` download and cosign verification are in [cli.md](cli.md).
 Agents on native Windows can `register`, `search`,
 `inspect`, and `execute` against the broker at `http://127.0.0.1:8100`

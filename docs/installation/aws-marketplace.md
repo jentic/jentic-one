@@ -122,19 +122,24 @@ the data plane every agent call goes through. See
 ## External database
 
 To use RDS/Aurora PostgreSQL instead of the bundled database, disable the
-bundled instance and point each surface at your endpoint. Explicit passwords
-always take precedence over the generated ones:
+bundled instance and point each surface at your endpoint:
 
 ```bash
 --set postgresql.enabled=false \
 --set global.postgresql.enabled=false \
 --set global.databases.registry.host=<endpoint> \
 --set global.databases.control.host=<endpoint> \
---set global.databases.admin.host=<endpoint> \
---set global.databases.registry.password=<...> \
---set global.databases.control.password=<...> \
---set global.databases.admin.password=<...>
+--set global.databases.admin.host=<endpoint>
 ```
+
+Keep the passwords out of `--set` flags and values files: reference a
+Kubernetes Secret you manage via `secretKeyRef` env entries (or mount your
+own Secret with `global.appSecrets.existingSecret`) — the worked shape is in
+the [Helm guide's Secrets section](helm.md#secrets). Quick path for a trial
+only: append `--set global.databases.<surface>.password=<…>` for the three
+surfaces (explicit passwords always win over generated ones) — **warning:**
+those values land in your shell history and are readable later via
+`helm get values`, so rotate them before real data touches the instance.
 
 Create the three roles and schemas (`registry`, `control`, `admin`) on the
 instance first.

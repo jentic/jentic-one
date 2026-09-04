@@ -58,7 +58,8 @@ Every path below runs on Linux and macOS; on Windows, follow the
 git clone https://github.com/jentic/jentic-one.git && cd jentic-one
 make install   # install dependencies and git hooks
 make dev       # idempotent local bring-up: fixtures + migrations + UI, then run the app
-open http://127.0.0.1:8000
+curl -fsS http://127.0.0.1:8000/health   # verify it's up
+open http://127.0.0.1:8000               # macOS; Linux: xdg-open
 
 # Build the CLIs
 cd cli && make build
@@ -78,7 +79,7 @@ and runs with development-mode secrets — don't point it at a real credential:
 docker pull ghcr.io/jentic/jentic-one-app:latest
 docker volume create jentic-data
 
-# Grab the trial config (SQLite on the volume) — tweak it, or use as is
+# Grab the trial config (SQLite on the volume; fetched from main — fine for the trial) — tweak it, or use as is
 curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
 
 # Migrate, then start the two roles
@@ -92,7 +93,12 @@ docker run -d --name jentic-broker --env-file quickstart.env -e JENTIC__APPS=bro
 # First admin (prompts for a password), then sign in at http://127.0.0.1:8000
 docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
   ghcr.io/jentic/jentic-one-app:latest python -m jentic_one create-admin --email you@example.com
+
+curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
 ```
+
+Something failed? [Troubleshooting](docs/operations/troubleshooting.md) keys
+recoveries by symptom.
 
 The production shape — external Postgres, image pinned and verified by digest,
 real secrets, TLS — is in [docs/installation/docker.md](docs/installation/docker.md).
@@ -106,7 +112,10 @@ winget install Jentic.Jentic             # Windows
 jentic register   # connect this machine to the instance
 ```
 
-No package manager? Manual download, checksum + signature verification, and
+`register` waits for an operator to approve the agent — approve it in the UI at
+`/app`.
+
+Without a package manager: manual download, checksum + signature verification, and
 air-gapped transfer are in [docs/installation/cli.md](docs/installation/cli.md)
 — along with our Scoop bucket, which carries brand-new releases before winget
 review completes.
@@ -116,6 +125,8 @@ review completes.
 [AWS Marketplace](docs/installation/aws-marketplace.md) — buy and run the listed product on EKS
 (prerequisites, zero-touch install, license-check behaviour).
 For commercial use, get in touch: [jentic.com/contact](https://jentic.com/contact).
+
+Next: [make your first brokered call](docs/guides/first-call.md).
 
 ## How it works
 

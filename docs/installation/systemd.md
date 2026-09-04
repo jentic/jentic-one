@@ -105,6 +105,13 @@ curl -fsS http://localhost:8000/health   # app
 curl -fsS http://localhost:8100/health   # broker
 ```
 
+The units assume the image is already on the host (step 1's pull or `docker
+load`): `docker run` fetches a missing image on demand, which stalls the
+first start after image GC (`docker system prune`) and fails outright on an
+air-gapped host — either add
+`ExecStartPre=/usr/bin/docker pull ${IMAGE}` to the two service units
+(connected hosts) or re-run the pull/load step before starting.
+
 Logs go to the journal:
 
 ```bash
@@ -117,6 +124,7 @@ them with a TLS-terminating reverse proxy before exposing anything.
 
 ## Upgrading
 
+0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
 1. Verify the new release's digest (`cosign verify` — see the
    [Docker guide](docker.md#1-pull-and-verify-the-image)) and load or pull the
    image on the host.

@@ -5,8 +5,8 @@ smallest production-shaped deployment, and the [systemd](systemd.md) and
 [Helm](helm.md) guides build on the same image, config, and bootstrap steps.
 
 The container image is the **only supported backend distribution** — there is
-no `pip install jentic-one`. Prefer one file over individual `docker run`s?
-The same deployment as a compose file: [docker-compose.md](docker-compose.md).
+no `pip install jentic-one`. The same deployment as a single compose file:
+[docker-compose.md](docker-compose.md).
 
 ## Platform notes
 
@@ -26,7 +26,7 @@ containers lives in WSL2.
 
 ## 1. Pull and verify the image
 
-Tags — including version tags — can be re-pushed; only a `@sha256:` digest is
+Tags (including version tags) can be re-pushed; only a `@sha256:` digest is
 a true pin. Take the digest from the release's `publish-image` job output (or
 the GHCR package page):
 
@@ -47,8 +47,11 @@ the tarball across (see the [installation index](README.md#air-gapped-transfer))
 
 Save the non-secret config as `/etc/jentic/production.yaml` on the host. Start
 from [`config/production.yaml.example`](../../config/production.yaml.example);
-this is the worked shape — secrets come from the environment, never this file
-(except the encryption keyset, which makes the whole file sensitive):
+this is the worked shape. Secrets come from the environment, never this file —
+with one exception: the encryption keyset is list-shaped, so it must live in
+the file **unless** you inject it via the indexed env vars below. A keyset in
+the file makes the whole file a secret — protect it accordingly (`chmod 600`,
+owned by the operating user):
 
 ```yaml
 # /etc/jentic/production.yaml — non-secret shape; secrets via env (JENTIC__…).
@@ -88,7 +91,7 @@ auth:
 
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
 # WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
-# var — keep it in this file and mount the file itself as a secret.
+# var — keep it in this file, or inject it via the indexed env vars below.
 credentials:
   encryption:
     active_id: v1
@@ -135,6 +138,44 @@ three. Generate fresh material (also for the encryption keyset) with:
 python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
 ```
 
+**Keeping the keyset out of the file** — the
+[security guide](../security/security.md)'s "keys out of files on disk" rule
+has an escape hatch: list entries can be addressed by index, so the keyset
+can ride the env file instead of `production.yaml`
+([reference](../reference/config.md#credentials)):
+
+```bash
+JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID=v1
+JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID=v1
+JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL=<base64-32-bytes>
+```
+
+With that in place, drop the `credentials.encryption` block from the yaml —
+the env file is then the single secret-bearing file.
+
+**ID-token signing keys (`auth.id_signing`)** — required the moment any
+OAuth client requests the `openid` scope (browser/OIDC sign-in flows, MCP
+interactive OAuth): the user-facing authorization-code exchange mints an
+ES256-signed ID token and fails with `No signing keys configured — cannot
+issue ID tokens` without a key. Agent registration (`jentic register`) does
+not need it. Nothing generates this for you — not even the Helm chart's
+generated Secret. Mint a P-256 key and add it to the config file (it is
+list-shaped and multiline, so keep it there, next to the keyset):
+
+```bash
+openssl ecparam -name prime256v1 -genkey -noout -out id-signing.pem
+```
+
+```yaml
+auth:
+  id_signing:
+    - kid: "prod-1"           # [a-zA-Z0-9_-]+; first entry signs
+      private_key_pem: |
+        -----BEGIN EC PRIVATE KEY-----
+        …contents of id-signing.pem…
+        -----END EC PRIVATE KEY-----
+```
+
 ## 3. Prepare the database
 
 Once, on your Postgres (the database itself must already exist). The migration
@@ -159,7 +200,11 @@ GRANT USAGE, CREATE ON SCHEMA admin TO admin_user;
 (Passwords must match the `JENTIC__DATABASES__*__PASSWORD` values in
 `prod.env`. Simpler variant: one owning role for all three schemas.)
 
-No Postgres yet, or want it in Docker too?
+**PostgreSQL version:** use 16 or newer — the compose examples and CI run
+`postgres:16`, and the Helm chart's bundled instance ships 17.x; nothing
+older is tested.
+
+No Postgres yet — or want it in Docker too:
 [`docker/local-setup/docker-compose.yaml`](../../docker/local-setup/docker-compose.yaml)
 runs `postgres:16` with
 [`init-schemas.sql`](../../docker/local-setup/init-schemas.sql) — the worked
@@ -215,7 +260,46 @@ Both surfaces speak plain HTTP — the loopback binds keep them off the network
 until a TLS-terminating reverse proxy fronts them. Route UI/control traffic to
 the app and execution traffic to the broker; agents need both URLs.
 
-Prefer one file over two `docker run`s? Two worked compose examples:
+### Behind a reverse proxy
+
+The containers never terminate TLS — the proxy does. Public URLs (token
+`iss`/`aud`, redirect URIs) come from `auth.canonical_base_url`, not from
+forwarded headers, so set that to the proxy's public URL (step 2). Have the
+proxy pass `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto`.
+
+`X-Forwarded-For` is ignored until you name the proxy in
+`auth.oauth_rate_limit.trusted_proxies`. Without it, the app rate-limits
+OAuth endpoints by the connecting socket IP — behind a proxy that is one IP,
+so **all** OAuth clients share one bucket and busy instances see spurious
+`429`s. The value must be the source IP the app actually sees; for the
+port-published containers above that is the Docker bridge gateway (commonly
+`172.17.0.1`), not `127.0.0.1`:
+
+```yaml
+# production.yaml
+auth:
+  oauth_rate_limit:
+    trusted_proxies: ["172.17.0.1"]
+```
+
+Minimal nginx shape — same pattern for both surfaces, different upstream
+ports:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name jentic.example.com;         # broker: broker.jentic.example.com → 127.0.0.1:8100
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;   # app (UI + control plane)
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Two worked compose examples as an alternative to the two `docker run`s:
 
 - [app + broker against an external Postgres](docker-compose.md)
   — migrate → app + broker with health checks; the production shape of this page.
@@ -238,6 +322,7 @@ Then walk through the [first brokered call](../guides/first-call.md).
 
 ## Upgrading
 
+0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
 1. Take the new release's digest, re-run the `cosign verify` above against it.
 2. Re-run step 4 (migrations) with the new image, then recreate the `app` and
    `broker` containers from it.

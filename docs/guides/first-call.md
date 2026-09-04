@@ -17,40 +17,21 @@ is the fastest local trial. Everything below assumes the app
 > at a real credential — or use [`jentic run`](local-agent.md) to isolate a local
 > coding agent behind its own Unix user.
 
-## 1. Create your admin account
+## 1. Create your admin account *(operator, one-time)*
 
-Open `/setup` in the web UI and create the first administrator — one-time; the
-page redirects to login once the account exists. This account is the operator:
-it imports APIs, stores credentials, and approves agents.
+Open `/app/setup` in the web UI and create the first administrator; the page
+redirects to login once the account exists. This account is the operator: it
+imports APIs, stores credentials, and approves agents. Already created your
+admin via the README quickstart's `create-admin`? Skip to step 2.
 
 From the terminal instead: `jenticctl setup` creates the account;
 `jenticctl wizard` sequences this whole page into one guided flow.
 
-## 2. Import an API
+## 2. Register the agent *(agent machine)*
 
-Pull an API description into your local registry from the public
-[Jentic API Directory](https://github.com/jentic/jentic-public-apis):
-
-```bash
-jentic catalog search httpbin   # find an API in the public directory (used in step 6)
-```
-
-`jentic catalog` run bare opens an interactive browser; `jentic apis` manages
-what you've imported. You can also register your own OpenAPI description for a
-private service — same custody, permissions, and audit trail. To correct an
-imported description without editing the original, use [Overlays](overlays.md).
-
-## 3. Store a credential
-
-Store what the API needs (API key, bearer, basic, or an OAuth2 flow) in the UI.
-It is encrypted at rest and never returned to a caller — it is decrypted only
-inside the broker, at execution time. How credentials attach to toolkits and
-their one-active-credential-per-API rule:
-[Credentials and toolkits](credentials-and-toolkits.md).
-
-## 4. Register the agent
-
-From the machine that will run the agent:
+Every step from here runs the `jentic` CLI, and every `jentic` command (even
+browsing the catalog) needs a registered agent. From the machine that will
+run the agent:
 
 ```bash
 jentic register
@@ -68,15 +49,49 @@ identity + skills + isolation in one flow — see
 (CLI + skill, MCP over stdio or HTTP, raw HTTP):
 [Connecting an agent](connecting-agents.md).
 
+## 3. Import an API
+
+Pull an API description into your local registry from the public
+[Jentic API Directory](https://github.com/jentic/jentic-public-apis):
+
+```bash
+jentic catalog search httpbin               # find the API used in step 6
+jentic catalog import httpbin.org/httpbin   # import it (auto-promotes to live)
+```
+
+`jentic catalog` run bare opens an interactive browser; `jentic apis` manages
+what you've imported. You can also register your own OpenAPI description for a
+private service — same custody, permissions, and audit trail. To correct an
+imported description without editing the original, use [Overlays](overlays.md).
+
+## 4. Store a credential *(authenticated APIs only)*
+
+httpbin needs none — skip to step 5. For an API that does authenticate, the
+operator stores what it needs (API key, bearer, basic, or an OAuth2 flow) in
+the UI. It is encrypted at rest and never returned to a caller — it is
+decrypted only inside the broker, at execution time. How credentials attach to
+toolkits and their one-active-credential-per-API rule:
+[Credentials and toolkits](credentials-and-toolkits.md).
+
 ## 5. Grant access
 
 Access is **default-deny**: an approved agent is bound to nothing until an
-operator grants it. Asking is a reviewable request, not a silent widening:
+operator grants it. Asking is a reviewable request, not a silent widening. A
+freshly imported API has no **toolkit** yet (the grant bundle agents are
+bound to and credentials attach to), so ask for the whole path to first
+execution as one provisioning plan:
 
 ```bash
-jentic access request --toolkit httpbin.org/httpbin   # prints an approve_url for the operator
-jentic access status <request-id>                     # has it been granted?
+jentic access request --provision httpbin.org/httpbin --auth none   # prints an approve_url for the operator
+jentic access status <request-id>                                   # has it been granted?
 ```
+
+`--auth none` declares that httpbin takes no credential. For an authenticated
+API, declare its type instead (`bearer`, `api_key`, `basic`, `oauth2`) — the
+operator enters the secret while approving; it never rides in your request.
+Once a toolkit already serves an API,
+`jentic access request --toolkit httpbin.org/httpbin` asks for just the
+binding.
 
 ## 6. Make the call
 

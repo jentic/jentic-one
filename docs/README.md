@@ -4,6 +4,7 @@ What Jentic One is and how it works: [repository README](../README.md).
 
 ## Where do I go?
 
+- **Trying it out** → [README quickstart](../README.md#quickstart).
 - **Installing and running it** (admin) → [Install](#install), then
   [Secure](#secure) for the security posture.
 - **Keeping it healthy** (upgrades, backups, monitoring) → [Operate](#operate).
@@ -14,9 +15,6 @@ What Jentic One is and how it works: [repository README](../README.md).
   [Develop](#develop).
 - **You are an AI agent executing a task** → [agent runbooks](agent/README.md)
   and [`llms.txt`](../llms.txt).
-
-Each section gets more detailed the deeper you go: this index → a section
-overview → one scoped guide → [generated reference](#reference-generated--never-hand-edit).
 
 ## Install
 
@@ -37,29 +35,29 @@ overview → one scoped guide → [generated reference](#reference-generated--ne
 - [Monitoring & logs](operations/monitoring.md) — health endpoints, log sinks, executions and the audit trail, metrics
 - [Upgrades](operations/upgrades.md) — the version/migration contract, per-install pointers
 - [Backup & restore](operations/backup-restore.md) — what a restorable backup must contain
-- [Troubleshooting](agent/troubleshoot.md) — failure catalogue (written for agents; the fixes are the same for you)
+- [Troubleshooting](operations/troubleshooting.md) — symptom index for humans, backed by the [agent failure catalogue](agent/troubleshoot.md)
 - Agent runbook: [operate](agent/operate.md) — status/logs/upgrade/uninstall as executable steps
 
 ## Use
 
 Get going:
 
-- [First brokered call](guides/first-call.md) — the six steps, each linking deeper
+- [First brokered call](guides/first-call.md) — the six-step route map
 
 Connect agents:
 
-- [Connect an agent](guides/connecting-agents.md) — the four integration paths, and how self-hosted differs from the Jentic cloud platform
-- [Run coding agents in isolation](guides/local-agent.md) — `jentic run` and the local-agent sandbox
+- [Connect an agent](guides/connecting-agents.md) — the four integration paths
+- [Run coding agents in isolation](guides/local-agent.md) — the `jentic run` sandbox
 - [Serve MCP over HTTP](guides/mcp-http-endpoint.md) — the optional hosted `/mcp` endpoint
 
 Operate the catalog:
 
-- [Fix a spec with an overlay](guides/overlays.md) — patching an imported API description without forking it
-- [How credential resolution works](guides/credentials-and-toolkits.md) — the credential/toolkit model and its invariants
+- [Fix a spec with an overlay](guides/overlays.md) — patching imported API descriptions
+- [How credential resolution works](guides/credentials-and-toolkits.md) — the credential/toolkit model
 
 Integrate apps:
 
-- [Register an OAuth client](guides/oauth-clients.md) — third-party apps authenticating users through Jentic One
+- [Register an OAuth client](guides/oauth-clients.md) — third-party apps authenticating users
 - [CLI README](../cli/README.md) — the full `jentic` / `jenticctl` command surface
 
 Agent runbook: [use](agent/use.md) — discover → request access → execute, as executable steps.

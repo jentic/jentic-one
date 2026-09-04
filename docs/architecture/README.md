@@ -29,17 +29,17 @@ flowchart LR
     end
 
     subgraph app [App process — JENTIC__APPS=registry,admin,control,auth]
-        REG["registry/\nAPI catalog: import, search,\ninspect, overlays"]
-        CON["control/\ncredentials, toolkits,\naccess requests (+ /mcp mount)"]
-        ADM["admin/\nusers, agents, jobs, events,\naudit, monitoring, SPA"]
-        AUTH["auth/\nregistration (RFC 7591/7592),\ntoken exchange (RFC 7523), JWKS"]
+        REG["registry/<br/>API catalog: import, search,<br/>inspect, overlays"]
+        CON["control/<br/>credentials, toolkits,<br/>access requests (+ /mcp mount)"]
+        ADM["admin/<br/>users, agents, jobs, events,<br/>audit, monitoring, SPA"]
+        AUTH["auth/<br/>registration (RFC 7591/7592),<br/>token exchange (RFC 7523), JWKS"]
     end
 
     subgraph broker [Broker process — JENTIC__APPS=broker]
-        BRK["broker/\nexecution pipeline:\nresolve, authorize, inject,\nforward, audit"]
+        BRK["broker/<br/>execution pipeline:<br/>resolve, authorize, inject,<br/>forward, audit"]
     end
 
-    subgraph dbs [Databases (Postgres schemas or SQLite files)]
+    subgraph dbs ["Databases (Postgres schemas or SQLite files)"]
         RDB[("registry")]
         CDB[("control")]
         ADB[("admin")]
@@ -57,6 +57,7 @@ flowchart LR
     CON --- CDB
     ADM --- ADB
     AUTH --- ADB
+    AUTH --- CDB
     BRK --- RDB
     BRK --- CDB
     BRK --- ADB
@@ -65,9 +66,11 @@ flowchart LR
 Five things the diagram compresses:
 
 - **Five surfaces, one package.** `registry`, `control`, `admin`, `broker`,
-  and `auth` each live in their own package under `src/jentic_one/` and never
-  import each other; `shared/` holds what they have in common, and
-  `wiring.py` is the one composition point allowed to see across them
+  and `auth` each live in their own package under `src/jentic_one/`;
+  cross-surface imports are forbidden, with one sanctioned seam (the
+  broker's credential services import control to refresh OAuth tokens);
+  `shared/` holds what they have in common, and `wiring.py` is the
+  composition point that sees across them
   ([surfaces and layering](surfaces-and-layering.md)).
 - **The surface set is chosen at runtime.** One container image runs either
   role; `JENTIC__APPS` picks the surfaces, and the entrypoint refuses to

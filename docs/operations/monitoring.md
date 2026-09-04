@@ -14,7 +14,21 @@ curl -fsS http://127.0.0.1:8000/admin/health   # adds setup_required (first-run 
 ```
 
 These are what the Docker healthchecks, Helm probes, and `jenticctl status`
-poll — point your own uptime monitoring at the same two endpoints.
+poll. Know what they measure: **process liveness only**. `/health` is
+deliberately dependency-free, and `/admin/health` swallows database errors
+and still reports ok — all three stay green with the database down. Real
+monitoring needs two more probes:
+
+- **Broker readiness: `GET /ready`** (port 8100, unauthenticated). Returns
+  `503` while the broker is draining or when sustained in-flight load nears
+  the admission cap (default: 0.9 of the cap), so a load balancer sheds the
+  instance before the broker starts shedding requests. Note the Helm chart's
+  broker readinessProbe currently defaults to `/health` — point it at
+  `/ready` to get saturation-aware draining.
+- **A database-sensitive check.** No unauthenticated endpoint touches the
+  database, so an uptime monitor pointed only at `/health` cannot detect a
+  database outage. Use an authenticated read that does, e.g.
+  `GET /executions?limit=1` with a token holding `executions:read`.
 
 ## Logs
 
@@ -47,7 +61,10 @@ Two append-only records, both in the **admin database** (which is why
 For durability, ship them like any other database rows: they are ordinary
 tables in the admin database, so your normal
 [backup](backup-restore.md) covers them — or export periodically via the
-endpoints above if your compliance story wants an external copy.
+endpoints above if your compliance story wants an external copy. These
+tables (`execution_records`, `audit_entries`, `events`) are append-only and
+grow unbounded — there is no pruning or retention mechanism. Size your
+database and disk for growth; export-then-trim is the operator's job today.
 
 Live event stream (imports, approvals, catalog updates): `jentic events`
 from the CLI, or the notifications surface in the UI.
@@ -56,6 +73,11 @@ from the CLI, or the notifications surface in the UI.
 
 OpenTelemetry wiring (OTLP metrics/traces, the optional Prometheus exporter
 and scrape annotations, collector sidecars) is covered in the
-[chart docs](../../deploy/helm/README.md#metrics-exporter). Telemetry is
-**off by default** and never leaves the deployment unless you configure an
-exporter.
+[chart docs](../../deploy/helm/README.md#metrics-exporter). The Prometheus
+exporter itself is not Helm-specific: setting
+`observability.metrics.exporter: prometheus` mounts `/metrics` on every
+surface on any install shape. Anonymous product telemetry is
+**off by default** (`telemetry.enabled: false`). The OTel exporters default
+to `otlp` targeting a local collector; without one, nothing is delivered
+anywhere — set `observability.metrics.exporter: none` to silence the export
+attempts.

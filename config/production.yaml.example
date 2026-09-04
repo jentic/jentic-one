@@ -75,6 +75,17 @@ auth:
     - client_id: "jentic-one-spa"
       redirect_uris:
         - "https://jentic.example.com/app/auth/callback"
+  # ES256 ID-token signing keys. Required as soon as any OAuth client requests
+  # the `openid` scope (browser/OIDC sign-in, MCP interactive OAuth) — the
+  # authorization-code exchange fails with "No signing keys configured"
+  # without one. Nothing generates this for you. Mint a P-256 key with:
+  #   openssl ecparam -name prime256v1 -genkey -noout -out id-signing.pem
+  # id_signing:
+  #   - kid: prod-1              # [a-zA-Z0-9_-]+; the first entry signs
+  #     private_key_pem: |
+  #       -----BEGIN EC PRIVATE KEY-----
+  #       ...contents of id-signing.pem...
+  #       -----END EC PRIVATE KEY-----
 
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
 # WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env

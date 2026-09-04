@@ -28,8 +28,10 @@ python -m jentic_one
   other downstream packages extend the system here, not inside surfaces.
 - **The app factories** (`shared/web/app_factory.py`) assemble either one
   standalone surface app (`SURFACE_MODULES[surface].create_app`) or a
-  combined app that mounts each surface under its prefix
-  (`/registry`, `/admin`, `/control`, `/auth`).
+  combined app that includes every selected surface's routers in one shared
+  root namespace — only the per-surface health routers carry a prefix
+  (`/registry/health`, `/control/health`, …); business routes such as
+  `/apis` and `/credentials` are served unprefixed.
 
 ## `JENTIC__APPS` selects the surfaces
 
@@ -92,12 +94,15 @@ flowchart TB
   default values produce.
 - **Parts** — each surface standalone, fronted by a gateway that routes by
   path prefix. Standalone apps serve at root (`/health`, not
-  `/registry/health`); the combined app keeps prefixes so surfaces don't
-  collide. Agent-discovery documents (`/llms.txt`, `/skills/*`) are mounted
-  on every standalone surface so a split deployment still serves them.
+  `/registry/health`); the combined app keeps the per-surface health
+  prefixes so the probes don't collide. Agent-discovery documents
+  (`/llms.txt`, `/skills/*`) are mounted on every standalone surface so a
+  split deployment still serves them.
 - **Broker-scaled** — brokers are stateless; run several behind a load
-  balancer. Point `state.backend` at Redis so rate limits, circuit breakers,
-  and idempotency records are shared across replicas.
+  balancer. Set `broker.resilience.backend.backend` to `redis` (and give
+  every replica the same `broker.resilience.backend.redis_url`) so rate
+  limits, circuit breakers, and idempotency records are shared across
+  replicas.
 
 ## Lifespan ordering
 
@@ -108,12 +113,13 @@ load-bearing:
    surface's own `extra_lifespan` (the broker opens its shared outbound
    `httpx.AsyncClient` here) → container-injected lifespans (the `/mcp`
    session manager) → background workers.
-2. **Shutdown**, strictly reversed with a drain step first: the broker's
-   admission gate reports unready (so the load balancer deregisters the
-   instance) → scanners stop → the job worker drains → telemetry flushes →
-   the surface lifespan closes the shared HTTP client → `ctx.shutdown()`.
-   Draining the worker *before* closing the client matters: an async
-   execution mid-flight must finish over a live connection pool.
+2. **Shutdown**, with a drain step first: the broker's admission gate
+   reports unready (so the load balancer deregisters the instance) →
+   scanners stop → the job worker drains → telemetry flushes →
+   `ctx.shutdown()` → container-injected lifespans exit in reverse → the
+   surface lifespan closes the shared HTTP client. Draining the worker
+   *before* closing the client matters: an async execution mid-flight must
+   finish over a live connection pool.
 
 ## Background work
 

@@ -8,16 +8,20 @@ with generated secrets enabled, every secret (credential-encryption keyset,
 JWT signing secret, database passwords) is created on first install and
 reused on every upgrade, and migrations run as a post-install hook.
 
-Two constraints to know up front (the chart is smoke-tested in CI — kind,
-all modes, post-merge and as a release gate — see the
-[chart docs](../../deploy/helm/README.md#known-gaps) for the full gap list):
+The chart is smoke-tested in CI on kind, in all modes, post-merge and as a
+release gate. Two constraints to know up front (the
+[chart docs](../../deploy/helm/README.md#known-gaps) carry the full gap
+list):
 
 - The chart is **not published** to any registry. Vendor
   `deploy/helm/jentic-one/` from a checkout of this repository **at the
   release tag** you are deploying.
-- Only the combined `app` image is published to GHCR; the `broker` subchart
-  needs an image you build and put where your cluster can pull it
-  (`make build-all`).
+- Only one image is published to GHCR: `ghcr.io/jentic/jentic-one-app`. It
+  runs the broker too — point `broker.image.repository` at it and set
+  `broker.extraEnv.JENTIC__APPS=broker` (the broker subchart does not set
+  that itself; the AWS Marketplace overlay uses exactly this shape). The
+  alternative is building your own images (`make build-all`) and pushing
+  them where your cluster can pull.
 
 If those constraints don't fit, the [Docker](docker.md) or
 [systemd](systemd.md) guide gives the same two-service topology today.
@@ -34,9 +38,14 @@ the packaged version of this chart with published images.
   one; on a bare cluster the symptom of missing storage is the `postgresql`
   pod `Pending` with "pod has unbound immediate PersistentVolumeClaims".
 
-## 1. Build the images
+## 1. Get the images
 
-From the checkout at the release tag:
+**Published image (no build):** `ghcr.io/jentic/jentic-one-app` serves both
+the `app` and `broker` subcharts — the install command in step 2 points both
+at it. [Verify the signature](docker.md#1-pull-and-verify-the-image) before
+mirroring it into an internal registry.
+
+**Build your own** from the checkout at the release tag:
 
 ```bash
 make build-all    # builds jentic-one/{app,broker,registry,admin,control}
@@ -44,10 +53,10 @@ make save-all     # writes build/jentic-<svc>-<version>.tar for offline transfer
 ```
 
 The combined topology needs only `app` and `broker`. For a remote cluster,
-`docker load -i` the tarballs, retag, and push to your internal registry. The
-published `ghcr.io/jentic/jentic-one-app` image can substitute for the `app`
-subchart only, via `--set app.image.repository=ghcr.io/jentic/jentic-one-app
---set app.image.tag=X.Y.Z`.
+`docker load -i` the tarballs, retag, and push to your internal registry,
+then set each enabled service's `<svc>.image.repository` to the pushed name
+(the subchart defaults, `jentic-one/<svc>`, resolve only for locally-built
+images on a local cluster).
 
 ## 2. Install
 
@@ -77,13 +86,23 @@ helm install jentic ./deploy/helm/jentic-one \
   --set global.appSecrets.generate=true \
   --set postgresql.enabled=true \
   --set global.postgresql.enabled=true \
-  --set global.image.registry=registry.internal/jentic-one \
+  --set broker.enabled=true \
+  --set app.image.repository=ghcr.io/jentic/jentic-one-app \
+  --set broker.image.repository=ghcr.io/jentic/jentic-one-app \
+  --set broker.extraEnv.JENTIC__APPS=broker \
   --set global.image.tag=X.Y.Z
 ```
 
-(`global.image.registry` + `global.image.tag` pin every subchart's image in
-one place; per-service `<svc>.image.repository`/`.tag` overrides win where
-set.)
+(`broker.enabled=true` is required — the umbrella chart ships the broker off.
+Both services run the one published image; `JENTIC__APPS=broker` makes the
+second one the broker. `global.image.tag` pins every subchart's tag in one
+place. Set `<svc>.image.repository` explicitly for **every enabled service**:
+each subchart ships a non-empty local-build default (`jentic-one/<svc>`), and
+`global.image.registry` applies only to services whose `image.repository` is
+empty — so on its own it is a no-op and the pods go `ImagePullBackOff` on the
+unqualified default. Self-built images: point the two repositories at your
+internal registry's `…/app` and `…/broker` instead and drop the
+`JENTIC__APPS` override.)
 
 ## 3. Set the canonical base URL
 
@@ -144,11 +163,40 @@ global:
   [Docker guide, step 3](docker.md#3-prepare-the-database).
 - **Migrations:** the chart's migrate hook renders only on the bundled-DB
   path. Against an external Postgres, run
-  `python -m jentic_one.migrations.run` yourself before (and on every upgrade
-  of) the release — the one-shot container from the
+  `python -m jentic_one.migrations.run` yourself before first start **and on
+  every upgrade** — the one-shot container from the
   [Docker guide, step 4](docker.md#4-run-migrations) works from any machine
-  that reaches the database, or run it in-cluster as a one-off Job on the
-  same image with the `JENTIC__DATABASES__*` env sourced from your Secret.
+  that reaches the database, or run it in-cluster as a one-off Job. Minimal
+  manifest (same image, command, and env-var names as the chart's own
+  migrate hook; the passwords ride `envFrom` a Secret you manage whose keys
+  are the `JENTIC__DATABASES__*__PASSWORD` variables — the same set as the
+  [Docker guide, step 2](docker.md#2-write-the-config)):
+
+  ```yaml
+  apiVersion: batch/v1
+  kind: Job
+  metadata:
+    name: jentic-migrate-X.Y.Z   # version-suffixed: Jobs are immutable, and this re-runs every upgrade
+    namespace: jentic-one
+  spec:
+    backoffLimit: 3
+    template:
+      spec:
+        restartPolicy: Never
+        containers:
+          - name: migrate
+            image: ghcr.io/jentic/jentic-one-app:X.Y.Z
+            command: ["python", "-m", "jentic_one.migrations.run"]
+            envFrom:
+              - secretRef:
+                  name: jentic-db-credentials   # JENTIC__DATABASES__{REGISTRY,CONTROL,ADMIN}__PASSWORD
+            env:
+              - { name: JENTIC__DATABASES__REGISTRY__HOST, value: db.prod.internal }
+              - { name: JENTIC__DATABASES__REGISTRY__NAME, value: jentic }
+              - { name: JENTIC__DATABASES__REGISTRY__USER, value: registry_user }
+              - { name: JENTIC__DATABASES__REGISTRY__SCHEMA_NAME, value: registry }
+              # …repeat HOST/NAME/USER/SCHEMA_NAME for CONTROL and ADMIN
+  ```
 - **First admin:** same shape — the
   `python -m jentic_one create-admin --email …` one-shot from the
   [Docker guide, step 5](docker.md#5-create-the-first-admin). Re-running is
@@ -204,8 +252,35 @@ reference a Secret you manage:
 
 Host/port/name/schema are not secrets — plain values are fine for those.
 Encryption-key **rotation** is a config-level operation in every mode: add a
-new keyset entry, flip `active_id`, keep the old entry until all rows are
-re-encrypted ([upgrades.md](../operations/upgrades.md#what-an-upgrade-never-does)).
+new keyset entry and flip `active_id`. Stored secrets re-encrypt under the
+new key only when they are rewritten — there is no bulk re-encrypt and no
+completion check — so keep retired keys in the keyset
+([upgrades.md](../operations/upgrades.md#what-an-upgrade-never-does)).
+
+## Scaling and HA
+
+Every subchart exposes `replicas` and `resources` in its values
+(`--set broker.replicas=3`). The default requests/limits (100m/128Mi,
+500m/256Mi) are eval-grade — size them for real load.
+
+- **Broker** — stateless; run several replicas behind the Service. First set
+  the shared-state backend to Redis so rate limits, circuit breakers, and
+  idempotency records are shared across replicas: with the default `memory`
+  backend that state is per-process
+  ([config/production.yaml.example](../../config/production.yaml.example),
+  [composition-and-processes.md](../architecture/composition-and-processes.md)).
+  The keys are `broker.resilience.backend.backend: redis` and
+  `broker.resilience.backend.redis_url` (via `extraEnv`:
+  `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` /
+  `…__REDIS_URL`, identical on every replica). The chart does not bundle
+  Redis — bring your own.
+- **App** — the same shared-state backend also carries the auth surface's
+  OAuth rate limiters and consent-nonce anti-replay, so the same rule
+  applies: keep `app.replicas: 1` on the `memory` backend; configure Redis
+  before scaling out. Multi-replica app surfaces are not part of the CI
+  smoke matrix.
+- **Bundled PostgreSQL** — a single-instance StatefulSet, dev/eval-grade by
+  design; HA means an external managed database (below).
 
 ## Observability
 
@@ -223,6 +298,7 @@ annotations are covered in the
 
 ## Upgrading
 
+0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
 1. Build/push the new release's images (step 1) and re-vendor the chart at
    the **new** release tag.
 2. `helm upgrade jentic ./deploy/helm/jentic-one …` with the new
@@ -242,6 +318,6 @@ rolling forward to a fixed release — the full contract:
 | Symptom | Likely cause |
 | ------- | ------------ |
 | `postgresql` pod `Pending`, "unbound immediate PersistentVolumeClaims" | No default StorageClass — see Prerequisites |
-| `broker` pod `ImagePullBackOff` | The broker image is not published — build it and push/load it where the cluster can pull (step 1) |
+| `broker` pod `ImagePullBackOff` | `broker.image.repository` still the local-build default (`jentic-one/broker`) — point it at the published image + `JENTIC__APPS=broker`, or at an image you built and pushed (steps 1–2) |
 | Agent approved but token exchange fails `invalid_grant` | `JENTIC__AUTH__CANONICAL_BASE_URL` unset or differs from the registered `--url` (step 3) |
 | Fresh install against an external Postgres has no tables | The migrate hook renders only on the bundled-DB path — run migrations yourself (External database) |

@@ -1,18 +1,21 @@
 # Backup & restore
 
-A restorable backup is **data + key, together**. Get one of them and not the
-other and you have nothing.
+A restorable backup is **data + key, together**. The databases restore
+without the keyset — catalog, agents, toolkits, audit trail, and execution
+history all come back — but every stored credential secret is then
+permanently unreadable, and re-entering credentials is usually the painful
+part of a rebuild.
 
 ## What a backup must contain
 
 | Piece | Where it lives | Why |
 | ----- | -------------- | --- |
 | **The three databases** (registry, control, admin) | SQLite files on the data volume, or schemas in your Postgres instance | The catalog, credentials (encrypted), agents, toolkits, audit trail, execution history |
-| **The credential-encryption keyset** | Your config — `credentials.encryption` in the config file, or the equivalent env var / Kubernetes Secret | Stored credentials are AES-encrypted at rest; **without the keyset the restored data is unreadable, permanently** |
+| **The credential-encryption keyset** | Your config — `credentials.encryption` in the config file, or the equivalent env var / Kubernetes Secret | Stored credential **secret material** is AES-encrypted at rest; without the keyset those secrets — and only those — are permanently unreadable. Everything else restores fine, but the credentials all have to be re-entered |
 | The rest of the config (`jentic-one.yaml` / env file / Helm values) | Wherever you configured the install | Not secret-critical, but a restore is much faster when you don't have to reconstruct it |
 
 What is deliberately **not** exportable: credential plaintext. There is no
-"export secrets" path — that's the product's core guarantee — so a backup of
+"export secrets" path (that's the product's core guarantee), so a backup of
 the encrypted rows plus the keyset is the *only* way stored credentials
 survive a machine loss.
 
@@ -66,10 +69,24 @@ count as the database half — you still need the keyset half.
 - On a schedule sized to how painful re-entering credentials and re-approving
   agents would be.
 
+Two sizing/placement notes. Backups grow with use: execution records, audit
+entries, and events are append-only and
+[never pruned](monitoring.md#what-agents-did-executions-and-the-audit-trail),
+so size storage and transfer windows for growth. And escrow the keyset with
+the same care as the database dumps, in a separate system from the running
+host — one lost or compromised machine must not take both halves.
+
 ## Restore drill (verify it, once)
 
 A backup nobody has restored is a hypothesis. On a scratch machine: restore
-the data, point a fresh install of the **same version** at it with the backed-up
-config, and check `curl -fsS http://127.0.0.1:8000/health`, sign-in, and one
-brokered call against a stored credential. That last step is the one that
-proves the keyset half of the backup.
+the data, point a fresh install of the **same version** at it with the
+backed-up config, then verify in three steps of increasing strength:
+
+1. `curl -fsS http://127.0.0.1:8000/health` — proves only that the process
+   boots; [the endpoint is dependency-free](monitoring.md#health) and passes
+   even against an empty or corrupt database.
+2. Sign in — proves the restored databases are actually being read.
+3. One brokered call against a stored credential — the only step that proves
+   the keyset half. This is also where a keyset-less restore shows itself:
+   everything up to here looks healthy, then the brokered call fails with a
+   decryption error.

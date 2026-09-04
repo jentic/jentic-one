@@ -1,7 +1,7 @@
 # Install Jentic One — agent runbook
 
-You are an AI agent installing Jentic One for a human. This runbook shows how 
-to install Jentic (App, Broker, Database). Two steps are **human gates** — you must stop, 
+You are an AI agent installing Jentic One for a human. This runbook shows how
+to install Jentic (App, Broker, Database). Two steps are **human gates** — you must stop,
 hand the human a URL, and wait; they are marked `HUMAN GATE`. (A hardened
 install adds a third gate at Step 3.)
 
@@ -42,7 +42,7 @@ Related files: [operate.md](operate.md) (start/stop/upgrade/uninstall),
 | Database: SQLite or Postgres? | SQLite | SQLite is fine for a single-host install. For an external/production Postgres follow [docker.md](../installation/docker.md) instead. |
 | Reachable from other machines, or this machine only? | This machine only (`127.0.0.1`) | Anything else → read [harden.md](harden.md) first; a LAN bind publishes the app, broker, and UI to the network. |
 | Enable anonymous usage telemetry? | Off | If yes, the config gets `enabled: true` plus a random `instance_id` (UUID) and `host_os`; if no, an explicit `enabled: false` records the decision. |
-| Is it acceptable that I (the installing agent) could read the instance secrets? | Ask — do not assume | The generated secrets land in files my shell writes and my OS user can read. Fine for trying things out with throwaway keys. If the answer is **no** — real credentials will be stored — follow the [hardened install](#hardened-install--the-human-holds-the-secrets) variant of Step 3. |
+| Is it acceptable that I (the installing agent) could read the instance secrets? | Ask — do not assume | The generated secrets land in files my shell writes and my OS user can read. Fine for trying things out with throwaway keys. If the answer is **no** (real credentials will be stored), follow the [hardened install](#hardened-install--the-human-holds-the-secrets) variant of Step 3. |
 
 The rest of this runbook assumes the defaults; the Postgres and hardened
 variants are given inline where they differ.
@@ -79,8 +79,9 @@ one fails.
 ```bash
 docker info >/dev/null           # daemon is running (not just installed)
 docker compose version           # compose v2 is available
-curl --version >/dev/null && openssl version >/dev/null
-# Ports 8000 (app) and 8100 (broker) must be free:
+curl --version >/dev/null && openssl version >/dev/null && command -v lsof >/dev/null
+# Ports 8000 (app) and 8100 (broker) must be free (the lsof check above is
+# what makes this fail closed — a missing lsof would otherwise false-pass):
 ! lsof -iTCP:8000 -sTCP:LISTEN -n -P && ! lsof -iTCP:8100 -sTCP:LISTEN -n -P
 ```
 
@@ -91,8 +92,13 @@ host-side protection:
 ```bash
 mkdir -p ~/.jentic/logs
 chmod 700 ~/.jentic
-chmod 777 ~/.jentic/logs   # containers run as uid 999 and must write here; safe only under the 0700 parent
+chmod 777 ~/.jentic/logs   # containers run as a non-root user and must write here; safe only under the 0700 parent
 ```
+
+(The image runs as a non-root user; its numeric uid is an image-build detail,
+not a contract. If you ever need the actual value — e.g. for a `chown` — read
+it from the image itself: `docker run --rm --entrypoint id
+ghcr.io/jentic/jentic-one-app:<version>`.)
 
 ## 2. Install the `jentic` CLI
 
@@ -115,6 +121,17 @@ sudo install /tmp/jentic /usr/local/bin/ && rm -f /tmp/jentic /tmp/jentic.tar.gz
 jentic --version
 # Persist VER for the rest of the install — later steps run in other shells:
 echo "VER=${VER}" > ~/.jentic/.env && chmod 600 ~/.jentic/.env
+```
+
+The `sudo install` line is a **possible human gate**: if `sudo` needs a
+password, the block stalls on an interactive prompt — ask the human to run it
+(or pre-authorise sudo) rather than waiting silently. Alternatively, avoid
+sudo entirely: re-run the block above with the `sudo install` line replaced
+by the user-local install below, and make sure `~/.local/bin` is on `PATH`:
+
+```bash
+mkdir -p ~/.local/bin
+install -m 0755 /tmp/jentic ~/.local/bin/jentic && rm -f /tmp/jentic /tmp/jentic.tar.gz
 ```
 
 If it fails: [troubleshoot.md](troubleshoot.md#cli-download-fails-no-url-resolved-or-404)
@@ -178,7 +195,7 @@ search:
 telemetry:
   enabled: false
 EOF
-chmod 644 ~/.jentic/jentic-one.yaml   # the app container (uid 999) must read it; ~/.jentic (0700) protects it host-side
+chmod 644 ~/.jentic/jentic-one.yaml   # the app container's non-root user must read it; ~/.jentic (0700) protects it host-side
 ```
 
 Adjustments from Step 0:
@@ -203,7 +220,12 @@ Adjustments from Step 0:
 - **HARDENED — human gate:** write the same file, but with the literal
   placeholder `__GENERATE__` in place of each of the four
   `$(openssl rand -base64 32)` substitutions (use a quoted heredoc,
-  `<<'EOF'`, so nothing expands). Then hand the human this and wait:
+  `<<'EOF'`, so nothing expands). Because *nothing* expands, non-secret
+  substitutions must be pre-expanded before writing the file: with telemetry
+  on, run `uuidgen | tr 'A-Z' 'a-z'` first and insert the resulting value as
+  the literal `instance_id` (it is not a secret — only the four
+  `__GENERATE__` markers are left for the human). Then hand the human this
+  and wait:
 
   > Run this once — it replaces each placeholder with a fresh secret that
   > never leaves your shell:
@@ -446,7 +468,7 @@ jentic skill init    # optional: install the usage skill for your runtime
 ## 10. Verify end to end
 
 ```bash
-jentic catalog                 # the API catalog answers
+jentic catalog list            # the API catalog answers (bare `jentic catalog` opens an interactive TUI on a terminal)
 jentic access whoami           # who you are and what you may call
 ```
 

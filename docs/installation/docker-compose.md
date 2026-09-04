@@ -93,6 +93,7 @@ curl -fsS http://localhost:8100/health       # broker
 
 When the next release is cut:
 
+0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
 1. Take the new digest from that release's `publish-image` job output (or
    the GHCR package page) and re-run `cosign verify` against it
    ([Docker guide, step 1](docker.md#1-pull-and-verify-the-image)).
@@ -102,9 +103,8 @@ When the next release is cut:
    `app`/`broker` once it exits 0. **If migrate fails, `up` aborts and the
    old containers keep running the old release** — fix, then re-run.
 
-Migrations are applied forward. Rolling the image back without downgrading
-the schema means old code on a newer schema — prefer rolling forward to a
-fixed release. (A schema downgrade path exists —
-`python -m jentic_one.migrations.run --direction down` — but treat it as a
-break-glass tool, not the routine rollback.) The full upgrade contract:
+Migrations apply forward, and restoring the pre-upgrade snapshot (step 0) is
+the rollback — a schema downgrade path exists
+(`python -m jentic_one.migrations.run --direction down`) but is break-glass,
+not a supported rollback; the full contract is
 [docs/operations/upgrades.md](../operations/upgrades.md).
