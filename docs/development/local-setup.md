@@ -29,20 +29,10 @@ no-op when it is already satisfied. It performs, in order:
 When it finishes, the SPA is reachable at `http://127.0.0.1:8000/app` and the
 site root redirects there.
 
-## What this replaces
-
-Previously, restarting local dev after a reboot took several manual,
-undocumented steps: start Docker, `make start-fixtures`, export
-`JENTIC_CONFIG_FILE=config/local.yaml` by hand, `make ui-build`, then manually
-symlink `ui/dist` → `src/jentic_one/static` so the SPA would be served. Two
-changes remove that friction:
-
-- **`make dev`** orchestrates Docker/DB/UI/app in one idempotent target and sets
-  `JENTIC_CONFIG_FILE` for you.
-- The SPA server now **falls back to `ui/dist`** when running from source (the
-  packaged `jentic_one/static` bundle only exists in a built wheel), so no
-  copy/symlink step is needed. Wheel/production serving is unchanged — the
-  packaged bundle still takes precedence.
+**SPA serving from source:** the server falls back to `ui/dist` when the
+packaged `jentic_one/static` bundle is absent (it only exists in a built
+wheel), so no copy/symlink step is needed. Wheel/production serving is
+unchanged — the packaged bundle takes precedence when present.
 
 ## First-time setup
 

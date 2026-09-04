@@ -33,8 +33,8 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
    - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and pushes the Homebrew cask.
 
-The pre-1.0 baseline is the restored `v0.1.0`…`v0.13.2` tag line; the next
-release is `v0.14.0` (we continue the `0.x` line — see `VERSIONING.md`).
+Releases continue the pre-1.0 `0.x` line — see `VERSIONING.md` for the
+versioning policy.
 
 ### Forcing or recovering a release
 
@@ -64,10 +64,10 @@ commit on `main` whose footer sets the version explicitly:
 ```
 ci(release): force patch release to republish artifacts
 
-Release-As: 0.14.3
+Release-As: 0.38.3
 ```
 
-release-please then opens a `chore(main): release 0.14.3` PR; merging it cuts the
+release-please then opens a `chore(main): release 0.38.3` PR; merging it cuts the
 tag and re-runs `release.yml` (now from the fixed workflow on `main`), producing
 a complete set of signed binaries + the Homebrew cask. A failed release version
 is superseded by the next one — every release rebuilds all artifacts from

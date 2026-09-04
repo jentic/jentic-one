@@ -67,8 +67,10 @@ scope):
   no-auth (`shared/models/credentials.py`).
 - **Database backends:** Postgres **and** SQLite — SQLite is a supported *production*
   target, not dev-only (`shared/db/backends/sqlite.py`).
-- **ML/embeddings** exist but are **registry-search-only**; core surfaces don't use
-  them (`tests/arch/test_no_ml_in_core_surfaces.py`).
+- **Registry search is lexical** (Postgres and SQLite FTS strategies under
+  `registry/repos/search/`); there is no ML/embeddings stack, and an arch test
+  keeps ML imports out of the core surfaces
+  (`tests/arch/test_no_ml_in_core_surfaces.py`).
 
 An issue is **in scope** when it improves the security, correctness, reliability,
 usability, or operability of one of these surfaces for the audience above.

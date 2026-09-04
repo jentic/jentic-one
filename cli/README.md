@@ -25,7 +25,7 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 | `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds. |
 | `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
 | `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
-| `jentic` | **Administration** | `admin` · `theme` | Manage OAuth provider config and the persisted color theme. |
+| `jentic` | **Administration** | `admin` · `theme` | `admin config providers` manages the platform's credential-provider configuration; `theme` sets the persisted color theme. |
 
 The table mirrors the CLI's own command groups (what `jentic` with no args
 prints). The **complete command + flag reference** is generated from these
@@ -73,7 +73,7 @@ locally.
 ### 1. Homebrew (macOS / Linux) — both binaries
 
 ```bash
-brew install jentic/tap/jentic
+brew install --cask jentic/tap/jentic
 ```
 
 The cask installs both `jentic` and `jenticctl`.
@@ -109,7 +109,7 @@ Environment knobs:
   `jenticctl install` stack wizard (useful in CI or when you only want the CLI).
 - `GITHUB_TOKEN=ghp_xxx` — download/clone from a **private** fork (token needs
   `repo` read scope); also used to build the server image from source.
-- `JENTIC_REF=v0.31.0` — pin the release tag to install (download mode) or the
+- `JENTIC_REF=v0.38.2` — pin the release tag to install (download mode) or the
   ref (tag / branch / commit) to build (source mode).
 
 On a machine with **no interactive terminal** (piped `curl … | sh` in CI), the
@@ -123,7 +123,7 @@ Grab the archive for your platform from the
 install it yourself:
 
 ```bash
-VER=0.31.0; OS=linux; ARCH=amd64            # adjust for your platform (darwin/arm64, …)
+VER=0.38.2; OS=linux; ARCH=amd64            # adjust for your platform (darwin/arm64, …)
 BASE="https://github.com/jentic/jentic-one/releases/download/v${VER}"
 curl -fsSLO "${BASE}/jentic_${VER}_${OS}_${ARCH}.tar.gz"
 curl -fsSLO "${BASE}/checksums.txt"
@@ -436,10 +436,13 @@ For the **Run in Docker** path the wizard performs an equivalent install:
 
 0. **Preflight** — checks `docker` is on `PATH` (plus `git` when the source must
    be cloned to build the image).
-1. **Build** the combined app image (`jentic-one/app:jentic-cli`) from your local
-   checkout, or from a fresh clone of
-   [`github.com/jentic/jentic-one`](https://github.com/jentic/jentic-one) into
-   `~/.jentic/src`. The shared `python-base` stages are built first.
+1. **Get the app image.** By default the wizard **pulls the published, signed
+   image** (`ghcr.io/jentic/jentic-one-app`, version-matched to the CLI) — no
+   local build. `--build-local` builds `jentic-one/app:jentic-cli` from your
+   checkout instead (auto-selected inside a jentic-one source tree or with
+   `$JENTIC_SRC`; the shared `python-base` stages are built first); `--ref`
+   builds a specific branch/tag/commit; `--image-tag` pins a tag or
+   `@sha256:` digest.
 2. **Write** `~/.jentic/docker-compose.yaml` (app + a managed Postgres
    when you choose Postgres) with your generated config mounted read-only at
    `/etc/jentic/jentic-one.yaml`. The config is rendered with container-aware

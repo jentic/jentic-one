@@ -179,12 +179,11 @@ import cycle). Migration ordering is **not** modelled in Go — the CLI only
 invokes the Python runner, which owns `DB_TARGETS` and its upgrade/rollback
 order.
 
-## Breaking change: unknown config keys now fail loudly
+## Unknown config keys fail loudly
 
 `AppConfig` sets `model_config = ConfigDict(extra="forbid")`. An **unrecognized
 top-level config key** — one that is neither a core field nor a *registered*
-extension section — now causes a **loud failure at startup** instead of being
-silently ignored. This is defensively correct (it ensures extensions are
-formally registered via `register_config`), but downstream configs with
-legacy/typo top-level keys must be cleaned up or migrated to a registered
-extension section before upgrading.
+extension section — causes a **loud failure at startup** rather than being
+silently ignored. This ensures extension sections are formally registered via
+`register_config`: a typo'd or unregistered top-level key stops the app instead
+of dropping your configuration on the floor.

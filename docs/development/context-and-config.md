@@ -70,11 +70,13 @@ Each property returns a `DatabaseSession` instance with:
 
 ## Database Layer
 
-The database layer uses **SQLAlchemy async** (with `asyncpg` as the underlying driver), following the same pattern as `jentic/core`:
+The database layer uses **SQLAlchemy async**, with a pluggable backend per
+database: PostgreSQL via `asyncpg` or SQLite via `aiosqlite` (selected by each
+database's `backend` config key):
 
-- `Base` — declarative base class for all ORM models (import from `jentic_one.shared.db`)
+- `RegistryBase` / `ControlBase` / `AdminBase` — per-database declarative base classes for ORM models (import from `jentic_one.shared.db`)
 - `DatabaseSession` — manages an async engine and session factory per database
-- `get_database_url(config)` — builds a `sqlalchemy.engine.URL` for `postgresql+asyncpg` from a `DatabaseConfig`
+- `get_database_url(config)` — builds the async `sqlalchemy.engine.URL` for the configured backend from a `DatabaseConfig`
 
 ### ORM Models
 
@@ -180,9 +182,8 @@ at the wrong backend.
 ### Repointing an MCP server (or any client) at a local install
 
 The per-response `backend` field is stamped by the MCP server — the local
-`jentic mcp` server (available in the `jentic` CLI from the next release)
-reads it from the `/instance` endpoint above, which is the `jentic-one` side
-of the contract. To move an MCP server (or the CLI) from a remote backend to
+`jentic mcp` server reads it from the `/instance` endpoint above, which is
+the `jentic-one` side of the contract. To move an MCP server (or the CLI) from a remote backend to
 a local install, update *that client's* backend base URL to your local
 `canonical_base_url` (e.g. `http://127.0.0.1:8000`) and re-check with
 `GET /instance`. For `jentic mcp` the backend comes from the context's
