@@ -5121,6 +5121,49 @@
         "title": "OAuth2UpdateRequest",
         "type": "object"
       },
+      "OAuthApprovalDecisionRequest": {
+        "description": "Inline admin approve/deny posted from the approval-pending page.\n\n``state`` is the signed approval-state blob minted by ``/authorize`` for\nthis exact authorize request — the decision endpoint never accepts a bare\n``client_id``.",
+        "properties": {
+          "action": {
+            "enum": [
+              "approve",
+              "deny"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string",
+            "x-sensitive": true
+          }
+        },
+        "required": [
+          "state",
+          "action"
+        ],
+        "title": "OAuthApprovalDecisionRequest",
+        "type": "object"
+      },
+      "OAuthApprovalStatusResponse": {
+        "description": "Minimal tri-state approval status for a pending-client authorize request.\n\nDeliberately carries nothing else — no client name, redirect URIs, or\nmetadata — so the anonymous poll endpoint cannot be used to read client\ndetails out of the registry.",
+        "properties": {
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "denied"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "OAuthApprovalStatusResponse",
+        "type": "object"
+      },
       "OAuthClientCreateRequest": {
         "description": "Request body for creating an OAuth client.",
         "examples": [
@@ -28734,6 +28777,233 @@
           }
         ],
         "summary": "Revoke OAuth grant",
+        "tags": [
+          "OAuth"
+        ]
+      }
+    },
+    "/oauth/approval/decision": {
+      "post": {
+        "description": "Thin wrapper over the admin approval path for the approval-pending page.\n\nAuthorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``\n/ ``:deny`` (``oauth-clients:write``, org:admin implies it) and the\ndecision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —\nsame audit records, same D7 active/approval_status coupling; this endpoint\nonly translates the signed state blob into the client row. CSRF posture\nmatches the consent POST: no ambient credential is honored — the browser\nmust explicitly present the SPA bearer token, which a cross-site form\ncannot do.",
+        "operationId": "approvalDecisionEndpoint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthApprovalStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Malformed, tampered, or expired approval-state blob."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Approve or deny a pending client inline (approval-pending page)",
+        "tags": [
+          "OAuth"
+        ]
+      }
+    },
+    "/oauth/approval/status": {
+      "get": {
+        "description": "Minimal tri-state poll for the approval-pending page.\n\nAnonymous but keyed by the signed approval-state blob — never a bare\nclient_id, so the endpoint cannot be used to enumerate registrations. Any\nverification failure (bad signature, wrong purpose, expired ``iat``,\nmalformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by\nre-running /authorize, which mints a fresh blob. The response carries ONLY\nthe tri-state — no names, redirect URIs, or metadata.",
+        "operationId": "approvalStatusEndpoint",
+        "parameters": [
+          {
+            "description": "Signed approval-state blob minted by /authorize",
+            "in": "query",
+            "name": "st",
+            "required": true,
+            "schema": {
+              "description": "Signed approval-state blob minted by /authorize",
+              "title": "St",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthApprovalStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Malformed, tampered, or expired approval-state blob."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Poll client approval status (approval-pending page)",
         "tags": [
           "OAuth"
         ]

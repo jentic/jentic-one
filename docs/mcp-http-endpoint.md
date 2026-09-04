@@ -164,7 +164,13 @@ resource participates in that discovery chain when
 `server.mcp.oauth.enabled` is on. Clients that self-register through that
 surface's dynamic registration door land in the admin approval queue and
 stay inactive until an operator approves them — **approval-first is the
-default**. Deployments that accept self-registered clients without review
+default**. While a registration is pending, the `/authorize` browser leg
+renders a live approval-pending page instead of parking: it polls a minimal
+signed-state status endpoint, lets an admin browser session approve/deny
+inline, and auto-continues the original authorize request to the IdP the
+moment the client is approved (see the *Approval* section of
+[oauth-clients.md](oauth-clients.md)). Deployments that accept
+self-registered clients without review
 can opt in to instant approval explicitly:
 
 ```yaml

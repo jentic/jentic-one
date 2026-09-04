@@ -565,6 +565,25 @@ def test_oauth_registration_rate_limit_knobs(config_file: Path):
     assert config.auth.oauth_rate_limit.registration_burst == 2
 
 
+def test_oauth_approval_status_rate_limit_defaults(config_file: Path):
+    """The approval-status poll bucket: generous defaults (a browser polls
+    every few seconds), independently tunable from /authorize."""
+    config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 60
+    assert config.auth.oauth_rate_limit.approval_status_burst == 30
+
+
+def test_oauth_approval_status_rate_limit_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_RPM": "6",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_BURST": "3",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 6
+    assert config.auth.oauth_rate_limit.approval_status_burst == 3
+
+
 def test_encryption_config_defaults():
     cfg = EncryptionConfig()
     assert cfg.active_id == "v1"

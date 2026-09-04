@@ -2,9 +2,22 @@
 
 Flow overview:
   GET /authorize        — validate client + redirect_uri, redirect to IdP
+                          (a pending-approval client renders the
+                          approval-pending page instead — see below)
   GET /oauth/callback   — verify IdP response, show consent screen (or skip)
   POST /oauth/consent   — verify consent token, issue authorization code, redirect to client
   POST /oauth/token     — exchange code + PKCE verifier + client_secret for tokens
+
+Approval-in-flow (D-approval-in-flow, P2): a registered-but-unapproved client
+at /authorize renders a live approval-pending page instead of a dead stop. The
+page polls GET /oauth/approval/status (anonymous, rate limited, keyed by a
+signed state blob — never a bare client_id) and, when the browser holds an
+admin SPA session, offers inline approve/deny via POST /oauth/approval/decision
+(a thin wrapper over the admin OAuthClientService approve/deny with the same
+``oauth-clients:write`` gate). On approval the page re-runs the ORIGINAL
+authorize request, which now proceeds normally to the IdP redirect; on denial
+it closes the loop with a standard ``error=access_denied`` redirect when the
+redirect_uri is registered for the client.
 """
 
 from __future__ import annotations
@@ -16,11 +29,12 @@ import json
 import secrets
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from typing import Literal
 from urllib.parse import urlencode, urlsplit
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
@@ -35,6 +49,11 @@ from jentic_one.auth.services.errors import (
 )
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
+from jentic_one.auth.web.schemas.authorize import (
+    OAuthApprovalDecisionRequest,
+    OAuthApprovalStatusResponse,
+)
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
     AGENTS_WRITE,
@@ -50,6 +69,7 @@ from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus, OA
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state.backend import SharedStateBackend
+from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.sensitive import SENSITIVE
 
@@ -77,6 +97,43 @@ async def _check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -
     key = f"{client_id}:{ip}" if client_id else ip
     limiter = _get_authorize_limiter(request, ctx)
     outcome = await limiter.acquire(key)
+    if not outcome.allowed:
+        raise RateLimitExceededError(retry_after=outcome.retry_after_s)
+
+
+def _get_approval_status_limiter(request: Request, ctx: Context) -> RateLimiter:
+    limiter: RateLimiter | None = getattr(request.app.state, "_approval_status_limiter", None)
+    if limiter is not None:
+        return limiter
+    cfg = ctx.config.auth.oauth_rate_limit
+    backend = get_auth_backend(request)
+    # Own bucket namespace (mirrors the DCR door): the approval-pending page
+    # polls this endpoint for minutes at a time, and a bare-IP key in the
+    # shared store would otherwise collide with /authorize's fallback bucket —
+    # steady polling must not drain the /authorize quota or vice versa.
+    limiter = RateLimiter(
+        backend,
+        default_rpm=cfg.approval_status_rpm,
+        burst=cfg.approval_status_burst,
+        namespace="oauth-approval-status",
+    )
+    request.app.state._approval_status_limiter = limiter
+    return limiter
+
+
+async def _check_approval_status_rate_limit(
+    request: Request, ctx: Context = Depends(get_ctx)
+) -> None:
+    """Per-IP rate limiter for the anonymous approval-status poll.
+
+    Keyed by bare IP: the only other request input is the signed state blob,
+    and a self-chosen key component would let one host sidestep the bucket by
+    re-minting blobs (every /authorize render hands out a fresh one).
+    """
+    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    ip = client_ip(request, trusted)
+    limiter = _get_approval_status_limiter(request, ctx)
+    outcome = await limiter.acquire(ip)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
@@ -183,6 +240,27 @@ def get_oauth_grant_service(ctx: Context = Depends(get_ctx)) -> OAuthGrantServic
 
 STATE_MAX_AGE_SECONDS = 600
 CONSENT_STATE_MAX_AGE_SECONDS = 300
+#: TTL for the signed approval-state blob carried by the approval-pending page
+#: (poll + inline-decision key). Deliberately the same window as the IdP-leg
+#: ``state`` — the page self-heals past expiry by re-running /authorize, which
+#: mints a fresh blob while the client stays pending.
+APPROVAL_STATE_MAX_AGE_SECONDS = STATE_MAX_AGE_SECONDS
+
+#: How often the approval-pending page polls /oauth/approval/status. 5 s keeps
+#: a single tab at 12 rpm, well inside the endpoint's own rate bucket.
+_APPROVAL_POLL_INTERVAL_MS = 5000
+
+#: localStorage key the operator SPA keeps its bearer session under. The
+#: approval-pending page is served from the same origin as the SPA in the
+#: default (combined) deployment, so page script can present that token to /me
+#: and the decision endpoint. Kept in lockstep with ``ui/src/shared/auth``.
+_SPA_TOKEN_STORAGE_KEY = "jentic-one.access_token"
+
+#: SPA route of the OAuth-client approval queue (Settings → queue tab), used
+#: for the "ask your admin" deep link. Kept in lockstep with the UI's
+#: ``oauthQueue`` link target (``ui/src/shared/lib/agentStream.tsx``) and the
+#: ``/app`` SPA mount (``shared/web/static.py``).
+_APPROVAL_QUEUE_SPA_PATH = "/app/settings?tab=queue"
 
 _CONSENT_SECURITY_HEADERS: dict[str, str] = {
     "X-Frame-Options": "DENY",
@@ -432,7 +510,7 @@ _AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
             background: white;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
-            max-width: 400px;
+            max-width: 420px;
             width: 100%;
             padding: 32px;
         }}
@@ -467,6 +545,72 @@ _AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
             font-size: 14px;
             line-height: 1.5;
             text-align: center;
+            margin-bottom: 16px;
+        }}
+        .panel {{
+            background: #f5f7f7;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }}
+        .panel p {{
+            color: #305256;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 10px;
+        }}
+        .copy-row {{
+            display: flex;
+            gap: 8px;
+        }}
+        .copy-row input {{
+            flex: 1;
+            min-width: 0;
+            padding: 8px 10px;
+            border: 1px solid #E4EAEB;
+            border-radius: 6px;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 12px;
+            color: #305256;
+            background: white;
+        }}
+        .buttons {{
+            display: flex;
+            gap: 12px;
+        }}
+        button {{
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }}
+        button:disabled {{ opacity: 0.6; cursor: default; }}
+        .buttons button {{ flex: 1; }}
+        .deny {{
+            background: #f5f7f7;
+            color: #305256;
+            border: 1px solid #E4EAEB;
+        }}
+        .deny:hover {{ background: #E4EAEB; }}
+        .approve {{
+            background: #305256;
+            color: white;
+        }}
+        .approve:hover {{ background: #193238; }}
+        .copy {{
+            background: white;
+            color: #305256;
+            border: 1px solid #E4EAEB;
+        }}
+        .copy:hover {{ background: #E4EAEB; }}
+        .status-line {{
+            text-align: center;
+            font-size: 13px;
+            color: #689296;
         }}
     </style>
 </head>
@@ -477,14 +621,159 @@ _AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
         </div>
         <h1><span class="app-name">{app_name}</span> is awaiting administrator approval</h1>
         <p class="description">
-            Ask your Jentic One admin to approve it under
-            Settings &rarr; OAuth clients, then retry the connection
-            from your application.
+            This page checks automatically and continues the connection
+            as soon as an administrator approves it.
         </p>
+        <div class="panel" id="anon-panel">
+            <p>Ask your Jentic One admin to approve
+                <span class="app-name">{app_name}</span> in the approval queue:</p>
+            <div class="copy-row">
+                <input id="queue-link" readonly value="{queue_url}">
+                <button type="button" class="copy" id="copy-link">Copy</button>
+            </div>
+        </div>
+        <div class="panel" id="admin-panel" hidden>
+            <p>You are signed in as an administrator &mdash; you can decide now:</p>
+            <div class="buttons">
+                <button type="button" class="deny" id="btn-deny">Deny</button>
+                <button type="button" class="approve" id="btn-approve">Approve</button>
+            </div>
+        </div>
+        <div class="status-line" id="approval-status">Waiting for approval&hellip;</div>
     </div>
+    <script id="approval-config" type="application/json">{config_json}</script>
+    {page_script}
 </body>
 </html>
 """
+
+# Inline behaviour for the approval-pending page. Kept as a plain string (not a
+# .format template) so its braces need no doubling; every dynamic value comes
+# from the JSON <script id="approval-config"> block, which is the single
+# escaped seam between server data and page script.
+_APPROVAL_PENDING_SCRIPT = """<script>
+(function () {
+    "use strict";
+    var cfg = JSON.parse(document.getElementById("approval-config").textContent);
+    var statusEl = document.getElementById("approval-status");
+    var adminPanel = document.getElementById("admin-panel");
+    var anonPanel = document.getElementById("anon-panel");
+    var settled = false;
+
+    function navigate(url) {
+        settled = true;
+        window.location.replace(url);
+    }
+
+    function isHttpUrl(url) {
+        return typeof url === "string" &&
+            (url.indexOf("https://") === 0 || url.indexOf("http://") === 0);
+    }
+
+    function onStatus(status) {
+        if (settled) { return; }
+        if (status === "approved") {
+            statusEl.textContent = "Approved — continuing…";
+            // Re-run the ORIGINAL authorize request; the client gate now
+            // passes, so the server 302s to the identity provider.
+            navigate(cfg.resume_url);
+        } else if (status === "denied") {
+            if (isHttpUrl(cfg.deny_redirect)) {
+                // Standard OAuth closure for the client: error=access_denied
+                // on its own registered redirect_uri.
+                navigate(cfg.deny_redirect);
+            } else {
+                settled = true;
+                statusEl.textContent =
+                    "An administrator denied this application. " +
+                    "You can close this page.";
+            }
+        }
+    }
+
+    function poll() {
+        if (settled) { return; }
+        fetch(cfg.status_url, { headers: { Accept: "application/json" } })
+            .then(function (resp) {
+                if (resp.status === 400) {
+                    // Signed state expired — re-run /authorize to mint a
+                    // fresh one (re-renders this page while still pending).
+                    navigate(cfg.resume_url);
+                    return null;
+                }
+                return resp.ok ? resp.json() : null;
+            })
+            .then(function (body) {
+                if (body && body.status) { onStatus(body.status); }
+            })
+            .catch(function () { /* transient — retry next tick */ });
+    }
+    window.setInterval(poll, cfg.poll_ms);
+    poll();
+
+    // Admin detection: the operator SPA keeps its session as a bearer token
+    // in same-origin localStorage. If one is present and /me confirms the
+    // oauth-clients:write permission (or org:admin), reveal the inline
+    // decision panel. Anything else keeps the anonymous panel.
+    var token = null;
+    try { token = window.localStorage.getItem(cfg.token_key); } catch (e) { /* blocked */ }
+    if (token) {
+        fetch(cfg.me_url, { headers: { Authorization: "Bearer " + token } })
+            .then(function (resp) { return resp.ok ? resp.json() : null; })
+            .then(function (me) {
+                var scopes = (me && me.scopes) || [];
+                if (me && (me.admin === true ||
+                        scopes.indexOf("oauth-clients:write") !== -1)) {
+                    adminPanel.hidden = false;
+                    anonPanel.hidden = true;
+                }
+            })
+            .catch(function () { /* stay anonymous */ });
+    }
+
+    function decide(action, button) {
+        button.disabled = true;
+        fetch(cfg.decision_url, {
+            method: "POST",
+            headers: {
+                Authorization: "Bearer " + token,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ state: cfg.state, action: action }),
+        })
+            .then(function (resp) {
+                if (!resp.ok) { throw new Error("decision failed"); }
+                return resp.json();
+            })
+            .then(function (body) { onStatus(body.status); })
+            .catch(function () {
+                button.disabled = false;
+                statusEl.textContent =
+                    "Decision failed — try again or use the approval queue.";
+            });
+    }
+    document.getElementById("btn-approve").addEventListener("click", function () {
+        decide("approve", this);
+    });
+    document.getElementById("btn-deny").addEventListener("click", function () {
+        decide("deny", this);
+    });
+
+    document.getElementById("copy-link").addEventListener("click", function () {
+        var input = document.getElementById("queue-link");
+        input.select();
+        var self = this;
+        try {
+            navigator.clipboard.writeText(input.value).then(function () {
+                self.textContent = "Copied";
+            });
+        } catch (e) {
+            document.execCommand("copy");
+            self.textContent = "Copied";
+        }
+    });
+})();
+</script>"""
 
 
 # The agent-picker consent variant (consent_model='agent' clients only —
@@ -827,6 +1116,162 @@ def _get_consent_backend(request: Request) -> SharedStateBackend:
     return get_auth_backend(request)
 
 
+# ---------- approval-in-flow helpers (P2) ----------
+
+
+def _approval_state_key(ctx: Context) -> str:
+    """Signing key for the approval-state blob.
+
+    Same signer/mechanism as the IdP-leg ``state`` but a distinct derived key
+    AND a distinct ``_purpose`` discriminator, so an approval blob can never be
+    replayed into /oauth/callback (or vice versa).
+    """
+    return _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "approval")
+
+
+def _mint_approval_state(
+    ctx: Context,
+    *,
+    client_id: str,
+    redirect_uri: str,
+    code_challenge: str,
+    scope: str,
+    state: str | None,
+    nonce: str | None,
+) -> str:
+    """Sign the ORIGINAL authorize parameters into the approval-state blob.
+
+    The blob is the only key the anonymous status endpoint accepts — never a
+    bare client_id — and its ``iat`` bounds its life to
+    :data:`APPROVAL_STATE_MAX_AGE_SECONDS`.
+    """
+    return _sign_payload(
+        {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "code_challenge": code_challenge,
+            "scope": scope,
+            "nonce": nonce,
+            "original_state": state,
+            "iat": str(int(time.time())),
+        },
+        _approval_state_key(ctx),
+        purpose="approval",
+    )
+
+
+def _approval_tri_state(
+    client: OAuthClientView | None,
+) -> Literal["pending", "approved", "denied"]:
+    """Collapse a client row into the poll tri-state.
+
+    ``approved`` only when the full D7 gate passes (approved AND active), so a
+    kill-switched client is never announced as ready. A missing row reads as
+    ``pending`` — rows are never deleted in normal operation, and answering
+    anything else would turn the endpoint into a deletion oracle.
+    """
+    if client is None:
+        return "pending"
+    if client.approval_status == OAuthClientApprovalStatus.DENIED.value:
+        return "denied"
+    if _client_gate_passes(client):
+        return "approved"
+    return "pending"
+
+
+def _safe_deny_redirect(
+    client: OAuthClientView, redirect_uri: str, state: str | None
+) -> str | None:
+    """The access_denied redirect for the deny arm — only when provably safe.
+
+    Safe means the request's redirect_uri is in the client's OWN registered
+    set (registration already enforces https/loopback-http schemes) and parses
+    as an http(s) URL. Anything else returns None and the page renders a
+    terminal message instead of navigating.
+    """
+    if redirect_uri not in client.redirect_uris:
+        return None
+    if urlsplit(redirect_uri).scheme not in ("http", "https"):
+        return None
+    params: dict[str, str] = {"error": "access_denied"}
+    if state:
+        params["state"] = state
+    separator = "&" if "?" in redirect_uri else "?"
+    return f"{redirect_uri}{separator}{urlencode(params)}"
+
+
+def _render_approval_pending_page(
+    request: Request,
+    ctx: Context,
+    *,
+    client: OAuthClientView,
+    response_type: str,
+    client_id: str,
+    redirect_uri: str,
+    code_challenge: str,
+    code_challenge_method: str,
+    scope: str,
+    state: str | None,
+    nonce: str | None,
+) -> HTMLResponse:
+    """Render the approval-pending page for an unapproved client.
+
+    All dynamic values reach the page script through one escaped JSON block;
+    the client's self-chosen name only ever lands in HTML-escaped text nodes.
+    """
+    approval_state = _mint_approval_state(
+        ctx,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        code_challenge=code_challenge,
+        scope=scope,
+        state=state,
+        nonce=nonce,
+    )
+
+    # The resume leg re-runs the ORIGINAL authorize request client-side; once
+    # the admin approves, this URL 302s to the IdP like any approved client.
+    resume_params: dict[str, str] = {
+        "response_type": response_type,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+        "scope": scope,
+    }
+    if state:
+        resume_params["state"] = state
+    if nonce:
+        resume_params["nonce"] = nonce
+    resume_url = f"/authorize?{urlencode(resume_params)}"
+
+    base_url = ctx.config.auth.canonical_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    queue_url = f"{base_url}{_APPROVAL_QUEUE_SPA_PATH}"
+
+    page_config = {
+        "state": approval_state,
+        "status_url": f"/oauth/approval/status?{urlencode({'st': approval_state})}",
+        "decision_url": "/oauth/approval/decision",
+        "me_url": "/me",
+        "resume_url": resume_url,
+        "deny_redirect": _safe_deny_redirect(client, redirect_uri, state),
+        "poll_ms": _APPROVAL_POLL_INTERVAL_MS,
+        "token_key": _SPA_TOKEN_STORAGE_KEY,
+    }
+    # \u003c-escape so attacker-influenced values (redirect_uri rides into
+    # deny_redirect/resume_url) can never close the JSON <script> block.
+    config_json = json.dumps(page_config).replace("<", "\\u003c")
+
+    html = _AWAITING_APPROVAL_PAGE_TEMPLATE.format(
+        app_name=html_mod.escape(client.name),
+        queue_url=html_mod.escape(queue_url, quote=True),
+        config_json=config_json,
+        page_script=_APPROVAL_PENDING_SCRIPT,
+        fonts_url=_FONTS_URL,
+    )
+    return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
+
+
 @router.get("/authorize", dependencies=[Depends(_check_rate_limit)], response_model=None)
 async def authorize_endpoint(
     request: Request,
@@ -846,12 +1291,15 @@ async def authorize_endpoint(
     If an external IdP is configured, redirects to the upstream provider.
     Otherwise returns an error (direct login requires a separate credential exchange).
     """
-    # D7 approval gate: a registered-but-unapproved client renders a
-    # human page — NEVER an OAuth error redirect (clients can't observe
-    # browser-side rejections; a hard authorize-time rejection bricks Claude
-    # Code permanently). This branch runs BEFORE redirect-URI failure handling
-    # and deliberately does not distinguish pending from denied (deny is
-    # reversible and silent; the admin communicates out of band).
+    # D7 approval gate, now approval-in-flow (P2): a registered-but-unapproved
+    # client renders a live approval-pending page — NEVER an OAuth error
+    # redirect (a hard authorize-time rejection bricks strict clients). The
+    # page carries the original authorize parameters in a signed state blob,
+    # polls the minimal status endpoint, offers inline approve/deny to an
+    # admin browser session, and auto-continues on approval by re-running this
+    # request. The initial render deliberately does not distinguish pending
+    # from denied (deny is reversible); a denied client resolves through the
+    # poll into the standard access_denied redirect when safe.
     if not _is_platform_client(client_id, ctx):
         unapproved = await _get_cached_oauth_client(request, client_id, ctx)
         if (
@@ -863,11 +1311,19 @@ async def authorize_endpoint(
                 client_id=client_id,
                 approval_status=unapproved.approval_status,
             )
-            html = _AWAITING_APPROVAL_PAGE_TEMPLATE.format(
-                app_name=html_mod.escape(unapproved.name),
-                fonts_url=_FONTS_URL,
+            return _render_approval_pending_page(
+                request,
+                ctx,
+                client=unapproved,
+                response_type=response_type,
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
+                scope=scope,
+                state=state,
+                nonce=nonce,
             )
-            return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
 
     if not await _is_allowed_redirect_uri(request, redirect_uri, client_id, ctx):
         logger.warning(
@@ -926,6 +1382,91 @@ async def authorize_endpoint(
         )
 
     return RedirectResponse(url=idp_url, status_code=302)
+
+
+@router.get(
+    "/oauth/approval/status",
+    dependencies=[Depends(_check_approval_status_rate_limit)],
+    summary="Poll client approval status (approval-pending page)",
+    responses={
+        400: {"description": "Malformed, tampered, or expired approval-state blob."},
+    },
+)
+async def approval_status_endpoint(
+    request: Request,
+    response: Response,
+    st: str = Query(..., description="Signed approval-state blob minted by /authorize"),
+    ctx: Context = Depends(get_ctx),
+) -> OAuthApprovalStatusResponse:
+    """Minimal tri-state poll for the approval-pending page.
+
+    Anonymous but keyed by the signed approval-state blob — never a bare
+    client_id, so the endpoint cannot be used to enumerate registrations. Any
+    verification failure (bad signature, wrong purpose, expired ``iat``,
+    malformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by
+    re-running /authorize, which mints a fresh blob. The response carries ONLY
+    the tri-state — no names, redirect URIs, or metadata.
+    """
+    params = _verify_payload(
+        st,
+        _approval_state_key(ctx),
+        purpose="approval",
+        max_age=APPROVAL_STATE_MAX_AGE_SECONDS,
+    )
+    client = await _get_cached_oauth_client(request, str(params.get("client_id") or ""), ctx)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return OAuthApprovalStatusResponse(status=_approval_tri_state(client))
+
+
+@router.post(
+    "/oauth/approval/decision",
+    summary="Approve or deny a pending client inline (approval-pending page)",
+    responses={
+        400: {"description": "Malformed, tampered, or expired approval-state blob."},
+    },
+)
+async def approval_decision_endpoint(
+    request: Request,
+    response: Response,
+    body: OAuthApprovalDecisionRequest,
+    identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
+    ctx: Context = Depends(get_ctx),
+) -> OAuthApprovalStatusResponse:
+    """Thin wrapper over the admin approval path for the approval-pending page.
+
+    Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+    / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+    decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+    same audit records, same D7 active/approval_status coupling; this endpoint
+    only translates the signed state blob into the client row. CSRF posture
+    matches the consent POST: no ambient credential is honored — the browser
+    must explicitly present the SPA bearer token, which a cross-site form
+    cannot do.
+    """
+    params = _verify_payload(
+        body.state,
+        _approval_state_key(ctx),
+        purpose="approval",
+        max_age=APPROVAL_STATE_MAX_AGE_SECONDS,
+    )
+    client_id = str(params.get("client_id") or "")
+    svc = OAuthClientService(ctx)
+    client = await svc.get_by_client_id(client_id)
+    if client is None:
+        raise InvalidGrantError("unknown client in approval state")
+    if body.action == "approve":
+        view = await svc.approve(client.id, identity=identity)
+    else:
+        view = await svc.deny(client.id, identity=identity)
+    logger.info(
+        "oauth_client_inline_decision",
+        client_id=client_id,
+        action=body.action,
+        actor_id=identity.sub,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return OAuthApprovalStatusResponse(status=_approval_tri_state(view))
 
 
 @router.get(

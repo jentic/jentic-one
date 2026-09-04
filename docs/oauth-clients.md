@@ -91,6 +91,44 @@ consent flow uses an opaque server-side handle (5-minute TTL, single-use); no
 user identity or scope information leaks into the URL. If the user denies, no
 local account is provisioned — provisioning is deferred until after approve.
 
+## Approval (self-registered clients)
+
+Clients that arrive through the anonymous dynamic-registration door land in
+the admin approval queue as `pending` and stay inactive until approved
+(approval-first is the default; see
+[mcp-http-endpoint.md](mcp-http-endpoint.md)).
+
+A `GET /authorize` for a pending client does **not** dead-end: it renders an
+**approval-pending page** in the user's browser while the client's own request
+keeps waiting. The page:
+
+- carries the original authorize parameters in a signed, expiring state blob
+  (10-minute TTL, same signer as the IdP-leg `state`, distinct purpose);
+- polls `GET /oauth/approval/status?st=<blob>` every few seconds — an
+  anonymous, rate-limited endpoint (own bucket,
+  `auth.oauth_rate_limit.approval_status_rpm`/`_burst`) that verifies the blob
+  and answers **only** `{"status": "pending" | "approved" | "denied"}`; it
+  never accepts a bare `client_id` and never returns client metadata;
+- if the browser holds an operator-SPA admin session (same origin), reveals
+  inline **Approve / Deny** controls that post the blob to
+  `POST /oauth/approval/decision` — a thin wrapper over the same
+  `OAuthClientService` approve/deny used by
+  `POST /admin/oauth-clients/{id}:approve`/`:deny`, gated by the same
+  `oauth-clients:write` permission (same audit records, no second approval
+  path). No ambient credential is honored: the browser must present the SPA
+  bearer token explicitly, mirroring the consent POST's CSRF posture;
+- otherwise shows "ask your admin" with a copyable deep link to the Settings
+  approval queue.
+
+On **approved**, the page re-runs the original authorize request, which now
+proceeds normally (302 to the IdP) — the MCP client's flow completes without
+any client-side retry. On **denied**, the page redirects back to the client
+with `error=access_denied` when the request's `redirect_uri` is registered
+for that client (else it renders a terminal message). If the blob expires
+while still pending, the page transparently re-runs `/authorize` to mint a
+fresh one. Nothing changes on the wire for the machine client: this page *is*
+the browser response.
+
 ## How the client is used
 
 Once registered, the third-party application initiates the OAuth flow by
