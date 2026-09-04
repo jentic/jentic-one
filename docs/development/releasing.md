@@ -31,7 +31,12 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
      pull — see
      [`deploy/README.md`](../../deploy/README.md#self-hosted-containers--external-postgres).
    - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
-     `jentic` binaries (cosign keyless + syft SBOMs) and pushes the Homebrew cask.
+     `jentic` binaries (cosign keyless + syft SBOMs) and publishes the package
+     channels: the Homebrew cask, a winget manifest PR against
+     `microsoft/winget-pkgs`, and the scoop bucket manifest. The winget/scoop
+     publishes are token-gated: with `WINGET_TOKEN` / `SCOOP_BUCKET_TOKEN`
+     unset the entry is skipped (logged, never fails the release) — see the
+     one-time setup below.
 
 Releases continue the pre-1.0 `0.x` line — see `VERSIONING.md` for the
 versioning policy.
@@ -69,7 +74,7 @@ Release-As: 0.38.3
 
 release-please then opens a `chore(main): release 0.38.3` PR; merging it cuts the
 tag and re-runs `release.yml` (now from the fixed workflow on `main`), producing
-a complete set of signed binaries + the Homebrew cask. A failed release version
+a complete set of signed binaries + the package channels (cask, winget, scoop). A failed release version
 is superseded by the next one — every release rebuilds all artifacts from
 scratch, so nothing is lost by skipping it.
 
@@ -86,6 +91,23 @@ The automation is inert until these are provisioned:
   `RELEASE_PLEASE_APP_PRIVATE_KEY`.
 - **`HOMEBREW_TAP_TOKEN`** — a fine-grained token with `contents: write` on
   `jentic/homebrew-tap` only (for the cross-repo cask push).
+- **`SCOOP_BUCKET_TOKEN`** — same shape: a fine-grained token with
+  `contents: write` on `jentic/scoop-bucket` only. Create that repo (public,
+  empty is fine — GoReleaser commits `jentic.json` to its root on each
+  release) before setting the secret.
+- **`WINGET_TOKEN`** — a **classic** PAT with `public_repo` scope
+  (fine-grained tokens cannot open cross-repo PRs against
+  `microsoft/winget-pkgs`). Fork `microsoft/winget-pkgs` into the `jentic`
+  org first; each release then pushes a manifest branch to the fork and opens
+  the upstream PR. The **first** submission goes through Microsoft's human
+  review (typically days); later versions are auto-validated by bots. Until
+  the first manifest lands, `winget install Jentic.Jentic` resolves nothing —
+  the scoop bucket is the immediate Windows channel in the meantime.
+
+Both Windows-channel secrets are **optional**: while unset, GoReleaser skips
+that publisher with a log line and the release stays green (the
+`skip_upload` templates in `cli/.goreleaser.yaml`). Provisioning the secret
+is what turns the channel on.
 
 cosign signing needs no secret — it uses the release job's OIDC token (keyless,
 via Sigstore/Fulcio).

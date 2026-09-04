@@ -39,8 +39,18 @@ run as-is. Two things Docker Desktop does for you:
 
 ## 4. The agent side — native Windows
 
-`jentic.exe` ships natively (amd64 `.zip` — download and verification in
-[cli.md](cli.md)). Agents on native Windows can `register`, `search`,
+`jentic.exe` ships natively (amd64 + arm64):
+
+```powershell
+winget install Jentic.Jentic
+
+# or, via our Scoop bucket (carries brand-new releases before winget review completes):
+scoop bucket add jentic https://github.com/jentic/scoop-bucket
+scoop install jentic
+```
+
+Manual `.zip` download and cosign verification are in [cli.md](cli.md).
+Agents on native Windows can `register`, `search`,
 `inspect`, and `execute` against the broker at `http://127.0.0.1:8100`
 thanks to the loopback forwarding above — no WSL needed on the agent side.
 

@@ -78,7 +78,21 @@ brew install --cask jentic/tap/jentic
 
 The cask installs both `jentic` and `jenticctl`.
 
-### 2. One-line download (verified binary, no compiler)
+### 2. Winget / Scoop (Windows) — agent CLI
+
+```powershell
+winget install Jentic.Jentic
+
+# or, via our Scoop bucket (carries brand-new releases before winget review completes):
+scoop bucket add jentic https://github.com/jentic/scoop-bucket
+scoop install jentic
+```
+
+Both install `jentic.exe` only — `jenticctl` is not shipped for native Windows
+(its job is Docker/compose lifecycle; use WSL, see
+[docs/installation/windows.md](../docs/installation/windows.md)).
+
+### 3. One-line download (verified binary, no compiler)
 
 ```bash
 # both binaries (default) — jentic (discover/run) + jenticctl (run the stack locally):
@@ -116,7 +130,7 @@ On a machine with **no interactive terminal** (piped `curl … | sh` in CI), the
 installer installs the binaries and then prints the exact non-interactive
 follow-up (`jenticctl install --defaults`) instead of blocking on a wizard.
 
-### 3. Manual download + verify
+### 4. Manual download + verify
 
 Grab the archive for your platform from the
 [Releases page](https://github.com/jentic/jentic-one/releases), then verify and
@@ -155,7 +169,7 @@ shipped natively for Windows, and `jentic run` (the local-agent sandbox) is
 **unsupported on native Windows** — use **WSL** for agent-sandbox and local-stack
 workflows.
 
-### 4. From source (contributors / advanced)
+### 5. From source (contributors / advanced)
 
 Build from a checkout with `make build` (below), or force the installer's
 from-source path with `JENTIC_INSTALL_METHOD=source`.
