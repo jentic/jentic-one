@@ -8,7 +8,8 @@ store.
 
 It covers the flow and day-to-day usage with examples. For the security design
 and rationale, see [`docs/security/same-host/`](../security/same-host/README.md);
-for the generated per-flag reference, see the platform docs (Reference → CLI).
+for the generated per-flag reference, open `/app/docs` on your deployment
+(Reference → CLI).
 
 - [The mental model](#the-mental-model)
 - [Quickstart](#quickstart)

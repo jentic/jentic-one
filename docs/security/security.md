@@ -165,8 +165,7 @@ the key/DB by construction, so agent sandboxing becomes about limiting what a
 compromised agent can *do* (egress control, least-privilege tokens) rather than
 protecting the key at rest.
 
-If an agent runtime spawns the local `jentic mcp` server (available in the
-`jentic` CLI from the next release — check `jentic mcp --help`) on the same
+If an agent runtime spawns the local `jentic mcp` server on the same
 host as the instance, see
 [Hardening same-host MCP setups](same-host/mcp-same-host-hardening.md)
 for MCP-entry-shaped recipes (isolated instance, sudo-shim with a per-agent
@@ -190,8 +189,6 @@ deployed:
   exfiltrating long-lived credentials that could be used from outside the
   network.
 
-> More detailed documentation on sidecar authentication patterns will be provided in future work.
-
 ## Production checklist
 
 Before pointing Jentic One at production credentials:
@@ -209,8 +206,8 @@ Before pointing Jentic One at production credentials:
       authenticated proxy).
 - [ ] TLS is terminated in front of Jentic One.
 - [ ] The audit log is shipped to durable storage.
-- [ ] Telemetry is set as you intend (it is **off by default**; see the
-      [README](../../README.md#security--telemetry)).
+- [ ] Telemetry is set as you intend (it is **off by default**; see
+      [`telemetry` in the configuration reference](../reference/config.md#telemetry)).
 
 ## Reporting a vulnerability
 

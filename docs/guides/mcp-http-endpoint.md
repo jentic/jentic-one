@@ -77,7 +77,25 @@ monitor labeled with the `mcp` origin.
 
 ## Recipes: stdio-only clients
 
-Some MCP runtimes only spawn stdio servers. Two third-party bridges pump
+Some MCP runtimes only spawn stdio servers. The first-party relay is
+`jentic mcp --connect <url>`: a credential-less stdio ↔ Streamable HTTP
+pump that keeps the bearer out of the config file and persists nothing.
+Pass the endpoint URL and hand the bearer over `JENTIC_MCP_BEARER` (or
+`--bearer-file <path>`):
+
+```json
+{
+  "mcpServers": {
+    "jentic": {
+      "command": "jentic",
+      "args": ["mcp", "--connect", "https://your-jentic-host/mcp"],
+      "env": { "JENTIC_MCP_BEARER": "<agent-api-key>" }
+    }
+  }
+}
+```
+
+Two third-party bridges also pump
 stdio ↔ Streamable HTTP; both keep the endpoint's per-request bearer model
 (the bridge adds the `Authorization` header, the deployment still enforces
 identity, scopes, and audit per call).
@@ -114,9 +132,8 @@ config.
 > bridge and caches any tokens it negotiates **in plaintext under the
 > desktop user's home** (`~/.mcp-auth`). With a static `--header` bearer as
 > above nothing sensitive should land there, but treat the directory as
-> secret-bearing if you let the bridge do OAuth. A first-party,
-> credential-less stdio relay (`jentic mcp --connect <url>`) is planned to
-> replace these third-party bridges for exactly this reason.
+> secret-bearing if you let the bridge do OAuth. The first-party relay
+> above never has this problem: it persists nothing.
 
 ### `mcp-proxy` (PyPI)
 

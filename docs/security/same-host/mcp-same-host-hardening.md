@@ -1,7 +1,6 @@
 # Hardening same-host MCP setups
 
-The local `jentic mcp` stdio server (available in the `jentic` CLI from the
-next release — check `jentic mcp --help`) is spawned by the agent runtime
+The local `jentic mcp` stdio server is spawned by the agent runtime
 itself: a GUI runtime (Claude Desktop, Cursor, …) starts the process as the
 **desktop user**, and there is no seam to interpose a different Unix user the
 way `jentic run` does for agents the CLI launches. When the Jentic One

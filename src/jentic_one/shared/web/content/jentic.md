@@ -11,8 +11,7 @@ them through a single authenticated gateway without managing each API's
 credentials yourself. The `jentic` CLI is the agent-facing entrypoint.
 
 The same loop is also exposed over **MCP** by the local `jentic mcp` stdio
-server — available in the `jentic` CLI from the next release; check
-`jentic mcp --help`. If your session has `jentic` MCP tools, prefer them; use
+server. If your session has `jentic` MCP tools, prefer them; use
 the CLI for `setup`/`access` recovery and anything not exposed over MCP. Both
 surfaces talk to the same instance — check `backend`/`host` in the identity
 stamp on MCP tool results if in doubt.

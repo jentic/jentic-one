@@ -17,8 +17,7 @@ actual operations is a separate, also-approved step
    the same machine as your own work? Isolate it —
    [Run coding agents in isolation](local-agent.md).
 2. **MCP over stdio (`jentic mcp`)** — for MCP-capable runtimes, add a stdio
-   entry that spawns `jentic mcp --context <name>` (available in the `jentic`
-   CLI from the next release; check `jentic mcp --help`). Setup and
+   entry that spawns `jentic mcp --context <name>`. Setup and
    registration stay CLI-only (`jentic setup`), so onboarding is unchanged;
    once registered, the execute loop is MCP-preferred. It exposes the same
    discover → execute loop the CLI drives (`search_apis`,

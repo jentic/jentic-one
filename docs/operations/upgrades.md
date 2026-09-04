@@ -27,7 +27,7 @@ number's exact promises while in beta: [VERSIONING.md](../../VERSIONING.md).
 | Install | Upgrade steps |
 | ------- | ------------- |
 | Docker (`docker run`) | [docker.md → Upgrading](../installation/docker.md#upgrading) |
-| systemd + Podman | [systemd.md → Upgrading](../installation/systemd.md#upgrading) |
+| systemd | [systemd.md → Upgrading](../installation/systemd.md#upgrading) |
 | Helm | [helm.md → Upgrading](../installation/helm.md#upgrading) |
 | CLI-managed (`jenticctl install`) | `jenticctl update`, or the step-by-step [agent runbook](../agent/operate.md#upgrade) |
 

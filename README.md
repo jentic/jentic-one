@@ -42,9 +42,8 @@
 Giving an agent API access normally means giving it an API key. Jentic One removes that step.
 Register the APIs an agent may use, store the credentials once, and the agent makes its calls through the Broker. The Broker checks the agent's permissions, attaches the credential at execution time, and writes an audit record. Your agent never sees your keys.
 
-Agents integrate through the `jentic` CLI, a generated skill, the local `jentic mcp` server
-(available in the `jentic` CLI from the next release — check `jentic mcp --help`), or plain
-HTTP. Every path terminates at the credential-injecting Broker: the MCP server runs beside the
+Agents integrate through the `jentic` CLI, a generated skill, the local `jentic mcp` server,
+or plain HTTP. Every path terminates at the credential-injecting Broker: the MCP server runs beside the
 agent as a thin client and holds no upstream credentials — those never leave your Broker.
 
 ## Quickstart
