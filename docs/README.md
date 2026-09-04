@@ -1,10 +1,24 @@
 # Jentic One documentation
 
-Docs index. What Jentic One is and how it works: [repository README](../README.md).
+What Jentic One is and how it works: [repository README](../README.md).
+
+## Where do I go?
+
+- **Installing and running it** (admin) → [Install](#install), then
+  [Secure](#secure) for the security posture.
+- **Using it** (connecting agents, brokering calls) → [Use](#use).
+- **Developing on it** (spinning it up from source, extending the code) →
+  [Develop](#develop).
+- **You are an AI agent executing a task** → [agent runbooks](agent/README.md)
+  and [`llms.txt`](../llms.txt).
+
+Each section gets more detailed the deeper you go: this index → a section
+overview → one scoped guide → [generated reference](#reference-generated--never-hand-edit).
 
 ## Install
 
 - [Installation overview](installation/quickstart.md) — artifacts, verification, air-gapped transfer
+- [Platform support](installation/platform-support.md) — what runs on Linux / macOS / Windows / WSL2
 - [Agent runbooks](agent/README.md) — install/operate/use/harden guides written for an AI agent to execute
 - [CLI binaries](installation/cli.md) — `jentic` / `jenticctl` download matrix and verification
 - [Docker](installation/docker.md)
@@ -19,6 +33,8 @@ Docs index. What Jentic One is and how it works: [repository README](../README.m
 - [Overlays](guides/overlays.md)
 - [Local coding agents](guides/local-agent.md)
 - [Cloud vs self-hosted](guides/cloud-vs-self-hosted.md)
+- [OAuth clients](guides/oauth-clients.md) — connecting OAuth-secured APIs
+- [MCP over HTTP](guides/mcp-http-endpoint.md) — the optional hosted `/mcp` endpoint
 - [CLI README](../cli/README.md) — the full `jentic` / `jenticctl` command surface
 
 ## Secure
@@ -40,4 +56,3 @@ Docs index. What Jentic One is and how it works: [repository README](../README.m
 - [Configuration](reference/config.md) — every config key, default, and env var (`make config-reference`)
 - [Endpoints & scopes](reference/endpoints.md) — every HTTP route and its required scope (`make endpoints`)
 - [reference/README.md](reference/README.md) — how the generated material works
-
