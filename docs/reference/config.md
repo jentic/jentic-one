@@ -148,13 +148,13 @@ Admin surface configuration.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `admin.auth.jwt_secret` | string (secret) | `"**********"` | `JENTIC__ADMIN__AUTH__JWT_SECRET` |  |
+| `admin.auth.jwt_secret` | string (secret) | `""` | `JENTIC__ADMIN__AUTH__JWT_SECRET` |  |
 | `admin.auth.jwt_ttl_seconds` | integer (> 0) | `3600` | `JENTIC__ADMIN__AUTH__JWT_TTL_SECONDS` |  |
 | `admin.auth.session_ttl_seconds` | integer (> 0) | `43200` | `JENTIC__ADMIN__AUTH__SESSION_TTL_SECONDS` |  |
 | `admin.auth.failed_login_lockout_threshold` | integer | `5` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_THRESHOLD` |  |
 | `admin.auth.failed_login_lockout_seconds` | integer | `900` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_SECONDS` |  |
 | `admin.invite.ttl_days` | integer | `7` | `JENTIC__ADMIN__INVITE__TTL_DAYS` |  |
-| `admin.invite.pepper` | string (secret) | `"**********"` | `JENTIC__ADMIN__INVITE__PEPPER` |  |
+| `admin.invite.pepper` | string (secret) | `""` | `JENTIC__ADMIN__INVITE__PEPPER` |  |
 
 ## `auth`
 
@@ -310,7 +310,7 @@ Credentials subsystem configuration.
 | `credentials.providers.<name>.client_id` | string | *required* | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__CLIENT_ID` |  |
 | `credentials.providers.<name>.client_secret` | string (secret) | *required* | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__CLIENT_SECRET` |  |
 | `credentials.providers.<name>.connect_base_url` | string | `"https://api.pipedream.com/v1"` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__CONNECT_BASE_URL` |  |
-| `credentials.connect.state_secret` | string (secret) | `"**********"` | `JENTIC__CREDENTIALS__CONNECT__STATE_SECRET` |  |
+| `credentials.connect.state_secret` | string (secret) | `""` | `JENTIC__CREDENTIALS__CONNECT__STATE_SECRET` |  |
 | `credentials.connect.state_ttl_seconds` | integer | `600` | `JENTIC__CREDENTIALS__CONNECT__STATE_TTL_SECONDS` |  |
 
 ## `search`
