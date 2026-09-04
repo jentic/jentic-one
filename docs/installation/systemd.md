@@ -87,7 +87,7 @@ ExecStart=/usr/bin/docker run --rm --name jentic-broker \
   --env-file /etc/jentic/prod.env \
   -e JENTIC__APPS=broker \
   -v /etc/jentic:/etc/jentic:ro \
-  -p 127.0.0.1:8080:8000 \
+  -p 127.0.0.1:8100:8000 \
   ${IMAGE}
 ExecStop=/usr/bin/docker stop -t 30 jentic-broker
 
@@ -102,7 +102,7 @@ systemctl daemon-reload
 systemctl enable --now jentic-app jentic-broker   # pulls in jentic-migrate first
 
 curl -fsS http://localhost:8000/health   # app
-curl -fsS http://localhost:8080/health   # broker
+curl -fsS http://localhost:8100/health   # broker
 ```
 
 Logs go to the journal:

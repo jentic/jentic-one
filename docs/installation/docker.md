@@ -126,13 +126,13 @@ docker run -d --name jentic-app --env-file /etc/jentic/prod.env \
 # broker: data plane — the execution edge agents call.
 docker run -d --name jentic-broker --env-file /etc/jentic/prod.env \
   -e JENTIC__APPS=broker \
-  -v /etc/jentic:/etc/jentic:ro -p 127.0.0.1:8080:8000 \
+  -v /etc/jentic:/etc/jentic:ro -p 127.0.0.1:8100:8000 \
   "$IMAGE"
 ```
 
 ```bash
 curl -fsS http://localhost:8000/health   # app
-curl -fsS http://localhost:8080/health   # broker
+curl -fsS http://localhost:8100/health   # broker
 ```
 
 Both surfaces speak plain HTTP — the loopback binds keep them off the network

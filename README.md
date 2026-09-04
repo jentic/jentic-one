@@ -90,7 +90,7 @@ docker run --rm "${DB[@]}" -v jentic-data:/data \
 docker run -d --name jentic-app "${DB[@]}" -v jentic-data:/data \
   -p 127.0.0.1:8000:8000 ghcr.io/jentic/jentic-one-app:latest      # control plane (UI + APIs)
 docker run -d --name jentic-broker "${DB[@]}" -e JENTIC__APPS=broker -v jentic-data:/data \
-  -p 127.0.0.1:8080:8000 ghcr.io/jentic/jentic-one-app:latest      # data plane (agents call this)
+  -p 127.0.0.1:8100:8000 ghcr.io/jentic/jentic-one-app:latest      # data plane (agents call this)
 
 # First admin (prompts for a password), then sign in at http://127.0.0.1:8000
 docker run --rm -it "${DB[@]}" -v jentic-data:/data \
