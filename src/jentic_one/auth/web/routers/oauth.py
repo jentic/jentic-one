@@ -226,6 +226,13 @@ _TOKEN_REQUEST_BODY: dict[str, object] = {
     "/oauth/token",
     dependencies=[Depends(_check_token_rate_limit)],
     openapi_extra=_TOKEN_REQUEST_BODY,
+    # RFC 6749 §5.1 + OIDC Core §3.1.3.3: optional members the grant did not
+    # mint (id_token on grant-bearing agent-channel codes per D11, refresh_token
+    # on grants that don't rotate one) are omitted from the response, never
+    # emitted as JSON null — strict clients (mcp-remote's zod schema, Cursor's
+    # MCP SDK) reject nulls and drop the whole token response. Same posture as
+    # the DCR door's RFC 7591 omission (oauth_client_registration.py).
+    response_model_exclude_none=True,
 )
 async def token_endpoint(
     request: Request,
@@ -566,7 +573,13 @@ async def revoke_endpoint(
 router.include_router(revocation_router)
 
 
-@router.post("/oauth/introspect")
+@router.post(
+    "/oauth/introspect",
+    # RFC 7662 §2.2: members the server has no value for are omitted from the
+    # introspection response, never emitted as JSON null (the inactive-token
+    # body is exactly `{"active": false}`).
+    response_model_exclude_none=True,
+)
 async def introspect_endpoint(
     body: IntrospectRequest,
     identity: Identity = get_current_identity(allow_expired_password=True),
