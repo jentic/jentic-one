@@ -50,6 +50,16 @@ server:
   # "local" (default) for a self-hosted install on your own machine/network,
   # "remote" for a hosted install run elsewhere.
   # backend: local
+  # Daemon-native MCP over Streamable HTTP (/mcp) and its interactive-OAuth
+  # surface. Both are off by default. OAuth-client self-registrations (DCR)
+  # land in the admin approval queue by default — auto_approve_clients is an
+  # explicit opt-in for deployments that accept self-registered clients
+  # without review.
+  # mcp:
+  #   enabled: true
+  #   oauth:
+  #     enabled: true
+  #     auto_approve_clients: false   # default; set true to skip the queue
 
 apps:
   - registry
