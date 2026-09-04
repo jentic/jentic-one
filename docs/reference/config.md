@@ -38,39 +38,39 @@ Named database connections.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `databases.registry.backend` | "postgres" \| "sqlite" | `"postgres"` | `JENTIC__DATABASES__REGISTRY__BACKEND` |  |
-| `databases.registry.host` | string | `"localhost"` | `JENTIC__DATABASES__REGISTRY__HOST` |  |
-| `databases.registry.port` | integer | `5432` | `JENTIC__DATABASES__REGISTRY__PORT` |  |
-| `databases.registry.name` | string | `""` | `JENTIC__DATABASES__REGISTRY__NAME` |  |
-| `databases.registry.user` | string | `"postgres"` | `JENTIC__DATABASES__REGISTRY__USER` |  |
-| `databases.registry.password` | string (secret) | `""` | `JENTIC__DATABASES__REGISTRY__PASSWORD` |  |
-| `databases.registry.pool_max` | integer | `10` | `JENTIC__DATABASES__REGISTRY__POOL_MAX` |  |
-| `databases.registry.schema_name` | string | `"public"` | `JENTIC__DATABASES__REGISTRY__SCHEMA_NAME` |  |
-| `databases.registry.path` | string \| null | `null` | `JENTIC__DATABASES__REGISTRY__PATH` |  |
-| `databases.registry.busy_timeout_ms` | integer | `5000` | `JENTIC__DATABASES__REGISTRY__BUSY_TIMEOUT_MS` |  |
-| `databases.registry.journal_mode` | string | `"WAL"` | `JENTIC__DATABASES__REGISTRY__JOURNAL_MODE` |  |
-| `databases.admin.backend` | "postgres" \| "sqlite" | `"postgres"` | `JENTIC__DATABASES__ADMIN__BACKEND` |  |
-| `databases.admin.host` | string | `"localhost"` | `JENTIC__DATABASES__ADMIN__HOST` |  |
-| `databases.admin.port` | integer | `5432` | `JENTIC__DATABASES__ADMIN__PORT` |  |
-| `databases.admin.name` | string | `""` | `JENTIC__DATABASES__ADMIN__NAME` |  |
-| `databases.admin.user` | string | `"postgres"` | `JENTIC__DATABASES__ADMIN__USER` |  |
-| `databases.admin.password` | string (secret) | `""` | `JENTIC__DATABASES__ADMIN__PASSWORD` |  |
-| `databases.admin.pool_max` | integer | `10` | `JENTIC__DATABASES__ADMIN__POOL_MAX` |  |
-| `databases.admin.schema_name` | string | `"public"` | `JENTIC__DATABASES__ADMIN__SCHEMA_NAME` |  |
-| `databases.admin.path` | string \| null | `null` | `JENTIC__DATABASES__ADMIN__PATH` |  |
-| `databases.admin.busy_timeout_ms` | integer | `5000` | `JENTIC__DATABASES__ADMIN__BUSY_TIMEOUT_MS` |  |
-| `databases.admin.journal_mode` | string | `"WAL"` | `JENTIC__DATABASES__ADMIN__JOURNAL_MODE` |  |
-| `databases.control.backend` | "postgres" \| "sqlite" | `"postgres"` | `JENTIC__DATABASES__CONTROL__BACKEND` |  |
-| `databases.control.host` | string | `"localhost"` | `JENTIC__DATABASES__CONTROL__HOST` |  |
-| `databases.control.port` | integer | `5432` | `JENTIC__DATABASES__CONTROL__PORT` |  |
-| `databases.control.name` | string | `""` | `JENTIC__DATABASES__CONTROL__NAME` |  |
-| `databases.control.user` | string | `"postgres"` | `JENTIC__DATABASES__CONTROL__USER` |  |
-| `databases.control.password` | string (secret) | `""` | `JENTIC__DATABASES__CONTROL__PASSWORD` |  |
-| `databases.control.pool_max` | integer | `10` | `JENTIC__DATABASES__CONTROL__POOL_MAX` |  |
-| `databases.control.schema_name` | string | `"public"` | `JENTIC__DATABASES__CONTROL__SCHEMA_NAME` |  |
-| `databases.control.path` | string \| null | `null` | `JENTIC__DATABASES__CONTROL__PATH` |  |
-| `databases.control.busy_timeout_ms` | integer | `5000` | `JENTIC__DATABASES__CONTROL__BUSY_TIMEOUT_MS` |  |
-| `databases.control.journal_mode` | string | `"WAL"` | `JENTIC__DATABASES__CONTROL__JOURNAL_MODE` |  |
+| `databases.registry.backend` | "postgres" \| "sqlite" | `"postgres"` | `JENTIC__DATABASES__REGISTRY__BACKEND` | Database engine for this connection: `postgres` uses the server connection fields; `sqlite` uses `path` and ignores them. |
+| `databases.registry.host` | string | `"localhost"` | `JENTIC__DATABASES__REGISTRY__HOST` | PostgreSQL server hostname. |
+| `databases.registry.port` | integer | `5432` | `JENTIC__DATABASES__REGISTRY__PORT` | PostgreSQL server port. |
+| `databases.registry.name` | string | `""` | `JENTIC__DATABASES__REGISTRY__NAME` | PostgreSQL database name. Required for the `postgres` backend. |
+| `databases.registry.user` | string | `"postgres"` | `JENTIC__DATABASES__REGISTRY__USER` | PostgreSQL role to connect as. |
+| `databases.registry.password` | string (secret) | `""` | `JENTIC__DATABASES__REGISTRY__PASSWORD` | Password for the PostgreSQL role. |
+| `databases.registry.pool_max` | integer | `10` | `JENTIC__DATABASES__REGISTRY__POOL_MAX` | Maximum connections in the PostgreSQL connection pool (ignored for SQLite). |
+| `databases.registry.schema_name` | string | `"public"` | `JENTIC__DATABASES__REGISTRY__SCHEMA_NAME` | PostgreSQL schema for this connection: created if missing by the migration runner (`CREATE SCHEMA IF NOT EXISTS`) and put first on `search_path`, so several connections can share one database. |
+| `databases.registry.path` | string \| null | `null` | `JENTIC__DATABASES__REGISTRY__PATH` | SQLite: filesystem path to the database file (`:memory:` for in-memory). Required for the `sqlite` backend. |
+| `databases.registry.busy_timeout_ms` | integer | `5000` | `JENTIC__DATABASES__REGISTRY__BUSY_TIMEOUT_MS` | SQLite: per-connection wait for a held write lock, in milliseconds, before failing with `database is locked`. |
+| `databases.registry.journal_mode` | string | `"WAL"` | `JENTIC__DATABASES__REGISTRY__JOURNAL_MODE` | SQLite journal mode (persistent per database file). `WAL` lets a writer and readers proceed concurrently instead of blocking each other. |
+| `databases.admin.backend` | "postgres" \| "sqlite" | `"postgres"` | `JENTIC__DATABASES__ADMIN__BACKEND` | Database engine for this connection: `postgres` uses the server connection fields; `sqlite` uses `path` and ignores them. |
+| `databases.admin.host` | string | `"localhost"` | `JENTIC__DATABASES__ADMIN__HOST` | PostgreSQL server hostname. |
+| `databases.admin.port` | integer | `5432` | `JENTIC__DATABASES__ADMIN__PORT` | PostgreSQL server port. |
+| `databases.admin.name` | string | `""` | `JENTIC__DATABASES__ADMIN__NAME` | PostgreSQL database name. Required for the `postgres` backend. |
+| `databases.admin.user` | string | `"postgres"` | `JENTIC__DATABASES__ADMIN__USER` | PostgreSQL role to connect as. |
+| `databases.admin.password` | string (secret) | `""` | `JENTIC__DATABASES__ADMIN__PASSWORD` | Password for the PostgreSQL role. |
+| `databases.admin.pool_max` | integer | `10` | `JENTIC__DATABASES__ADMIN__POOL_MAX` | Maximum connections in the PostgreSQL connection pool (ignored for SQLite). |
+| `databases.admin.schema_name` | string | `"public"` | `JENTIC__DATABASES__ADMIN__SCHEMA_NAME` | PostgreSQL schema for this connection: created if missing by the migration runner (`CREATE SCHEMA IF NOT EXISTS`) and put first on `search_path`, so several connections can share one database. |
+| `databases.admin.path` | string \| null | `null` | `JENTIC__DATABASES__ADMIN__PATH` | SQLite: filesystem path to the database file (`:memory:` for in-memory). Required for the `sqlite` backend. |
+| `databases.admin.busy_timeout_ms` | integer | `5000` | `JENTIC__DATABASES__ADMIN__BUSY_TIMEOUT_MS` | SQLite: per-connection wait for a held write lock, in milliseconds, before failing with `database is locked`. |
+| `databases.admin.journal_mode` | string | `"WAL"` | `JENTIC__DATABASES__ADMIN__JOURNAL_MODE` | SQLite journal mode (persistent per database file). `WAL` lets a writer and readers proceed concurrently instead of blocking each other. |
+| `databases.control.backend` | "postgres" \| "sqlite" | `"postgres"` | `JENTIC__DATABASES__CONTROL__BACKEND` | Database engine for this connection: `postgres` uses the server connection fields; `sqlite` uses `path` and ignores them. |
+| `databases.control.host` | string | `"localhost"` | `JENTIC__DATABASES__CONTROL__HOST` | PostgreSQL server hostname. |
+| `databases.control.port` | integer | `5432` | `JENTIC__DATABASES__CONTROL__PORT` | PostgreSQL server port. |
+| `databases.control.name` | string | `""` | `JENTIC__DATABASES__CONTROL__NAME` | PostgreSQL database name. Required for the `postgres` backend. |
+| `databases.control.user` | string | `"postgres"` | `JENTIC__DATABASES__CONTROL__USER` | PostgreSQL role to connect as. |
+| `databases.control.password` | string (secret) | `""` | `JENTIC__DATABASES__CONTROL__PASSWORD` | Password for the PostgreSQL role. |
+| `databases.control.pool_max` | integer | `10` | `JENTIC__DATABASES__CONTROL__POOL_MAX` | Maximum connections in the PostgreSQL connection pool (ignored for SQLite). |
+| `databases.control.schema_name` | string | `"public"` | `JENTIC__DATABASES__CONTROL__SCHEMA_NAME` | PostgreSQL schema for this connection: created if missing by the migration runner (`CREATE SCHEMA IF NOT EXISTS`) and put first on `search_path`, so several connections can share one database. |
+| `databases.control.path` | string \| null | `null` | `JENTIC__DATABASES__CONTROL__PATH` | SQLite: filesystem path to the database file (`:memory:` for in-memory). Required for the `sqlite` backend. |
+| `databases.control.busy_timeout_ms` | integer | `5000` | `JENTIC__DATABASES__CONTROL__BUSY_TIMEOUT_MS` | SQLite: per-connection wait for a held write lock, in milliseconds, before failing with `database is locked`. |
+| `databases.control.journal_mode` | string | `"WAL"` | `JENTIC__DATABASES__CONTROL__JOURNAL_MODE` | SQLite journal mode (persistent per database file). `WAL` lets a writer and readers proceed concurrently instead of blocking each other. |
 
 ## `services`
 
@@ -148,11 +148,11 @@ Admin surface configuration.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `admin.auth.jwt_secret` | string (secret) | `""` | `JENTIC__ADMIN__AUTH__JWT_SECRET` |  |
-| `admin.auth.jwt_ttl_seconds` | integer (> 0) | `3600` | `JENTIC__ADMIN__AUTH__JWT_TTL_SECONDS` |  |
-| `admin.auth.session_ttl_seconds` | integer (> 0) | `43200` | `JENTIC__ADMIN__AUTH__SESSION_TTL_SECONDS` |  |
-| `admin.auth.failed_login_lockout_threshold` | integer | `5` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_THRESHOLD` |  |
-| `admin.auth.failed_login_lockout_seconds` | integer | `900` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_SECONDS` |  |
+| `admin.auth.jwt_secret` | string (secret) | `""` | `JENTIC__ADMIN__AUTH__JWT_SECRET` | HMAC secret that signs admin login JWTs. Required in production (empty or placeholder values are rejected at startup); in development an ephemeral per-process secret is generated when empty. |
+| `admin.auth.jwt_ttl_seconds` | integer (> 0) | `3600` | `JENTIC__ADMIN__AUTH__JWT_TTL_SECONDS` | Lifetime of one admin login JWT. `POST /auth/refresh` re-mints the token, so this bounds a single token, not the session. |
+| `admin.auth.session_ttl_seconds` | integer (> 0) | `43200` | `JENTIC__ADMIN__AUTH__SESSION_TTL_SECONDS` | Absolute cap on a web session: refresh re-mints the login JWT only while `now - auth_time` stays inside this window, so a leaked token cannot be kept alive indefinitely. Must be >= `jwt_ttl_seconds`. |
+| `admin.auth.failed_login_lockout_threshold` | integer | `5` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_THRESHOLD` | Consecutive failed logins after which an admin account is locked. |
+| `admin.auth.failed_login_lockout_seconds` | integer | `900` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_SECONDS` | How long a locked admin account stays locked before logins are accepted again. |
 | `admin.invite.ttl_days` | integer | `7` | `JENTIC__ADMIN__INVITE__TTL_DAYS` |  |
 | `admin.invite.pepper` | string (secret) | `""` | `JENTIC__ADMIN__INVITE__PEPPER` |  |
 
@@ -172,26 +172,26 @@ Platform-actors OAuth surface configuration.
 | `auth.id_signing` | list of SigningKeyConfig | — | `JENTIC__AUTH__ID_SIGNING` |  |
 | `auth.id_signing.<n>.kid` | string | *required* | `JENTIC__AUTH__ID_SIGNING__<N>__KID` |  |
 | `auth.id_signing.<n>.private_key_pem` | string (secret) | *required* | `JENTIC__AUTH__ID_SIGNING__<N>__PRIVATE_KEY_PEM` |  |
-| `auth.idp.enabled` | boolean | `false` | `JENTIC__AUTH__IDP__ENABLED` |  |
-| `auth.idp.provider` | string | `"oidc"` | `JENTIC__AUTH__IDP__PROVIDER` |  |
-| `auth.idp.issuer` | string | `""` | `JENTIC__AUTH__IDP__ISSUER` |  |
-| `auth.idp.client_id` | string | `""` | `JENTIC__AUTH__IDP__CLIENT_ID` |  |
-| `auth.idp.client_secret` | string (secret) | `""` | `JENTIC__AUTH__IDP__CLIENT_SECRET` |  |
-| `auth.idp.scopes` | list of string | — | `JENTIC__AUTH__IDP__SCOPES` |  |
-| `auth.idp.authorization_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__AUTHORIZATION_ENDPOINT` |  |
-| `auth.idp.exchange_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__EXCHANGE_ENDPOINT` |  |
-| `auth.idp.userinfo_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__USERINFO_ENDPOINT` |  |
-| `auth.idp.hosted_domain` | string \| null | `null` | `JENTIC__AUTH__IDP__HOSTED_DOMAIN` |  |
+| `auth.idp.enabled` | boolean | `false` | `JENTIC__AUTH__IDP__ENABLED` | Enable login via an external OIDC identity provider. When false no IdP adapter is built and the IdP login path is absent. |
+| `auth.idp.provider` | string | `"oidc"` | `JENTIC__AUTH__IDP__PROVIDER` | Adapter selector: `google` supplies Google's well-known endpoints and `hd` claim handling; any other value uses the generic standards-compliant OIDC adapter. |
+| `auth.idp.issuer` | string | `""` | `JENTIC__AUTH__IDP__ISSUER` | OIDC issuer base URL. Default authorization/token/userinfo endpoints are derived from it when the explicit `*_endpoint` keys are unset. |
+| `auth.idp.client_id` | string | `""` | `JENTIC__AUTH__IDP__CLIENT_ID` | OAuth client ID registered with the identity provider. |
+| `auth.idp.client_secret` | string (secret) | `""` | `JENTIC__AUTH__IDP__CLIENT_SECRET` | OAuth client secret, sent on the authorization-code exchange. |
+| `auth.idp.scopes` | list of string | — | `JENTIC__AUTH__IDP__SCOPES` | OAuth scopes requested on the IdP authorization redirect. |
+| `auth.idp.authorization_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__AUTHORIZATION_ENDPOINT` | Explicit IdP authorization endpoint URL; overrides the issuer-derived or provider well-known default. |
+| `auth.idp.exchange_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__EXCHANGE_ENDPOINT` | Explicit IdP token (code-exchange) endpoint URL; overrides the issuer-derived or provider well-known default. |
+| `auth.idp.userinfo_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__USERINFO_ENDPOINT` | Explicit IdP userinfo endpoint URL; overrides the issuer-derived or provider well-known default. |
+| `auth.idp.hosted_domain` | string \| null | `null` | `JENTIC__AUTH__IDP__HOSTED_DOMAIN` | Google `hd` (hosted-domain) restriction. When set, only accounts whose userinfo carries a matching `hd` claim should be admitted. OSS surfaces the claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's admission policy. |
 | `auth.platform_clients` | list of PlatformClientConfig | — | `JENTIC__AUTH__PLATFORM_CLIENTS` |  |
 | `auth.platform_clients.<n>.client_id` | string | *required* | `JENTIC__AUTH__PLATFORM_CLIENTS__<N>__CLIENT_ID` |  |
 | `auth.platform_clients.<n>.redirect_uris` | list of string | *required* | `JENTIC__AUTH__PLATFORM_CLIENTS__<N>__REDIRECT_URIS` |  |
-| `auth.oauth_rate_limit.authorize_rpm` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_RPM` |  |
-| `auth.oauth_rate_limit.authorize_burst` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_BURST` |  |
-| `auth.oauth_rate_limit.exchange_rpm` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_RPM` |  |
-| `auth.oauth_rate_limit.exchange_burst` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_BURST` |  |
-| `auth.oauth_rate_limit.registration_rpm` | integer | `10` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM` |  |
-| `auth.oauth_rate_limit.registration_burst` | integer | `5` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST` |  |
-| `auth.oauth_rate_limit.trusted_proxies` | list of string | — | `JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` |  |
+| `auth.oauth_rate_limit.authorize_rpm` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_RPM` | Sustained requests/minute allowed per `client_id`+IP on the unauthenticated `/authorize` endpoints. |
+| `auth.oauth_rate_limit.authorize_burst` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_BURST` | Burst allowance on top of `authorize_rpm`. |
+| `auth.oauth_rate_limit.exchange_rpm` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_RPM` | Sustained requests/minute allowed per `client_id`+IP on the token endpoint (also reused per-IP for token revocation). |
+| `auth.oauth_rate_limit.exchange_burst` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_BURST` | Burst allowance on top of `exchange_rpm`. |
+| `auth.oauth_rate_limit.registration_rpm` | integer | `10` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM` | Sustained requests/minute allowed per IP on anonymous dynamic client registration (`POST /oauth-clients`). |
+| `auth.oauth_rate_limit.registration_burst` | integer | `5` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST` | Burst allowance on top of `registration_rpm`. |
+| `auth.oauth_rate_limit.trusted_proxies` | list of string | — | `JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` | Socket IPs of reverse proxies whose `X-Forwarded-For` header is honored when deriving the per-client rate-limit identity. Empty (default) means the socket address is used as-is — behind a reverse proxy every request then carries the proxy's IP and all clients share one bucket, so list the proxy IPs when deploying behind one. |
 
 ## `broker`
 
@@ -250,9 +250,9 @@ Broker surface configuration.
 | `broker.idempotency.ttl_s` | number | `86400.0` | `JENTIC__BROKER__IDEMPOTENCY__TTL_S` |  |
 | `broker.idempotency.pending_ttl_s` | number | `35.0` | `JENTIC__BROKER__IDEMPOTENCY__PENDING_TTL_S` |  |
 | `broker.idempotency.max_response_bytes` | integer | `262144` | `JENTIC__BROKER__IDEMPOTENCY__MAX_RESPONSE_BYTES` |  |
-| `broker.egress.allowed_private_subnets` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS` |  |
-| `broker.egress.allowed_internal_domains` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS` |  |
-| `broker.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__BROKER__EGRESS__DNS_PINNING_ENABLED` |  |
+| `broker.egress.allowed_private_subnets` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
+| `broker.egress.allowed_internal_domains` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
+| `broker.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__BROKER__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
 
 ## `control`
 
@@ -272,9 +272,9 @@ Spec ingestion settings (fetch limits, timeouts, egress policy).
 | `ingest.max_spec_bytes` | integer | `26214400` | `JENTIC__INGEST__MAX_SPEC_BYTES` |  |
 | `ingest.fetch_timeout_s` | number | `30.0` | `JENTIC__INGEST__FETCH_TIMEOUT_S` |  |
 | `ingest.max_redirects` | integer | `5` | `JENTIC__INGEST__MAX_REDIRECTS` |  |
-| `ingest.egress.allowed_private_subnets` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS` |  |
-| `ingest.egress.allowed_internal_domains` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS` |  |
-| `ingest.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__INGEST__EGRESS__DNS_PINNING_ENABLED` |  |
+| `ingest.egress.allowed_private_subnets` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
+| `ingest.egress.allowed_internal_domains` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
+| `ingest.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__INGEST__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
 
 ## `catalog`
 
@@ -353,7 +353,7 @@ Anonymous product-telemetry settings (issue #446). Defaults to **OFF**: an insta
 
 ## `release_check`
 
-"Update available" check for the running jentic-one build itself. Powers `GET /system/version`: the backend asks GitHub for the newest published release of `repo` and compares it against the running build so the web console can surface an "update available" banner (and the user menu can always show the current version). This is about *jentic-one's own* release — distinct from `CatalogConfig`, which tracks the public *API catalog*. Runs only on a `local` backend (a self-hosted install the operator can actually update); the hosted platform (`server.backend == "remote"`) skips it. The result is cached in-process for `cache_ttl_seconds` (fetch-on-read, no background job), so at most one GitHub request happens per TTL regardless of how many clients poll. Every failure degrades to "latest unknown" (no banner) rather than erroring — the version probe must never break the app.
+"Update available" check for the running jentic-one build itself. Powers `GET /system/version`: the backend asks GitHub for the newest published release of `repo` and compares it against the running build so the web console can surface an "update available" banner (and the user menu can always show the current version). This covers *jentic-one's own* release; `CatalogConfig` tracks the public *API catalog* instead. Runs only on a `local` backend (a self-hosted install the operator can actually update); the hosted platform (`server.backend == "remote"`) skips it. The result is cached in-process for `cache_ttl_seconds` (fetch-on-read, no background job), so at most one GitHub request happens per TTL regardless of how many clients poll. Every failure degrades to "latest unknown" (no banner) rather than erroring — the version probe must never break the app.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -363,7 +363,7 @@ Anonymous product-telemetry settings (issue #446). Defaults to **OFF**: an insta
 
 ## `entitlement`
 
-AWS Marketplace license gate for the Marketplace-listed deployment. Powers the entitlement checker (`integrations/aws_marketplace`): on startup — and every `refresh_interval_seconds` after — the process asks AWS whether this deployment's Marketplace subscription is still active, and locks the HTTP surface (503, health excepted) when it definitively is not. Defaults to **OFF**: a non-Marketplace install that omits this block runs exactly as before — nothing is wired, no AWS call is ever made. Failure posture: an *unreachable* or *erroring* AWS API is never grounds for lockout by itself — the last definitive verdict holds for `grace_period_seconds` before the gate fails closed. Only an explicit "not entitled" answer from AWS locks out immediately.
+AWS Marketplace license gate for the Marketplace-listed deployment. Powers the entitlement checker (`integrations/aws_marketplace`): on startup, and every `refresh_interval_seconds` after, the process asks AWS whether this deployment's Marketplace subscription is still active, and locks the HTTP surface (503, health excepted) when it definitively is not. Defaults to **OFF**: a non-Marketplace install that omits this block wires nothing and never makes an AWS call. Failure posture: an *unreachable* or *erroring* AWS API is never grounds for lockout by itself — the last definitive verdict holds for `grace_period_seconds` before the gate fails closed. Only an explicit "not entitled" answer from AWS locks out immediately.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |

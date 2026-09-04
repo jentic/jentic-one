@@ -39,21 +39,24 @@ func (j *AccessRequestsConfig) UnmarshalJSON(value []byte) error {
 
 // Admin authentication settings.
 type AdminAuthConfig struct {
-	// FailedLoginLockoutSeconds corresponds to the JSON schema field
-	// "failed_login_lockout_seconds".
+	// How long a locked admin account stays locked before logins are accepted again.
 	FailedLoginLockoutSeconds int `json:"failed_login_lockout_seconds,omitempty,omitzero" yaml:"failed_login_lockout_seconds,omitempty" mapstructure:"failed_login_lockout_seconds,omitempty"`
 
-	// FailedLoginLockoutThreshold corresponds to the JSON schema field
-	// "failed_login_lockout_threshold".
+	// Consecutive failed logins after which an admin account is locked.
 	FailedLoginLockoutThreshold int `json:"failed_login_lockout_threshold,omitempty,omitzero" yaml:"failed_login_lockout_threshold,omitempty" mapstructure:"failed_login_lockout_threshold,omitempty"`
 
-	// JwtSecret corresponds to the JSON schema field "jwt_secret".
+	// HMAC secret that signs admin login JWTs. Required in production (empty or
+	// placeholder values are rejected at startup); in development an ephemeral
+	// per-process secret is generated when empty.
 	JwtSecret string `json:"jwt_secret,omitempty,omitzero" yaml:"jwt_secret,omitempty" mapstructure:"jwt_secret,omitempty"`
 
-	// JwtTtlSeconds corresponds to the JSON schema field "jwt_ttl_seconds".
+	// Lifetime of one admin login JWT. ``POST /auth/refresh`` re-mints the token, so
+	// this bounds a single token, not the session.
 	JwtTtlSeconds int `json:"jwt_ttl_seconds,omitempty,omitzero" yaml:"jwt_ttl_seconds,omitempty" mapstructure:"jwt_ttl_seconds,omitempty"`
 
-	// SessionTtlSeconds corresponds to the JSON schema field "session_ttl_seconds".
+	// Absolute cap on a web session: refresh re-mints the login JWT only while ``now
+	// - auth_time`` stays inside this window, so a leaked token cannot be kept alive
+	// indefinitely. Must be >= ``jwt_ttl_seconds``.
 	SessionTtlSeconds int `json:"session_ttl_seconds,omitempty,omitzero" yaml:"session_ttl_seconds,omitempty" mapstructure:"session_ttl_seconds,omitempty"`
 }
 
@@ -671,37 +674,43 @@ type CredentialsConfigProviders map[string]interface{}
 //   - “sqlite“: uses “path“ (a single-file database). The Postgres
 //     connection fields are ignored.
 type DatabaseConfig struct {
-	// Backend corresponds to the JSON schema field "backend".
+	// Database engine for this connection: ``postgres`` uses the server connection
+	// fields; ``sqlite`` uses ``path`` and ignores them.
 	Backend DatabaseConfigBackend `json:"backend,omitempty,omitzero" yaml:"backend,omitempty" mapstructure:"backend,omitempty"`
 
-	// BusyTimeoutMs corresponds to the JSON schema field "busy_timeout_ms".
+	// SQLite: per-connection wait for a held write lock, in milliseconds, before
+	// failing with ``database is locked``.
 	BusyTimeoutMs int `json:"busy_timeout_ms,omitempty,omitzero" yaml:"busy_timeout_ms,omitempty" mapstructure:"busy_timeout_ms,omitempty"`
 
-	// Host corresponds to the JSON schema field "host".
+	// PostgreSQL server hostname.
 	Host string `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
 
-	// JournalMode corresponds to the JSON schema field "journal_mode".
+	// SQLite journal mode (persistent per database file). ``WAL`` lets a writer and
+	// readers proceed concurrently instead of blocking each other.
 	JournalMode string `json:"journal_mode,omitempty,omitzero" yaml:"journal_mode,omitempty" mapstructure:"journal_mode,omitempty"`
 
-	// Name corresponds to the JSON schema field "name".
+	// PostgreSQL database name. Required for the ``postgres`` backend.
 	Name string `json:"name,omitempty,omitzero" yaml:"name,omitempty" mapstructure:"name,omitempty"`
 
-	// Password corresponds to the JSON schema field "password".
+	// Password for the PostgreSQL role.
 	Password string `json:"password,omitempty,omitzero" yaml:"password,omitempty" mapstructure:"password,omitempty"`
 
-	// Path corresponds to the JSON schema field "path".
+	// SQLite: filesystem path to the database file (``:memory:`` for in-memory).
+	// Required for the ``sqlite`` backend.
 	Path interface{} `json:"path,omitempty,omitzero" yaml:"path,omitempty" mapstructure:"path,omitempty"`
 
-	// PoolMax corresponds to the JSON schema field "pool_max".
+	// Maximum connections in the PostgreSQL connection pool (ignored for SQLite).
 	PoolMax int `json:"pool_max,omitempty,omitzero" yaml:"pool_max,omitempty" mapstructure:"pool_max,omitempty"`
 
-	// Port corresponds to the JSON schema field "port".
+	// PostgreSQL server port.
 	Port int `json:"port,omitempty,omitzero" yaml:"port,omitempty" mapstructure:"port,omitempty"`
 
-	// SchemaName corresponds to the JSON schema field "schema_name".
+	// PostgreSQL schema for this connection: created if missing by the migration
+	// runner (``CREATE SCHEMA IF NOT EXISTS``) and put first on ``search_path``, so
+	// several connections can share one database.
 	SchemaName string `json:"schema_name,omitempty,omitzero" yaml:"schema_name,omitempty" mapstructure:"schema_name,omitempty"`
 
-	// User corresponds to the JSON schema field "user".
+	// PostgreSQL role to connect as.
 	User string `json:"user,omitempty,omitzero" yaml:"user,omitempty" mapstructure:"user,omitempty"`
 }
 
@@ -879,15 +888,20 @@ func (j *DirectOAuth2ProviderConfig) UnmarshalJSON(value []byte) error {
 // decisions; the cloud-metadata IP is a **hard, non-overridable** deny so a
 // credential-stealing SSRF can never be allowlisted by accident.
 type EgressConfig struct {
-	// AllowedInternalDomains corresponds to the JSON schema field
-	// "allowed_internal_domains".
+	// Domain suffixes (e.g. ``[".svc.cluster.local"]``) whose resolved private IP is
+	// permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML
+	// list or a comma-separated string.
 	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
 
-	// AllowedPrivateSubnets corresponds to the JSON schema field
-	// "allowed_private_subnets".
+	// CIDRs exempted from the private-IP egress block (e.g. ``["10.50.0.0/16"]``).
+	// The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted,
+	// even when a listed range covers them. Accepts a YAML list or a comma-separated
+	// string.
 	AllowedPrivateSubnets []string `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
 
-	// DnsPinningEnabled corresponds to the JSON schema field "dns_pinning_enabled".
+	// Pin the outbound connection to the IP validated at connect time, closing the
+	// DNS-rebinding TOCTOU between pre-request validation and the runner's own
+	// resolution. Disable only to debug egress issues.
 	DnsPinningEnabled bool `json:"dns_pinning_enabled,omitempty,omitzero" yaml:"dns_pinning_enabled,omitempty" mapstructure:"dns_pinning_enabled,omitempty"`
 }
 
@@ -969,11 +983,11 @@ func (j *EncryptionKey) UnmarshalJSON(value []byte) error {
 // AWS Marketplace license gate for the Marketplace-listed deployment.
 //
 // Powers the entitlement checker (“integrations/aws_marketplace“): on
-// startup — and every “refresh_interval_seconds“ after — the process asks
+// startup, and every “refresh_interval_seconds“ after, the process asks
 // AWS whether this deployment's Marketplace subscription is still active, and
 // locks the HTTP surface (503, health excepted) when it definitively is not.
-// Defaults to **OFF**: a non-Marketplace install that omits this block runs
-// exactly as before — nothing is wired, no AWS call is ever made.
+// Defaults to **OFF**: a non-Marketplace install that omits this block wires
+// nothing and never makes an AWS call.
 //
 // Failure posture: an *unreachable* or *erroring* AWS API is never grounds
 // for lockout by itself — the last definitive verdict holds for
@@ -1130,35 +1144,44 @@ func (j *IdempotencyConfig) UnmarshalJSON(value []byte) error {
 
 // External OIDC identity provider configuration.
 type IdpConfig struct {
-	// AuthorizationEndpoint corresponds to the JSON schema field
-	// "authorization_endpoint".
+	// Explicit IdP authorization endpoint URL; overrides the issuer-derived or
+	// provider well-known default.
 	AuthorizationEndpoint interface{} `json:"authorization_endpoint,omitempty,omitzero" yaml:"authorization_endpoint,omitempty" mapstructure:"authorization_endpoint,omitempty"`
 
-	// ClientId corresponds to the JSON schema field "client_id".
+	// OAuth client ID registered with the identity provider.
 	ClientId string `json:"client_id,omitempty,omitzero" yaml:"client_id,omitempty" mapstructure:"client_id,omitempty"`
 
-	// ClientSecret corresponds to the JSON schema field "client_secret".
+	// OAuth client secret, sent on the authorization-code exchange.
 	ClientSecret string `json:"client_secret,omitempty,omitzero" yaml:"client_secret,omitempty" mapstructure:"client_secret,omitempty"`
 
-	// Enabled corresponds to the JSON schema field "enabled".
+	// Enable login via an external OIDC identity provider. When false no IdP adapter
+	// is built and the IdP login path is absent.
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
 
-	// ExchangeEndpoint corresponds to the JSON schema field "exchange_endpoint".
+	// Explicit IdP token (code-exchange) endpoint URL; overrides the issuer-derived
+	// or provider well-known default.
 	ExchangeEndpoint interface{} `json:"exchange_endpoint,omitempty,omitzero" yaml:"exchange_endpoint,omitempty" mapstructure:"exchange_endpoint,omitempty"`
 
-	// HostedDomain corresponds to the JSON schema field "hosted_domain".
+	// Google ``hd`` (hosted-domain) restriction. When set, only accounts whose
+	// userinfo carries a matching ``hd`` claim should be admitted. OSS surfaces the
+	// claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's
+	// admission policy.
 	HostedDomain interface{} `json:"hosted_domain,omitempty,omitzero" yaml:"hosted_domain,omitempty" mapstructure:"hosted_domain,omitempty"`
 
-	// Issuer corresponds to the JSON schema field "issuer".
+	// OIDC issuer base URL. Default authorization/token/userinfo endpoints are
+	// derived from it when the explicit ``*_endpoint`` keys are unset.
 	Issuer string `json:"issuer,omitempty,omitzero" yaml:"issuer,omitempty" mapstructure:"issuer,omitempty"`
 
-	// Provider corresponds to the JSON schema field "provider".
+	// Adapter selector: ``google`` supplies Google's well-known endpoints and ``hd``
+	// claim handling; any other value uses the generic standards-compliant OIDC
+	// adapter.
 	Provider string `json:"provider,omitempty,omitzero" yaml:"provider,omitempty" mapstructure:"provider,omitempty"`
 
-	// Scopes corresponds to the JSON schema field "scopes".
+	// OAuth scopes requested on the IdP authorization redirect.
 	Scopes []string `json:"scopes,omitempty,omitzero" yaml:"scopes,omitempty" mapstructure:"scopes,omitempty"`
 
-	// UserinfoEndpoint corresponds to the JSON schema field "userinfo_endpoint".
+	// Explicit IdP userinfo endpoint URL; overrides the issuer-derived or provider
+	// well-known default.
 	UserinfoEndpoint interface{} `json:"userinfo_endpoint,omitempty,omitzero" yaml:"userinfo_endpoint,omitempty" mapstructure:"userinfo_endpoint,omitempty"`
 }
 
@@ -1463,25 +1486,32 @@ func (j *MetricsConfig) UnmarshalJSON(value []byte) error {
 
 // Pre-auth rate limit tunables for OAuth endpoints.
 type OAuthRateLimitConfig struct {
-	// AuthorizeBurst corresponds to the JSON schema field "authorize_burst".
+	// Burst allowance on top of ``authorize_rpm``.
 	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
 
-	// AuthorizeRpm corresponds to the JSON schema field "authorize_rpm".
+	// Sustained requests/minute allowed per ``client_id``+IP on the unauthenticated
+	// ``/authorize`` endpoints.
 	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
 
-	// ExchangeBurst corresponds to the JSON schema field "exchange_burst".
+	// Burst allowance on top of ``exchange_rpm``.
 	ExchangeBurst int `json:"exchange_burst,omitempty,omitzero" yaml:"exchange_burst,omitempty" mapstructure:"exchange_burst,omitempty"`
 
-	// ExchangeRpm corresponds to the JSON schema field "exchange_rpm".
+	// Sustained requests/minute allowed per ``client_id``+IP on the token endpoint
+	// (also reused per-IP for token revocation).
 	ExchangeRpm int `json:"exchange_rpm,omitempty,omitzero" yaml:"exchange_rpm,omitempty" mapstructure:"exchange_rpm,omitempty"`
 
-	// RegistrationBurst corresponds to the JSON schema field "registration_burst".
+	// Burst allowance on top of ``registration_rpm``.
 	RegistrationBurst int `json:"registration_burst,omitempty,omitzero" yaml:"registration_burst,omitempty" mapstructure:"registration_burst,omitempty"`
 
-	// RegistrationRpm corresponds to the JSON schema field "registration_rpm".
+	// Sustained requests/minute allowed per IP on anonymous dynamic client
+	// registration (``POST /oauth-clients``).
 	RegistrationRpm int `json:"registration_rpm,omitempty,omitzero" yaml:"registration_rpm,omitempty" mapstructure:"registration_rpm,omitempty"`
 
-	// TrustedProxies corresponds to the JSON schema field "trusted_proxies".
+	// Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is honored when
+	// deriving the per-client rate-limit identity. Empty (default) means the socket
+	// address is used as-is — behind a reverse proxy every request then carries the
+	// proxy's IP and all clients share one bucket, so list the proxy IPs when
+	// deploying behind one.
 	TrustedProxies []string `json:"trusted_proxies,omitempty,omitzero" yaml:"trusted_proxies,omitempty" mapstructure:"trusted_proxies,omitempty"`
 }
 
@@ -1704,8 +1734,8 @@ func (j *RateLimitConfig) UnmarshalJSON(value []byte) error {
 // Powers “GET /system/version“: the backend asks GitHub for the newest
 // published release of “repo“ and compares it against the running build so the
 // web console can surface an "update available" banner (and the user menu can
-// always show the current version). This is about *jentic-one's own* release —
-// distinct from “CatalogConfig“, which tracks the public *API catalog*.
+// always show the current version). This covers *jentic-one's own* release;
+// “CatalogConfig“ tracks the public *API catalog* instead.
 //
 // Runs only on a “local“ backend (a self-hosted install the operator can
 // actually update); the hosted platform (“server.backend == "remote"“) skips
