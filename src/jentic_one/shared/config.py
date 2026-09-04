@@ -896,11 +896,13 @@ class McpOAuthConfig(BaseModel):
     """Master switch for the interactive-OAuth surface. Off (the default) the
     anonymous DCR front door ``POST /oauth-clients`` returns a plain 404,
     indistinguishable from not-shipped."""
-    auto_approve_clients: bool = True
-    """D9: auto-approve DCR registrations (``approval_status='approved'`` +
-    ``active=true`` at registration). Default **true** in OSS — self-hosted
-    single-user installs would otherwise approve their own registrations twice;
-    the enterprise overlay pins the default to ``false`` (admin queue)."""
+    auto_approve_clients: bool = False
+    """D9 (amended): auto-approve DCR registrations (``approval_status='approved'``
+    + ``active=true`` at registration). Default **false** everywhere —
+    approval-first posture: new registrations land ``pending`` + inactive in
+    the admin queue until an operator approves them. Setting this ``true`` is
+    an explicit opt-in for deployments that accept self-registered clients
+    without review (e.g. self-hosted single-user installs)."""
     registration_gc_days: int = 90
     """Long-TTL GC policy for never-consented DCR rows: rows are
     GC-eligible only after this many days, and rows with any grant history are

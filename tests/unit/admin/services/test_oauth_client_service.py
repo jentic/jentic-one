@@ -80,6 +80,177 @@ def test_rejects_javascript_scheme() -> None:
         _validate_redirect_uris(["javascript:alert(1)"])
 
 
+# ---------- private-use schemes (RFC 8252 §7.1 — anonymous DCR arm only) ----------
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "cursor://anysphere.cursor-mcp/oauth/callback",
+        "com.example.app:/oauth/callback",
+        "com.example.app://callback",
+        "my-app+beta.x://cb",
+    ],
+)
+def test_private_use_scheme_rejected_on_strict_door(uri: str) -> None:
+    """Pin: admin/platform client creation never accepts a custom scheme."""
+    with pytest.raises(InvalidInputError):
+        _validate_redirect_uris([uri])
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "cursor://anysphere.cursor-mcp/oauth/callback",
+        "com.example.app:/oauth/callback",
+        "com.example.app://callback",
+        "my-app+beta.x://cb",
+    ],
+)
+def test_private_use_scheme_accepted_on_dcr_arm(uri: str) -> None:
+    """RFC 8252 §7.1: native apps redirect to a scheme they control."""
+    _validate_redirect_uris([uri], allow_private_use_schemes=True)
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "javascript:alert(1)",
+        "JAVASCRIPT:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "file:///etc/passwd",
+        "vbscript:msgbox(1)",
+        "blob:https://example.com/uuid",
+        "about:blank",
+        "chrome://settings",
+        "ws://example.com/cb",
+        "wss://example.com/cb",
+        "ftp://example.com/cb",
+        # review-1246 F1: schemes with built-in UA/OS dispatch behavior.
+        "intent://scan/",
+        "INTENT://scan/",
+        "android-app://com.evil.app",
+        "ms-msdt:/id",
+        "search-ms:query=x",
+        "ms-officecmd:x",
+        "ms-appx://app/cb",
+        "ms-appx-web://app/cb",
+        "chrome-extension://abcdef/cb",
+        "moz-extension://abcdef/cb",
+        "safari-extension://abcdef/cb",
+        # Any *-extension scheme is rejected as a class, not just the listed ones.
+        "ms-browser-extension://abcdef/cb",
+        "view-source:https://example.com/",
+        "filesystem:https://example.com/temp/f",
+        "resource://gre/x",
+        "res://ieframe.dll/x",
+        "jar:https://example.com/a.jar!/x",
+        "mailto:a@example.com",
+        "tel:+15551234567",
+        "sms:+15551234567",
+        "callto:+15551234567",
+        "ssh://host/x",
+        "vnc://host/x",
+        "smb://host/share",
+    ],
+)
+def test_dangerous_schemes_rejected_even_on_dcr_arm(uri: str) -> None:
+    """The §7.1 allowance never opens browser-executable or registered schemes."""
+    with pytest.raises(InvalidInputError):
+        _validate_redirect_uris([uri], allow_private_use_schemes=True)
+
+
+@pytest.mark.parametrize("allow_private_use_schemes", [False, True])
+@pytest.mark.parametrize(
+    "uri",
+    [
+        # review-1246 F2 payloads: urlparse strips these before parsing, so
+        # without the raw-charset gate they validate clean but store raw.
+        " cursor://h/cb",
+        "cursor://h/cb\n",
+        "cur\tsor://h/cb",
+        "cursor://h/cb\x00",
+        "cursor://h/cb\r\nSet-Cookie: x=1",
+        " https://example.com/cb",
+        "https://example.com/cb\n",
+        "https://exam ple.com/cb",
+        "https://example.com/cb\x00",
+        "https://example.com/cb\r\nSet-Cookie: x=1",
+    ],
+)
+def test_control_chars_and_whitespace_rejected_on_every_door(
+    uri: str, allow_private_use_schemes: bool
+) -> None:
+    """review-1246 F2: the RAW string must satisfy the RFC 3986 charset —
+    whitespace and control bytes (NUL/CR/LF/TAB) are rejected before parsing
+    on both the strict and the DCR arm."""
+    with pytest.raises(InvalidInputError, match="outside the RFC 3986 URI set"):
+        _validate_redirect_uris([uri], allow_private_use_schemes=allow_private_use_schemes)
+
+
+@pytest.mark.parametrize("allow_private_use_schemes", [False, True])
+@pytest.mark.parametrize("uri", ["cursor://h/cb#", "https://example.com/cb#"])
+def test_empty_fragment_rejected_on_every_door(uri: str, allow_private_use_schemes: bool) -> None:
+    """review-1246 F3: a trailing bare '#' yields a falsy ``parsed.fragment``
+    but still produces ``…#?code=…`` redirects — '#' presence is what's banned."""
+    with pytest.raises(InvalidInputError, match="fragment"):
+        _validate_redirect_uris([uri], allow_private_use_schemes=allow_private_use_schemes)
+
+
+@pytest.mark.parametrize("allow_private_use_schemes", [False, True])
+def test_userinfo_authority_rejected_on_every_door(allow_private_use_schemes: bool) -> None:
+    """review-1246 F5: ``http://evil.com@localhost/cb`` parses as loopback in
+    urlparse but WHATWG browsers navigate to evil.com — userinfo is banned."""
+    for uri in (
+        "http://evil.com@localhost/cb",
+        "https://evil.com@example.com/cb",
+    ):
+        with pytest.raises(InvalidInputError, match="userinfo"):
+            _validate_redirect_uris([uri], allow_private_use_schemes=allow_private_use_schemes)
+
+
+@pytest.mark.parametrize("allow_private_use_schemes", [False, True])
+def test_backslash_authority_rejected_on_every_door(allow_private_use_schemes: bool) -> None:
+    """review-1246 F5: WHATWG treats '\\' as '/' in special schemes, so
+    ``http://evil.com\\@localhost/cb`` is host evil.com to a browser while
+    urlparse sees loopback — the raw charset gate rejects the backslash."""
+    with pytest.raises(InvalidInputError, match="outside the RFC 3986 URI set"):
+        _validate_redirect_uris(
+            ["http://evil.com\\@localhost/cb"],
+            allow_private_use_schemes=allow_private_use_schemes,
+        )
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        # No opaque part after the scheme — nowhere to deliver the code.
+        "cursor://",
+        "cursor:",
+        # Fragments are banned on every arm (RFC 6749 §3.1.2).
+        "cursor://anysphere.cursor-mcp/cb#fragment",
+        # No scheme at all.
+        "anysphere.cursor-mcp/cb",
+    ],
+)
+def test_malformed_private_use_uris_rejected_on_dcr_arm(uri: str) -> None:
+    with pytest.raises(InvalidInputError):
+        _validate_redirect_uris([uri], allow_private_use_schemes=True)
+
+
+def test_dcr_arm_keeps_http_loopback_only() -> None:
+    """The private-use allowance never widens http beyond the loopback hosts."""
+    _validate_redirect_uris(["http://localhost:33418/cb"], allow_private_use_schemes=True)
+    with pytest.raises(InvalidInputError, match="http redirect_uri only allowed for localhost"):
+        _validate_redirect_uris(["http://example.com/cb"], allow_private_use_schemes=True)
+
+
+def test_dcr_arm_keeps_https_authority_requirement() -> None:
+    """https URIs still need an authority on the DCR arm."""
+    with pytest.raises(InvalidInputError, match="invalid redirect_uri"):
+        _validate_redirect_uris(["https://"], allow_private_use_schemes=True)
+
+
 # ---------- verify_client_secret ----------
 
 
@@ -652,6 +823,29 @@ async def test_update_allows_reactivation_of_approved_client(
 
     assert view.active is True
     mock_repo.update.assert_awaited_once()
+
+
+@patch("jentic_one.admin.services.oauth_client_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.admin.services.oauth_client_service.OAuthClientRepository")
+async def test_update_rejects_private_use_scheme_redirects(
+    mock_repo: MagicMock, mock_audit: AsyncMock
+) -> None:
+    """Pin (review-1246 P5): the PATCH door keeps strict validation — an admin
+    update can never introduce a custom-scheme redirect, and nothing is written."""
+    ctx = _make_transactional_ctx()
+    mock_repo.get_by_id = AsyncMock(return_value=_full_row())
+    mock_repo.update = AsyncMock()
+
+    svc = OAuthClientService(ctx)
+    with pytest.raises(InvalidInputError, match="redirect_uri must use https or http"):
+        await svc.update(
+            "oac_1",
+            redirect_uris=["cursor://anysphere.cursor-mcp/oauth/callback"],
+            identity=_make_identity(),
+        )
+
+    mock_repo.update.assert_not_awaited()
+    mock_audit.assert_not_awaited()
 
 
 # ---------- create: public vs confidential ----------

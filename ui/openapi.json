@@ -5467,6 +5467,7 @@
             "title": "Grant Types"
           },
           "redirect_uris": {
+            "description": "1-20 redirect URIs. `https` always; `http` for loopback hosts only; RFC 8252 §7.1 private-use (custom) schemes are accepted for native apps (browser-executable and other dangerous schemes are rejected).",
             "items": {
               "type": "string"
             },

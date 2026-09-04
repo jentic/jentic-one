@@ -40,13 +40,28 @@ _REDIRECT_URIS = ["http://localhost:33418/callback", "https://client.test.local/
 
 @pytest.fixture()
 def dcr_context(integration_context: Context) -> Generator[Context, None, None]:
-    """The integration context with the DCR queue policy (no auto-approve).
+    """The integration context pinned to the DCR queue policy (no auto-approve).
+
+    This is the default posture (D9 as amended), pinned explicitly so the
+    tests document what they exercise. Restores the config afterwards —
+    AppConfig is shared session state.
+    """
+    oauth_cfg = integration_context.config.server.mcp.oauth
+    prior = oauth_cfg.auto_approve_clients
+    oauth_cfg.auto_approve_clients = False
+    yield integration_context
+    oauth_cfg.auto_approve_clients = prior
+
+
+@pytest.fixture()
+def auto_approve_context(integration_context: Context) -> Generator[Context, None, None]:
+    """The integration context with the explicit auto-approve opt-in (D9).
 
     Restores the config afterwards — AppConfig is shared session state.
     """
     oauth_cfg = integration_context.config.server.mcp.oauth
     prior = oauth_cfg.auto_approve_clients
-    oauth_cfg.auto_approve_clients = False
+    oauth_cfg.auto_approve_clients = True
     yield integration_context
     oauth_cfg.auto_approve_clients = prior
 
@@ -179,26 +194,26 @@ async def test_register_zero_overlap_scope_rejected_no_row(
 
 
 async def test_auto_approve_policy_activates_row_at_registration(
-    integration_context: Context, clean_dcr_tables: None
+    auto_approve_context: Context, clean_dcr_tables: None
 ) -> None:
-    """OSS default: auto_approve_clients=true → approved + active row,
+    """D9 (explicit opt-in): auto_approve_clients=true → approved + active row,
     non-actionable registered event, and the row passes /authorize validation."""
-    assert integration_context.config.server.mcp.oauth.auto_approve_clients is True
-    svc = OAuthDcrService(integration_context)
+    assert auto_approve_context.config.server.mcp.oauth.auto_approve_clients is True
+    svc = OAuthDcrService(auto_approve_context)
     result = await svc.register(
         client_name="Claude", redirect_uris=_REDIRECT_URIS, software_id="com.anthropic.claude"
     )
 
-    row = await _row_by_client_id(integration_context, result.client_id)
+    row = await _row_by_client_id(auto_approve_context, result.client_id)
     assert row.approval_status == "approved"
     assert row.active is True
 
-    events = await _events_of_type(integration_context, EventType.OAUTH_CLIENT_REGISTERED)
+    events = await _events_of_type(auto_approve_context, EventType.OAUTH_CLIENT_REGISTERED)
     assert len(events) == 1
     assert events[0].requires_action is False
     assert events[0].data["approval_status"] == "approved"
 
-    client_svc = OAuthClientService(integration_context)
+    client_svc = OAuthClientService(auto_approve_context)
     assert await client_svc.is_redirect_uri_allowed(result.client_id, _REDIRECT_URIS[0]) is True
     assert await client_svc.is_public_client(result.client_id) is True
 
