@@ -33,7 +33,10 @@ curl -fsSLO "${BASE}/jenticctl_${VER}_${OS}_${ARCH}.tar.gz"   # admin host only
 | -- | ---- | -------- | ----------- |
 | Linux | amd64 / arm64 | ✅ | ✅ |
 | macOS (darwin) | amd64 / arm64 | ✅ | ✅ |
-| Windows | amd64 / arm64 | ✅ `jentic_<ver>_windows_<arch>.tar.gz` | ❌ use WSL |
+| Windows | amd64 / arm64 (arm64 untested) | ✅ `jentic_<ver>_windows_<arch>.zip` (`jentic.exe`) | ❌ use WSL |
+
+The full component-by-platform picture (server, installer, confinement) is in
+[platform-support.md](platform-support.md).
 
 ## Verify
 

@@ -49,6 +49,9 @@ agent as a thin client and holds no upstream credentials — those never leave y
 
 ## Quickstart
 
+Every path below runs on Linux and macOS; on Windows, see the
+[platform support matrix](docs/installation/platform-support.md).
+
 ### Self-hosted (build from source)
 
 ```bash

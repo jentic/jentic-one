@@ -18,6 +18,7 @@ the verify commands linked above need nothing but the downloaded files and
 
 | Guide | Use when |
 | ----- | -------- |
+| [Platform support](platform-support.md) | Checking what runs on Linux / macOS / Windows / WSL2 before you start. |
 | [Docker](docker.md) | A container host and an external Postgres. The baseline every other guide builds on. |
 | [systemd](systemd.md) | The same two containers, supervised by systemd on a Linux host. |
 | [Helm](helm.md) | Kubernetes. |
