@@ -34,7 +34,7 @@ from jentic_one.auth.core.idp import (
     get_default_idp_grants,
 )
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
-from jentic_one.auth.services.token_service import TokenService
+from jentic_one.auth.services.token_service import TokenService, resolve_effective_scopes
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.context import Context
@@ -417,19 +417,26 @@ class AuthorizeService:
         redirect_uri: str,
         client_id: str,
         oauth_client_id: str | None = None,
-    ) -> tuple[str, str, str | None]:
+    ) -> tuple[str, str, str | None, list[str]]:
         """Exchange auth code + PKCE verifier for tokens.
 
-        Returns (access_token, refresh_token, id_token). Grant-bearing codes
-        mint actor=AGENT tokens bound to the consent grant and
-        return ``id_token=None`` (D11 — no OIDC identity on the agent
-        channel); plain codes keep the act-as-user path with an id_token.
+        Returns (access_token, refresh_token, id_token, scopes). ``scopes`` is
+        the effective set the minted access token will actually enforce,
+        reported per RFC 6749 §5.1: for grant-bearing (agent-channel) codes it
+        is recomputed at exchange time the way the live resolvers enforce it
+        (agent live grants ∩ client ceiling ∩ consent-grant scopes, via
+        :func:`resolve_effective_scopes`); for plain codes it is the
+        authorize-time snapshot. Grant-bearing codes mint actor=AGENT tokens
+        bound to the consent grant and return ``id_token=None`` (D11 — no OIDC
+        identity on the agent channel); plain codes keep the act-as-user path
+        with an id_token.
         """
         code_hash = _hash_code(code)
         now = datetime.now(UTC)
         grant_id: str | None = None
         grant_agent_id: str | None = None
         grant_scopes: list[str] = []
+        grant_effective_scopes: list[str] = []
 
         async with self._ctx.admin_db.transaction() as session:
             auth_code = await AuthorizationCodeRepository.get_by_hash(
@@ -487,6 +494,25 @@ class AuthorizeService:
                 grant_id = grant.id
                 grant_agent_id = grant.agent_id
                 grant_scopes = list(grant.scopes)
+                # Reported set (RFC 6749 §5.1) — the resolvers ignore the
+                # snapshot for agent tokens and enforce live grants ∩ client
+                # ceiling ∩ grant scopes from the token's first use, so the
+                # consent-time D2 set alone would over-report a scope revoked
+                # inside the code TTL (the consent-time snapshot is not
+                # trusted across the TTL — same posture as the gates above).
+                grant_effective_scopes = await resolve_effective_scopes(
+                    session,
+                    actor_id=grant.agent_id,
+                    actor_type=ActorType.AGENT,
+                    snapshot_scopes=grant_scopes,
+                    is_ephemeral=False,
+                    client_ceiling=(
+                        frozenset(oauth_client.allowed_scopes)
+                        if oauth_client.allowed_scopes is not None
+                        else None
+                    ),
+                    grant_ceiling=frozenset(grant.scopes),
+                )
 
             user = await UserRepository.get_by_id(session, auth_code.user_id)
 
@@ -524,7 +550,7 @@ class AuthorizeService:
                 oauth_client_id=oauth_client_id,
                 oauth_grant_id=grant_id,
             )
-            return access_token, refresh_token, None
+            return access_token, refresh_token, None, grant_effective_scopes
 
         scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
         access_token, refresh_token = await self._token_svc.issue_pair(
@@ -539,7 +565,14 @@ class AuthorizeService:
             nonce=auth_code.nonce,
         )
 
-        return access_token, refresh_token, id_token
+        # Reported (§5.1) as granted at authorize time, deliberately: the user
+        # channel's set may include OIDC passthrough scopes (openid/email/…)
+        # that are consumed by the id_token and never enforced as platform
+        # permissions, and enforcement additionally intersects the *live*
+        # client ceiling at resolve time. Standard OIDC posture — the scope
+        # member tells the client what its authorization covers (including
+        # the identity scopes), not the platform-permission subset.
+        return access_token, refresh_token, id_token, scopes
 
     async def _resolve_or_create_user(self, claims: IdpClaims) -> str:
         """Resolve external identity to existing user or create a new one.

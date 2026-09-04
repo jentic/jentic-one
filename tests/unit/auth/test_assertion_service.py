@@ -92,10 +92,11 @@ async def test_verify_and_exchange_happy_path(
 
     svc = AssertionService(ctx)
     assertion = _make_assertion(private_key)
-    access, refresh = await svc.verify_and_exchange(assertion)
+    access, refresh, scopes = await svc.verify_and_exchange(assertion)
 
     assert access == "at_new"
     assert refresh == "rt_new"
+    assert scopes == ["read"]
 
 
 @patch("jentic_one.auth.services.assertion_service.AgentRepository")

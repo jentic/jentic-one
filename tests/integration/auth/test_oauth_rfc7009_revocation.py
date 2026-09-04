@@ -206,7 +206,7 @@ async def test_access_revoke_kills_token_but_grant_survives(
     assert revoked is not None and revoked.active is False
     assert await _grant_status(ctx, grant_id) == "active"
     # The client can still re-obtain access: the refresh channel survives.
-    new_access, _new_refresh = await token_svc.refresh(refresh, client_id=_CLIENT_ID)
+    new_access, _new_refresh, _scopes = await token_svc.refresh(refresh, client_id=_CLIENT_ID)
     resolved = await token_svc.resolve_access_token(new_access)
     assert resolved is not None and resolved.active is True
     assert await _rfc7009_events(ctx, grant_id) == []

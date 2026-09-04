@@ -36,7 +36,7 @@ def test_jwt_bearer_grant_success(
 ) -> None:
     mock_assertion_instance = MagicMock()
     mock_assertion_instance.verify_and_exchange = AsyncMock(
-        return_value=("at_new_token", "rt_new_token")
+        return_value=("at_new_token", "rt_new_token", ["apis:read", "apis:write"])
     )
     mock_assertion_cls.return_value = mock_assertion_instance
 
@@ -57,6 +57,7 @@ def test_jwt_bearer_grant_success(
     assert data["refresh_token"] == "rt_new_token"
     assert data["token_type"] == "bearer"
     assert data["expires_in"] == 3600
+    assert data["scope"] == "apis:read apis:write"
 
 
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
