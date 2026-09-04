@@ -8,9 +8,9 @@ with generated secrets enabled, every secret (credential-encryption keyset,
 JWT signing secret, database passwords) is created on first install and
 reused on every upgrade, and migrations run as a post-install hook.
 
-Two constraints to know up front (the chart is exercised in CI on every PR —
-kind, three modes — but see
-[What's deferred](../../deploy/README.md#whats-deferred)):
+Two constraints to know up front (the chart is smoke-tested in CI — kind,
+all modes, post-merge and as a release gate — see the
+[chart docs](../../deploy/helm/README.md#known-gaps) for the full gap list):
 
 - The chart is **not published** to any registry. Vendor
   `deploy/helm/jentic-one/` from a checkout of this repository **at the
@@ -156,10 +156,56 @@ global:
 - **Secrets:** database passwords must match the roles you created — explicit
   `global.databases.*.password` values always win over generated ones. Do not
   put them in a values file: source them from a Kubernetes Secret via
-  `secretKeyRef` ([Production secrets](../../deploy/README.md#production-secrets));
-  or manage everything yourself and mount your own Secret with
-  `global.appSecrets.existingSecret`. The mandatory set is in
-  [Mandatory vs optional secrets](../../deploy/README.md#mandatory-vs-optional-secrets).
+  `secretKeyRef`, or mount your own Secret with
+  `global.appSecrets.existingSecret` — see [Secrets](#secrets) below. The
+  mandatory set is the same as the
+  [Docker guide, step 2](docker.md#2-write-the-config).
+
+## Secrets
+
+Four config values have no safe default: the credential-encryption keyset
+(`credentials.encryption` — a *list*, so it cannot ride the flat `JENTIC__*`
+env convention; credential writes fail without it), the admin JWT secret, the
+invite pepper, and the connect state secret (all three ship a placeholder
+that `JENTIC_ENV=production` refuses to boot with). On the bundled-DB path
+the same Secret also carries the database passwords. The chart offers three
+sources, in order of preference:
+
+1. **`global.appSecrets.generate: true`** — the chart mints random values
+   into a release-scoped Secret (`<release>-app-secrets`) on first install
+   and **reuses each key verbatim on every upgrade** (regenerating would
+   orphan everything already encrypted, revoke every live session, and break
+   DB logins). The Secret carries `helm.sh/resource-policy: keep`, so
+   `helm uninstall` leaves it behind and a same-name reinstall re-adopts it.
+   Caveat: piping `helm template` to `kubectl apply` bypasses the lookup and
+   **will** rotate the secrets — use `helm install`/`upgrade`.
+2. **`global.appSecrets.existingSecret: <name>`** — mount your own Secret
+   (SealedSecrets, External Secrets Operator, …). It must hold a
+   `config.yaml` key shaped like the keyset block in the
+   [worked config](docker.md#2-write-the-config), plus
+   `admin.auth.jwt_secret`, `admin.invite.pepper`, and
+   `credentials.connect.state_secret` — and, if the bundled Postgres is
+   enabled, the four `db-password-*` keys.
+3. **Per-service `configFile.contents`** (dev overlays only) — inlines
+   secrets into a plain ConfigMap; never for real data. Mutually exclusive
+   with the two modes above (both claim `JENTIC_CONFIG_FILE`; the chart
+   fails the render rather than silently preferring one).
+
+For external-database passwords, keep them out of values files entirely —
+reference a Secret you manage:
+
+```yaml
+- name: JENTIC__DATABASES__REGISTRY__PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: jentic-db-credentials
+      key: registry-password
+```
+
+Host/port/name/schema are not secrets — plain values are fine for those.
+Encryption-key **rotation** is a config-level operation in every mode: add a
+new keyset entry, flip `active_id`, keep the old entry until all rows are
+re-encrypted ([upgrades.md](../operations/upgrades.md#what-an-upgrade-never-does)).
 
 ## Observability
 
@@ -172,7 +218,8 @@ helm upgrade jentic ./deploy/helm/jentic-one --reuse-values \
 ```
 
 Metrics exporter selection (`otlp` / `prometheus` / `none`) and the scrape
-annotations are covered in [Metrics](../../deploy/README.md#metrics).
+annotations are covered in the
+[chart docs](../../deploy/helm/README.md#metrics-exporter).
 
 ## Upgrading
 
@@ -188,8 +235,8 @@ everything already encrypted and revoke live sessions. `helm uninstall`
 intentionally keeps the `jentic-app-secrets` Secret (and the Postgres PVC)
 so stored credentials survive a reinstall; delete the namespace to remove
 everything. Migrations apply forward; prefer rolling forward to a fixed
-release — see
-[Upgrading (and rolling back)](../../deploy/README.md#upgrading-and-rolling-back).
+release — the full contract:
+[docs/operations/upgrades.md](../operations/upgrades.md).
 
 ## Troubleshooting
 

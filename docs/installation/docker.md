@@ -5,10 +5,8 @@ smallest production-shaped deployment, and the [systemd](systemd.md) and
 [Helm](helm.md) guides build on the same image, config, and bootstrap steps.
 
 The container image is the **only supported backend distribution** — there is
-no `pip install jentic-one`. The full reference for everything on this page
-(worked config, compose file, connection-pool sizing) is
-[deploy/README.md](../../deploy/README.md#self-hosted-containers--external-postgres);
-this page is the install path in order.
+no `pip install jentic-one`. Prefer one file over individual `docker run`s?
+The same deployment as a compose file: [docker-compose.md](docker-compose.md).
 
 ## Platform notes
 
@@ -49,15 +47,70 @@ the tarball across (see the [quickstart](quickstart.md#air-gapped-transfer)).
 
 Save the non-secret config as `/etc/jentic/production.yaml` on the host. Start
 from [`config/production.yaml.example`](../../config/production.yaml.example);
-the worked, commented version is in the
-[deploy README](../../deploy/README.md#a-worked-production-configyaml). It must
-contain:
+this is the worked shape — secrets come from the environment, never this file
+(except the encryption keyset, which makes the whole file sensitive):
 
-- the three database sections (`registry`, `control`, `admin`) pointing at
-  your Postgres — three schemas in one database is the shipped shape;
-- `auth.canonical_base_url` set to the app's public URL;
-- the credential-encryption keyset (`credentials.encryption`) — it is a list,
-  so it lives in this file, not an env var. Treat the file as a secret.
+```yaml
+# /etc/jentic/production.yaml — non-secret shape; secrets via env (JENTIC__…).
+# Point all three DBs at your managed Postgres. Three schemas in one database
+# is the shipped shape; separate hosts/databases work identically.
+databases:
+  registry:
+    host: db.prod.internal
+    port: 5432
+    name: jentic
+    user: registry_user
+    schema_name: registry
+    pool_max: 20
+  control:
+    host: db.prod.internal
+    port: 5432
+    name: jentic
+    user: control_user
+    schema_name: control
+    pool_max: 15
+  admin:
+    host: db.prod.internal
+    port: 5432
+    name: jentic
+    user: admin_user
+    schema_name: admin
+    pool_max: 10
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# The app's public base URL — issued OAuth/OIDC token iss/aud and connect
+# redirect URIs are derived from it.
+auth:
+  canonical_base_url: "https://jentic.example.com"
+
+# Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
+# WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
+# var — keep it in this file and mount the file itself as a secret.
+credentials:
+  encryption:
+    active_id: v1
+    entries:
+      - id: v1
+        material: "REPLACE-WITH-BASE64-32-BYTES"   # pragma: allowlist secret
+
+# Keep exporters off until you run a collector. With `otlp` and no
+# OTEL_EXPORTER_OTLP_ENDPOINT set, the SDK dials localhost:4317 inside the
+# container and logs an export failure every interval.
+observability:
+  metrics:
+    exporter: none     # or "otlp" / "prometheus"
+  tracing:
+    exporter: none     # or "otlp"
+```
+
+**Connection-pool sizing:** each process caps at `pool_max` + 10 overflow per
+DB, and **both** the app and broker containers open all three pools — the
+example above can reach (30+25+20) × 2 ≈ **190 server connections**
+worst-case. Size against your instance's `max_connections` (managed-PG entry
+tiers are often ~100) or front Postgres with a pooler like pgbouncer.
 
 Secrets go in an env file, `/etc/jentic/prod.env` (`chmod 600`, values
 unquoted — `docker --env-file` takes them literally):
@@ -164,7 +217,7 @@ the app and execution traffic to the broker; agents need both URLs.
 
 Prefer one file over two `docker run`s? Two worked compose examples:
 
-- [app + broker against an external Postgres](../../deploy/README.md#docker-compose-example)
+- [app + broker against an external Postgres](docker-compose.md)
   — migrate → app + broker with health checks; the production shape of this page.
 - [the whole stack including Postgres](../agent/install.md#4-write-the-compose-file--jenticdocker-composeyaml)
   — the agent runbook's self-contained compose file (app, broker, and a
@@ -190,5 +243,5 @@ Then walk through the [first brokered call](../guides/first-call.md).
    `broker` containers from it.
 
 Migrations are applied forward — prefer rolling forward to a fixed release
-over rolling the image back onto a newer schema. Details:
-[Upgrading (and rolling back)](../../deploy/README.md#upgrading-and-rolling-back).
+over rolling the image back onto a newer schema. The full contract:
+[docs/operations/upgrades.md](../operations/upgrades.md).

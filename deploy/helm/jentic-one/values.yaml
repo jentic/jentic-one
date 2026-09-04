@@ -149,7 +149,8 @@ global:
   # and reuses it verbatim on upgrades (rotating would orphan everything
   # already encrypted and revoke live sessions; the Secret is kept on
   # uninstall for the same reason). `existingSecret` mounts your own Secret
-  # instead (must hold the same keys — see deploy/README.md). Both are
+  # instead (must hold the same keys — see docs/installation/helm.md
+  # "Secrets"). Both are
   # mutually exclusive with per-service `configFile.contents`, which the dev
   # overlays use to inline dev secrets.
   appSecrets:
@@ -163,7 +164,7 @@ global:
   # deploy/helm/values/local-*.yaml. In production, do NOT put real passwords
   # in a values file: replace `common.db-env` in your subchart deployments
   # with a Secret-backed `valueFrom: secretKeyRef:` block, or pass an
-  # `existingSecret` reference. See deploy/README.md "Production secrets".
+  # `existingSecret` reference. See docs/installation/helm.md "Secrets".
   databases:
     registry:
       host: ""
@@ -190,7 +191,7 @@ postgresql:
   # image — the former Bitnami dependency pinned the frozen `bitnamilegacy`
   # image (no CVE fixes since Aug 2025), which the Trivy publish gate and the
   # AWS Marketplace scan both reject. Dev/eval-grade single instance;
-  # production should use a managed database (deploy/README.md).
+  # production should use a managed database (docs/installation/helm.md).
   image:
     registry: docker.io
     repository: postgres

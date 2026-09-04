@@ -55,7 +55,7 @@ from the CLI, or the notifications surface in the UI.
 ## Metrics and traces
 
 OpenTelemetry wiring (OTLP metrics/traces, the optional Prometheus exporter
-and scrape annotations, collector sidecars) is covered in
-[deploy/README.md → Metrics](../../deploy/README.md#metrics). Telemetry is
+and scrape annotations, collector sidecars) is covered in the
+[chart docs](../../deploy/helm/README.md#metrics-exporter). Telemetry is
 **off by default** and never leaves the deployment unless you configure an
 exporter.

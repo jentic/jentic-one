@@ -223,7 +223,8 @@ images: ## List locally built jentic-one images
 
 # ─── Release (publish the app image to a real registry) ───────────────────
 # One `app` image serves every surface — the surface set is chosen at runtime
-# via JENTIC__APPS (see deploy/README.md "Self-hosted"). So publishing the
+# via JENTIC__APPS (see deploy/README.md "One image, runtime surfaces"). So
+# publishing the
 # single `app` image is enough for a self-hosted app + broker deployment.
 #
 #   make release-image REGISTRY=ghcr.io/jentic

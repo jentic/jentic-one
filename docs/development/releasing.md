@@ -29,7 +29,7 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
      — and the short SHA; `latest` moves only on stable releases). One image
      serves every surface via `JENTIC__APPS`; this is the image self-hosters
      pull — see
-     [`deploy/README.md`](../../deploy/README.md#self-hosted-containers--external-postgres).
+     [`docs/installation/docker.md`](../installation/docker.md).
    - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and pushes the Homebrew cask.
 
@@ -102,7 +102,7 @@ against re-pushes, but breaks the full-re-run recovery path above (a full
 re-run cannot overwrite `X.Y.Z`) — enable it only if you accept recovering
 via "Re-run failed jobs" or `Release-As` instead. The image is cosign-signed
 with an SBOM attestation; the verify commands live in `deploy/README.md`
-("Verify the image signature").
+("Verify the signature").
 
 Also consider a **repository ruleset restricting `v*` tag creation** to the
 release App and admins: the workflow trusts any pushed tag, and while the

@@ -6,7 +6,7 @@ Production installs run from released artifacts only: the published container im
 
 | Artifact | Role | Distribution |
 | -------- | ---- | ------------ |
-| `ghcr.io/jentic/jentic-one-app` | The backend. One image runs both the **app** (control plane) and the **broker** (data plane) — the surface set is chosen at runtime via `JENTIC__APPS`. | GHCR. Cosign-signed with an SBOM attestation; pin by `@sha256:` digest. [Pull + verify](../../deploy/README.md#pull-the-image). |
+| `ghcr.io/jentic/jentic-one-app` | The backend. One image runs both the **app** (control plane) and the **broker** (data plane) — the surface set is chosen at runtime via `JENTIC__APPS`. | GHCR. Cosign-signed with an SBOM attestation; pin by `@sha256:` digest. [Pull + verify](../../deploy/README.md#the-published-image). |
 | `jenticctl` | Operator CLI, for the admin host. | GitHub Releases archive, checksummed and cosign-signed. [Download + verify](cli.md). |
 | `jentic` | Agent CLI, for every host inside the network that calls the instance. | Same release archives, same verification — see [Installing the CLIs](cli.md). |
 
@@ -21,6 +21,7 @@ the verify commands linked above need nothing but the downloaded files and
 | [Platform support](platform-support.md) | Checking what runs on Linux / macOS / Windows / WSL2 before you start. |
 | [Windows](windows.md) | Windows host — WSL2 for the server, native `jentic.exe` for the agent side. |
 | [Docker](docker.md) | A container host and an external Postgres. The baseline every other guide builds on. |
+| [docker-compose](docker-compose.md) | The Docker deployment as one file — migrate, app, broker, health checks. |
 | [systemd](systemd.md) | The same two containers, supervised by systemd on a Linux host. |
 | [Helm](helm.md) | Kubernetes. |
 | [AWS Marketplace](aws-marketplace.md) | Buying and running the listed product on EKS — prerequisites, zero-touch install, license-check behaviour. |
@@ -35,7 +36,7 @@ the verify commands linked above need nothing but the downloaded files and
   `checksums.txt.sig`, and `checksums.txt.pem`, so the verification can be
   repeated inside the network.
 - **Helm chart:** not published to a registry yet — vendor
-  [`deploy/helm/jentic-one/`](../../deploy/README.md) from a checkout of this
+  [`deploy/helm/jentic-one/`](../../deploy/helm/README.md) from a checkout of this
   repository at the release tag.
 
 ## After installing

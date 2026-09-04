@@ -84,8 +84,8 @@ development workflow, and the conventions the project enforces.
    make start-app
    ```
 
-See the [Build & Deploy Guide](deploy/README.md) for the full setup and
-common tasks.
+See [deploy/README.md](deploy/README.md) for the build architecture and
+common build tasks.
 
 ## Development Workflow
 

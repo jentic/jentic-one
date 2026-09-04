@@ -23,6 +23,7 @@ overview → one scoped guide → [generated reference](#reference-generated--ne
 - [Windows](installation/windows.md) — the WSL2 + native-CLI path, step by step
 - [CLI binaries](installation/cli.md) — `jentic` / `jenticctl` download matrix and verification
 - [Docker](installation/docker.md)
+- [docker-compose](installation/docker-compose.md)
 - [systemd](installation/systemd.md)
 - [Helm](installation/helm.md)
 - [AWS Marketplace](installation/aws-marketplace.md)
@@ -74,7 +75,9 @@ Agent runbook: [use](agent/use.md) — discover → request access → execute, 
 - [Context and configuration](development/context-and-config.md)
 - [Releasing](development/releasing.md)
 - [Product scope](development/product-scope.md)
-- [deploy/README.md](../deploy/README.md) — images, charts, Terraform, observability
+- [deploy/README.md](../deploy/README.md) — build architecture: images, charts, Terraform, multi-arch
+- [Helm charts & local cluster](../deploy/helm/README.md) — chart docs, kind workflow, smoke tests, observability stack
+- [AWS Marketplace publishing](development/marketplace-publishing.md) — the seller/maintainer side of the listing
 
 ## Reference (generated — never hand-edit)
 
