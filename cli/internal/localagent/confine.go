@@ -433,7 +433,7 @@ func SandboxProfile(agentHome string, grantedDirs []string) string {
 
 	// Everything the session may reach inside a denied root: the agent's own home
 	// first (always), then each granted directory. Sourced from the shared
-	// SessionAccess so this can't drift from what `jentic profile view` shows.
+	// SessionAccess so this can't drift from what `jentic run --list-grants` shows.
 	reopen := reopenDirs(agentHome, grantedDirs)
 
 	seenMeta := map[string]bool{}
