@@ -50,8 +50,8 @@ Integrate apps:
 
 ## Secure
 
-- [Deploying Jentic One securely](security/security.md)
-- [Local-agent sandbox design](security/local-agent/README.md)
+- [Deploying Jentic One securely](security/security.md) — threat model and the deployment-tier ladder
+- [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options (including `jentic run`)
 
 ## Develop
 

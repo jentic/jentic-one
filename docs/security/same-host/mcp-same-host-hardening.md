@@ -26,7 +26,7 @@ Two things to keep straight before choosing a recipe:
   shape: a command to spawn.
 
 Pick the lowest rung that matches the sensitivity of the credentials your
-instance holds (the general tier ladder is in [hardening.md](security.md)).
+instance holds (the general tier ladder is in [security.md](../security.md)).
 
 ## Recipe 1 — isolate the instance
 
@@ -38,7 +38,7 @@ not readable by the desktop user:
   with the desktop user's home.
 - **Different OS user**: run the instance under a dedicated non-root user (or
   rootless container) so its key/DB are not readable by the agent's uid —
-  tier T2 in the [hardening guide](security.md#deployment-tiers).
+  tier T2 in the [hardening guide](../security.md#deployment-tiers).
 - **Remote instance**: point the MCP entry's context at an instance on
   another host/VM/private network (tier T3) — the agent cannot touch the
   key store by construction.

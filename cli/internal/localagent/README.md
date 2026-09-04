@@ -9,7 +9,7 @@ persistence, cobra wiring) lives in
 `*exec.Cmd` values and pure data it runs.
 
 Operator-facing guide: [`docs/guides/local-agent.md`](../../../docs/guides/local-agent.md).
-Security design: [`docs/security/local-agent/`](../../../docs/security/local-agent/README.md).
+Security design: [`docs/security/same-host/`](../../../docs/security/same-host/README.md).
 
 ## Layering contract
 

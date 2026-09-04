@@ -1,9 +1,10 @@
-# Analysis: the credential boundary for locally-run agents
+# The same-host threat model
 
-> **Status:** analysis / design exploration. Not yet a committed plan. This
-> captures the *problem* — the state before the local-agent isolation work. The
-> design that responds to it lives in the sibling docs (see the
-> [directory README](README.md)).
+> **Status:** the canonical problem statement. This captures the *problem* —
+> the state before any isolation work — and the attack-path codes (AP-1…AP-4)
+> the design docs cite. The shipped design that responds to it lives in the
+> sibling docs (see the [directory README](README.md)), and the menu of other
+> mitigations is indexed there too.
 
 ## The problem in one sentence
 
@@ -57,4 +58,4 @@ test). All worth doing; none closes a structural gap on its own.
 The concrete design that responds to this analysis —
 [`local-agent-isolation.md`](local-agent-isolation.md) and
 [`filesystem-access-model.md`](filesystem-access-model.md) — lives alongside this
-file; the [directory README](README.md) indexes all three.
+file; the [directory README](README.md) indexes every option.

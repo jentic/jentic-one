@@ -50,7 +50,7 @@ configure a *URL-based* MCP entry against a deployment whose operator has
 enabled the endpoint.
 
 If the agent runtime spawning `jentic mcp` shares a host with the instance,
-read [Hardening same-host MCP setups](../security/mcp-same-host-hardening.md).
+read [Hardening same-host MCP setups](../security/same-host/mcp-same-host-hardening.md).
 
 ## Not the Jentic cloud platform
 

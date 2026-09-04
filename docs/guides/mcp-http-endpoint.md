@@ -14,7 +14,7 @@ When to use which:
   process** — the agent's key never leaves its machine, and registration
   (`jentic setup`) is unchanged. See
   [connecting-agents.md](connecting-agents.md) for the integration
-  paths and [../security/mcp-same-host-hardening.md](../security/mcp-same-host-hardening.md)
+  paths and [../security/same-host/mcp-same-host-hardening.md](../security/same-host/mcp-same-host-hardening.md)
   for same-host recipes.
 - **The HTTP endpoint is the daemon-native shape**: headless agents, other
   machines, runtimes that cannot spawn processes, and the many-users-one-URL

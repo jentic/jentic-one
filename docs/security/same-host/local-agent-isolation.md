@@ -1,6 +1,6 @@
 # Design: run the agent as its own Unix user, wrapped by `jentic`
 
-> Builds on the [analysis](analysis.md). The structural fix is: run a CLI coding
+> Builds on the [threat model](threat-model.md). The structural fix is: run a CLI coding
 > agent (Claude Code is the worked example) under a **dedicated, unprivileged OS
 > user** distinct from the operator's login user, so it cannot read the
 > operator's jentic keyset (`~/.config/jentic`, `~/.local/state/jentic`, legacy

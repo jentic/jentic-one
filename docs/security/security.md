@@ -29,6 +29,11 @@ the credential database and the encryption key directly off disk or out of
 memory, regardless of the API-level controls. This is the single most important
 thing to understand before you point Jentic One at real credentials.
 
+The same-host case is worked through in detail —
+the [attack paths](same-host/threat-model.md) (AP-1…AP-4) and the
+[menu of mitigations](same-host/README.md), including the CLI's shipped
+`jentic run` isolation.
+
 ## Two independent decisions
 
 Hardening Jentic One is really **two separate questions** — people often conflate
@@ -86,7 +91,7 @@ you store.
 | Tier | Who it's for | Posture | Residual risk |
 |---|---|---|---|
 | **T0 — Local, same user** | Trying it out | Jentic One + agent run as your user on your laptop | A compromised or prompt-injected agent can read the key/DB. **Do not store real high-value credentials.** |
-| **T1 — Sandbox the agent** | Local dev with some real creds | Jentic One still local, but the agent runs under its built-in OS sandbox with **network default-deny**, allowlisting only Jentic One's address, and unable to read Jentic One's files (provided they are not mounted in the agent's container) | Agent sandboxes filter by hostname without TLS inspection and have escape hatches → defense-in-depth, not a hard wall. Containerising agents is the best form of local sandboxing if available |
+| **T1 — Sandbox the agent** | Local dev with some real creds | Jentic One still local, but the agent is isolated: the CLI's own **`jentic run`** (a dedicated Unix user + per-session confinement — see [same-host/](same-host/README.md)), or the agent's built-in OS sandbox with **network default-deny**, allowlisting only Jentic One's address, and unable to read Jentic One's files (provided they are not mounted in the agent's container) | Built-in agent sandboxes filter by hostname without TLS inspection and have escape hatches → defense-in-depth, not a hard wall. Containerising agents is the best form of local sandboxing if available |
 | **T2 — Separate users on one host** | Serious local use | Jentic One runs under a **dedicated non-root user** (or rootless container) so its key/DB aren't readable by the agent's user; the agent runs in a container with default-deny egress and reaches Jentic One over loopback/HTTP | Shared kernel |
 | **T3 — Separate host / private network** *(recommended for real use)* | Teams / production | Jentic One + database on a **separate host/VM in a private network**, reachable only over that private network (VPN / private DNS / authenticated reverse proxy). Provisioned agents/services run inside the network; operators use the CLI over the VPN. The agent never shares a machine with the key store | Standard cloud hardening applies |
 | **T4 — Strong isolation** | Untrusted agents / high-value creds | Agent in a **microVM** (e.g. Firecracker) or **gVisor** sandbox; Jentic One in a private subnet with restrictive security groups and default-deny egress; clients reach it only over private networking | Highest ops cost, smallest attack surface |
@@ -129,6 +134,11 @@ sandbox that denies network egress by default and only allows Jentic One's
 address, and that cannot read Jentic One's key files. Options, lightest to
 strongest:
 
+- **First-party: `jentic run`** — the CLI launches a coding agent as its
+  **own unprivileged Unix user**, confined per session (`sandbox-exec` /
+  `bwrap`) with on-demand directory grants. Design:
+  [same-host/](same-host/README.md); operator guide:
+  [`guides/local-agent.md`](../guides/local-agent.md).
 - **Built-in agent sandboxes** — Claude Code
   ([sandboxing](https://code.claude.com/docs/en/sandboxing),
   [`sandbox-runtime`](https://github.com/anthropic-experimental/sandbox-runtime)),
@@ -158,7 +168,7 @@ protecting the key at rest.
 If an agent runtime spawns the local `jentic mcp` server (available in the
 `jentic` CLI from the next release — check `jentic mcp --help`) on the same
 host as the instance, see
-[Hardening same-host MCP setups](mcp-same-host-hardening.md)
+[Hardening same-host MCP setups](same-host/mcp-same-host-hardening.md)
 for MCP-entry-shaped recipes (isolated instance, sudo-shim with a per-agent
 service user, container entry).
 
