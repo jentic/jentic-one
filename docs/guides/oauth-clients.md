@@ -1,4 +1,4 @@
-# OAuth clients
+# Register an OAuth client
 
 An OAuth client represents a third-party application that authenticates users
 through Jentic One using the Authorization Code flow with PKCE (S256). Clients

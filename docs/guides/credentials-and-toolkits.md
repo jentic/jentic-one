@@ -1,4 +1,4 @@
-# Credentials and toolkits
+# How credential resolution works
 
 How stored credentials relate to the APIs they authenticate and the toolkits
 that expose them, and the invariants the platform enforces to keep credential

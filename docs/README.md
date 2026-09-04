@@ -28,13 +28,24 @@ overview → one scoped guide → [generated reference](#reference-generated--ne
 
 ## Use
 
-- [First brokered call](guides/first-call.md)
-- [Credentials and toolkits](guides/credentials-and-toolkits.md)
-- [Overlays](guides/overlays.md)
-- [Local coding agents](guides/local-agent.md)
-- [Cloud vs self-hosted](guides/cloud-vs-self-hosted.md)
-- [OAuth clients](guides/oauth-clients.md) — connecting OAuth-secured APIs
-- [MCP over HTTP](guides/mcp-http-endpoint.md) — the optional hosted `/mcp` endpoint
+Get going:
+
+- [First brokered call](guides/first-call.md) — the six steps, each linking deeper
+
+Connect agents:
+
+- [Connecting an agent](guides/connecting-agents.md) — the four integration paths, and how self-hosted differs from the Jentic cloud platform
+- [Run coding agents in isolation](guides/local-agent.md) — `jentic run` and the local-agent sandbox
+- [Serve MCP over HTTP](guides/mcp-http-endpoint.md) — the optional hosted `/mcp` endpoint
+
+Operate the catalog:
+
+- [Fix a spec with an overlay](guides/overlays.md) — patching an imported API description without forking it
+- [How credential resolution works](guides/credentials-and-toolkits.md) — the credential/toolkit model and its invariants
+
+Integrate apps:
+
+- [Register an OAuth client](guides/oauth-clients.md) — third-party apps authenticating users through Jentic One
 - [CLI README](../cli/README.md) — the full `jentic` / `jenticctl` command surface
 
 ## Secure

@@ -100,8 +100,9 @@ is still production-shaped.
 > and secret handling are the real thing — not that the product is done.
 > Also note a self-hosted instance serves the HTTP APIs + UI; MCP access is
 > via the local `jentic mcp` stdio server (available in the `jentic` CLI from
-> the next release), not an HTTP endpoint on the instance — see
-> [`docs/guides/cloud-vs-self-hosted.md`](../docs/guides/cloud-vs-self-hosted.md).
+> the next release) or the instance's own `/mcp` endpoint (config-gated, off
+> by default) — see
+> [`docs/guides/connecting-agents.md`](../docs/guides/connecting-agents.md).
 
 ### The one-image, two-surfaces model
 

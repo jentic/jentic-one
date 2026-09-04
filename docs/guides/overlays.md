@@ -1,4 +1,4 @@
-# Overlays and the update loop
+# Fix a spec with an overlay
 
 An **overlay** is an operator/agent-contributed patch to a registered API's OpenAPI
 spec — a small JSONPath-based document that fixes a broken or incomplete upstream

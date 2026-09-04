@@ -64,7 +64,9 @@ the agent** — approve it in the UI at `/app`. Re-running is idempotent.
 
 Setting up a local *coding* agent (Claude Code, Cursor, …)? `jentic setup` does
 identity + skills + isolation in one flow — see
-[Local coding agents](local-agent.md).
+[Local coding agents](local-agent.md). All the ways an agent can connect
+(CLI + skill, MCP over stdio or HTTP, raw HTTP):
+[Connecting an agent](connecting-agents.md).
 
 ## 5. Grant access
 

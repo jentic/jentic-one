@@ -64,7 +64,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 
 ## Optional
 
-- [Cloud platform compared with self-hosted](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/cloud-vs-self-hosted.md): the two products are easy to conflate and share no state. Read this before copying integration instructions from one into the other.
+- [Connecting an agent](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/connecting-agents.md): the four integration paths in one place, and how the self-hosted product differs from the Jentic cloud platform — the two are easy to conflate and share no state, so don't copy integration instructions from one into the other.
 - [Extending Jentic One](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/extending-jentic-one.md): adding a surface or a capability to the codebase itself.
 - [VERSIONING.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/VERSIONING.md): what the version number promises while the project is in public beta.
-- [Jentic documentation](https://docs.jentic.com/): the documentation site. A deployment also serves generated references at `/docs` (interactive Swagger) and `/redoc`.
+- [Jentic documentation](https://docs.jentic.com/): the documentation site. A deployment also serves its own interactive API reference at `/docs`, generated from code.
