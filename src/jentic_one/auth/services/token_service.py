@@ -71,6 +71,44 @@ def _apply_scope_ceiling(scopes: list[str], ceiling: frozenset[str] | None) -> l
     return [s for s in scopes if s in ceiling]
 
 
+async def resolve_effective_scopes(
+    session: AsyncSession,
+    *,
+    actor_id: str,
+    actor_type: str,
+    snapshot_scopes: list[str],
+    is_ephemeral: bool,
+    client_ceiling: frozenset[str] | None,
+    grant_ceiling: frozenset[str] | None,
+) -> list[str]:
+    """The scope set the live resolvers actually enforce for a token.
+
+    Non-ephemeral AGENT/SERVICE_ACCOUNT tokens draw scopes *live* from
+    ``actor_scope_grants`` — the mint-time snapshot is dead weight for
+    enforcement on these actor types (scope edits take effect immediately by
+    design). Ephemeral mints and USER tokens keep their snapshot. Either
+    starting set is then intersected with the issuing client's
+    ``allowed_scopes`` ceiling and the consent grant's scope set.
+
+    This is the single source of truth shared by the enforcement path
+    (:meth:`TokenService.resolve_access_token`) and the RFC 6749 §5.1
+    reporting paths (:meth:`TokenService.refresh`,
+    ``AuthorizeService.exchange_code``), so the ``scope`` member a token
+    response reports can never diverge from what the minted token enforces.
+    The broker's ``InProcessTokenResolver`` re-implements the same math over
+    raw SQL (it deliberately imports nothing from ``auth``); the
+    grant-channel integration suite pins all three against each other.
+    """
+    scopes = snapshot_scopes
+    if not is_ephemeral and actor_type in (ActorType.AGENT, ActorType.SERVICE_ACCOUNT):
+        grants = await ActorScopeGrantRepository.list_for_actor(
+            session, actor_id, actor_type=actor_type
+        )
+        scopes = [g.scope for g in grants]
+    scopes = _apply_scope_ceiling(scopes, client_ceiling)
+    return _apply_scope_ceiling(scopes, grant_ceiling)
+
+
 async def _resolve_grant_gate(
     session: AsyncSession, oauth_grant_id: str | None
 ) -> tuple[bool, frozenset[str] | None]:
@@ -246,9 +284,13 @@ class TokenService:
     ) -> tuple[str, str, list[str]]:
         """Rotate a refresh token. Returns (access_token, refresh_token, scopes).
 
-        ``scopes`` is the rotated pair's mint-time snapshot (carried over from
-        the consumed refresh token), returned so the token endpoint can report
-        the effective scope per RFC 6749 §5.1.
+        ``scopes`` is the rotated access token's *effective* set, computed at
+        rotation time exactly the way the live resolvers enforce it
+        (:func:`resolve_effective_scopes`): live ``actor_scope_grants`` ∩
+        client ceiling ∩ grant scopes for non-ephemeral AGENT/SA actors, the
+        family snapshot ∩ ceilings for USER actors. The token rows still
+        carry the family's mint-time snapshot — enforcement for AGENT/SA
+        ignores it, and re-stamping would break USER-token semantics.
 
         Implements reuse detection: if the refresh token has already been consumed,
         the entire token family is revoked. Uses SELECT FOR UPDATE to prevent TOCTOU
@@ -261,6 +303,8 @@ class TokenService:
         token_hash = _hash_token(refresh_token)
         reuse_detected = False
         client_mismatch = False
+        client_ceiling: frozenset[str] | None = None
+        grant_ceiling: frozenset[str] | None = None
 
         async with self._ctx.admin_db.transaction() as session:
             rt = await RefreshTokenRepository.get_by_hash(session, token_hash, for_update=True)
@@ -284,6 +328,8 @@ class TokenService:
                     # active off, but a pending row force-set active must
                     # still never mint tokens.
                     raise InvalidGrantError("issuing OAuth client has been deactivated")
+                if oauth_client.allowed_scopes is not None:
+                    client_ceiling = frozenset(oauth_client.allowed_scopes)
                 if client_id is None:
                     raise InvalidGrantError("client authentication required")
                 if client_id != rt.oauth_client_id:
@@ -333,13 +379,30 @@ class TokenService:
                         )
                         if grant is None or grant.status != OAuthGrantStatus.ACTIVE.value:
                             raise InvalidGrantError("consent grant has been revoked")
+                        grant_ceiling = frozenset(grant.scopes)
 
                     if not await _actor_is_active(session, rt.actor_id, rt.actor_type):
                         raise InvalidGrantError("actor is not active")
 
                     access_plain = _generate_token(ACCESS_TOKEN_PREFIX)
                     refresh_plain = _generate_token(REFRESH_TOKEN_PREFIX)
-                    scopes = list(rt.scopes)
+                    snapshot = list(rt.scopes)
+                    # Reported set (RFC 6749 §5.1) — computed the way the
+                    # resolvers will enforce it for the new access token, not
+                    # the family snapshot: for AGENT/SA actors the resolvers
+                    # ignore the snapshot and re-derive live on every request,
+                    # so reporting rt.scopes would over-report scopes revoked
+                    # since the original mint (and under-report ones granted
+                    # since) — the exact #1260 failure mode.
+                    scopes = await resolve_effective_scopes(
+                        session,
+                        actor_id=rt.actor_id,
+                        actor_type=rt.actor_type,
+                        snapshot_scopes=snapshot,
+                        is_ephemeral=False,
+                        client_ceiling=client_ceiling,
+                        grant_ceiling=grant_ceiling,
+                    )
                     now = datetime.now(UTC)
 
                     await AccessTokenRepository.create(
@@ -347,7 +410,7 @@ class TokenService:
                         token_hash=_hash_token(access_plain),
                         actor_id=rt.actor_id,
                         actor_type=rt.actor_type,
-                        scopes=scopes,
+                        scopes=snapshot,
                         token_family_id=rt.token_family_id,
                         expires_at=now + timedelta(seconds=self.access_ttl_seconds),
                         created_by=rt.actor_id,
@@ -359,7 +422,7 @@ class TokenService:
                         token_hash=_hash_token(refresh_plain),
                         actor_id=rt.actor_id,
                         actor_type=rt.actor_type,
-                        scopes=scopes,
+                        scopes=snapshot,
                         token_family_id=rt.token_family_id,
                         expires_at=now + timedelta(seconds=self._refresh_ttl),
                         created_by=rt.actor_id,
@@ -556,7 +619,6 @@ class TokenService:
                 if not grant_active:
                     return None
 
-            scopes = list(at.scopes)
             parent_actor_id: str | None = None
             if at.actor_type == ActorType.AGENT:
                 # One lookup serves both parent resolution and the status check.
@@ -566,22 +628,19 @@ class TokenService:
             else:
                 actor_active = await _actor_is_active(session, at.actor_id, at.actor_type)
 
-            if not at.is_ephemeral and at.actor_type in (
-                ActorType.AGENT,
-                ActorType.SERVICE_ACCOUNT,
-            ):
-                grants = await ActorScopeGrantRepository.list_for_actor(
-                    session, at.actor_id, actor_type=at.actor_type
-                )
-                scopes = [g.scope for g in grants]
-
-            if client_scope_ceiling is not None:
-                scopes = [s for s in scopes if s in client_scope_ceiling]
-
-            if grant_scope_ceiling is not None:
-                # Fourth leg of the quadruple intersection: token
-                # snapshot ∩ agent live grants ∩ client ceiling ∩ grant scopes.
-                scopes = [s for s in scopes if s in grant_scope_ceiling]
+            # Live grants (non-ephemeral AGENT/SA) or snapshot (ephemeral,
+            # USER), intersected with the client ceiling and the grant's
+            # scope set (the quadruple intersection) — via the same helper
+            # the §5.1 reporting paths use, so reported == enforced.
+            scopes = await resolve_effective_scopes(
+                session,
+                actor_id=at.actor_id,
+                actor_type=at.actor_type,
+                snapshot_scopes=list(at.scopes),
+                is_ephemeral=at.is_ephemeral,
+                client_ceiling=client_scope_ceiling,
+                grant_ceiling=grant_scope_ceiling,
+            )
 
         active = at.revoked_at is None and at.expires_at > now and actor_active
         return Identity(

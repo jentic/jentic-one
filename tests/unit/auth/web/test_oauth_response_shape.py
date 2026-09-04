@@ -11,11 +11,16 @@ the anonymous DCR door's omission tests
 
 RFC 6749 §5.1 also REQUIRES the ``scope`` member whenever the granted scope
 differs from the requested one — and the platform downscopes routinely
-(effective scope = client ceiling ∩ grant scopes; the D2 triple intersection
-on the agent channel). Every grant leg therefore always carries ``scope``
-with the minted token's effective (post-intersection) value, so strict
-clients (mcp-remote pins requested_scope) learn what they actually hold
-instead of presenting tokens for scopes they were never granted (#1260).
+(effective scope = live scope grants ∩ client ceiling ∩ grant scopes; the D2
+triple intersection on the agent channel). Every grant leg therefore carries
+``scope`` with the minted token's effective (post-intersection, as-enforced)
+value, so strict clients (mcp-remote pins requested_scope) learn what they
+actually hold instead of presenting tokens for scopes they were never
+granted (#1260). One exception, forced by §3.3's ABNF (``scope-token`` is
+1*): an EMPTY effective set cannot be serialized, so the member is omitted —
+reachable only where the caller requested no scopes at this endpoint (the
+token request has no scope parameter; consent fails closed on an empty
+intersection) or where every grant was revoked post-mint.
 """
 
 from __future__ import annotations
@@ -300,6 +305,41 @@ def test_client_credentials_exchange_includes_effective_scope(
     assert data["access_token"] == "at_sa"
     assert data["scope"] == "capabilities:execute"
     assert b'"scope":"capabilities:execute"' in resp.content
+    assert b"null" not in resp.content
+
+
+@patch("jentic_one.auth.web.routers.oauth.AssertionService")
+@patch("jentic_one.auth.web.routers.oauth.TokenService")
+def test_empty_effective_scope_set_omits_the_scope_member(
+    mock_token_cls: MagicMock,
+    mock_assertion_cls: MagicMock,
+    client: TestClient,
+) -> None:
+    """A zero-grant agent (jwt-bearer, no scope requestable at this endpoint)
+    mints a token with an empty effective set. RFC 6749 §3.3's ABNF forbids
+    ``"scope": ""`` (scope-token is 1*), so the member is OMITTED from the
+    raw body — never emitted as the empty string, never as JSON null."""
+    mock_assertion_svc = MagicMock()
+    mock_assertion_svc.verify_and_exchange = AsyncMock(
+        return_value=("at_zero_grant", "rt_zero_grant", [])
+    )
+    mock_assertion_cls.return_value = mock_assertion_svc
+    mock_token_cls.return_value = MagicMock(access_ttl_seconds=3600)
+
+    resp = client.post(
+        "/oauth/token",
+        json={
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": "eyJ.test.assertion",
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["access_token"] == "at_zero_grant"
+    assert "scope" not in data
+    assert b'"scope"' not in resp.content
+    assert b'""' not in resp.content
     assert b"null" not in resp.content
 
 

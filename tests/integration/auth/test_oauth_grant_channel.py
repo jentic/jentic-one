@@ -302,6 +302,99 @@ async def test_grant_scopes_cap_agent_live_scopes(
         assert resolved.permissions == ["apis:read"]
 
 
+# --- reported scope == enforced scope (PR #1262 review, findings 1+2) --------
+
+
+async def test_refresh_reports_live_narrowed_scope_not_snapshot(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """Reviewer repro: consent grants ``a b`` → admin revokes the agent's
+    ``b`` grant (immediate effect by design) → client refreshes. The §5.1
+    ``scope`` member must report exactly what the rotated access token
+    enforces (the live intersection, [a]) — NOT the family's mint-time
+    snapshot ("a b"), which both resolvers deliberately ignore for
+    non-ephemeral agent tokens."""
+    user_id = await _seed_user(integration_context, "usr_g_rep_refresh")
+    agent_id = await _seed_agent(
+        integration_context, owner_id=user_id, scopes=["apis:read", "apis:write"]
+    )
+    await _seed_client(integration_context, allowed_scopes=["apis:read", "apis:write"])
+    _grant_id, _access, refresh, _ = await _mint_grant_channel_tokens(
+        integration_context,
+        user_id=user_id,
+        agent_id=agent_id,
+        grant_scopes=["apis:read", "apis:write"],
+    )
+
+    # apis:write revoked between mint and rotation.
+    async with integration_context.admin_db.session() as session:
+        await ActorScopeGrantRepository.revoke(session, actor_id=agent_id, scope="apis:write")
+        await session.commit()
+
+    token_svc = TokenService(integration_context)
+    new_access, _new_refresh, reported = await token_svc.refresh(refresh, client_id=_CLIENT_ID)
+    assert reported == ["apis:read"]
+
+    # reported == enforced, on BOTH resolvers.
+    broker = InProcessTokenResolver(integration_context.admin_db)
+    for resolver in (token_svc, broker):
+        resolved = await resolver.resolve_access_token(new_access)
+        assert resolved is not None and resolved.active is True
+        assert resolved.permissions == reported
+
+
+async def test_exchange_reports_live_narrowed_scope_not_consent_snapshot(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """A scope revocation landing inside the code TTL (consent → exchange):
+    the exchange response reports the live intersection the token enforces
+    from first use, not the consent-time D2 snapshot on the grant row."""
+    user_id = await _seed_user(integration_context, "usr_g_rep_exch")
+    agent_id = await _seed_agent(
+        integration_context, owner_id=user_id, scopes=["apis:read", "apis:write"]
+    )
+    await _seed_client(integration_context, allowed_scopes=["apis:read", "apis:write"])
+    grant_svc = OAuthGrantService(integration_context)
+    authorize_svc = AuthorizeService(integration_context)
+    grant_id = await grant_svc.create_grant(
+        user_id=user_id,
+        oauth_client_id=_CLIENT_ID,
+        agent_id=agent_id,
+        scopes=["apis:read", "apis:write"],
+        client_name="Grant Channel App",
+    )
+    code = await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=_CLIENT_ID,
+        redirect_uri=_REDIRECT_URI,
+        code_challenge=_code_challenge(_CODE_VERIFIER),
+        scopes="apis:read apis:write",
+        grant_id=grant_id,
+    )
+
+    # apis:write revoked inside the code TTL, before the exchange.
+    async with integration_context.admin_db.session() as session:
+        await ActorScopeGrantRepository.revoke(session, actor_id=agent_id, scope="apis:write")
+        await session.commit()
+
+    access, _refresh, id_token, reported = await authorize_svc.exchange_code(
+        code=code,
+        code_verifier=_CODE_VERIFIER,
+        redirect_uri=_REDIRECT_URI,
+        client_id=_CLIENT_ID,
+        oauth_client_id=_CLIENT_ID,
+    )
+    assert id_token is None
+    assert reported == ["apis:read"]
+
+    token_svc = TokenService(integration_context)
+    broker = InProcessTokenResolver(integration_context.admin_db)
+    for resolver in (token_svc, broker):
+        resolved = await resolver.resolve_access_token(access)
+        assert resolved is not None and resolved.active is True
+        assert resolved.permissions == reported
+
+
 # --- the three kill radii, on BOTH resolvers --------------------------------
 
 

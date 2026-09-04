@@ -253,10 +253,8 @@ func (SetPermissionsRequest) RequiredFields() []string        { return []string{
 func (Sigv4CreateRequest) RequiredFields() []string {
 	return []string{"access_key_id", "api", "aws_region", "aws_service", "name", "secret_access_key", "type"}
 }
-func (Sigv4UpdateRequest) RequiredFields() []string { return []string{"type"} }
-func (TokenResponse) RequiredFields() []string {
-	return []string{"access_token", "expires_in", "scope"}
-}
+func (Sigv4UpdateRequest) RequiredFields() []string       { return []string{"type"} }
+func (TokenResponse) RequiredFields() []string            { return []string{"access_token", "expires_in"} }
 func (ToolkitAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ToolkitAgentResponse) RequiredFields() []string {
 	return []string{"agent_id", "agent_name", "bound_at", "status"}
