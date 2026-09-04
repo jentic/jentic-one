@@ -10,6 +10,22 @@ no `pip install jentic-one`. The full reference for everything on this page
 [deploy/README.md](../../deploy/README.md#self-hosted-containers--external-postgres);
 this page is the install path in order.
 
+## Platform notes
+
+Any Docker host works; what differs is how Docker gets there and where the
+commands run ([full matrix](platform-support.md)):
+
+| Host | Docker | Where to run this page |
+| ---- | ------ | ---------------------- |
+| Linux | Native | Any shell, as shown |
+| macOS | Docker Desktop (or colima) | Any shell, as shown |
+| Windows | Docker Desktop, WSL2 backend (Linux containers) | **Inside WSL2** — the snippets are POSIX shell, and `jenticctl` is not shipped for native Windows |
+
+The `127.0.0.1` port binds behave the same everywhere — Docker Desktop
+forwards them to the host's loopback on macOS and Windows. The native Windows
+`jentic.exe` can call a broker published this way; only the *operating* of the
+containers lives in WSL2.
+
 ## 1. Pull and verify the image
 
 Tags — including version tags — can be re-pushed; only a `@sha256:` digest is
@@ -90,6 +106,13 @@ GRANT USAGE, CREATE ON SCHEMA admin TO admin_user;
 (Passwords must match the `JENTIC__DATABASES__*__PASSWORD` values in
 `prod.env`. Simpler variant: one owning role for all three schemas.)
 
+No Postgres yet, or want it in Docker too?
+[`docker/local-setup/docker-compose.yaml`](../../docker/local-setup/docker-compose.yaml)
+runs `postgres:16` with
+[`init-schemas.sql`](../../docker/local-setup/init-schemas.sql) — the worked
+version of the SQL above, run automatically on first boot (dev passwords;
+change them for anything real).
+
 ## 4. Run migrations
 
 ```bash
@@ -139,9 +162,13 @@ Both surfaces speak plain HTTP — the loopback binds keep them off the network
 until a TLS-terminating reverse proxy fronts them. Route UI/control traffic to
 the app and execution traffic to the broker; agents need both URLs.
 
-Prefer one file over two `docker run`s? The
-[docker-compose example](../../deploy/README.md#docker-compose-example) wires
-migrate → app + broker with health checks.
+Prefer one file over two `docker run`s? Two worked compose examples:
+
+- [app + broker against an external Postgres](../../deploy/README.md#docker-compose-example)
+  — migrate → app + broker with health checks; the production shape of this page.
+- [the whole stack including Postgres](../agent/install.md#4-write-the-compose-file--jenticdocker-composeyaml)
+  — the agent runbook's self-contained compose file (app, broker, and a
+  `postgres:16` service with the schema init baked in).
 
 ## 7. Connect the CLIs
 
