@@ -3359,7 +3359,7 @@ components:
           type: boolean
         active_grant_count:
           default: 0
-          description: Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+          description: Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
           title: Active Grant Count
           type: integer
         allowed_scopes:
@@ -3644,7 +3644,7 @@ components:
           type: boolean
         active_grant_count:
           default: 0
-          description: Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+          description: Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
           title: Active Grant Count
           type: integer
         allowed_scopes:
@@ -6802,7 +6802,7 @@ paths:
   /.well-known/oauth-authorization-server/mcp:
     get:
       description: |-
-        RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+        RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 
         RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
         the issuer `{base}/mcp` named by the protected-resource document. It
@@ -6857,7 +6857,7 @@ paths:
   /.well-known/oauth-protected-resource:
     get:
       description: |-
-        Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+        Root-path alias of the MCP protected-resource document.
 
         Compatibility fallback for clients that probe the root
         `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -6865,7 +6865,7 @@ paths:
         because this deployment has exactly one OAuth-protected resource, so the
         root and path-scoped documents are the same body.
 
-        Two acknowledged trades (§4.7, review F6):
+        Two acknowledged trades:
 
         - RFC 9728 §3 says this well-known path corresponds to resource identifier
           ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
@@ -6875,7 +6875,7 @@ paths:
           what the alias exists to satisfy. That is the intended trade.
         - The alias squats the deployment's only root PRM slot: a future non-MCP
           protected resource at ``{base}`` cannot get its own root document
-          without breaking this fallback. Phase 3's mount must re-confirm the
+          without breaking this fallback. The mounted MCP app must re-confirm the
           "exactly one OAuth-protected resource" premise before adding one.
       operationId: mcpOauthProtectedResourceRootAlias
       responses:
@@ -6924,7 +6924,7 @@ paths:
   /.well-known/oauth-protected-resource/mcp:
     get:
       description: |-
-        RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+        RFC 9728 protected-resource metadata for `{base}/mcp`.
 
         Names the /mcp-scoped authorization server and the MCP tool scopes. The
         same body is also served at the root well-known path for clients that
@@ -8379,7 +8379,7 @@ paths:
   /admin/oauth-grants:
     get:
       description: |-
-        List consent→agent grants across all clients and agents (§4.8).
+        List consent→agent grants across all clients and agents.
 
         The admin cross-view over the grant registry: filter by client, agent,
         consenting user, or status. Each item carries the client's display name
@@ -9056,7 +9056,7 @@ paths:
   /agents/{agent_id}/oauth-grants:
     get:
       description: |-
-        List OAuth consent grants binding clients to this agent (§4.8).
+        List OAuth consent grants binding clients to this agent.
 
         The "Connected clients" surface: every grant carries the client's display
         name and redirect-URI origin, the granted scopes, the consenting user,
@@ -15448,7 +15448,7 @@ paths:
   /oauth-clients:
     post:
       description: |-
-        Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+        Register a public OAuth client anonymously (RFC 7591 subset).
 
         Returns 201 with the new ``client_id``, or 200 with the **existing** row's
         ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -15494,7 +15494,7 @@ paths:
   /oauth-grants/{grant_id}:revoke:
     post:
       description: |-
-        Revoke a consent→agent grant — one of the three §4.6 kill radii.
+        Revoke a consent→agent grant — one of the three revocation kill radii.
 
         Allowed for the grant's owner (the consenting user) or an admin. Marks
         the grant ``revoked`` and revokes every outstanding access/refresh token
@@ -15686,7 +15686,7 @@ paths:
         parameters (user_id, email, scopes, redirect_uri) live server-side and
         can't be tampered with or captured from browser history/proxy logs.
 
-        ``agent_id`` is posted only by the §4.4 agent-picker variant
+        ``agent_id`` is posted only by the agent-picker variant
         (``consent_model='agent'`` clients); it is validated and the scope math
         recomputed entirely server-side — the browser's selection is never
         trusted.

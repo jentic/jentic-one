@@ -2141,7 +2141,7 @@ type OAuthClientCreateRequestTokenEndpointAuthMethod string
 type OAuthClientCreateResponse struct {
 	Active bool `json:"active"`
 
-	// ActiveGrantCount Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+	// ActiveGrantCount Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
 	ActiveGrantCount *int `json:"active_grant_count,omitempty"`
 
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
@@ -2244,7 +2244,7 @@ type OAuthClientRegistrationResponse struct {
 type OAuthClientResponse struct {
 	Active bool `json:"active"`
 
-	// ActiveGrantCount Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+	// ActiveGrantCount Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
 	ActiveGrantCount *int `json:"active_grant_count,omitempty"`
 
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
@@ -4644,7 +4644,7 @@ type ClientInterface interface {
 
 	// McpOauthAuthorizationServer OAuth authorization server metadata for the MCP resource
 	//
-	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 	//
 	// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
 	// the issuer `{base}/mcp` named by the protected-resource document. It
@@ -4658,7 +4658,7 @@ type ClientInterface interface {
 
 	// McpOauthProtectedResourceRootAlias OAuth protected resource metadata (root alias for the MCP resource)
 	//
-	// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+	// Root-path alias of the MCP protected-resource document.
 	//
 	// Compatibility fallback for clients that probe the root
 	// `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -4666,7 +4666,7 @@ type ClientInterface interface {
 	// because this deployment has exactly one OAuth-protected resource, so the
 	// root and path-scoped documents are the same body.
 	//
-	// Two acknowledged trades (§4.7, review F6):
+	// Two acknowledged trades:
 	//
 	// - RFC 9728 §3 says this well-known path corresponds to resource identifier
 	//   ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
@@ -4676,7 +4676,7 @@ type ClientInterface interface {
 	//   what the alias exists to satisfy. That is the intended trade.
 	// - The alias squats the deployment's only root PRM slot: a future non-MCP
 	//   protected resource at ``{base}`` cannot get its own root document
-	//   without breaking this fallback. Phase 3's mount must re-confirm the
+	//   without breaking this fallback. The mounted MCP app must re-confirm the
 	//   "exactly one OAuth-protected resource" premise before adding one.
 	//
 	// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
@@ -4684,7 +4684,7 @@ type ClientInterface interface {
 
 	// McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
 	//
-	// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+	// RFC 9728 protected-resource metadata for `{base}/mcp`.
 	//
 	// Names the /mcp-scoped authorization server and the MCP tool scopes. The
 	// same body is also served at the root well-known path for clients that
@@ -4932,7 +4932,7 @@ type ClientInterface interface {
 
 	// ListOauthGrants List OAuth grants
 	//
-	// List consent→agent grants across all clients and agents (§4.8).
+	// List consent→agent grants across all clients and agents.
 	//
 	// The admin cross-view over the grant registry: filter by client, agent,
 	// consenting user, or status. Each item carries the client's display name
@@ -5042,7 +5042,7 @@ type ClientInterface interface {
 
 	// ListAgentOauthGrants List agent OAuth grants
 	//
-	// List OAuth consent grants binding clients to this agent (§4.8).
+	// List OAuth consent grants binding clients to this agent.
 	//
 	// The "Connected clients" surface: every grant carries the client's display
 	// name and redirect-URI origin, the granted scopes, the consenting user,
@@ -5984,7 +5984,7 @@ type ClientInterface interface {
 
 	// RegisterOauthClientEndpointWithBody Register OAuth client (anonymous DCR)
 	//
-	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -6001,7 +6001,7 @@ type ClientInterface interface {
 
 	// RegisterOauthClientEndpoint Register OAuth client (anonymous DCR)
 	//
-	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -6018,7 +6018,7 @@ type ClientInterface interface {
 
 	// RevokeOauthGrant Revoke OAuth grant
 	//
-	// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
 	// Allowed for the grant's owner (the consenting user) or an admin. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
@@ -6052,7 +6052,7 @@ type ClientInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
-	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// ``agent_id`` is posted only by the agent-picker variant
 	// (``consent_model='agent'`` clients); it is validated and the scope math
 	// recomputed entirely server-side — the browser's selection is never
 	// trusted.
@@ -6071,7 +6071,7 @@ type ClientInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
-	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// ``agent_id`` is posted only by the agent-picker variant
 	// (``consent_model='agent'`` clients); it is validated and the scope math
 	// recomputed entirely server-side — the browser's selection is never
 	// trusted.
@@ -6899,7 +6899,7 @@ func (c *Client) OauthAuthorizationServer(ctx context.Context, reqEditors ...Req
 
 // McpOauthAuthorizationServer OAuth authorization server metadata for the MCP resource
 //
-// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 //
 // RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
 // the issuer `{base}/mcp` named by the protected-resource document. It
@@ -6923,7 +6923,7 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 
 // McpOauthProtectedResourceRootAlias OAuth protected resource metadata (root alias for the MCP resource)
 //
-// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+// Root-path alias of the MCP protected-resource document.
 //
 // Compatibility fallback for clients that probe the root
 // `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -6931,7 +6931,7 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 // because this deployment has exactly one OAuth-protected resource, so the
 // root and path-scoped documents are the same body.
 //
-// Two acknowledged trades (§4.7, review F6):
+// Two acknowledged trades:
 //
 //   - RFC 9728 §3 says this well-known path corresponds to resource identifier
 //     “{base}“ (no path), and §3.3 has clients validate “resource“ against
@@ -6941,7 +6941,7 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 //     what the alias exists to satisfy. That is the intended trade.
 //   - The alias squats the deployment's only root PRM slot: a future non-MCP
 //     protected resource at “{base}“ cannot get its own root document
-//     without breaking this fallback. Phase 3's mount must re-confirm the
+//     without breaking this fallback. The mounted MCP app must re-confirm the
 //     "exactly one OAuth-protected resource" premise before adding one.
 //
 // Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
@@ -6959,7 +6959,7 @@ func (c *Client) McpOauthProtectedResourceRootAlias(ctx context.Context, reqEdit
 
 // McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
 //
-// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+// RFC 9728 protected-resource metadata for `{base}/mcp`.
 //
 // Names the /mcp-scoped authorization server and the MCP tool scopes. The
 // same body is also served at the root well-known path for clients that
@@ -7477,7 +7477,7 @@ func (c *Client) DenyOauthClient(ctx context.Context, id string, body DenyOauthC
 
 // ListOauthGrants List OAuth grants
 //
-// List consent→agent grants across all clients and agents (§4.8).
+// List consent→agent grants across all clients and agents.
 //
 // The admin cross-view over the grant registry: filter by client, agent,
 // consenting user, or status. Each item carries the client's display name
@@ -7707,7 +7707,7 @@ func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body Updat
 
 // ListAgentOauthGrants List agent OAuth grants
 //
-// List OAuth consent grants binding clients to this agent (§4.8).
+// List OAuth consent grants binding clients to this agent.
 //
 // The "Connected clients" surface: every grant carries the client's display
 // name and redirect-URI origin, the granted scopes, the consenting user,
@@ -9639,7 +9639,7 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 
 // RegisterOauthClientEndpointWithBody Register OAuth client (anonymous DCR)
 //
-// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+// Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
@@ -9666,7 +9666,7 @@ func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, conten
 
 // RegisterOauthClientEndpoint Register OAuth client (anonymous DCR)
 //
-// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+// Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
@@ -9693,7 +9693,7 @@ func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterO
 
 // RevokeOauthGrant Revoke OAuth grant
 //
-// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+// Revoke a consent→agent grant — one of the three revocation kill radii.
 //
 // Allowed for the grant's owner (the consenting user) or an admin. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
@@ -9757,7 +9757,7 @@ func (c *Client) ConsentPage(ctx context.Context, params *ConsentPageParams, req
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
-// “agent_id“ is posted only by the §4.4 agent-picker variant
+// “agent_id“ is posted only by the agent-picker variant
 // (“consent_model='agent'“ clients); it is validated and the scope math
 // recomputed entirely server-side — the browser's selection is never
 // trusted.
@@ -9786,7 +9786,7 @@ func (c *Client) ConsentSubmitWithBody(ctx context.Context, contentType string, 
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
-// “agent_id“ is posted only by the §4.4 agent-picker variant
+// “agent_id“ is posted only by the agent-picker variant
 // (“consent_model='agent'“ clients); it is validated and the scope math
 // recomputed entirely server-side — the browser's selection is never
 // trusted.
@@ -20179,7 +20179,7 @@ type ClientWithResponsesInterface interface {
 
 	// McpOauthAuthorizationServerWithResponse OAuth authorization server metadata for the MCP resource
 	//
-	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 	//
 	// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
 	// the issuer `{base}/mcp` named by the protected-resource document. It
@@ -20195,7 +20195,7 @@ type ClientWithResponsesInterface interface {
 
 	// McpOauthProtectedResourceRootAliasWithResponse OAuth protected resource metadata (root alias for the MCP resource)
 	//
-	// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+	// Root-path alias of the MCP protected-resource document.
 	//
 	// Compatibility fallback for clients that probe the root
 	// `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -20203,7 +20203,7 @@ type ClientWithResponsesInterface interface {
 	// because this deployment has exactly one OAuth-protected resource, so the
 	// root and path-scoped documents are the same body.
 	//
-	// Two acknowledged trades (§4.7, review F6):
+	// Two acknowledged trades:
 	//
 	// - RFC 9728 §3 says this well-known path corresponds to resource identifier
 	//   ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
@@ -20213,7 +20213,7 @@ type ClientWithResponsesInterface interface {
 	//   what the alias exists to satisfy. That is the intended trade.
 	// - The alias squats the deployment's only root PRM slot: a future non-MCP
 	//   protected resource at ``{base}`` cannot get its own root document
-	//   without breaking this fallback. Phase 3's mount must re-confirm the
+	//   without breaking this fallback. The mounted MCP app must re-confirm the
 	//   "exactly one OAuth-protected resource" premise before adding one.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -20223,7 +20223,7 @@ type ClientWithResponsesInterface interface {
 
 	// McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
 	//
-	// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+	// RFC 9728 protected-resource metadata for `{base}/mcp`.
 	//
 	// Names the /mcp-scoped authorization server and the MCP tool scopes. The
 	// same body is also served at the root well-known path for clients that
@@ -20497,7 +20497,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListOauthGrantsWithResponse List OAuth grants
 	//
-	// List consent→agent grants across all clients and agents (§4.8).
+	// List consent→agent grants across all clients and agents.
 	//
 	// The admin cross-view over the grant registry: filter by client, agent,
 	// consenting user, or status. Each item carries the client's display name
@@ -20619,7 +20619,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListAgentOauthGrantsWithResponse List agent OAuth grants
 	//
-	// List OAuth consent grants binding clients to this agent (§4.8).
+	// List OAuth consent grants binding clients to this agent.
 	//
 	// The "Connected clients" surface: every grant carries the client's display
 	// name and redirect-URI origin, the granted scopes, the consenting user,
@@ -21687,7 +21687,7 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterOauthClientEndpointWithBodyWithResponse Register OAuth client (anonymous DCR)
 	//
-	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -21704,7 +21704,7 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterOauthClientEndpointWithResponse Register OAuth client (anonymous DCR)
 	//
-	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -21721,7 +21721,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeOauthGrantWithResponse Revoke OAuth grant
 	//
-	// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
 	// Allowed for the grant's owner (the consenting user) or an admin. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
@@ -21761,7 +21761,7 @@ type ClientWithResponsesInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
-	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// ``agent_id`` is posted only by the agent-picker variant
 	// (``consent_model='agent'`` clients); it is validated and the scope math
 	// recomputed entirely server-side — the browser's selection is never
 	// trusted.
@@ -21780,7 +21780,7 @@ type ClientWithResponsesInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
-	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// ``agent_id`` is posted only by the agent-picker variant
 	// (``consent_model='agent'`` clients); it is validated and the scope math
 	// recomputed entirely server-side — the browser's selection is never
 	// trusted.
@@ -36534,7 +36534,7 @@ func (c *ClientWithResponses) OauthAuthorizationServerWithResponse(ctx context.C
 
 // McpOauthAuthorizationServerWithResponse OAuth authorization server metadata for the MCP resource
 //
-// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 //
 // RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
 // the issuer `{base}/mcp` named by the protected-resource document. It
@@ -36556,7 +36556,7 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 
 // McpOauthProtectedResourceRootAliasWithResponse OAuth protected resource metadata (root alias for the MCP resource)
 //
-// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+// Root-path alias of the MCP protected-resource document.
 //
 // Compatibility fallback for clients that probe the root
 // `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -36564,7 +36564,7 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 // because this deployment has exactly one OAuth-protected resource, so the
 // root and path-scoped documents are the same body.
 //
-// Two acknowledged trades (§4.7, review F6):
+// Two acknowledged trades:
 //
 //   - RFC 9728 §3 says this well-known path corresponds to resource identifier
 //     “{base}“ (no path), and §3.3 has clients validate “resource“ against
@@ -36574,7 +36574,7 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 //     what the alias exists to satisfy. That is the intended trade.
 //   - The alias squats the deployment's only root PRM slot: a future non-MCP
 //     protected resource at “{base}“ cannot get its own root document
-//     without breaking this fallback. Phase 3's mount must re-confirm the
+//     without breaking this fallback. The mounted MCP app must re-confirm the
 //     "exactly one OAuth-protected resource" premise before adding one.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -36590,7 +36590,7 @@ func (c *ClientWithResponses) McpOauthProtectedResourceRootAliasWithResponse(ctx
 
 // McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
 //
-// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+// RFC 9728 protected-resource metadata for `{base}/mcp`.
 //
 // Names the /mcp-scoped authorization server and the MCP tool scopes. The
 // same body is also served at the root well-known path for clients that
@@ -37026,7 +37026,7 @@ func (c *ClientWithResponses) DenyOauthClientWithResponse(ctx context.Context, i
 
 // ListOauthGrantsWithResponse List OAuth grants
 //
-// List consent→agent grants across all clients and agents (§4.8).
+// List consent→agent grants across all clients and agents.
 //
 // The admin cross-view over the grant registry: filter by client, agent,
 // consenting user, or status. Each item carries the client's display name
@@ -37220,7 +37220,7 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 
 // ListAgentOauthGrantsWithResponse List agent OAuth grants
 //
-// List OAuth consent grants binding clients to this agent (§4.8).
+// List OAuth consent grants binding clients to this agent.
 //
 // The "Connected clients" surface: every grant carries the client's display
 // name and redirect-URI origin, the granted scopes, the consenting user,
@@ -38882,7 +38882,7 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 
 // RegisterOauthClientEndpointWithBodyWithResponse Register OAuth client (anonymous DCR)
 //
-// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+// Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
@@ -38905,7 +38905,7 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ct
 
 // RegisterOauthClientEndpointWithResponse Register OAuth client (anonymous DCR)
 //
-// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+// Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
@@ -38928,7 +38928,7 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithResponse(ctx contex
 
 // RevokeOauthGrantWithResponse Revoke OAuth grant
 //
-// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+// Revoke a consent→agent grant — one of the three revocation kill radii.
 //
 // Allowed for the grant's owner (the consenting user) or an admin. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
@@ -38986,7 +38986,7 @@ func (c *ClientWithResponses) ConsentPageWithResponse(ctx context.Context, param
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
-// “agent_id“ is posted only by the §4.4 agent-picker variant
+// “agent_id“ is posted only by the agent-picker variant
 // (“consent_model='agent'“ clients); it is validated and the scope math
 // recomputed entirely server-side — the browser's selection is never
 // trusted.
@@ -39011,7 +39011,7 @@ func (c *ClientWithResponses) ConsentSubmitWithBodyWithResponse(ctx context.Cont
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
-// “agent_id“ is posted only by the §4.4 agent-picker variant
+// “agent_id“ is posted only by the agent-picker variant
 // (“consent_model='agent'“ clients); it is validated and the scope math
 // recomputed entirely server-side — the browser's selection is never
 // trusted.
