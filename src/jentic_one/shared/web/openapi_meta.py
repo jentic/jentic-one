@@ -796,6 +796,12 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # OAuth redirect callbacks (bound by a signed state param, not a session).
         "oauthCallback",
         "authorizeOauthCallback",
+        # Approval-pending status poll: anonymous by design (the polling
+        # browser has no platform token yet), bound by the signed
+        # approval-state blob minted at /authorize — not a session and not a
+        # bare client_id. Returns only the pending/approved/denied tri-state;
+        # rate limited in its own bucket instead.
+        "approvalStatusEndpoint",
         # OAuth consent screen (presented after IdP login, before issuing the code).
         "consentPage",
         "consentSubmit",

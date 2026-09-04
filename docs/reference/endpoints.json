@@ -2742,6 +2742,47 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "approvalDecisionEndpoint",
+      "path": "/oauth/approval/decision",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Approve or deny a pending client inline (approval-pending page)",
+      "surface": "oauth",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "approvalStatusEndpoint",
+      "path": "/oauth/approval/status",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Poll client approval status (approval-pending page)",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,
@@ -5149,5 +5190,5 @@
     ],
     "total": 33
   },
-  "total": 178
+  "total": 180
 }

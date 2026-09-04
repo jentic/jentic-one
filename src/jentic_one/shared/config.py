@@ -334,6 +334,12 @@ class OAuthRateLimitConfig(BaseModel):
     # Anonymous dynamic client registration (POST /oauth-clients).
     registration_rpm: int = 10
     registration_burst: int = 5
+    # Approval-pending status poll (GET /oauth/approval/status). The
+    # approval-pending page polls every few seconds, so this bucket is more
+    # generous than the /authorize one; it lives in its own namespace so
+    # polling can never drain the /authorize (or registration) quota.
+    approval_status_rpm: int = 60
+    approval_status_burst: int = 30
     trusted_proxies: list[str] = Field(default_factory=list)
 
 

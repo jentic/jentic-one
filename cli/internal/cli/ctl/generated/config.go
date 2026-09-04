@@ -1463,6 +1463,13 @@ func (j *MetricsConfig) UnmarshalJSON(value []byte) error {
 
 // Pre-auth rate limit tunables for OAuth endpoints.
 type OAuthRateLimitConfig struct {
+	// ApprovalStatusBurst corresponds to the JSON schema field
+	// "approval_status_burst".
+	ApprovalStatusBurst int `json:"approval_status_burst,omitempty,omitzero" yaml:"approval_status_burst,omitempty" mapstructure:"approval_status_burst,omitempty"`
+
+	// ApprovalStatusRpm corresponds to the JSON schema field "approval_status_rpm".
+	ApprovalStatusRpm int `json:"approval_status_rpm,omitempty,omitzero" yaml:"approval_status_rpm,omitempty" mapstructure:"approval_status_rpm,omitempty"`
+
 	// AuthorizeBurst corresponds to the JSON schema field "authorize_burst".
 	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
 
@@ -1495,6 +1502,12 @@ func (j *OAuthRateLimitConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["approval_status_burst"]; !ok || v == nil {
+		plain.ApprovalStatusBurst = 30
+	}
+	if v, ok := raw["approval_status_rpm"]; !ok || v == nil {
+		plain.ApprovalStatusRpm = 60
 	}
 	if v, ok := raw["authorize_burst"]; !ok || v == nil {
 		plain.AuthorizeBurst = 30

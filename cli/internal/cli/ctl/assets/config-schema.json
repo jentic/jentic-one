@@ -977,6 +977,16 @@
     "OAuthRateLimitConfig": {
       "description": "Pre-auth rate limit tunables for OAuth endpoints.",
       "properties": {
+        "approval_status_burst": {
+          "default": 30,
+          "title": "Approval Status Burst",
+          "type": "integer"
+        },
+        "approval_status_rpm": {
+          "default": 60,
+          "title": "Approval Status Rpm",
+          "type": "integer"
+        },
         "authorize_burst": {
           "default": 30,
           "title": "Authorize Burst",
