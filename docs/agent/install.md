@@ -258,9 +258,6 @@ services:
     environment:
       JENTIC_CONFIG_FILE: /etc/jentic/jentic-one.yaml
       JENTIC__APPS: registry,admin,control,auth
-      # uid 999's home dir is read-only; point model caches at /tmp
-      HF_HOME: /tmp/hf-cache
-      SENTENCE_TRANSFORMERS_HOME: /tmp/hf-cache
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -273,8 +270,6 @@ services:
       JENTIC_CONFIG_FILE: /etc/jentic/jentic-one.yaml
       JENTIC__APPS: broker
       JENTIC__SERVER__PORT: "8100"
-      HF_HOME: /tmp/hf-cache
-      SENTENCE_TRANSFORMERS_HOME: /tmp/hf-cache
     ports:
       - "127.0.0.1:8100:8100"
     volumes:
@@ -304,8 +299,6 @@ services:
     environment:
       JENTIC_CONFIG_FILE: /etc/jentic/jentic-one.yaml
       JENTIC__APPS: registry,admin,control,auth
-      HF_HOME: /tmp/hf-cache
-      SENTENCE_TRANSFORMERS_HOME: /tmp/hf-cache
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -320,8 +313,6 @@ services:
       JENTIC_CONFIG_FILE: /etc/jentic/jentic-one.yaml
       JENTIC__APPS: broker
       JENTIC__SERVER__PORT: "8100"
-      HF_HOME: /tmp/hf-cache
-      SENTENCE_TRANSFORMERS_HOME: /tmp/hf-cache
     ports:
       - "127.0.0.1:8100:8100"
     volumes:
