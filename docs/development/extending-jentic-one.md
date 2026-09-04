@@ -1,4 +1,4 @@
-# Extending jentic-one
+# Extending Jentic One
 
 `jentic-one` ships a set of **backward-compatible seams** so an integrator can
 inject alternate implementations and mount extra components **without editing
@@ -7,7 +7,9 @@ stock distribution.
 
 This guide is the unified composition story: how the seams fit together and the
 order in which an integrator wires them. Each seam is also documented at its
-definition — this page links them into one workflow.
+definition — this page links them into one workflow. For the concepts the seams
+plug into (the surfaces, the `AppContainer` composition root, the broker's
+"one pipeline, two callers" rule), see [docs/architecture/](../architecture/README.md).
 
 ## The seams at a glance
 
@@ -128,7 +130,7 @@ def build_app(ctx: Context):
 
 The container stashes your `broker` on `app.state.broker`. It is honored by
 **both** callers of the "one pipeline, two callers" seam — the sync router
-(`broker/web/routers/execute.py`) and the async worker
+([`broker/web/routers/execute.py`](../../src/jentic_one/broker/web/routers/execute.py)) and the async worker
 (`PipelineExecutor`) — so an injected broker reaches the sync **and** async
 paths, not just one of them.
 
@@ -167,7 +169,7 @@ class TestMyStrategyCompliance(BaseSearchStrategyComplianceTest):
 
 These `Test*` subclasses are collected by pytest and fail loudly if your
 implementation diverges from the built-in contract — the same guard the OSS
-suite runs against its own defaults (`tests/unit/testing/test_compliance_oss.py`).
+suite runs against its own defaults ([`tests/unit/testing/test_compliance_oss.py`](../../tests/unit/testing/test_compliance_oss.py)).
 
 ### 4. (Optional) Compose your own CLI binary
 
@@ -179,12 +181,11 @@ import cycle). Migration ordering is **not** modelled in Go — the CLI only
 invokes the Python runner, which owns `DB_TARGETS` and its upgrade/rollback
 order.
 
-## Breaking change: unknown config keys now fail loudly
+## Unknown config keys fail loudly
 
 `AppConfig` sets `model_config = ConfigDict(extra="forbid")`. An **unrecognized
 top-level config key** — one that is neither a core field nor a *registered*
-extension section — now causes a **loud failure at startup** instead of being
-silently ignored. This is defensively correct (it ensures extensions are
-formally registered via `register_config`), but downstream configs with
-legacy/typo top-level keys must be cleaned up or migrated to a registered
-extension section before upgrading.
+extension section — causes a **loud failure at startup** rather than being
+silently ignored. This ensures extension sections are formally registered via
+`register_config`: a typo'd or unregistered top-level key stops the app instead
+of dropping your configuration on the floor.

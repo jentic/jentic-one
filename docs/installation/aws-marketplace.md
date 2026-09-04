@@ -12,7 +12,7 @@ on every upgrade. A bundled PostgreSQL runs in-cluster by default; an
 external database such as RDS is supported.
 
 For self-hosted installs outside AWS Marketplace, use the
-[quickstart](../quickstart.md) instead.
+[installation index](README.md) instead.
 
 ## Prerequisites
 
@@ -77,7 +77,7 @@ aws ecr get-login-password --region us-east-1 \
     709825985650.dkr.ecr.us-east-1.amazonaws.com
 
 helm install jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
   --version <version> --namespace jentic-one --create-namespace \
   --set global.serviceAccount.name=jentic-one \
   --set global.awsmp.licenseSecret=<from-launch-page>
@@ -87,15 +87,14 @@ No passwords or further configuration are required at install time.
 
 ## Post-install: set the canonical base URL
 
-Required before agents can connect. Set it to the URL your agents will reach
-the app at (your ingress or load-balancer URL). Agent token exchange compares
-this value byte-for-byte against the `--url` agents register with — a
-mismatch (including `localhost` vs `127.0.0.1`) fails with `invalid_grant`
-*after* the agent is approved:
+Required before agents can connect — set it to the URL your agents will reach
+the app at (your ingress or load-balancer URL). Why the value must match what
+agents register with byte-for-byte (including the `localhost` vs `127.0.0.1`
+trap): [Helm guide, step 3](helm.md#3-set-the-canonical-base-url).
 
 ```bash
 helm upgrade jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
   --version <version> -n jentic-one --reuse-values \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=https://jentic.example.com
 ```
@@ -117,37 +116,44 @@ jentic register --url <app URL> --broker-url <broker URL>
 ```
 
 Expose the broker Service (port 8000 in-cluster) alongside the app — it is
-the data plane every agent call goes through. See the
-[quickstart](../quickstart.md) for the first brokered call.
+the data plane every agent call goes through. See
+[the first brokered call](../guides/first-call.md) to take it from there.
 
 ## External database
 
 To use RDS/Aurora PostgreSQL instead of the bundled database, disable the
-bundled instance and point each surface at your endpoint. Explicit passwords
-always take precedence over the generated ones:
+bundled instance and point each surface at your endpoint:
 
 ```bash
 --set postgresql.enabled=false \
 --set global.postgresql.enabled=false \
 --set global.databases.registry.host=<endpoint> \
 --set global.databases.control.host=<endpoint> \
---set global.databases.admin.host=<endpoint> \
---set global.databases.registry.password=<...> \
---set global.databases.control.password=<...> \
---set global.databases.admin.password=<...>
+--set global.databases.admin.host=<endpoint>
 ```
+
+Keep the passwords out of `--set` flags and values files: reference a
+Kubernetes Secret you manage via `secretKeyRef` env entries (or mount your
+own Secret with `global.appSecrets.existingSecret`) — the worked shape is in
+the [Helm guide's Secrets section](helm.md#secrets). Quick path for a trial
+only: append `--set global.databases.<surface>.password=<…>` for the three
+surfaces (explicit passwords always win over generated ones) — **warning:**
+those values land in your shell history and are readable later via
+`helm get values`, so rotate them before real data touches the instance.
 
 Create the three roles and schemas (`registry`, `control`, `admin`) on the
 instance first.
 
 ## Upgrades and removal
 
+0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
+
 Upgrade to a new version with `--reset-values`, re-passing your explicit
 overrides:
 
 ```bash
 helm upgrade jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
   --version <new-version> -n jentic-one --reset-values \
   --set global.serviceAccount.name=jentic-one \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=<url>

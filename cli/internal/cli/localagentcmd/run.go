@@ -91,7 +91,7 @@ func NewRunCmd(app *cmdcore.App) *cobra.Command {
 			"The agent account, its home, and the directories it has been granted are\n" +
 			"recorded in the CLI's agent state (~/.config/jentic/agent-account.yaml).\n" +
 			"See the security analysis in\n" +
-			"docs/security/local-agent/local-agent-isolation.md for the full rationale.",
+			"docs/security/same-host/local-agent-isolation.md for the full rationale.",
 		// Only the positional args that are jentic's own (agent id, optional path)
 		// count against the limit; everything forwarded to the agent does not.
 		// cmd.ArgsLenAtDash() is the arg count before `--` (-1 when absent): a
@@ -219,7 +219,7 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	if !localagent.UserExists(ctx, agentUser) {
 		return accountMissingErr(fmt.Sprintf("agent account %q does not exist — create it first with "+
 			"`jentic setup` or `jenticctl wizard` (see "+
-			"docs/security/local-agent/local-agent-isolation.md), then re-run", agentUser))
+			"docs/security/same-host/local-agent-isolation.md), then re-run", agentUser))
 	}
 
 	// Confirm we can actually become the agent user before anything else. Every
@@ -477,7 +477,7 @@ func (a *Cmd) launchAgent(ctx context.Context, acct config.AgentAccount, agentUs
 		b.WriteString("  jentic run won't start an unconfined session, because that would expose the operator's\n")
 		b.WriteString("  home beyond the directories granted. Install the prerequisites above and re-run, or run\n")
 		b.WriteString("  this agent in isolation another way (e.g. inside Docker). See ")
-		b.WriteString("docs/security/local-agent/sandbox-exec-plan.md")
+		b.WriteString("docs/security/same-host/sandbox-confinement-design.md")
 		return confinementUnavailableErr(b.String())
 	}
 

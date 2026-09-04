@@ -176,9 +176,11 @@ JENTIC_INSTALL_METHOD="${JENTIC_INSTALL_METHOD:-auto}"
 #          regardless of this knob.
 JENTIC_INSTALL_BINARIES="${JENTIC_INSTALL_BINARIES:-both}"
 
-# cosign keyless-signing identity, mirrored from docs/releasing.md and the Go
-# updater (cli/internal/update/download.go). Used to verify checksums.txt.sig.
-COSIGN_CERT_IDENTITY_REGEXP="https://github.com/${JENTIC_REPO}/.*"
+# cosign keyless-signing identity, mirrored from docs/development/releasing.md and the Go
+# updater (cli/internal/update/download.go): pinned to the release workflow on a
+# version tag, with the repo still parameterised for forks. Used to verify
+# checksums.txt.sig.
+COSIGN_CERT_IDENTITY_REGEXP="^https://github.com/${JENTIC_REPO}/\\.github/workflows/release\\.yml@refs/tags/"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
 # Minimum Go version required to build the CLI (mirrors the `go` directive in
@@ -643,7 +645,7 @@ verify_checksum() {
 # verify_cosign <checksums> <sig> <cert> verifies the release signature over
 # checksums.txt when cosign is on PATH. cosign absent → loud warning but the
 # sha256 gate above already held. cosign present but verification fails → hard
-# error (fail-closed). Mirrors docs/releasing.md and the Go updater.
+# error (fail-closed). Mirrors docs/development/releasing.md and the Go updater.
 verify_cosign() {
   local sums="$1" sig="$2" cert="$3"
   if ! command -v cosign >/dev/null 2>&1; then

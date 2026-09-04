@@ -7,6 +7,6 @@ description: >-
   `bitnamilegacy` namespace in Aug 2025 and stopped receiving CVE fixes,
   which both our Trivy publish gate and the AWS Marketplace image scan
   reject. Dev/eval-grade by design — production deployments should use a
-  managed database (see deploy/README.md).
+  managed database (see docs/installation/helm.md).
 type: application
 version: 0.38.0 # x-release-please-version

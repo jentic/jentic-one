@@ -12,15 +12,11 @@ What an agent can do once an instance is running:
 
 What it does not do. Jentic One bounds what a mistaken or compromised agent can reach. It does not make an agent correct or reliable, and it does not remove the judgment call about which operations an agent should be allowed to touch at all.
 
-Agents integrate through the `jentic` CLI and the skill it generates, over MCP via the CLI's local stdio server (an `mcp` subcommand shipping in the next `jentic` release) or the deployment's own Streamable HTTP `/mcp` endpoint (config-gated, off by default — see [docs/mcp-http-endpoint.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md)), or over plain HTTP against the deployment's own API. All paths are documented below.
+Agents integrate three ways (MCP has two transports, so four paths in all), all documented below: through the `jentic` CLI and the skill it generates; over MCP — either the CLI's local stdio server (`jentic mcp`) or the deployment's own Streamable HTTP `/mcp` endpoint, which is config-gated and off by default (see [docs/guides/mcp-http-endpoint.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/mcp-http-endpoint.md)); or over plain HTTP against the deployment's own API.
 
-Jentic One runs on one machine and the agent runs on another. Install on both with the same bootstrap:
+If you are an agent asked to **install or operate** Jentic One, start with the agent runbooks — they are written for you to execute directly, with the human-approval gates marked. The set: [install](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/install.md) (stand up the app, broker and database with Docker), [operate](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/operate.md) (start/stop/upgrade/uninstall), [use](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/use.md) (the discover → access → execute loop), [troubleshoot](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/troubleshoot.md) (symptom-keyed recoveries when a step fails), [harden](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/harden.md) (read before storing a real credential).
 
-```
-curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install.sh | sh
-```
-
-On the host machine that is the whole command. The installer builds the two CLI binaries, `jenticctl` and `jentic`, then hands off into `jenticctl install`, which stands the deployment up through an interactive wizard. On the agent machine, set `JENTIC_NO_INSTALL=1` (it needs only the binaries, not a second deployment), then run `jentic setup --url <deployment URL>` to create the agent identity against that deployment and install the agent skill (`jentic register` is the registration-only path — identity only, no skills; when `--url` is omitted both fall back to the configured base URL or `http://127.0.0.1:8000`).
+Jentic One typically runs on one machine and the agent on another. On the host machine, follow the install runbook above (or the human-facing [installation guides](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/README.md)). On each agent machine, install only the `jentic` binary ([CLI install guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/cli.md)) and run `jentic setup --url <deployment URL>` to create the agent identity against that deployment and install the agent skill. `jentic register` is the registration-only path — identity only, no skills. When `--url` is omitted, both commands fall back to the configured base URL or `http://127.0.0.1:8000`. Both block on a human approving the agent in the deployment's console.
 
 Keep the agent off the machine that runs Jentic One. An agent running as the same OS user can read the credential database and the encryption key directly off disk whatever the API-level controls say, so keep them on separate machines. The hardening guide below sets out the tiers; read it before pointing an instance at a real credential.
 
@@ -28,28 +24,31 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 
 ## Install
 
-- [tools/install.sh](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install.sh): the installer. Detects OS and architecture, provides a Go toolchain if you have none, builds only the `cli/` subtree, and installs to `~/.jentic/bin`.
-- [Installer reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install-README.md): every environment variable, including `JENTIC_REF` to build a specific release and `JENTIC_NO_INSTALL=1` to stop after the binaries.
+- [Agent install runbook](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/install.md): the install an agent executes directly — preflight, config and compose generation, migrations, first admin (human gate), agent registration (human gate), verification. Companions: [operate](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/operate.md), [troubleshoot](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/troubleshoot.md), [harden](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/harden.md).
+- [CLI binaries](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/cli.md): downloading and cosign-verifying the released `jentic` and `jenticctl` binaries for every platform, or installing via Homebrew/winget/Scoop.
+- [Installation overview](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/README.md): the human-facing guides — Docker with external Postgres, systemd, Helm, AWS — plus artifact verification and air-gapped transfer.
 - [CLI reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/cli/README.md): what `jenticctl` and `jentic` each own, the full command groups, and the agent loop of `search`, `inspect`, `execute`.
-- [Deployment guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/deploy/README.md): Docker, Helm, Kubernetes and Terraform layouts for running it somewhere other than a laptop.
+- [Build & deploy architecture](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/deploy/README.md): how the images, Helm charts and Terraform layouts are built — one image, runtime surfaces, digest pins, multi-arch.
 - [AWS Marketplace install](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/aws-marketplace.md): running the listed product on EKS — storage and IRSA prerequisites, the zero-touch Helm install, upgrades, and how the runtime license check behaves.
 - [Local development setup](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/local-setup.md): running from source with `make install`, `make dev` and `make check`.
 
 ## Security
 
-- [Hardening guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/hardening.md): the threat model and a tiered set of deployment postures, from trying it out to handling production credentials. Explains why the network guarantee holds and the same-host, same-user case does not.
-- [Local agent isolation](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/local-agent/README.md): the options for the case where the agent must share a machine with the instance, and what each one actually buys.
-- [Credentials and toolkits](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/credentials-and-toolkits.md): how a credential is stored, encrypted and injected, and how one credential is shared across the operations of an API.
+- [Hardening guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/README.md): the threat model and a tiered set of deployment postures, from trying it out to handling production credentials. Explains why the network guarantee holds and the same-host, same-user case does not.
+- [Same-host setups](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/same-host/README.md): the options for the case where the agent must share a machine with the instance, and what each one actually buys.
+- [Credentials and toolkits](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/credentials-and-toolkits.md): how the agent never holds a secret — encrypted storage, credential providers, server-side resolution and injection, and the audit trail.
 - [SECURITY.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/SECURITY.md): supported versions and how to report a vulnerability.
 
 ## How it works
 
 - [README](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/README.md): the architecture diagram and component table. An App control plane (Registry, Control, Admin) and a stateless Broker data plane over PostgreSQL or SQLite; both are supported production backends.
+- [Architecture overview](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/architecture/README.md): the next level down — the five surfaces (including the auth surface), runtime process shapes, the broker's execution pipeline, the three-database data model, and identity/authorization. Start here to understand the codebase.
 - [Endpoint and authorization reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/reference/endpoints.md): every HTTP endpoint with the scopes it requires. This is the authoritative source for authorization, because the OpenAPI documents model authentication only.
+- [Configuration reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/reference/config.md): every configuration key with its type, default, and `JENTIC__*` environment variable, generated from the config model and drift-guarded in CI.
 - [Control plane OpenAPI](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/openapi/control/control.openapi.yaml) and [Broker OpenAPI](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/openapi/broker/broker.openapi.yaml): the two machine-readable API descriptions, for calling an instance over raw HTTP instead of through the CLI.
 - [Agent skill](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/skills/jentic/SKILL.md): the instructions installed into an agent runtime by `jentic skill init` (or `jentic setup`), describing the identity, discover, request access, execute loop.
-- [Context and configuration](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/context-and-config.md): how a deployment is configured, and what an agent's execution context carries.
-- [Overlays](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/overlays.md): correcting or adapting an imported API description without editing the original.
+- [Context and configuration](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/context-and-config.md): how a deployment is configured, and what an agent's execution context carries.
+- [Overlays](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/overlays.md): correcting or adapting an imported API description without editing the original.
 
 ## APIs to run against
 
@@ -66,7 +65,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 
 ## Optional
 
-- [Cloud platform compared with self-hosted](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/cloud-vs-self-hosted.md): the two products are easy to conflate and share no state. Read this before copying integration instructions from one into the other.
+- [Connect an agent](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/connecting-agents.md): the four integration paths in one place, and how the self-hosted product differs from the Jentic cloud platform — the two are easy to conflate and share no state, so don't copy integration instructions from one into the other.
 - [Extending Jentic One](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/extending-jentic-one.md): adding a surface or a capability to the codebase itself.
 - [VERSIONING.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/VERSIONING.md): what the version number promises while the project is in public beta.
-- [Jentic documentation](https://docs.jentic.com/): the documentation site. A deployment also serves generated references at `/docs` (interactive Swagger) and `/redoc`.
+- [Jentic documentation](https://docs.jentic.com/): the documentation site. A deployment also serves its own interactive API reference at `/docs`, generated from code.

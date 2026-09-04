@@ -137,7 +137,7 @@ func TestSandboxProfileDedupesSharedAncestors(t *testing.T) {
 }
 
 // SessionAccess is the single source of truth both the confinement builders and
-// `jentic profile view` consume: the agent home + grants are read/write, the
+// `jentic run --list-grants` consume: the agent home + grants are read/write, the
 // existing exec routes are read-only, and everything it reports read/write must
 // be exactly what SandboxProfile re-opens (so the display can't drift from the
 // mount).

@@ -4,7 +4,7 @@
 // the command layer (internal/cli/*) stays a thin orchestrator over these.
 //
 // The security model this implements is documented in
-// docs/security/local-agent/local-agent-isolation.md: the agent runs as its own
+// docs/security/same-host/local-agent-isolation.md: the agent runs as its own
 // unprivileged Unix user, is granted access to individual working directories via
 // inherited ACLs rather than by widening any human's home, and is launched under a
 // per-session process-confinement profile (confine.go) that trims its view of the
@@ -170,7 +170,7 @@ func UserExists(ctx context.Context, user string) bool {
 // account: a subdirectory of an existing shared parent that the operator can be
 // granted into without touching any human's home. macOS uses /Users/Shared,
 // Linux uses /opt — both are world-traversable roots owned by root, matching the
-// setup recipe in docs/security/local-agent/local-agent-isolation.md.
+// setup recipe in docs/security/same-host/local-agent-isolation.md.
 func DefaultHomeDir(agentUser string) string {
 	if runtime.GOOS == "darwin" {
 		return "/Users/Shared/" + agentUser
@@ -238,7 +238,7 @@ type AccountStep struct {
 // CreateAccountCmds returns the ordered, platform-specific steps that create the
 // agent's Unix account, materialise its home, and grant the operator inherited
 // read/write into that home — the privileged half of the setup recipe in
-// docs/security/local-agent/local-agent-isolation.md. It does NOT touch the
+// docs/security/same-host/local-agent-isolation.md. It does NOT touch the
 // operator's own home: in-home confidentiality against the agent is enforced per
 // session by the process-confinement layer (see confine.go), not by locking ~.
 //
@@ -919,7 +919,7 @@ done`
 // under the operator's 700 home and are therefore unreachable by the agent no
 // matter how they are referenced (a symlink resolves with the AGENT's
 // credentials and dangles with EACCES at the home boundary). Those home-local
-// dirs are deliberately NOT shared; see docs/security/local-agent/
+// dirs are deliberately NOT shared; see docs/security/same-host/
 // local-agent-isolation.md ("Sharing the operator's installed CLI tools").
 //
 // /usr/bin, /bin, /usr/sbin, /sbin, and /usr/local/bin are already on the
@@ -1686,7 +1686,7 @@ func OperatorHome() string {
 // I trust this folder"). Other operators (hermes, …) plug their own reader in here
 // as they are added — the trusted-projects format is per-agent, so this dispatches
 // on the descriptor rather than pretending one format is shared. See
-// docs/security/local-agent/local-agent-isolation.md ("Bringing workspaces over").
+// docs/security/same-host/local-agent-isolation.md ("Bringing workspaces over").
 //
 // The strict access rules always take precedence: every candidate is run through
 // Classify and any banned one (HardBan subtree like ~/.ssh/~/.aws, or a SoftBan

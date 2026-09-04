@@ -274,7 +274,6 @@ def test_llms_txt_advertises_mcp_server(client: TestClient) -> None:
     body = client.get(LLMS_TXT_PATH).text
     assert "no MCP endpoint" not in body
     assert "`jentic mcp`" in body
-    assert "jentic mcp --help" in body
     # The routing paragraph: MCP preferred, CLI for recovery, same instance.
     assert "prefer them" in body
     assert "`setup`/`access` recovery" in body
@@ -299,7 +298,7 @@ def test_llms_txt_advertises_http_endpoint_only_when_enabled(
     the stdio server, and points stdio-only runtimes at the
     ``mcp-remote``/``mcp-proxy`` bridge recipes.
     Disabled (the default, pinned by ``test_llms_txt_advertises_mcp_server``):
-    the pre-phase-3 wording — a 404-answering endpoint is never advertised.
+    the stdio-only wording — a 404-answering endpoint is never advertised.
     """
     config_dict = dict(sample_config_dict)
     config_dict["server"] = {"mcp": {"enabled": True}}
@@ -317,7 +316,7 @@ def test_llms_txt_advertises_http_endpoint_only_when_enabled(
     assert "`jentic mcp`" in body
     assert "mcp-remote" in body
     assert "mcp-proxy" in body
-    assert "docs/mcp-http-endpoint.md" in body
+    assert "docs/guides/mcp-http-endpoint.md" in body
     # The routing paragraph (§3.5) is arm-independent.
     assert "prefer them" in body
     assert "`backend`/`host`" in body
@@ -374,12 +373,11 @@ def test_llms_txt_disabled_arm_never_mentions_the_endpoint_url(client: TestClien
     assert "mcp-remote" not in body
 
 
-#: The pre-phase-3 MCP paragraph, verbatim from the base branch's
-#: ``render_llms_txt`` — the golden for the disabled-arm byte-identity pin.
-_PRE_PHASE3_MCP_PARAGRAPH = """\
+#: The disabled-arm MCP paragraph, verbatim from ``render_llms_txt`` — the
+#: golden for the flag-swap pin below.
+_DISABLED_ARM_MCP_PARAGRAPH = """\
 This deployment is reachable over **MCP** via the local `jentic mcp` stdio
-server — available in the `jentic` CLI from the next release; check
-`jentic mcp --help`. It exposes the same discover → execute loop as the CLI
+server. It exposes the same discover → execute loop as the CLI
 tools against this deployment. MCP access runs through that local server, not
 an HTTP endpoint here: `/mcp` on the control plane serves no MCP server today —
 it answers either 404 or, on deployments preparing interactive OAuth, a 401
@@ -394,33 +392,31 @@ This deployment is reachable over **MCP** two ways. It serves a **stateless
 Streamable HTTP endpoint at {base}/mcp** (spec revision 2026-07-28):
 configure a URL-based MCP entry pointing at it and authenticate every request
 with `Authorization: Bearer <agent API key or access token>`. Alternatively,
-the local `jentic mcp` stdio server — available in the `jentic` CLI from the
-next release; check `jentic mcp --help` — spawns on the agent machine and
+the local `jentic mcp` stdio server spawns on the agent machine and
 talks to this deployment with the agent's registered identity. Both expose
 the same discover → execute loop as the CLI tools. Stdio-only MCP runtimes
 can reach {base}/mcp through a stdio↔HTTP bridge such as `mcp-remote` or
 `mcp-proxy` — exact entries in the
-[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md).
+[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/mcp-http-endpoint.md).
 A 401 from the broker host is its auth-gated forward proxy, not a
 second MCP server."""
 
 
-def test_llms_txt_disabled_arm_is_byte_identical_to_pre_phase3_render() -> None:
-    """Review N3: the disabled arm's full render is byte-identical to the
-    pre-phase-3 document — pinned by equality, not substrings.
+def test_llms_txt_mcp_flag_swaps_exactly_one_paragraph() -> None:
+    """The `mcp_http_enabled` flag swaps exactly the MCP paragraph —
+    pinned by full-document equality, not substrings.
 
-    Three properties combine into the byte-identity guarantee:
-    the kwarg default is the disabled arm (every pre-existing caller renders
-    it unchanged); the disabled arm carries the base branch's MCP paragraph
-    verbatim (the golden above); and the flag swaps exactly that paragraph
-    and nothing else, so the rest of the document is the one shared template.
+    Three properties combine into the guarantee: the kwarg default is the
+    disabled arm; the disabled arm carries the MCP paragraph verbatim (the
+    golden above); and the flag swaps exactly that paragraph and nothing
+    else, so the rest of the document is the one shared template.
     """
     base = "https://example.test"
     disabled = render_llms_txt(base, assertion_max_ttl_seconds=300)
     assert disabled == render_llms_txt(base, assertion_max_ttl_seconds=300, mcp_http_enabled=False)
-    assert _PRE_PHASE3_MCP_PARAGRAPH in disabled
+    assert _DISABLED_ARM_MCP_PARAGRAPH in disabled
     enabled = render_llms_txt(base, assertion_max_ttl_seconds=300, mcp_http_enabled=True)
-    assert enabled == disabled.replace(_PRE_PHASE3_MCP_PARAGRAPH, _enabled_mcp_paragraph(base))
+    assert enabled == disabled.replace(_DISABLED_ARM_MCP_PARAGRAPH, _enabled_mcp_paragraph(base))
     assert enabled != disabled
 
 

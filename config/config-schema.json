@@ -22,16 +22,19 @@
       "properties": {
         "failed_login_lockout_seconds": {
           "default": 900,
+          "description": "How long a locked admin account stays locked before logins are accepted again.",
           "title": "Failed Login Lockout Seconds",
           "type": "integer"
         },
         "failed_login_lockout_threshold": {
           "default": 5,
+          "description": "Consecutive failed logins after which an admin account is locked.",
           "title": "Failed Login Lockout Threshold",
           "type": "integer"
         },
         "jwt_secret": {
           "default": "",
+          "description": "HMAC secret that signs admin login JWTs. Required in production (empty or placeholder values are rejected at startup); in development an ephemeral per-process secret is generated when empty.",
           "format": "password",
           "title": "Jwt Secret",
           "type": "string",
@@ -39,12 +42,14 @@
         },
         "jwt_ttl_seconds": {
           "default": 3600,
+          "description": "Lifetime of one admin login JWT. ``POST /auth/refresh`` re-mints the token, so this bounds a single token, not the session.",
           "exclusiveMinimum": 0,
           "title": "Jwt Ttl Seconds",
           "type": "integer"
         },
         "session_ttl_seconds": {
           "default": 43200,
+          "description": "Absolute cap on a web session: refresh re-mints the login JWT only while ``now - auth_time`` stays inside this window, so a leaked token cannot be kept alive indefinitely. Must be >= ``jwt_ttl_seconds``.",
           "exclusiveMinimum": 0,
           "title": "Session Ttl Seconds",
           "type": "integer"
@@ -430,6 +435,7 @@
       "properties": {
         "backend": {
           "default": "postgres",
+          "description": "Database engine for this connection: ``postgres`` uses the server connection fields; ``sqlite`` uses ``path`` and ignores them.",
           "enum": [
             "postgres",
             "sqlite"
@@ -439,26 +445,31 @@
         },
         "busy_timeout_ms": {
           "default": 5000,
+          "description": "SQLite: per-connection wait for a held write lock, in milliseconds, before failing with ``database is locked``.",
           "title": "Busy Timeout Ms",
           "type": "integer"
         },
         "host": {
           "default": "localhost",
+          "description": "PostgreSQL server hostname.",
           "title": "Host",
           "type": "string"
         },
         "journal_mode": {
           "default": "WAL",
+          "description": "SQLite journal mode (persistent per database file). ``WAL`` lets a writer and readers proceed concurrently instead of blocking each other.",
           "title": "Journal Mode",
           "type": "string"
         },
         "name": {
           "default": "",
+          "description": "PostgreSQL database name. Required for the ``postgres`` backend.",
           "title": "Name",
           "type": "string"
         },
         "password": {
           "default": "",
+          "description": "Password for the PostgreSQL role.",
           "format": "password",
           "title": "Password",
           "type": "string",
@@ -474,26 +485,31 @@
             }
           ],
           "default": null,
+          "description": "SQLite: filesystem path to the database file (``:memory:`` for in-memory). Required for the ``sqlite`` backend.",
           "title": "Path"
         },
         "pool_max": {
           "default": 10,
+          "description": "Maximum connections in the PostgreSQL connection pool (ignored for SQLite).",
           "title": "Pool Max",
           "type": "integer"
         },
         "port": {
           "default": 5432,
+          "description": "PostgreSQL server port.",
           "title": "Port",
           "type": "integer"
         },
         "schema_name": {
           "default": "public",
+          "description": "PostgreSQL schema for this connection: created if missing by the migration runner (``CREATE SCHEMA IF NOT EXISTS``) and put first on ``search_path``, so several connections can share one database.",
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "title": "Schema Name",
           "type": "string"
         },
         "user": {
           "default": "postgres",
+          "description": "PostgreSQL role to connect as.",
           "title": "User",
           "type": "string"
         }
@@ -565,6 +581,7 @@
       "description": "Outbound SSRF/egress policy for upstream calls.\n\nDefaults are **strict** (both lists empty) — identical to the historical\nhard-coded behaviour: every private range and the cloud-metadata host are\nblocked. The two allowlists exist because the broker is frequently installed\n*inside* a corporate network to bridge to internal/legacy APIs, where the\ndefault block is a false positive. Both are opt-in, auditable operator\ndecisions; the cloud-metadata IP is a **hard, non-overridable** deny so a\ncredential-stealing SSRF can never be allowlisted by accident.",
       "properties": {
         "allowed_internal_domains": {
+          "description": "Domain suffixes (e.g. ``[\".svc.cluster.local\"]``) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string.",
           "items": {
             "type": "string"
           },
@@ -572,6 +589,7 @@
           "type": "array"
         },
         "allowed_private_subnets": {
+          "description": "CIDRs exempted from the private-IP egress block (e.g. ``[\"10.50.0.0/16\"]``). The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string.",
           "items": {
             "type": "string"
           },
@@ -580,6 +598,7 @@
         },
         "dns_pinning_enabled": {
           "default": true,
+          "description": "Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues.",
           "title": "Dns Pinning Enabled",
           "type": "boolean"
         }
@@ -628,7 +647,7 @@
       "type": "object"
     },
     "EntitlementConfig": {
-      "description": "AWS Marketplace license gate for the Marketplace-listed deployment.\n\nPowers the entitlement checker (``integrations/aws_marketplace``): on\nstartup — and every ``refresh_interval_seconds`` after — the process asks\nAWS whether this deployment's Marketplace subscription is still active, and\nlocks the HTTP surface (503, health excepted) when it definitively is not.\nDefaults to **OFF**: a non-Marketplace install that omits this block runs\nexactly as before — nothing is wired, no AWS call is ever made.\n\nFailure posture: an *unreachable* or *erroring* AWS API is never grounds\nfor lockout by itself — the last definitive verdict holds for\n``grace_period_seconds`` before the gate fails closed. Only an explicit\n\"not entitled\" answer from AWS locks out immediately.",
+      "description": "AWS Marketplace license gate for the Marketplace-listed deployment.\n\nPowers the entitlement checker (``integrations/aws_marketplace``): on\nstartup, and every ``refresh_interval_seconds`` after, the process asks\nAWS whether this deployment's Marketplace subscription is still active, and\nlocks the HTTP surface (503, health excepted) when it definitively is not.\nDefaults to **OFF**: a non-Marketplace install that omits this block wires\nnothing and never makes an AWS call.\n\nFailure posture: an *unreachable* or *erroring* AWS API is never grounds\nfor lockout by itself — the last definitive verdict holds for\n``grace_period_seconds`` before the gate fails closed. Only an explicit\n\"not entitled\" answer from AWS locks out immediately.",
       "properties": {
         "enabled": {
           "default": false,
@@ -746,15 +765,18 @@
             }
           ],
           "default": null,
+          "description": "Explicit IdP authorization endpoint URL; overrides the issuer-derived or provider well-known default.",
           "title": "Authorization Endpoint"
         },
         "client_id": {
           "default": "",
+          "description": "OAuth client ID registered with the identity provider.",
           "title": "Client Id",
           "type": "string"
         },
         "client_secret": {
           "default": "",
+          "description": "OAuth client secret, sent on the authorization-code exchange.",
           "format": "password",
           "title": "Client Secret",
           "type": "string",
@@ -762,6 +784,7 @@
         },
         "enabled": {
           "default": false,
+          "description": "Enable login via an external OIDC identity provider. When false no IdP adapter is built and the IdP login path is absent.",
           "title": "Enabled",
           "type": "boolean"
         },
@@ -775,6 +798,7 @@
             }
           ],
           "default": null,
+          "description": "Explicit IdP token (code-exchange) endpoint URL; overrides the issuer-derived or provider well-known default.",
           "title": "Exchange Endpoint"
         },
         "hosted_domain": {
@@ -787,19 +811,23 @@
             }
           ],
           "default": null,
+          "description": "Google ``hd`` (hosted-domain) restriction. When set, only accounts whose userinfo carries a matching ``hd`` claim should be admitted. OSS surfaces the claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's admission policy.",
           "title": "Hosted Domain"
         },
         "issuer": {
           "default": "",
+          "description": "OIDC issuer base URL. Default authorization/token/userinfo endpoints are derived from it when the explicit ``*_endpoint`` keys are unset.",
           "title": "Issuer",
           "type": "string"
         },
         "provider": {
           "default": "oidc",
+          "description": "Adapter selector: ``google`` supplies Google's well-known endpoints and ``hd`` claim handling; any other value uses the generic standards-compliant OIDC adapter.",
           "title": "Provider",
           "type": "string"
         },
         "scopes": {
+          "description": "OAuth scopes requested on the IdP authorization redirect.",
           "items": {
             "type": "string"
           },
@@ -816,6 +844,7 @@
             }
           ],
           "default": null,
+          "description": "Explicit IdP userinfo endpoint URL; overrides the issuer-derived or provider well-known default.",
           "title": "Userinfo Endpoint"
         }
       },
@@ -979,35 +1008,42 @@
       "properties": {
         "authorize_burst": {
           "default": 30,
+          "description": "Burst allowance on top of ``authorize_rpm``.",
           "title": "Authorize Burst",
           "type": "integer"
         },
         "authorize_rpm": {
           "default": 30,
+          "description": "Sustained requests/minute allowed per ``client_id``+IP on the unauthenticated ``/authorize`` endpoints.",
           "title": "Authorize Rpm",
           "type": "integer"
         },
         "exchange_burst": {
           "default": 60,
+          "description": "Burst allowance on top of ``exchange_rpm``.",
           "title": "Exchange Burst",
           "type": "integer"
         },
         "exchange_rpm": {
           "default": 60,
+          "description": "Sustained requests/minute allowed per ``client_id``+IP on the token endpoint (also reused per-IP for token revocation).",
           "title": "Exchange Rpm",
           "type": "integer"
         },
         "registration_burst": {
           "default": 5,
+          "description": "Burst allowance on top of ``registration_rpm``.",
           "title": "Registration Burst",
           "type": "integer"
         },
         "registration_rpm": {
           "default": 10,
+          "description": "Sustained requests/minute allowed per IP on anonymous dynamic client registration (``POST /oauth-clients``).",
           "title": "Registration Rpm",
           "type": "integer"
         },
         "trusted_proxies": {
+          "description": "Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the per-client rate-limit identity. Empty (default) means the socket address is used as-is — behind a reverse proxy every request then carries the proxy's IP and all clients share one bucket, so list the proxy IPs when deploying behind one.",
           "items": {
             "type": "string"
           },
@@ -1128,7 +1164,7 @@
       "type": "object"
     },
     "ReleaseCheckConfig": {
-      "description": "\"Update available\" check for the running jentic-one build itself.\n\nPowers ``GET /system/version``: the backend asks GitHub for the newest\npublished release of ``repo`` and compares it against the running build so the\nweb console can surface an \"update available\" banner (and the user menu can\nalways show the current version). This is about *jentic-one's own* release —\ndistinct from ``CatalogConfig``, which tracks the public *API catalog*.\n\nRuns only on a ``local`` backend (a self-hosted install the operator can\nactually update); the hosted platform (``server.backend == \"remote\"``) skips\nit. The result is cached in-process for ``cache_ttl_seconds`` (fetch-on-read,\nno background job), so at most one GitHub request happens per TTL regardless\nof how many clients poll. Every failure degrades to \"latest unknown\" (no\nbanner) rather than erroring — the version probe must never break the app.",
+      "description": "\"Update available\" check for the running jentic-one build itself.\n\nPowers ``GET /system/version``: the backend asks GitHub for the newest\npublished release of ``repo`` and compares it against the running build so the\nweb console can surface an \"update available\" banner (and the user menu can\nalways show the current version). This covers *jentic-one's own* release;\n``CatalogConfig`` tracks the public *API catalog* instead.\n\nRuns only on a ``local`` backend (a self-hosted install the operator can\nactually update); the hosted platform (``server.backend == \"remote\"``) skips\nit. The result is cached in-process for ``cache_ttl_seconds`` (fetch-on-read,\nno background job), so at most one GitHub request happens per TTL regardless\nof how many clients poll. Every failure degrades to \"latest unknown\" (no\nbanner) rather than erroring — the version probe must never break the app.",
       "properties": {
         "cache_ttl_seconds": {
           "default": 21600,

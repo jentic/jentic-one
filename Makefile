@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -82,6 +82,11 @@ config-schema: ## Regenerate the backend config JSON Schema (config/config-schem
 	uv run python -m tools.config_schema_export
 	@echo "Regenerated config/config-schema.json."
 	@echo "Run 'cd cli && make generate-config' to refresh the generated installer config struct."
+	@echo "Run 'make config-reference' to refresh the configuration reference doc."
+
+config-reference: ## Regenerate the configuration reference (docs/reference/config.md) from the AppConfig model
+	uv run python -m tools.config_reference
+	@echo "Regenerated docs/reference/config.md."
 endpoints: ## Regenerate the endpoint + scope reference (docs/reference/endpoints.{md,json}) from code
 	uv run python -m tools.endpoint_tree
 	@echo "Regenerated docs/reference/endpoints.md and docs/reference/endpoints.json."
@@ -218,8 +223,9 @@ images: ## List locally built jentic-one images
 
 # ─── Release (publish the app image to a real registry) ───────────────────
 # One `app` image serves every surface — the surface set is chosen at runtime
-# via JENTIC__APPS (see deploy/README.md "Self-hosted"). So publishing the
-# single `app` image is enough for a self-hosted app + broker deployment.
+# via JENTIC__APPS (see deploy/README.md "One image, runtime surfaces"). So
+# publishing the single `app` image is enough for a self-hosted app + broker
+# deployment.
 #
 #   make release-image REGISTRY=ghcr.io/jentic
 #

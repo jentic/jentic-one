@@ -9,7 +9,7 @@
 #   type       — what kind of issue it is (exactly one)
 #   area:*      — which part of Jentic One (exactly one, when determinable)
 #   severity:*  — priority / impact (bugs & pain points)
-#   fit:*       — harness product-fit score (see docs/product-scope.md)
+#   fit:*       — harness product-fit score (see docs/development/product-scope.md)
 #   feasibility:* — harness build-feasibility score
 #   status      — lifecycle (needs-triage, needs-info, confirmed, needs-human, …)
 #   agent/ai    — harness trigger + provenance labels
@@ -80,7 +80,7 @@
   color: fbca04
   description: Annoying but low impact
 
-# --- Harness scores (see docs/product-scope.md) ---
+# --- Harness scores (see docs/development/product-scope.md) ---
 - name: fit:high
   color: 0e8a16
   description: "Harness: squarely fits the product scope"

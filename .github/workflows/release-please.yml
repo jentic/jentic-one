@@ -10,7 +10,7 @@
 # (release.yml's `on: push: tags`). The App is scoped to contents:write +
 # issues:write + pull-requests:write on this repo only (issues:write is required
 # because release-please creates its `autorelease:*` bookkeeping labels via the
-# Issues API on the first run). See docs/releasing.md.
+# Issues API on the first run). See docs/development/releasing.md.
 #
 # SETUP REQUIRED (repo/org admin): create the App, install it on this repo, and
 # add these secrets:

@@ -24,7 +24,7 @@ import (
 // dependencies outside ~ are untouched, so it can't fail to start on an OS/agent
 // update) and scoped to the one thing the sandbox uniquely does — the per-entry
 // distinction inside ~ that DAC cannot express. See
-// docs/security/local-agent/sandbox-exec-plan.md for the full rationale.
+// docs/security/same-host/sandbox-confinement-design.md for the full rationale.
 //
 // Confinement is REQUIRED, not best-effort: when the platform mechanism is
 // unavailable the caller must error closed (refuse the launch) rather than fall
@@ -66,7 +66,7 @@ func AgentUserPrereqs() []Prereq {
 		return []Prereq{lookPathPrereq(
 			"sandbox-exec", "sandbox-exec",
 			"sandbox-exec is not available on this macOS",
-			"sandbox-exec ships with macOS; see docs/security/local-agent/local-agent-isolation.md",
+			"sandbox-exec ships with macOS; see docs/security/same-host/local-agent-isolation.md",
 		)}
 	case "linux":
 		return []Prereq{
@@ -265,12 +265,13 @@ type SessionDir struct {
 // SessionAccess returns the complete set of directories a confined agent session
 // can reach: the agent's own home and each granted directory (read/write), plus
 // the executable routes on its PATH (read-only). It is the SINGLE source of truth
-// shared by the confinement builders (SandboxProfile on macOS, bwrapArgs on
-// Linux) and any display of "what the agent can see" (`jentic profile view`), so
-// the two can never diverge. Paths are cleaned; the read-only routes are filtered
-// to those that actually exist on this machine, exactly as the launcher computes
-// them. Directories outside a denied human-home root are still reachable via the
-// permissive base and are not enumerated here (they are not session-specific).
+// for the confinement builders (SandboxProfile on macOS, bwrapArgs on Linux);
+// any display of "what the agent can see" must consume it too, so the display
+// and the sandbox can never diverge. Paths are cleaned; the read-only routes are
+// filtered to those that actually exist on this machine, exactly as the launcher
+// computes them. Directories outside a denied human-home root are still reachable
+// via the permissive base and are not enumerated here (they are not
+// session-specific).
 func SessionAccess(agentHome string, grantedDirs []string) []SessionDir {
 	var dirs []SessionDir
 	if agentHome != "" {
@@ -432,7 +433,7 @@ func SandboxProfile(agentHome string, grantedDirs []string) string {
 
 	// Everything the session may reach inside a denied root: the agent's own home
 	// first (always), then each granted directory. Sourced from the shared
-	// SessionAccess so this can't drift from what `jentic profile view` shows.
+	// SessionAccess so this can't drift from what `jentic run --list-grants` shows.
 	reopen := reopenDirs(agentHome, grantedDirs)
 
 	seenMeta := map[string]bool{}

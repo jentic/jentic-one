@@ -11,8 +11,7 @@ them through a single authenticated gateway without managing each API's
 credentials yourself. The `jentic` CLI is the agent-facing entrypoint.
 
 The same loop is also exposed over **MCP** by the local `jentic mcp` stdio
-server — available in the `jentic` CLI from the next release; check
-`jentic mcp --help`. If your session has `jentic` MCP tools, prefer them; use
+server. If your session has `jentic` MCP tools, prefer them; use
 the CLI for `setup`/`access` recovery and anything not exposed over MCP. Both
 surfaces talk to the same instance — check `backend`/`host` in the identity
 stamp on MCP tool results if in doubt.
@@ -520,7 +519,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   may be bound to a **different backend** than this CLI — typically the hosted
   cloud workspace vs the local install. The symptom of a mismatch is *silent
   wrong answers*, not errors: an API the user just imported "doesn't exist",
-  credentials "disappeared", or operation ids from one surface don't resolve
+  credentials "disappeared", or call targets from one surface don't resolve
   on the other. Before concluding anything is missing or broken, check where
   each surface points — `jentic context view` shows this CLI's active
   environment/`base_url`, and `jentic api GET /instance` reports which backend

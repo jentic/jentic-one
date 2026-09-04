@@ -207,20 +207,18 @@ This deployment is reachable over **MCP** two ways. It serves a **stateless
 Streamable HTTP endpoint at {base}/mcp** (spec revision 2026-07-28):
 configure a URL-based MCP entry pointing at it and authenticate every request
 with `Authorization: Bearer <agent API key or access token>`. Alternatively,
-the local `jentic mcp` stdio server — available in the `jentic` CLI from the
-next release; check `jentic mcp --help` — spawns on the agent machine and
+the local `jentic mcp` stdio server spawns on the agent machine and
 talks to this deployment with the agent's registered identity. Both expose
 the same discover → execute loop as the CLI tools. Stdio-only MCP runtimes
 can reach {base}/mcp through a stdio↔HTTP bridge such as `mcp-remote` or
 `mcp-proxy` — exact entries in the
-[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md).
+[MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/mcp-http-endpoint.md).
 A 401 from the broker host is its auth-gated forward proxy, not a
 second MCP server."""
     else:
         mcp_paragraph = """\
 This deployment is reachable over **MCP** via the local `jentic mcp` stdio
-server — available in the `jentic` CLI from the next release; check
-`jentic mcp --help`. It exposes the same discover → execute loop as the CLI
+server. It exposes the same discover → execute loop as the CLI
 tools against this deployment. MCP access runs through that local server, not
 an HTTP endpoint here: `/mcp` on the control plane serves no MCP server today —
 it answers either 404 or, on deployments preparing interactive OAuth, a 401

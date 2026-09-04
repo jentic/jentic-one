@@ -19,8 +19,9 @@
 #                      red.
 #   4. release       — GoReleaser builds the signed, checksummed jenticctl +
 #                      jentic binaries (cosign keyless via OIDC + syft SBOMs) and
-#                      pushes the Homebrew cask. This is the install (see
-#                      docs/releasing.md). Needs gate + smoke + publish-image so
+#                      publishes the package channels: Homebrew cask, winget PR,
+#                      scoop bucket. This is the install (see
+#                      docs/development/releasing.md). Needs gate + smoke + publish-image so
 #                      a release never half-ships (binaries without the image).
 #
 # Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
@@ -436,6 +437,17 @@ jobs:
           # PAT/App token with contents:write on jentic/homebrew-tap so the cask
           # can be pushed cross-repo (GITHUB_TOKEN is scoped to THIS repo only).
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Windows package channels. Both are OPTIONAL: the goreleaser config
+          # skips the winget/scoop publish (with a log line) when its token is
+          # empty, so an unprovisioned secret never fails a release — it just
+          # doesn't publish that channel. Provisioning is documented in
+          # docs/development/releasing.md ("One-time setup").
+          # WINGET_TOKEN: classic PAT with public_repo — pushes manifests to
+          # the jentic/winget-pkgs fork and opens the microsoft/winget-pkgs PR.
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          # SCOOP_BUCKET_TOKEN: fine-grained PAT, contents:write on
+          # jentic/scoop-bucket only (same shape as HOMEBREW_TAP_TOKEN).
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
           COSIGN_YES: "true"
       # Pipeline review F4/E1: the app image already asserts /health .version ==
       # tag (gate job); mirror that for the CLI binaries so a bad ldflag stamp
