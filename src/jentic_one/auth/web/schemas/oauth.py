@@ -28,6 +28,13 @@ class TokenResponse(BaseModel):
     id_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     token_type: str = "bearer"
     expires_in: int
+    scope: str = Field(
+        description="Space-delimited effective scopes of the minted access token "
+        "(RFC 6749 §3.3). Always present (RFC 6749 §5.1): the platform downscopes "
+        "(client ceiling / consent-grant intersection), so the granted set may be "
+        "narrower than requested and clients must not assume they got what they "
+        "asked for."
+    )
 
 
 class MintRequest(BaseModel):

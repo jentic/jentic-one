@@ -138,10 +138,11 @@ async def test_refresh_rotation(
     user_id = await _seed_user(integration_context, "usr_test2")
     access1, refresh1 = await token_service.issue_pair(user_id, ActorType.USER, ["read"])
 
-    access2, refresh2 = await token_service.refresh(refresh1)
+    access2, refresh2, scopes2 = await token_service.refresh(refresh1)
 
     assert access2.startswith("at_")
     assert refresh2.startswith("rt_")
+    assert scopes2 == ["read"]
     assert access2 != access1
     assert refresh2 != refresh1
 
@@ -159,7 +160,7 @@ async def test_reuse_detection(
     user_id = await _seed_user(integration_context, "usr_test3")
     _access1, refresh1 = await token_service.issue_pair(user_id, ActorType.USER, ["read"])
 
-    access2, _refresh2 = await token_service.refresh(refresh1)
+    access2, _refresh2, _scopes2 = await token_service.refresh(refresh1)
 
     with pytest.raises(InvalidGrantError, match="reuse detected"):
         await token_service.refresh(refresh1)
@@ -454,7 +455,7 @@ async def test_disabled_agent_cannot_refresh_to_fresh_tokens(
     # The rejected attempt must not have consumed the refresh token: after
     # re-enable, the same token still rotates normally (no reuse trip).
     await _set_agent_status(integration_context, agent_id, ActorStatus.ACTIVE)
-    access2, refresh2 = await token_service.refresh(refresh)
+    access2, refresh2, _scopes2 = await token_service.refresh(refresh)
     assert access2.startswith("at_")
     assert refresh2.startswith("rt_")
 

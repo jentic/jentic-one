@@ -111,10 +111,13 @@ class ServiceAccountAuthService:
 
     async def authenticate_client_credentials(
         self, client_id: str, client_secret: str
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, list[str]]:
         """Verify client_id + client_secret, issue an access+refresh pair.
 
-        Returns (access_token, refresh_token).
+        Returns (access_token, refresh_token, scopes). ``scopes`` is the
+        service account's live ``actor_scope_grants`` set stamped on the
+        minted pair, returned so the token endpoint can report the effective
+        scope per RFC 6749 §5.1.
         Raises InvalidGrantError on authentication failure.
         """
         async with self._ctx.admin_db.session() as session:
@@ -147,7 +150,10 @@ class ServiceAccountAuthService:
             origin=None,
         )
 
-        return await self._token_svc.issue_pair(client_id, ActorType.SERVICE_ACCOUNT, scopes)
+        access_token, refresh_token = await self._token_svc.issue_pair(
+            client_id, ActorType.SERVICE_ACCOUNT, scopes
+        )
+        return access_token, refresh_token, scopes
 
     async def mint_task_token(
         self,

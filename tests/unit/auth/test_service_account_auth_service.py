@@ -105,10 +105,11 @@ async def test_authenticate_client_credentials_success(
 
     with patch.object(svc._token_svc, "issue_pair", new_callable=AsyncMock) as mock_issue:
         mock_issue.return_value = ("at_new", "rt_new")
-        access, refresh = await svc.authenticate_client_credentials("sva_test123", secret)
+        access, refresh, scopes = await svc.authenticate_client_credentials("sva_test123", secret)
 
     assert access == "at_new"
     assert refresh == "rt_new"
+    assert scopes == ["capabilities:execute", "capabilities:read"]
     mock_issue.assert_called_once_with(
         "sva_test123", "service_account", ["capabilities:execute", "capabilities:read"]
     )

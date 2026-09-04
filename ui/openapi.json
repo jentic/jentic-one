@@ -8619,6 +8619,11 @@
             "title": "Refresh Token",
             "x-sensitive": true
           },
+          "scope": {
+            "description": "Space-delimited effective scopes of the minted access token (RFC 6749 §3.3). Always present (RFC 6749 §5.1): the platform downscopes (client ceiling / consent-grant intersection), so the granted set may be narrower than requested and clients must not assume they got what they asked for.",
+            "title": "Scope",
+            "type": "string"
+          },
           "token_type": {
             "default": "bearer",
             "title": "Token Type",
@@ -8627,7 +8632,8 @@
         },
         "required": [
           "access_token",
-          "expires_in"
+          "expires_in",
+          "scope"
         ],
         "title": "TokenResponse",
         "type": "object"

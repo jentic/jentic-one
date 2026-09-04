@@ -69,8 +69,13 @@ class AssertionService:
         self._ctx = ctx
         self._jti_cache = _get_jti_cache(ctx.config.auth.assertion_max_ttl_seconds)
 
-    async def verify_and_exchange(self, assertion: str) -> tuple[str, str]:
-        """Verify a JWT assertion and return (access_token, refresh_token)."""
+    async def verify_and_exchange(self, assertion: str) -> tuple[str, str, list[str]]:
+        """Verify a JWT assertion and return (access_token, refresh_token, scopes).
+
+        ``scopes`` is the agent's live ``actor_scope_grants`` set stamped on
+        the minted pair, returned so the token endpoint can report the
+        effective scope per RFC 6749 §5.1.
+        """
         try:
             unverified_header = jwt.get_unverified_header(assertion)
         except jwt.exceptions.DecodeError:
@@ -163,7 +168,7 @@ class AssertionService:
         token_svc = TokenService(self._ctx)
         access_token, refresh_token = await token_svc.issue_pair(agent.id, ActorType.AGENT, scopes)
 
-        return access_token, refresh_token
+        return access_token, refresh_token, scopes
 
     @property
     def _expected_audience(self) -> str:

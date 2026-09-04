@@ -241,8 +241,14 @@ class TokenService:
 
         return access_plain, refresh_plain
 
-    async def refresh(self, refresh_token: str, *, client_id: str | None = None) -> tuple[str, str]:
-        """Rotate a refresh token. Returns a new (access_token, refresh_token) pair.
+    async def refresh(
+        self, refresh_token: str, *, client_id: str | None = None
+    ) -> tuple[str, str, list[str]]:
+        """Rotate a refresh token. Returns (access_token, refresh_token, scopes).
+
+        ``scopes`` is the rotated pair's mint-time snapshot (carried over from
+        the consumed refresh token), returned so the token endpoint can report
+        the effective scope per RFC 6749 §5.1.
 
         Implements reuse detection: if the refresh token has already been consumed,
         the entire token family is revoked. Uses SELECT FOR UPDATE to prevent TOCTOU
@@ -333,6 +339,7 @@ class TokenService:
 
                     access_plain = _generate_token(ACCESS_TOKEN_PREFIX)
                     refresh_plain = _generate_token(REFRESH_TOKEN_PREFIX)
+                    scopes = list(rt.scopes)
                     now = datetime.now(UTC)
 
                     await AccessTokenRepository.create(
@@ -340,7 +347,7 @@ class TokenService:
                         token_hash=_hash_token(access_plain),
                         actor_id=rt.actor_id,
                         actor_type=rt.actor_type,
-                        scopes=list(rt.scopes),
+                        scopes=scopes,
                         token_family_id=rt.token_family_id,
                         expires_at=now + timedelta(seconds=self.access_ttl_seconds),
                         created_by=rt.actor_id,
@@ -352,7 +359,7 @@ class TokenService:
                         token_hash=_hash_token(refresh_plain),
                         actor_id=rt.actor_id,
                         actor_type=rt.actor_type,
-                        scopes=list(rt.scopes),
+                        scopes=scopes,
                         token_family_id=rt.token_family_id,
                         expires_at=now + timedelta(seconds=self._refresh_ttl),
                         created_by=rt.actor_id,
@@ -382,7 +389,7 @@ class TokenService:
         if client_mismatch:
             raise InvalidGrantError("client_id mismatch")
 
-        return access_plain, refresh_plain
+        return access_plain, refresh_plain, scopes
 
     async def revoke(self, token: str, *, identity: Identity) -> None:
         """Revoke a token. No-op if not found or not owned by actor (RFC 7009)."""

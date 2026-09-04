@@ -279,7 +279,7 @@ async def token_endpoint(
             ):
                 raise InvalidGrantError("invalid_client")
             third_party_client_id = body.client_id
-        access_token, refresh_token, id_token = await authorize_svc.exchange_code(
+        access_token, refresh_token, id_token, scopes = await authorize_svc.exchange_code(
             code=body.code,
             code_verifier=body.code_verifier,
             redirect_uri=body.redirect_uri,
@@ -292,23 +292,27 @@ async def token_endpoint(
             id_token=id_token,
             token_type="bearer",
             expires_in=token_svc.access_ttl_seconds,
+            scope=" ".join(scopes),
         )
 
     if body.grant_type == _JWT_BEARER_GRANT:
         if not body.assertion:
             raise InvalidGrantError("assertion is required for grant_type=jwt-bearer")
-        access_token, refresh_token = await assertion_svc.verify_and_exchange(body.assertion)
+        access_token, refresh_token, scopes = await assertion_svc.verify_and_exchange(
+            body.assertion
+        )
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=token_svc.access_ttl_seconds,
+            scope=" ".join(scopes),
         )
 
     if body.grant_type == _CLIENT_CREDENTIALS_GRANT:
         if not body.client_id or not body.client_secret:
             raise InvalidGrantError("client_id and client_secret are required")
-        access_token, refresh_token = await sa_auth_svc.authenticate_client_credentials(
+        access_token, refresh_token, scopes = await sa_auth_svc.authenticate_client_credentials(
             body.client_id, body.client_secret
         )
         return TokenResponse(
@@ -316,6 +320,7 @@ async def token_endpoint(
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=sa_auth_svc.access_ttl_seconds,
+            scope=" ".join(scopes),
         )
 
     if body.grant_type != "refresh_token":
@@ -336,7 +341,7 @@ async def token_endpoint(
         # verify_client_secret above: NULL-hash rows short-circuit to False).
         verified_client_id = body.client_id
 
-    access_token, refresh_token = await token_svc.refresh(
+    access_token, refresh_token, scopes = await token_svc.refresh(
         body.refresh_token, client_id=verified_client_id
     )
     return TokenResponse(
@@ -344,6 +349,7 @@ async def token_endpoint(
         refresh_token=refresh_token,
         token_type="bearer",
         expires_in=token_svc.access_ttl_seconds,
+        scope=" ".join(scopes),
     )
 
 

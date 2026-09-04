@@ -175,7 +175,7 @@ async def test_plain_code_keeps_user_actor_and_id_token(
         "jentic_one.auth.services.authorize_service.issue_id_token",
         return_value="hdr.payload.sig",
     ) as mock_issue:
-        access, _refresh, id_token = await authorize_svc.exchange_code(
+        access, _refresh, id_token, _scopes = await authorize_svc.exchange_code(
             code=code,
             code_verifier=_CODE_VERIFIER,
             redirect_uri=_REDIRECT_URI,
@@ -432,7 +432,7 @@ async def test_refresh_rotation_recheck_and_lineage_propagation(
     )
 
     token_svc = TokenService(integration_context)
-    access2, refresh2 = await token_svc.refresh(refresh, client_id=_CLIENT_ID)
+    access2, refresh2, _scopes2 = await token_svc.refresh(refresh, client_id=_CLIENT_ID)
     resolved = await token_svc.resolve_access_token(access2)
     assert resolved is not None and resolved.oauth_grant_id == grant_id
 

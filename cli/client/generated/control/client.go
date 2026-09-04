@@ -2985,7 +2985,10 @@ type TokenResponse struct {
 	ExpiresIn    int     `json:"expires_in"`
 	IdToken      *string `json:"id_token,omitempty"`
 	RefreshToken *string `json:"refresh_token,omitempty"`
-	TokenType    *string `json:"token_type,omitempty"`
+
+	// Scope Space-delimited effective scopes of the minted access token (RFC 6749 §3.3). Always present (RFC 6749 §5.1): the platform downscopes (client ceiling / consent-grant intersection), so the granted set may be narrower than requested and clients must not assume they got what they asked for.
+	Scope     string  `json:"scope"`
+	TokenType *string `json:"token_type,omitempty"`
 }
 
 // ToolkitAgentListResponse Paginated list of agents bound to a toolkit.

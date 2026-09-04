@@ -417,13 +417,17 @@ class AuthorizeService:
         redirect_uri: str,
         client_id: str,
         oauth_client_id: str | None = None,
-    ) -> tuple[str, str, str | None]:
+    ) -> tuple[str, str, str | None, list[str]]:
         """Exchange auth code + PKCE verifier for tokens.
 
-        Returns (access_token, refresh_token, id_token). Grant-bearing codes
-        mint actor=AGENT tokens bound to the consent grant and
-        return ``id_token=None`` (D11 — no OIDC identity on the agent
-        channel); plain codes keep the act-as-user path with an id_token.
+        Returns (access_token, refresh_token, id_token, scopes). ``scopes`` is
+        the effective scope set stamped on the minted tokens — for
+        grant-bearing codes the consent-time D2 triple intersection, for plain
+        codes the authorize-time snapshot — so the token endpoint can report
+        it per RFC 6749 §5.1. Grant-bearing codes mint actor=AGENT tokens
+        bound to the consent grant and return ``id_token=None`` (D11 — no OIDC
+        identity on the agent channel); plain codes keep the act-as-user path
+        with an id_token.
         """
         code_hash = _hash_code(code)
         now = datetime.now(UTC)
@@ -524,7 +528,7 @@ class AuthorizeService:
                 oauth_client_id=oauth_client_id,
                 oauth_grant_id=grant_id,
             )
-            return access_token, refresh_token, None
+            return access_token, refresh_token, None, grant_scopes
 
         scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
         access_token, refresh_token = await self._token_svc.issue_pair(
@@ -539,7 +543,7 @@ class AuthorizeService:
             nonce=auth_code.nonce,
         )
 
-        return access_token, refresh_token, id_token
+        return access_token, refresh_token, id_token, scopes
 
     async def _resolve_or_create_user(self, claims: IdpClaims) -> str:
         """Resolve external identity to existing user or create a new one.

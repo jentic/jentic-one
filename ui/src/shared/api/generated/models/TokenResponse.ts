@@ -10,6 +10,10 @@ export type TokenResponse = {
     expires_in: number;
     id_token?: (string | null);
     refresh_token?: (string | null);
+    /**
+     * Space-delimited effective scopes of the minted access token (RFC 6749 §3.3). Always present (RFC 6749 §5.1): the platform downscopes (client ceiling / consent-grant intersection), so the granted set may be narrower than requested and clients must not assume they got what they asked for.
+     */
+    scope: string;
     token_type?: string;
 };
 

@@ -168,7 +168,7 @@ async def test_refresh_rotation_returns_new_pair(
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     svc = TokenService(ctx)
-    access, refresh = await svc.refresh("rt_oldtoken")
+    access, refresh, _scopes = await svc.refresh("rt_oldtoken")
 
     assert access.startswith(ACCESS_TOKEN_PREFIX)
     assert refresh.startswith(REFRESH_TOKEN_PREFIX)
@@ -666,7 +666,7 @@ async def test_refresh_approved_client_still_rotates(
     mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
 
     svc = TokenService(ctx)
-    access, refresh = await svc.refresh("rt_ok", client_id="oc_approved")
+    access, refresh, _scopes = await svc.refresh("rt_ok", client_id="oc_approved")
 
     assert access.startswith(ACCESS_TOKEN_PREFIX)
     assert refresh.startswith(REFRESH_TOKEN_PREFIX)
