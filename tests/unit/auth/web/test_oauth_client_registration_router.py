@@ -22,14 +22,14 @@ _BODY = {
 }
 
 
-def _result(*, created: bool) -> DcrRegisterResult:
+def _result(*, created: bool, software_id: str | None = "com.cursor.ide") -> DcrRegisterResult:
     return DcrRegisterResult(
         client_id="oc_abc123",
         client_name="Cursor",
         redirect_uris=["http://localhost:33418/callback"],
         grant_types=["authorization_code", "refresh_token"],
         scope="apis:read capabilities:execute",
-        software_id="com.cursor.ide",
+        software_id=software_id,
         software_version=None,
         application_type=None,
         client_id_issued_at=1_700_000_000,
@@ -79,9 +79,44 @@ def test_register_returns_201_with_rfc7591_shape(mock_svc_cls: MagicMock) -> Non
     assert data["token_endpoint_auth_method"] == "none"
     assert data["grant_types"] == ["authorization_code", "refresh_token"]
     assert data["response_types"] == ["code"]
+    # Registered optional metadata is echoed back (exclude_none must not
+    # drop members that ARE set).
+    assert data["software_id"] == "com.cursor.ide"
     # No secret and no RFC 7592 management surface (D12).
     assert "client_secret" not in data
     assert "registration_access_token" not in data
+
+
+@patch("jentic_one.auth.web.routers.oauth_client_registration.OAuthDcrService")
+@pytest.mark.parametrize(("created", "expected_status"), [(True, 201), (False, 200)])
+def test_unset_optional_metadata_is_omitted_not_null(
+    mock_svc_cls: MagicMock, created: bool, expected_status: int
+) -> None:
+    """RFC 7591 §3.2.1: optional metadata the client did not register is
+    OMITTED from the response body — never serialized as JSON ``null``.
+    Strict clients (Cursor's MCP SDK zod schema: software_id /
+    software_version must be string-or-absent) reject a null, drop their
+    stored client info, and loop re-registering. Pinned on the raw JSON
+    body for both the 201-create and 200 D8-dedupe arms."""
+    mock_svc_cls.return_value.register = AsyncMock(
+        return_value=_result(created=created, software_id=None)
+    )
+    client = _make_client()
+
+    body = {
+        "client_name": "Cursor",
+        "redirect_uris": ["http://localhost:33418/callback"],
+        "token_endpoint_auth_method": "none",
+    }
+    resp = client.post("/oauth-clients", json=body)
+
+    assert resp.status_code == expected_status
+    data = resp.json()
+    assert "software_id" not in data
+    assert "software_version" not in data
+    assert "application_type" not in data
+    # Belt-and-braces: the raw body carries no null members at all.
+    assert b"null" not in resp.content
 
 
 @patch("jentic_one.auth.web.routers.oauth_client_registration.OAuthDcrService")
