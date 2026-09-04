@@ -5,7 +5,9 @@ Helm charts, and Terraform modules that install the charts. Three design
 rules shape everything here:
 
 - One Python package (`src/jentic_one/`) produces every image; the surface
-  set is chosen at **runtime** via `JENTIC__APPS`, not at build time.
+  set is chosen at **runtime** via `JENTIC__APPS`, not at build time. The
+  process shapes this enables (combined / parts / broker-scaled) are mapped
+  in [`docs/architecture/composition-and-processes.md`](../docs/architecture/composition-and-processes.md#deployment-topologies).
 - A single source of version truth (`pyproject.toml`) flows through Make,
   Docker, and Helm.
 - Adding a new deployable is a localized change: a new Dockerfile, a new

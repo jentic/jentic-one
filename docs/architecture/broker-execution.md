@@ -55,7 +55,7 @@ neither re-implements any step.
   and `CredentialService` — so `shared/jobs/` never imports `broker/`
   (enforced by `tests/arch/test_worker_no_inline_dispatch.py`).
 
-Results of async (and held) executions are polled through the jobs API
+Results of async executions are polled through the jobs API
 (`GET /jobs/{job_id}`, `GET /jobs/{job_id}/result`) or the
 `get_execution_result` MCP tool.
 

@@ -98,7 +98,9 @@ common build tasks.
 
 ### Making Changes
 
-1. Write code following the conventions enforced by the architecture tests (`make test-arch`).
+1. Write code following the conventions enforced by the architecture tests
+   (`make test-arch`); [docs/architecture/surfaces-and-layering.md](docs/architecture/surfaces-and-layering.md)
+   maps each rule to its test.
 2. Add or update tests for your change.
 3. Run `make check` (lint + type check + secrets audit + architecture tests)
    before pushing. `make fix` auto-fixes formatting and lint issues.

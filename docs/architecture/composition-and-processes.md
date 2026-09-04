@@ -49,7 +49,7 @@ enforced at boot:
   local auth verifier resolves API keys and permissions there); and a
   control shape with MCP enabled needs registry (the `/mcp` search tools
   call registry services in-process). Touching a DB outside the gate raises
-  immediately, so a mis-deployed process fails at boot, not at 3 a.m.
+  immediately, so a mis-deployed process fails at boot.
 
 ## Deployment topologies
 
