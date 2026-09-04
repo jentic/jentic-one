@@ -108,7 +108,9 @@ jentic register   # connect this machine to the instance
 ```
 
 No package manager? Manual download, checksum + signature verification, and
-air-gapped transfer are in [docs/installation/cli.md](docs/installation/cli.md).
+air-gapped transfer are in [docs/installation/cli.md](docs/installation/cli.md)
+— along with our Scoop bucket, which carries brand-new releases before winget
+review completes.
 
 ### Managed install
 

@@ -27,6 +27,7 @@ scoop manifests are actually generated from this config.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 GORELEASER_CONFIG = REPO_ROOT / "cli" / ".goreleaser.yaml"
 
 #: Directories that hold third-party or generated markdown, not our docs.
+#: (Fallback filter — the primary enumeration is `git ls-files`.)
 _EXCLUDED_DIR_NAMES = {".git", ".venv", "node_modules", "dist", ".ruff_cache", ".pytest_cache"}
 
 #: ``winget install <id>`` / ``winget upgrade <id>`` mentions.
@@ -65,10 +67,25 @@ def _release_config() -> dict[str, Any]:
 
 
 def _doc_files() -> list[Path]:
+    """Tracked markdown files plus ``llms.txt``.
+
+    Enumerates via ``git ls-files`` so untracked scratch files never trip the
+    guard; falls back to an rglob when git is unavailable (e.g. an sdist).
+    """
     docs = [REPO_ROOT / "llms.txt"]
-    for path in REPO_ROOT.rglob("*.md"):
-        if _EXCLUDED_DIR_NAMES.isdisjoint(part.lower() for part in path.parts):
-            docs.append(path)
+    try:
+        tracked = subprocess.run(
+            ["git", "ls-files", "-z", "*.md"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+        docs.extend(REPO_ROOT / name for name in tracked.split("\0") if name)
+    except (OSError, subprocess.CalledProcessError):
+        for path in REPO_ROOT.rglob("*.md"):
+            if _EXCLUDED_DIR_NAMES.isdisjoint(part.lower() for part in path.parts):
+                docs.append(path)
     return [doc for doc in docs if doc.is_file()]
 
 

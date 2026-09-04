@@ -99,7 +99,9 @@ The automation is inert until these are provisioned:
   (fine-grained tokens cannot open cross-repo PRs against
   `microsoft/winget-pkgs`). Fork `microsoft/winget-pkgs` into the `jentic`
   org first; each release then pushes a manifest branch to the fork and opens
-  the upstream PR. The **first** submission goes through Microsoft's human
+  the upstream PR. **Keep the fork's `master` synced** (GitHub's "Sync fork"
+  button, or a scheduled sync) — a stale fork makes the generated PR conflict
+  at tag time. The **first** submission goes through Microsoft's human
   review (typically days); later versions are auto-validated by bots. Until
   the first manifest lands, `winget install Jentic.Jentic` resolves nothing —
   the scoop bucket is the immediate Windows channel in the meantime.
