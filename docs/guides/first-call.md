@@ -13,7 +13,7 @@ is the fastest local trial. Everything below assumes the app
 > **Run the agent on a different machine from Jentic One.** An agent running as
 > the same OS user can read the credential database and encryption key off disk,
 > whatever the API-level controls allow. Read the
-> [security hardening guide](../security/security.md) before pointing an instance
+> [security hardening guide](../security/README.md) before pointing an instance
 > at a real credential — or use [`jentic run`](local-agent.md) to isolate a local
 > coding agent behind its own Unix user.
 
@@ -118,4 +118,4 @@ after the check, forwards the request, and writes an audit record.
 - **Endpoint & scope reference.** Every HTTP route and the scope it requires:
   [endpoint reference](../reference/endpoints.md).
 - **Run it somewhere real.** The [installation guides](../installation/README.md),
-  then the [security hardening guide](../security/security.md).
+  then the [security hardening guide](../security/README.md).

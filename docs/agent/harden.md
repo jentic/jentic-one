@@ -2,7 +2,7 @@
 
 Read this **before the install touches a real credential**. It distils the
 security decisions an install must get right, drawn from the
-[security guide](../security/security.md) (the full threat model — link the
+[security guide](../security/README.md) (the full threat model — link the
 human there for the reasoning). Everything here is a concrete change you can
 make to the artifacts from [install.md](install.md).
 

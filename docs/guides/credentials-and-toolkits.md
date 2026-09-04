@@ -6,7 +6,7 @@ server-side, how secrets are encrypted at rest, how credentials get into the
 system through providers, and what every use leaves in the audit trail.
 Storing a credential and granting an agent access are walked through in
 [Your first brokered call](first-call.md) (steps 4–5); read
-[Deploying Jentic One securely](../security/security.md) before storing a
+[Deploying Jentic One securely](../security/README.md) before storing a
 real one. The rest of the guides are indexed in [`README.md`](README.md).
 
 ## The promise: the agent never holds the secret
@@ -242,7 +242,7 @@ never the secret.
 The platform holds the secrets; these docs close the remaining gaps around
 the agent:
 
-- [Deploying Jentic One securely](../security/security.md) — the umbrella
+- [Deploying Jentic One securely](../security/README.md) — the umbrella
   threat model, deployment tiers, and production checklist.
 - [Same-host setups](../security/same-host/README.md) — what changes when
   the agent and the credential store share a machine, and what `jentic run`

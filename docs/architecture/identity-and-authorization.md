@@ -121,4 +121,4 @@ implied by the previous one.
   the agent's point of view.
 - [How credential resolution works](../guides/credentials-and-toolkits.md) —
   what happens after authorization succeeds.
-- [Security](../security/security.md) — threat model and hardening posture.
+- [Security](../security/README.md) — threat model and hardening posture.

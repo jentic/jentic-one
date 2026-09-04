@@ -11,7 +11,7 @@
   <a href="#quickstart">Quickstart</a> ·
   <a href="docs/guides/first-call.md">First brokered call</a> ·
   <a href="https://github.com/jentic/jentic-public-apis">API Directory</a> ·
-  <a href="docs/security/security.md">Security</a> ·
+  <a href="docs/security/README.md">Security</a> ·
   <a href="https://github.com/jentic/jentic-one/discussions">Discussions</a>
 </p>
 
@@ -170,7 +170,7 @@ The full index is at [docs/README.md](docs/README.md).
 - [Installation](docs/installation/README.md) — [Docker](docs/installation/docker.md), [systemd](docs/installation/systemd.md), [Helm](docs/installation/helm.md), [AWS Marketplace](docs/installation/aws-marketplace.md)
 - [First brokered call](docs/guides/first-call.md) — from a running instance to a real API response
 - [CLI](cli/README.md) — `jentic` (agent) and `jenticctl` (operator)
-- [Deploying securely](docs/security/security.md) — read before pointing an instance at a real credential
+- [Deploying securely](docs/security/README.md) — read before pointing an instance at a real credential
 - [Configuration reference](docs/reference/config.md) — every config key, default, and env var
 - [Endpoint & scope reference](docs/reference/endpoints.md) — every HTTP route and who may call it
 - [Local development](docs/development/local-setup.md) — running from a source checkout

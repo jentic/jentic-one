@@ -48,7 +48,7 @@ _RAW_LINK_RE = re.compile(
 #: ``REPO_ROOT`` would silently discard the root and check the host filesystem.
 _MD_LINK_RE = re.compile(r"\]\((?!https?://|#|mailto:|/)([\w./-]+?)(?:#[^)]*)?\)")
 
-#: Backticked repo paths mentioned in prose, e.g. ```docs/security/security.md``.
+#: Backticked repo paths mentioned in prose, e.g. ```docs/security/README.md``.
 #: Requires a ``/`` and a file extension so plain filenames and flags don't match.
 _PATH_MENTION_RE = re.compile(r"`([\w-]+(?:/[\w.-]+)+\.(?:md|ya?ml|json|sh|txt|js|py|toml))`")
 

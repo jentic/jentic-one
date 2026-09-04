@@ -6,7 +6,7 @@ Jentic One is community-supported for self-hosted deployments:
 
 - **Questions & discussion** — [GitHub Discussions](https://github.com/jentic/jentic-one/discussions)
 - **Bugs & feature requests** — [GitHub Issues](https://github.com/jentic/jentic-one/issues) (use the templates)
-- **Documentation** — the [documentation index](docs/README.md), the [install guides](docs/installation/README.md), and the [security hardening guide](docs/security/security.md)
+- **Documentation** — the [documentation index](docs/README.md), the [install guides](docs/installation/README.md), and the [security hardening guide](docs/security/README.md)
 
 Please do **not** report security vulnerabilities in public issues — see
 [SECURITY.md](SECURITY.md).

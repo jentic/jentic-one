@@ -23,7 +23,7 @@ rest of this file is for changing the codebase.
 
 **Run Jentic One on a different machine from the agent.** An agent running as the same OS user
 can read the credential database and encryption key from disk, whatever the API-level controls
-allow. See `docs/security/security.md` before using real credentials.
+allow. See `docs/security/README.md` before using real credentials.
 
 **Register and reach a first call:**
 

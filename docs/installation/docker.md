@@ -139,7 +139,7 @@ python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
 ```
 
 **Keeping the keyset out of the file** — the
-[security guide](../security/security.md)'s "keys out of files on disk" rule
+[security guide](../security/README.md)'s "keys out of files on disk" rule
 has an escape hatch: list entries can be addressed by index, so the keyset
 can ride the env file instead of `production.yaml`
 ([reference](../reference/config.md#credentials)):

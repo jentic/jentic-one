@@ -21,11 +21,11 @@ combined. Pick by how the agent runs and what the credentials are worth:
 
 | Option | What it closes | Where |
 | ------ | -------------- | ----- |
-| **Separate host / private network** — the instance never shares a machine with any agent | AP-1/AP-2 by construction (pair with operator-browser hygiene for AP-3); the strongest posture, and the recommended one for real credentials | [Deployment tiers, T3+](../security.md#deployment-tiers) |
+| **Separate host / private network** — the instance never shares a machine with any agent | AP-1/AP-2 by construction (pair with operator-browser hygiene for AP-3); the strongest posture, and the recommended one for real credentials | [Deployment tiers, T3+](../README.md#deployment-tiers) |
 | **Isolate the agent — `jentic run`** (shipped) — the CLI launches a coding agent as its own unprivileged Unix user, confined per session | AP-1…AP-4 on the machine it runs on | Design docs below; operator guide: [`guides/local-agent.md`](../../guides/local-agent.md) |
-| **Isolate the instance** — run Jentic One under a different OS user, in a container, or rootless | AP-1/AP-2 only — the agent still shares a machine with the operator's browser, so **AP-3 stays open** | [Deployment tiers, T2](../security.md#deployment-tiers) |
+| **Isolate the instance** — run Jentic One under a different OS user, in a container, or rootless | AP-1/AP-2 only — the agent still shares a machine with the operator's browser, so **AP-3 stays open** | [Deployment tiers, T2](../README.md#deployment-tiers) |
 | **MCP-spawned agents** — the runtime (Claude Desktop, Cursor, …) spawns `jentic mcp` as the desktop user; a different seam, same problem | A ladder of four recipes, from isolating the instance to a socket-activated daemon holding the keys | [`mcp-same-host-hardening.md`](mcp-same-host-hardening.md), [`mcp-daemon.md`](mcp-daemon.md) |
-| **Generic sandboxing** — the agent's built-in sandbox, OS primitives, containers, microVMs | Defense-in-depth of varying strength; not a substitute for the rows above | [Sandboxing the agent](../security.md#sandboxing-the-agent-axis-a) |
+| **Generic sandboxing** — the agent's built-in sandbox, OS primitives, containers, microVMs | Defense-in-depth of varying strength; not a substitute for the rows above | [Sandboxing the agent](../README.md#sandboxing-the-agent-axis-a) |
 
 > **Just want to use the shipped isolation?** The operator-facing guide —
 > flow, examples, and troubleshooting for `jentic setup` / `jentic run` /
@@ -44,4 +44,4 @@ analysis and design rationale behind it:
 | [`sandbox-confinement-design.md`](sandbox-confinement-design.md) | **The confinement layer.** The per-session process confinement (`sandbox-exec` on macOS, `bwrap` on Linux) that closes the sibling-traversal leak: why it's a targeted human-home deny, why it errors closed, and the non-negotiable boundaries (whole-`/Users`+`/home` deny, read-only exec routes). |
 
 For the broader deployment guidance (network postures, tiers, the production
-checklist) see [`../security.md`](../security.md).
+checklist) see [`../README.md`](../README.md).

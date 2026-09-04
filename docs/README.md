@@ -64,7 +64,7 @@ Agent runbook: [use](agent/use.md) — discover → request access → execute, 
 
 ## Secure
 
-- [Deploying Jentic One securely](security/security.md) — threat model and the deployment-tier ladder
+- [Deploying Jentic One securely](security/README.md) — threat model and the deployment-tier ladder
 - [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options (including `jentic run`)
 - Agent runbook: [harden](agent/harden.md) — posture checks as executable steps
 
@@ -79,6 +79,7 @@ Agent runbook: [use](agent/use.md) — discover → request access → execute, 
 
 ## Develop
 
+- [development/README.md](development/README.md) — the folder index
 - [Local development setup](development/local-setup.md)
 - [Extending Jentic One](development/extending-jentic-one.md)
 - [Context and configuration](development/context-and-config.md)

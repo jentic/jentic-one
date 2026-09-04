@@ -34,7 +34,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 
 ## Security
 
-- [Hardening guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/security.md): the threat model and a tiered set of deployment postures, from trying it out to handling production credentials. Explains why the network guarantee holds and the same-host, same-user case does not.
+- [Hardening guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/README.md): the threat model and a tiered set of deployment postures, from trying it out to handling production credentials. Explains why the network guarantee holds and the same-host, same-user case does not.
 - [Same-host setups](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/security/same-host/README.md): the options for the case where the agent must share a machine with the instance, and what each one actually buys.
 - [Credentials and toolkits](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/credentials-and-toolkits.md): how the agent never holds a secret — encrypted storage, credential providers, server-side resolution and injection, and the audit trail.
 - [SECURITY.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/SECURITY.md): supported versions and how to report a vulnerability.

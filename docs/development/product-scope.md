@@ -4,7 +4,7 @@
 > [`.harness/ISSUE_INTAKE_STANDARDS.md`](../../.harness/ISSUE_INTAKE_STANDARDS.md)) a
 > rubric for scoring an issue's **product fit** (`fit:high/med/low`). It is grounded
 > only in **public** sources — `README.md`, `SECURITY.md`, `SUPPORT.md`,
-> [`docs/security/security.md`](../security/security.md), and the code in this repo. It deliberately does **not**
+> [`docs/security/README.md`](../security/README.md), and the code in this repo. It deliberately does **not**
 > restate internal roadmap/prioritization detail; where a finer-grained or
 > forward-looking judgment is needed, defer to the maintainers (label `needs-human`)
 > rather than guessing.
@@ -23,7 +23,7 @@ secures, and operates a Jentic One instance (`SECURITY.md` operator guidance;
 `SUPPORT.md` "community-supported for self-hosted deployments"). It must be
 installable and operable by a small team without Jentic's help.
 
-Deployment personas the public docs call out ([`docs/security/security.md`](../security/security.md)):
+Deployment personas the public docs call out ([`docs/security/README.md`](../security/README.md)):
 
 - **Local coding-agent developer** — running Jentic One next to a local coding agent
   (e.g. Claude Code, Cursor) for dev / trying it out.
@@ -76,7 +76,7 @@ usability, or operability of one of these surfaces for the audience above.
 - **Not co-located with the agent for _real / high-value credentials_.** *(Grounded —
   security model.)* The "credentials never leave the data plane" guarantee does not
   hold when the agent runs as the same OS user / same host as the broker
-  (`SECURITY.md`, [`docs/security/security.md`](../security/security.md)). **Nuance:** same-host use *is*
+  (`SECURITY.md`, [`docs/security/README.md`](../security/README.md)). **Nuance:** same-host use *is*
   supported for trying it out / non-real credentials — so a local/dev-mode request is
   **not** automatically out of scope; only "use real credentials in the agent's trust
   boundary" is.
@@ -109,7 +109,7 @@ Ordered by how strongly the public docs emphasize each.
    blocks everything); append-only audit log; operator-supplied encryption keyset
    required (`SECURITY.md`, [`control/web/schemas/toolkits.py`](../../src/jentic_one/control/web/schemas/toolkits.py)).
 3. **Self-hostable & operable by a small team.** One-command install; tiered
-   self-serve hardening path (`README.md`, [`docs/security/security.md`](../security/security.md)).
+   self-serve hardening path (`README.md`, [`docs/security/README.md`](../security/README.md)).
 4. **Telemetry opt-in / off by default / closed-schema; observability self-hosted.**
    No telemetry unless explicitly enabled; the event schema structurally can't carry
    PII (`SECURITY.md`, [`tests/arch/test_telemetry_no_pii.py`](../../tests/arch/test_telemetry_no_pii.py)).
