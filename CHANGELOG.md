@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.38.2](https://github.com/jentic/jentic-one/compare/v0.38.1...v0.38.2) (2026-09-04)
+
+Hotfix release cut from v0.38.1 (not main): removes the placeholder secret
+defaults AWS Marketplace review flagged as static/default passwords, so the
+listing can be resubmitted without shipping main's in-flight work.
+
+### Bug Fixes
+
+* **config:** remove static placeholder secret defaults from the shipped image ([#1255](https://github.com/jentic/jentic-one/issues/1255))
+
 ## [0.38.1](https://github.com/jentic/jentic-one/compare/v0.38.0...v0.38.1) (2026-09-03)
 
 Hotfix release cut from v0.38.0 (not main): the Marketplace users-only
