@@ -174,6 +174,10 @@ async def _check_registration_rate_limit(request: Request, ctx: Context = Depend
     status_code=201,
     summary="Register OAuth client (anonymous DCR)",
     response_model=OAuthClientRegistrationResponse,
+    # RFC 7591 §3.2.1: unset optional metadata (software_id, software_version,
+    # application_type) is omitted from the response, never emitted as JSON
+    # null — strict clients (Cursor's MCP SDK zod schema) reject nulls.
+    response_model_exclude_none=True,
     dependencies=[Depends(_check_registration_rate_limit)],
     responses={
         400: {
