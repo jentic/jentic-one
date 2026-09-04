@@ -374,6 +374,141 @@ async def test_no_software_id_reattach_to_approved_row_keeps_it_approved(
     assert refreshed.active is True
 
 
+async def test_empty_string_software_id_normalizes_to_null_key_space(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """F1 regression: ``software_id: ""`` passes schema validation and, before
+    normalization, took the fallback lookup (``IS NULL``) while *storing*
+    ``""`` (NOT NULL) — a row in neither key space that re-opened the #1251
+    loop. Falsy/whitespace software_id must normalize to NULL at the service
+    boundary, so all its spellings land in the fallback key space and dedupe
+    with each other."""
+    svc = OAuthDcrService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="")
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    assert row.software_id is None
+    assert first.software_id is None  # The response echoes the normalized value.
+
+    # Two ""-registrations dedupe to one row…
+    second = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="")
+    assert second.created is False
+    assert second.client_id == first.client_id
+
+    # …and "", whitespace-only, and absent software_id share one key space.
+    for spelling in (None, "   "):
+        again = await svc.register(
+            client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id=spelling
+        )
+        assert again.created is False, f"software_id={spelling!r} minted a duplicate row"
+        assert again.client_id == first.client_id
+
+    async with dcr_context.admin_db.session() as session:
+        rows = (await session.execute(select(OAuthClient))).scalars().all()
+    assert len(rows) == 1
+
+
+async def test_dedupe_hit_writes_audit_row_but_no_event(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """F2: every dedupe re-attach leaves a forensic audit trace (the 200 arm
+    discloses an existing client_id to an anonymous caller), while the event
+    stream stays quiet — no fresh approval-queue alert per retry."""
+    svc = OAuthDcrService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    second = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    assert second.created is False
+
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    async with dcr_context.admin_db.session() as session:
+        audits = (
+            (
+                await session.execute(
+                    select(AuditEntry).where(
+                        AuditEntry.target_type == AuditTargetType.OAUTH_CLIENT.value,
+                        AuditEntry.target_id == row.id,
+                        AuditEntry.action == AuditAction.REGISTER.value,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    by_reason = {audit.reason: audit for audit in audits}
+    assert set(by_reason) == {
+        "anonymous dynamic client registration",
+        "anonymous DCR re-attach (dedupe hit)",
+    }
+    reattach = by_reason["anonymous DCR re-attach (dedupe hit)"]
+    assert reattach.actor_type == "dcr"
+    assert reattach.origin == "mcp"
+    assert reattach.after is not None
+    assert reattach.after["client_id"] == first.client_id
+    assert reattach.after["approval_status"] == OAuthClientApprovalStatus.PENDING.value
+    # The event stream stays quiet: one registered event, nothing per retry.
+    events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)
+    assert len(events) == 1
+
+
+async def test_no_software_id_dedupe_denied_row_stays_denied(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """F6(b) — denied arm of the *fallback* key (the existing denied test is
+    software_id-only): a software_id-less re-registration against a denied
+    row re-attaches (created=False, same client_id) and never mints a fresh
+    pending second chance; recovery stays admin-actioned."""
+    svc = OAuthDcrService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    await OAuthClientService(dcr_context).deny(row.id, reason="not vetted", identity=_ADMIN)
+
+    second = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+
+    assert second.created is False
+    assert second.client_id == first.client_id
+    refreshed = await _row_by_client_id(dcr_context, first.client_id)
+    assert refreshed.approval_status == OAuthClientApprovalStatus.DENIED.value
+    assert refreshed.active is False
+    async with dcr_context.admin_db.session() as session:
+        rows = (await session.execute(select(OAuthClient))).scalars().all()
+    assert len(rows) == 1
+
+
+async def test_admin_created_row_never_adopted_by_anonymous_door(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """F6(c) — adversarial pin on the ``registration_source='dcr'`` filter:
+    an admin-created client with the same name + redirect set (and no
+    software_id) must never be adopted by an anonymous registration — that
+    filter is the only line between the anonymous door and admin rows."""
+    async with dcr_context.admin_db.transaction() as session:
+        admin_row = await OAuthClientRepository.create(
+            session,
+            client_id=generate_client_id(),
+            name="Cursor",
+            redirect_uris=_REDIRECT_URIS,
+            client_secret_hash=None,
+            allowed_scopes=sorted(MCP_TOOL_SCOPES),
+            token_endpoint_auth_method="none",
+            consent_model="agent",
+            registration_source="admin",
+            software_id=None,
+            approval_status=OAuthClientApprovalStatus.APPROVED.value,
+            active=True,
+            created_by=_ADMIN.sub,
+        )
+        admin_client_id = admin_row.client_id
+
+    result = await OAuthDcrService(dcr_context).register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS
+    )
+
+    assert result.created is True
+    assert result.client_id != admin_client_id
+    async with dcr_context.admin_db.session() as session:
+        rows = (await session.execute(select(OAuthClient))).scalars().all()
+    assert len(rows) == 2
+
+
 async def test_dedupe_key_spaces_never_cross_match(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:

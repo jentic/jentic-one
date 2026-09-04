@@ -230,7 +230,16 @@ class OAuthDcrService:
         every awaiting-approval retry. Never dedupes on ``software_id`` or
         ``client_name`` alone, never across the two key spaces, and a dedupe
         hit never mutates the stored row (status, name, and redirect set are
-        preserved verbatim).
+        preserved verbatim) — it only writes an audit entry so anonymous
+        re-attaches stay visible to admins.
+
+        A falsy or whitespace-only ``software_id`` is normalized to ``None``
+        *before* the key-space branch and the insert: ``""`` passes schema
+        validation (empty-default serializers are common) but would otherwise
+        take the fallback lookup (``IS NULL``) while storing ``""`` (NOT
+        NULL) — a row in *neither* key space that re-opens the #1251 loop.
+        Normalizing (rather than rejecting) follows RFC 7591's
+        ignore-don't-reject posture for metadata the server curtails.
         """
         _validate_metadata(
             redirect_uris=redirect_uris,
@@ -240,6 +249,7 @@ class OAuthDcrService:
         )
         if not client_name.strip():
             raise InvalidClientMetadataError("client_name is required")
+        software_id = (software_id or "").strip() or None
 
         allowed_scopes = _cap_scopes(scope)
         auto_approve = self._ctx.config.server.mcp.oauth.auto_approve_clients
@@ -276,6 +286,26 @@ class OAuthDcrService:
                     key=lambda c: _APPROVAL_PREFERENCE.get(
                         c.approval_status, len(_APPROVAL_PREFERENCE)
                     ),
+                )
+                # F2: a re-attach must leave a forensic trace — the 200-dedupe
+                # arm discloses an existing (possibly approved) client_id to
+                # an anonymous caller, and a client bouncing off a denied row
+                # retries with no other admin-visible signal. Audit row only,
+                # deliberately no event: the whole point of the dedupe is
+                # that retries stop spamming the approval queue.
+                await record_audit(
+                    session,
+                    action=AuditAction.REGISTER,
+                    target_type=AuditTargetType.OAUTH_CLIENT,
+                    target_id=winner.id,
+                    actor_type=_DCR_ACTOR,
+                    actor_id=None,
+                    after={
+                        "client_id": winner.client_id,
+                        "approval_status": winner.approval_status,
+                    },
+                    reason="anonymous DCR re-attach (dedupe hit)",
+                    origin=Origin.MCP.value,
                 )
                 return winner, False
 
