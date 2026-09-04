@@ -53,8 +53,8 @@ func noFollowRedirects(*http.Request, []*http.Request) error { return http.ErrUs
 // exchangeClient resolves the *http.Client a token exchange for creds goes
 // through. Credentials.HTTPClient wins when set — that is how the
 // environment's SEC-20 CA-pinned transport and the attribution hook
-// (User-Agent / session headers) reach the mint, which previously always went
-// out on the package default and so bypassed both (#1205). The mint always
+// (User-Agent / session headers) reach the mint instead of it going
+// out on the package default and bypassing both (#1205). The mint always
 // rides a COPY (the caller's client is shared with the plane clients and must
 // not be mutated) carrying the exchange invariants: a timeout when the caller
 // set none (a zero-timeout mint could hang a whole command — rules/05), and

@@ -109,15 +109,13 @@ class PlanGovernance:
     must stamp before this bind can approve, and — for ``toolkit:bind`` — the
     canonical ``(vendor, name)`` slug key that made those intents relevant.
     ``credential:bind`` items intentionally leave ``governing_api`` at
-    ``None``: the credential-bind governance rule is "any live intent" (§778
-    review), not tied to a specific API.
+    ``None``: the credential-bind governance rule is "any live intent" (#778),
+    not tied to a specific API.
 
     Default construction (``PlanGovernance()``) means "not governed by any
     plan" — the plain fulfilment contract applies. ``is_governed`` is the
     single decision point call-sites branch on; the id / API fields are for
-    the diagnostic path (which intent must be fulfilled? which API tuple?),
-    replacing the coarser ``is_provisioning_plan: bool`` that used to be
-    threaded through :meth:`EffectApplicator.validate`.
+    the diagnostic path (which intent must be fulfilled? which API tuple?).
     """
 
     governing_intent_ids: frozenset[str] = field(default_factory=frozenset)

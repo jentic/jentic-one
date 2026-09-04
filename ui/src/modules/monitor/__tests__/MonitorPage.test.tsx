@@ -662,10 +662,9 @@ describe('Monitor inter-linking', () => {
 });
 
 /**
- * Events-tab severity filter (#617). The Events tab previously had no way to
- * filter by severity — a "critical" flag elsewhere led to a filter that showed
- * nothing. The backend honours a repeatable `severity=` param; these lock in
- * that the chips drive it and that error/critical stay independent values.
+ * Events-tab severity filter (#617). The backend honours a repeatable
+ * `severity=` param; these lock in that the chips drive it and that
+ * error/critical stay independent values.
  */
 describe('Monitor Events severity filter', () => {
 	beforeEach(() => {

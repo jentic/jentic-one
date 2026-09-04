@@ -1,4 +1,4 @@
-"""Unit tests for the mid-flow D7 client-gate re-checks (PR #1218 review).
+"""Unit tests for the mid-flow client-gate re-checks (PR #1218 review).
 
 The approval+active gate runs at /authorize entry, but the signed-state
 window (STATE_MAX_AGE_SECONDS) leaves the rest of the flow open: these tests
@@ -6,7 +6,7 @@ pin the re-checks at the IdP callback and the consent-submit step, so a
 client denied (or deactivated) after /authorize can neither provision a user
 row nor mint an authorization code. Rejections are browser-facing error
 redirects (/error), never OAuth error redirects to the client's redirect_uri
-(D7: clients can't observe browser-side rejections).
+(clients can't observe browser-side rejections).
 """
 
 from __future__ import annotations

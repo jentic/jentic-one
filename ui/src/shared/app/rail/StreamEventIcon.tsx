@@ -42,7 +42,7 @@ const TYPE_ICON_MAP: Record<string, { Icon: LucideIcon; tone: string }> = {
 	'catalog.update_available': { Icon: PackageCheck, tone: 'text-warning' },
 	'catalog.update_conflicts_overlay': { Icon: AlertTriangle, tone: 'text-warning' },
 	'overlay.deprecated': { Icon: Layers, tone: 'text-muted-foreground' },
-	// Interactive OAuth (phase-3a §4.8): client registration awaits an approval
+	// Interactive OAuth: client registration awaits an approval
 	// decision (warning), the rest are lifecycle notifications.
 	'oauth_client.registered': { Icon: ShieldQuestion, tone: 'text-warning' },
 	'oauth_client.approved': { Icon: CheckCircle2, tone: 'text-success' },

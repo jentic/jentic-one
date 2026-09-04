@@ -363,7 +363,7 @@ describe('AgentsPage — agents lifecycle', () => {
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 	});
 
-	// --- Phase 5: first-run empty state with DCR quickstart ----------------
+	// --- First-run empty state with DCR quickstart --------------------------
 
 	it('shows the DCR quickstart when no agents are registered', async () => {
 		worker.use(
@@ -384,7 +384,7 @@ describe('AgentsPage — agents lifecycle', () => {
 		expect(screen.getByText(/--name my-first-agent/)).toBeInTheDocument();
 	});
 
-	// --- Phase 4: create sheet with optional initial scopes ----------------
+	// --- Create sheet with optional initial scopes --------------------------
 
 	it('creates an agent with initial scopes included in the POST body', async () => {
 		const user = userEvent.setup();

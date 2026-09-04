@@ -460,23 +460,24 @@ def test_apps_env_comma_separated_with_spaces(config_file: Path):
 
 
 def test_mcp_oauth_config_defaults(config_file: Path):
-    """3a-2 seam (design §4.9/§8 E2): off by default, auto-approve on in OSS."""
+    """MCP OAuth seam, D9 as amended: off by default, and approval-first —
+    auto-approve is an explicit opt-in, false by default."""
     config = load_config(config_file)
     assert config.server.mcp.oauth.enabled is False
-    assert config.server.mcp.oauth.auto_approve_clients is True
+    assert config.server.mcp.oauth.auto_approve_clients is False
     assert config.server.mcp.oauth.registration_gc_days == 90
 
 
 def test_mcp_oauth_env_overrides(config_file: Path):
     env = {
         "JENTIC__SERVER__MCP__OAUTH__ENABLED": "true",
-        "JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS": "false",
+        "JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS": "true",
         "JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS": "30",
     }
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.server.mcp.oauth.enabled is True
-    assert config.server.mcp.oauth.auto_approve_clients is False
+    assert config.server.mcp.oauth.auto_approve_clients is True
     assert config.server.mcp.oauth.registration_gc_days == 30
 
 

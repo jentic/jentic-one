@@ -5,11 +5,10 @@ FastAPI >= 0.137 wraps ``include_router`` results in an opaque
 <= 0.63b1 a request that path-matched an included router without matching a
 method (a CORS ``OPTIONS`` preflight, a ``405``) hit an unguarded
 ``route.path`` read in ``_get_route_details``, raising ``AttributeError`` and
-turning the response into a ``500``. jentic-one used to monkeypatch a local
-guard around ``_get_route_details``; upstream fixed the lookup properly in
-0.65b0 (``_flatten_routes`` over FastAPI's ``iter_route_contexts``), so the
-guard was removed and this test now pins the upstream behaviour instead —
-``pyproject.toml`` floors the instrumentation at the fixed version.
+turning the response into a ``500``. Upstream fixed the lookup in 0.65b0
+(``_flatten_routes`` over FastAPI's ``iter_route_contexts``);
+``pyproject.toml`` floors the instrumentation there, and this test pins that
+fixed behaviour.
 """
 
 from __future__ import annotations

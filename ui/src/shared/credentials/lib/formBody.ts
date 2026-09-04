@@ -62,8 +62,8 @@ export function isValidHttpUrl(raw: string): boolean {
 /**
  * Build the optional `runtime_config` from collected server-variable values.
  *
- * Server variables now have a dedicated `server_variables` field on the
- * credential contract and are no longer transmitted here. This function is
+ * Server variables travel on the credential contract's dedicated
+ * `server_variables` field, never in `runtime_config`. This function is
  * retained for any future header/query-param overrides that may use
  * `RuntimeConfig`.
  */

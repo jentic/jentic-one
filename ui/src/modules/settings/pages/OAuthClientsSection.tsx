@@ -497,11 +497,12 @@ const QUEUE_FILTER_OPTIONS: SegmentedToggleOption<QueueFilter>[] = [
 ];
 
 /**
- * The DCR approval queue (phase-3a §4.8, D7): registrations land `pending` +
+ * The DCR approval queue (D7): registrations land `pending` +
  * inactive; Approve activates them, Deny keeps the row (reversible — the
- * Denied filter re-offers Approve as the recovery path). With auto-approve on
- * (D9, the OSS default) the queue is normally empty — it is chiefly a manual
- * / enterprise-mode surface.
+ * Denied filter re-offers Approve as the recovery path). Approval-first is
+ * the default everywhere (D7 as amended 2026-09-03): every fresh instance's
+ * first DCR client lands here. With the explicit `auto_approve_clients: true`
+ * opt-in the queue is normally empty.
  */
 function ApprovalQueueTab() {
 	const [filter, setFilter] = useState<QueueFilter>('pending');

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.permissions import ALL_PERMISSIONS
 from jentic_one.admin.core.schema.agents import Agent
@@ -76,7 +77,7 @@ def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class AgentConsentOption:
-    """One row of the agent-picker consent page (phase-3a §4.4).
+    """One row of the agent-picker consent page.
 
     ``scopes`` is the agent's *live* scope set (its current
     ``actor_scope_grants``) — the consent page intersects it with the request
@@ -223,7 +224,7 @@ class AuthorizeService:
         return await self._resolve_or_create_user(claims)
 
     async def resolve_existing_user_id(self, claims: IdpClaims) -> str | None:
-        """Read-only user resolution for the agent-picker consent page (§4.4).
+        """Read-only user resolution for the agent-picker consent page.
 
         The deferred-provisioning contract holds — rendering the consent page
         must not create a user row — but the agent picker needs to know whose
@@ -248,11 +249,11 @@ class AuthorizeService:
     async def list_consentable_agents(self, user_id: str) -> list[AgentConsentOption]:
         """The consenting user's own ``status='active'`` agents + live scopes.
 
-        Only admin-approved (active) agents are bindable (§4.4); pending,
+        Only admin-approved (active) agents are bindable; pending,
         denied, disabled, and archived agents never appear on the picker.
         """
         async with self._ctx.admin_db.session() as session:
-            # limit=1000 (review A7): §4.4 specifies no picker ceiling, but the
+            # limit=1000: the design specifies no picker ceiling, but the
             # repo API is limit-shaped. The bound is explicit and generous —
             # beyond it the newest-first (created_at DESC) order deterministically
             # drops the *oldest* agents from both render and submit (the same
@@ -263,7 +264,7 @@ class AuthorizeService:
                 limit=1000,
                 filters=[Agent.status == ActorStatus.ACTIVE.value],
             )
-            # One batch query for every candidate's live scopes (review A7:
+            # One batch query for every candidate's live scopes (a
             # avoids a per-agent actor_scope_grants round-trip, run twice
             # because the submit path re-runs this predicate).
             grants = await ActorScopeGrantRepository.list_for_actors(
@@ -355,8 +356,8 @@ class AuthorizeService:
     ) -> None:
         """Audit a user's approve/deny decision on the OAuth consent screen.
 
-        Third-party consent decisions were previously only logged, so the audit
-        trail contained no record of *which* user consented to *which* client
+        Without this record the audit trail would contain no record of *which*
+        user consented to *which* client
         with *which* scopes — impossible to reconstruct after the fact.
         """
         async with self._ctx.admin_db.transaction() as session:
@@ -393,6 +394,21 @@ class AuthorizeService:
         if auth_code.expires_at <= datetime.now(UTC):
             raise InvalidGrantError("authorization code expired")
 
+    async def _redirect_uri_currently_registered(
+        self, session: AsyncSession, *, client_id: str, redirect_uri: str
+    ) -> bool:
+        """True iff ``redirect_uri`` is in the client's CURRENT redirect set.
+
+        Platform clients read from config, registered clients from the live
+        row. A missing row fails closed — a code was minted for this
+        client_id, so absence means the registration vanished mid-flow.
+        """
+        for pc in self._ctx.config.auth.platform_clients:
+            if pc.client_id == client_id:
+                return redirect_uri in pc.redirect_uris
+        client = await OAuthClientRepository.get_by_client_id(session, client_id)
+        return client is not None and redirect_uri in client.redirect_uris
+
     async def exchange_code(
         self,
         *,
@@ -405,7 +421,7 @@ class AuthorizeService:
         """Exchange auth code + PKCE verifier for tokens.
 
         Returns (access_token, refresh_token, id_token). Grant-bearing codes
-        (phase-3a §4.5) mint actor=AGENT tokens bound to the consent grant and
+        mint actor=AGENT tokens bound to the consent grant and
         return ``id_token=None`` (D11 — no OIDC identity on the agent
         channel); plain codes keep the act-as-user path with an id_token.
         """
@@ -435,13 +451,22 @@ class AuthorizeService:
             if auth_code.redirect_uri != redirect_uri:
                 raise InvalidGrantError("redirect_uri mismatch")
 
+            # The code row pins the authorize-time value, but an admin may
+            # have narrowed the client's redirect set inside the code TTL —
+            # re-validate against the client's *live* set so a mid-flow
+            # narrowing invalidates in-flight codes (review-1246 F6).
+            if not await self._redirect_uri_currently_registered(
+                session, client_id=client_id, redirect_uri=redirect_uri
+            ):
+                raise InvalidGrantError("redirect_uri is no longer registered for this client")
+
             if not _verify_pkce(code_verifier, auth_code.code_challenge):
                 raise InvalidGrantError("PKCE verification failed")
 
             await AuthorizationCodeRepository.consume(session, auth_code.id, now)
 
             if auth_code.grant_id is not None:
-                # Grant-channel exchange (§4.5): every leg is re-checked at
+                # Grant-channel exchange: every leg is re-checked at
                 # exchange time and fails closed with invalid_grant — the
                 # consent-time snapshot is not trusted across the code TTL.
                 grant = await OAuthClientGrantRepository.get_by_id(session, auth_code.grant_id)

@@ -173,7 +173,7 @@ export const actorAccessRequestsRootKey = (actorId: string) =>
 	['access-requests', 'by-actor', actorId] as const;
 
 /**
- * OAuth consent grants binding clients to one agent (phase-3a §4.8), keyed by
+ * OAuth consent grants binding clients to one agent, keyed by
  * agent + status slice under the shared `oauthGrantsRoot`: grant creation
  * happens out-of-band (a consent screen in another tab) and lands as an
  * `oauth_grant.created` SSE event, which the shared agent-stream provider
@@ -775,7 +775,7 @@ export function useActorAccessRequests(actorId: string | null, status: string | 
 
 /**
  * The OAuth clients holding a consent→agent grant on this agent — the detail
- * console's "Connected clients" panel (phase-3a §4.8). Owner-or-admin on the
+ * console's "Connected clients" panel. Owner-or-admin on the
  * backend; a 403 surfaces as an error the card renders honestly.
  *
  * Cursor-paginated like {@link useAgents}: the first page renders

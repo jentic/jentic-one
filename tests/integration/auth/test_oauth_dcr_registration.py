@@ -1,8 +1,8 @@
-"""Integration tests for the anonymous OAuth-client DCR flow (phase 3a-2).
+"""Integration tests for the anonymous OAuth-client DCR flow.
 
-Exercises OAuthDcrService and the 3a-1 approval verbs against a real database
-(PostgreSQL or SQLite — no mocking): the §4.2 registration happy path
-(pending + inactive rows, D9 auto-approve), the D8 dedupe key, and the §4.8
+Exercises OAuthDcrService and the admin approval verbs against a real database
+(PostgreSQL or SQLite — no mocking): the registration happy path
+(pending + inactive rows, auto-approve), the dedupe key, and the
 ``oauth_client.registered`` / ``oauth_client.approved`` events with their
 audit rows.
 """
@@ -40,13 +40,28 @@ _REDIRECT_URIS = ["http://localhost:33418/callback", "https://client.test.local/
 
 @pytest.fixture()
 def dcr_context(integration_context: Context) -> Generator[Context, None, None]:
-    """The integration context with the DCR queue policy (no auto-approve).
+    """The integration context pinned to the DCR queue policy (no auto-approve).
+
+    This is the default posture (D9 as amended), pinned explicitly so the
+    tests document what they exercise. Restores the config afterwards —
+    AppConfig is shared session state.
+    """
+    oauth_cfg = integration_context.config.server.mcp.oauth
+    prior = oauth_cfg.auto_approve_clients
+    oauth_cfg.auto_approve_clients = False
+    yield integration_context
+    oauth_cfg.auto_approve_clients = prior
+
+
+@pytest.fixture()
+def auto_approve_context(integration_context: Context) -> Generator[Context, None, None]:
+    """The integration context with the explicit auto-approve opt-in (D9).
 
     Restores the config afterwards — AppConfig is shared session state.
     """
     oauth_cfg = integration_context.config.server.mcp.oauth
     prior = oauth_cfg.auto_approve_clients
-    oauth_cfg.auto_approve_clients = False
+    oauth_cfg.auto_approve_clients = True
     yield integration_context
     oauth_cfg.auto_approve_clients = prior
 
@@ -93,7 +108,7 @@ async def _row_by_client_id(ctx: Context, client_id: str) -> OAuthClient:
 async def test_register_lands_pending_inactive_public_agent_row(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
-    """§4.2 happy path under the queue policy: pending + inactive, public-only,
+    """Happy path under the queue policy: pending + inactive, public-only,
     consent_model=agent, registration_source=dcr, RFC 7591-shaped result."""
     svc = OAuthDcrService(dcr_context)
     result = await svc.register(
@@ -124,7 +139,7 @@ async def test_register_lands_pending_inactive_public_agent_row(
     assert row.registration_source == "dcr"
     assert row.software_id == "com.cursor.ide"
     assert row.allowed_scopes == ["apis:read", "capabilities:execute"]
-    # The repo create path stamps the D8 dedupe fingerprint (§4.1).
+    # The repo create path stamps the dedupe fingerprint.
     assert row.redirect_uris_fingerprint == redirect_uris_fingerprint(_REDIRECT_URIS)
 
     # Registration is durable: audit row (actor=dcr, origin=mcp)…
@@ -141,7 +156,7 @@ async def test_register_lands_pending_inactive_public_agent_row(
     assert audit.actor_type == "dcr"
     assert audit.origin == "mcp"
 
-    # …plus an actionable oauth_client.registered event (§4.8).
+    # …plus an actionable oauth_client.registered event.
     events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)
     assert len(events) == 1
     assert events[0].requires_action is True
@@ -166,7 +181,7 @@ async def test_register_zero_overlap_scope_rejected_no_row(
     """A scope claim with no MCP-tool-scope overlap is rejected outright: an
     empty ceiling ``[]`` would collapse to the ``None`` "no allowlist"
     sentinel in the admin view and skip the /authorize scope check entirely —
-    an *unrestricted* client, the opposite of §4.2. No row is written."""
+    an *unrestricted* client, which this door never mints. No row is written."""
     svc = OAuthDcrService(dcr_context)
     with pytest.raises(InvalidClientMetadataError, match="no overlap"):
         await svc.register(
@@ -179,26 +194,26 @@ async def test_register_zero_overlap_scope_rejected_no_row(
 
 
 async def test_auto_approve_policy_activates_row_at_registration(
-    integration_context: Context, clean_dcr_tables: None
+    auto_approve_context: Context, clean_dcr_tables: None
 ) -> None:
-    """D9 (OSS default): auto_approve_clients=true → approved + active row,
+    """D9 (explicit opt-in): auto_approve_clients=true → approved + active row,
     non-actionable registered event, and the row passes /authorize validation."""
-    assert integration_context.config.server.mcp.oauth.auto_approve_clients is True
-    svc = OAuthDcrService(integration_context)
+    assert auto_approve_context.config.server.mcp.oauth.auto_approve_clients is True
+    svc = OAuthDcrService(auto_approve_context)
     result = await svc.register(
         client_name="Claude", redirect_uris=_REDIRECT_URIS, software_id="com.anthropic.claude"
     )
 
-    row = await _row_by_client_id(integration_context, result.client_id)
+    row = await _row_by_client_id(auto_approve_context, result.client_id)
     assert row.approval_status == "approved"
     assert row.active is True
 
-    events = await _events_of_type(integration_context, EventType.OAUTH_CLIENT_REGISTERED)
+    events = await _events_of_type(auto_approve_context, EventType.OAUTH_CLIENT_REGISTERED)
     assert len(events) == 1
     assert events[0].requires_action is False
     assert events[0].data["approval_status"] == "approved"
 
-    client_svc = OAuthClientService(integration_context)
+    client_svc = OAuthClientService(auto_approve_context)
     assert await client_svc.is_redirect_uri_allowed(result.client_id, _REDIRECT_URIS[0]) is True
     assert await client_svc.is_public_client(result.client_id) is True
 
@@ -206,7 +221,7 @@ async def test_auto_approve_policy_activates_row_at_registration(
 async def test_register_rejects_confidential_client_attempts(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
-    """§4.2: this door only mints public clients; no row is written on reject."""
+    """This door only mints public clients; no row is written on reject."""
     svc = OAuthDcrService(dcr_context)
     with pytest.raises(InvalidClientMetadataError):
         await svc.register(
@@ -221,7 +236,7 @@ async def test_register_rejects_confidential_client_attempts(
 async def test_dedupe_same_software_id_and_redirect_set_returns_existing(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
-    """D8: exact (software_id + redirect set) match → the existing client_id,
+    """Dedupe: exact (software_id + redirect set) match → the existing client_id,
     even with the redirect URIs reordered; only one row and one event exist."""
     svc = OAuthDcrService(dcr_context)
     first = await svc.register(
@@ -246,7 +261,7 @@ async def test_dedupe_same_software_id_and_redirect_set_returns_existing(
 async def test_dedupe_different_redirect_set_creates_new_row(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
-    """D8: never dedupe on software_id alone — a differing redirect set is a
+    """Never dedupe on software_id alone — a differing redirect set is a
     new registration."""
     svc = OAuthDcrService(dcr_context)
     first = await svc.register(
@@ -263,7 +278,7 @@ async def test_dedupe_different_redirect_set_creates_new_row(
 
 
 async def test_no_software_id_never_dedupes(dcr_context: Context, clean_dcr_tables: None) -> None:
-    """D8: without a software_id every register creates a fresh row."""
+    """Without a software_id every register creates a fresh row."""
     svc = OAuthDcrService(dcr_context)
     first = await svc.register(client_name="anon", redirect_uris=_REDIRECT_URIS)
     second = await svc.register(client_name="anon", redirect_uris=_REDIRECT_URIS)
@@ -275,7 +290,7 @@ async def test_no_software_id_never_dedupes(dcr_context: Context, clean_dcr_tabl
 async def test_approve_verb_emits_event_and_settles_registration_alert(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
-    """§4.3/§4.8: :approve flips the row live, emits oauth_client.approved, and
+    """:approve flips the row live, emits oauth_client.approved, and
     acknowledges the actionable registered alert."""
     dcr_svc = OAuthDcrService(dcr_context)
     result = await dcr_svc.register(
@@ -321,7 +336,7 @@ async def test_deny_verb_settles_alert_without_approved_event(
 async def test_dedupe_denied_row_returns_same_client_id_and_stays_denied(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
-    """D7 arm of the dedupe: an exact re-registration against a *denied* row
+    """Denied arm of the dedupe: an exact re-registration against a *denied* row
     returns the same client_id (200-shaped, created=False) and does not mint
     a fresh pending row or a second chance — recovery is admin-actioned only."""
     dcr_svc = OAuthDcrService(dcr_context)
@@ -350,7 +365,7 @@ async def test_dedupe_denied_row_returns_same_client_id_and_stays_denied(
 async def test_denied_then_approved_recovery_emits_approved_event(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
-    """§9 denied → approved recovery: deny is reversible; a later :approve
+    """Denied → approved recovery: deny is reversible; a later :approve
     re-arms the row and fires oauth_client.approved (the events.py "including
     re-approval of a previously denied client" arm)."""
     dcr_svc = OAuthDcrService(dcr_context)

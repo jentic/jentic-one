@@ -82,18 +82,24 @@ app:
   # secret. Safe here because global.appSecrets generates real values.
   extraEnv:
     JENTIC_ENV: "production"
-    # Entitlement gate (contract pricing, dimensions users + executions —
-    # decided 2026-08-20; `contract` is the config default so only the IDs are
-    # set). IDs are the RE-LISTED product's (prod-cwonumew2jeyo, created
-    # 2026-09-03 for the 12-month-only public offer — the original listing's
-    # offer terms were unfixable post-release). Enabled together with the
-    # checkout-shape/check-in fix — a release carrying this env MUST ship
-    # that client (Count+Value entitlements, CheckInLicense after checkout)
-    # or entitled buyers lock themselves out.
+    # Entitlement gate. IDs are the RE-LISTED product's (prod-cwonumew2jeyo,
+    # created 2026-09-03 for the 12-month-only public offer — the original
+    # listing's offer terms were unfixable post-release). Enabled together
+    # with the checkout-shape/check-in fix — a release carrying this env MUST
+    # ship that client (Count+Value entitlements, CheckInLicense after
+    # checkout) or entitled buyers lock themselves out.
+    #
+    # Gate on `users` ONLY (2026-09-03). The public offer's card is
+    # buyer-configurable and its constraints are locked loosen-only, so the
+    # price rides users ($20k/unit) with executions at $0 (documents the 50k
+    # on the agreement). Gating on users makes the paid dimension the only
+    # valid license and turns a $0 executions-only cart into a 503 — and it
+    # removes the old both-dimensions requirement that would have rejected
+    # every self-service public buyer.
     JENTIC__ENTITLEMENT__ENABLED: "true"
     JENTIC__ENTITLEMENT__PRODUCT_CODE: "ed4bj3dbc8w2r80qtnbxbboub"
     JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-cwonumew2jeyo"
-    JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
+    JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users"
 
 broker:
   enabled: true
@@ -106,7 +112,7 @@ broker:
     JENTIC__ENTITLEMENT__ENABLED: "true"
     JENTIC__ENTITLEMENT__PRODUCT_CODE: "ed4bj3dbc8w2r80qtnbxbboub"
     JENTIC__ENTITLEMENT__LICENSE_SKU: "prod-cwonumew2jeyo"
-    JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users,executions"
+    JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS: "users"
     JENTIC__APPS: "broker"
 
 registry:

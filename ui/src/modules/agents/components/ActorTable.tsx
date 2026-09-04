@@ -1,6 +1,6 @@
 /**
  * ActorTable — the fleet table shared by the Agents and Service-accounts
- * tabs. Replaces the old card-row roster (jentic-mini port) with the same
+ * tabs, using the same
  * DataTable grammar the Toolkits and Credentials lists use.
  *
  * Rows are NOT click-through (that would nest the kebab's interactive

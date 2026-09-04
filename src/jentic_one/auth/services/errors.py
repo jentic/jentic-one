@@ -173,7 +173,7 @@ class OAuthGrantNotFoundError(AuthServiceError):
 class OAuthGrantAccessDeniedError(AuthServiceError):
     """Raised when a caller may not operate on an OAuth grant.
 
-    Grant ``:revoke`` is owner-or-admin (design §4.8): the consenting user
+    Grant ``:revoke`` is owner-or-admin: the consenting user
     owns the grant; anyone else needs the admin permission. 403, not 404 —
     the grant id is a ksuid, not a secret.
 
@@ -193,10 +193,23 @@ class InvalidClientMetadataError(AuthServiceError):
     Maps to 400 ``invalid_client_metadata`` — the RFC 7591 error code for a
     registration request whose metadata is invalid or unsupported (e.g. a
     confidential ``token_endpoint_auth_method``, an unsupported grant type, or
-    a malformed redirect URI). The DCR front door only mints public clients
-    (phase-3a design §4.2).
+    a malformed redirect URI). The DCR front door only mints public clients.
     """
 
     def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidRevocationRequestError(AuthServiceError):
+    """Raised when an RFC 7009 revocation request is malformed (G11).
+
+    Maps to 400 ``invalid_request`` (RFC 7009 §2.2.1 via RFC 6749 §5.2) — the
+    ONLY error arm of the revocation endpoint's form-encoded path: a request
+    missing the required ``token`` parameter. Invalid, unknown, foreign, and
+    already-revoked tokens are deliberately NOT errors (200 no-op, no oracle).
+    """
+
+    def __init__(self, reason: str = "token is required") -> None:
         super().__init__(reason)
         self.reason = reason

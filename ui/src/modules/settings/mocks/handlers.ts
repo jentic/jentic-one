@@ -1,8 +1,8 @@
 /**
  * Settings MSW handlers + in-memory store — the admin OAuth-client registry
- * (`/admin/oauth-clients`), including the phase-3a D7 approval lifecycle the
+ * (`/admin/oauth-clients`), including the D7 approval lifecycle the
  * approval-queue tab drives (pending→approved/denied, denied→approved
- * recovery) and the §4.8 per-client active-grant count.
+ * recovery) and the per-client active-grant count.
  *
  * Shapes match the generated `OAuthClientResponse`; the state machine mirrors
  * the backend: approve activates the row, deny keeps it (inactive) so a later

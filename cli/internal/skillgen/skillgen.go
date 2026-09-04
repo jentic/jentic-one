@@ -42,9 +42,9 @@ const (
 
 // Canonical is the source-agnostic skill content every adapter renders from.
 // It is populated from the bundled embed today; the hosted counterpart —
-// `GET /skills/*`, anticipated by #277 — shipped as #651
-// (shared/web/agent_discovery.py serves the same bytes), and Origin records
-// which source a given Canonical came from. Despite the name it now models two
+// `GET /skills/*` (#651; shared/web/agent_discovery.py serves the same bytes)
+// — is the other source, and Origin records which source a given Canonical
+// came from. Despite the name it now models two
 // kinds (see Kind): the structured "canonical" jentic skill (sections/steps)
 // and a "freeform" runbook whose Body is emitted verbatim.
 type Canonical struct {

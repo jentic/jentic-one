@@ -1,4 +1,4 @@
-"""Streaming-passthrough web edge for the sync proxy (§08 E2.4).
+"""Streaming-passthrough web edge for the sync proxy.
 
 The buffered path (`RunnerResult.body`) is kept for idempotent requests (replay
 needs the whole body) and the async worker (persists the body). This module is

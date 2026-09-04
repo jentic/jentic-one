@@ -789,7 +789,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "tokenEndpoint",
         "authorizeEndpoint",
         "registerEndpoint",
-        # Anonymous OAuth-client DCR front door (phase-3a §4.2): flagship MCP
+        # Anonymous OAuth-client DCR front door: flagship MCP
         # clients register anonymously; the boundary is admin approval +
         # consent, not registration. Rate limited and config-gated instead.
         "registerOauthClientEndpoint",
@@ -804,7 +804,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # Unauthenticated discovery metadata.
         "jwks",
         "oauthAuthorizationServer",
-        # /mcp-scoped discovery documents (phase-3a §4.7): RFC 8414 for the
+        # /mcp-scoped discovery documents: RFC 8414 for the
         # path-scoped issuer, RFC 9728 protected-resource metadata, and its
         # root-path alias. Unauthenticated by spec; config-gated (404) instead.
         "mcpOauthAuthorizationServer",
@@ -831,6 +831,13 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
         # token. It still returns 401 on a missing/invalid/expired RAT
         # (RegistrationAccessDeniedError -> 401), so the 401 response stays.
         "pollStatusEndpoint",
+        # RFC 7009 token revocation (G11): dual-arm client authentication. The
+        # form-encoded arm authenticates by OAuth client_id lineage binding
+        # (public clients, auth method "none" — no platform bearer); the JSON
+        # arm keeps the pre-G11 platform-bearer contract and still 401s on a
+        # bad bearer, so the 401 response stays while the blanket BearerAuth
+        # requirement is dropped.
+        "revokeEndpoint",
     }
 )
 

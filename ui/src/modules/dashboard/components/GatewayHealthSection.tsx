@@ -101,8 +101,8 @@ type RankedUsageRow = TopUsageRow & { rank: number };
 
 /**
  * Columns for the top-usage ranking. Built per render because the Calls cell
- * draws a share bar scaled against the busiest row (`maxTotal`) — turning what
- * used to be dead space between sparse numbers into a readable "who dominates
+ * draws a share bar scaled against the busiest row (`maxTotal`) — turning the
+ * space between sparse numbers into a readable "who dominates
  * the traffic" comparison. All numeric columns are right-aligned so the digits
  * line up into scannable rails.
  */

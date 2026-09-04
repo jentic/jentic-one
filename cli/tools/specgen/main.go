@@ -11,12 +11,12 @@
 //	required.gen.go   RequiredFields() companions   (impl/2.1 §4a)
 //	sensitive.gen.go  SensitiveFields table         (impl/2.1 §4b, from x-sensitive)
 //
-// NOTE: an ops.gen.go operation index was originally emitted too, intended to
-// power `jentic api ops`. It was DROPPED (GEN-8): `api ops`/`api describe`/the
+// NOTE: no ops.gen.go operation index is emitted (GEN-8): `jentic api ops`/
+// `api describe`/the
 // passthrough allowlist all parse the embedded spec.yaml at runtime via
 // internal/cli/apispec — one data path that also serves `--live` (a server's
 // spec fetched at runtime, which no build-time index could cover). Keeping an
-// unconsumed generated index invited divergence between documented and real
+// unconsumed generated index would invite divergence between documented and real
 // data flow.
 //
 // It parses the SAME vendored spec.yaml with libopenapi — the parser the runtime

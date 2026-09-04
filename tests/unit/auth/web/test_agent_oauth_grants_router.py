@@ -1,6 +1,6 @@
 """Unit tests for the per-agent grant listing (GET /agents/{id}/oauth-grants).
 
-The §4.8 "Connected clients" endpoint: response shape (including the per-item
+The "Connected clients" endpoint: response shape (including the per-item
 ``can_revoke`` capability, G10), query forwarding, and the web mapping of the
 service-layer outcomes (owner-or-admin is enforced in
 :class:`OAuthGrantService`, so here it is mocked as its error outcomes: 403

@@ -407,7 +407,7 @@ export default function AgentDetailPage() {
 						<ScopesCard actorKind="agent" actorId={agent.id} actorName={agent.name} />
 						{/* Pending access requests this agent has filed (#619). */}
 						<ActorAccessRequestsCard actorId={agent.id} actorName={agent.name} />
-						{/* OAuth clients holding a consent→agent grant (phase-3a §4.8). */}
+						{/* OAuth clients holding a consent→agent grant. */}
 						<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 					</>
 				)}

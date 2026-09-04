@@ -2141,7 +2141,7 @@ type OAuthClientCreateRequestTokenEndpointAuthMethod string
 type OAuthClientCreateResponse struct {
 	Active bool `json:"active"`
 
-	// ActiveGrantCount Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+	// ActiveGrantCount Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
 	ActiveGrantCount *int `json:"active_grant_count,omitempty"`
 
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
@@ -2199,8 +2199,10 @@ type OAuthClientRegistrationRequest struct {
 	ClientName      string  `json:"client_name"`
 
 	// GrantTypes Subset of ['authorization_code', 'refresh_token'].
-	GrantTypes   *[]string `json:"grant_types,omitempty"`
-	RedirectUris []string  `json:"redirect_uris"`
+	GrantTypes *[]string `json:"grant_types,omitempty"`
+
+	// RedirectUris 1-20 redirect URIs. `https` always; `http` for loopback hosts only; RFC 8252 §7.1 private-use (custom) schemes are accepted for native apps (browser-executable and other dangerous schemes are rejected).
+	RedirectUris []string `json:"redirect_uris"`
 
 	// ResponseTypes Only ['code'] is supported.
 	ResponseTypes   *[]string `json:"response_types,omitempty"`
@@ -2242,7 +2244,7 @@ type OAuthClientRegistrationResponse struct {
 type OAuthClientResponse struct {
 	Active bool `json:"active"`
 
-	// ActiveGrantCount Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.
+	// ActiveGrantCount Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
 	ActiveGrantCount *int `json:"active_grant_count,omitempty"`
 
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
@@ -2798,8 +2800,16 @@ type RegistrationStatusResponse struct {
 	TokenEndpointAuthMethod *string   `json:"token_endpoint_auth_method,omitempty"`
 }
 
-// RevokeRequest Revocation endpoint request (form body).
+// RevokeRequest Revocation endpoint request (RFC 7009) — JSON or form-encoded.
+//
+// “token“ is required either way. “token_type_hint“
+// (“access_token“/“refresh_token“) is a lookup-order optimization only —
+// the server falls through both types regardless (RFC 7009 §2.1).
+// “client_id“ belongs to the form-encoded public-client arm (G11): the
+// secret-less client's lineage binding; ignored on the bearer-authenticated
+// JSON arm, where the platform identity scopes the revocation instead.
 type RevokeRequest struct {
+	ClientId      *string `json:"client_id,omitempty"`
 	Token         string  `json:"token"`
 	TokenTypeHint *string `json:"token_type_hint,omitempty"`
 }
@@ -3786,6 +3796,9 @@ type MintEndpointJSONRequestBody = MintRequest
 // RevokeEndpointJSONRequestBody defines body for RevokeEndpoint for application/json ContentType.
 type RevokeEndpointJSONRequestBody = RevokeRequest
 
+// RevokeEndpointFormdataRequestBody defines body for RevokeEndpoint for application/x-www-form-urlencoded ContentType.
+type RevokeEndpointFormdataRequestBody = RevokeRequest
+
 // TokenEndpointJSONRequestBody defines body for TokenEndpoint for application/json ContentType.
 type TokenEndpointJSONRequestBody TokenEndpointJSONBody
 
@@ -4631,7 +4644,7 @@ type ClientInterface interface {
 
 	// McpOauthAuthorizationServer OAuth authorization server metadata for the MCP resource
 	//
-	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 	//
 	// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
 	// the issuer `{base}/mcp` named by the protected-resource document. It
@@ -4645,7 +4658,7 @@ type ClientInterface interface {
 
 	// McpOauthProtectedResourceRootAlias OAuth protected resource metadata (root alias for the MCP resource)
 	//
-	// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+	// Root-path alias of the MCP protected-resource document.
 	//
 	// Compatibility fallback for clients that probe the root
 	// `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -4653,7 +4666,7 @@ type ClientInterface interface {
 	// because this deployment has exactly one OAuth-protected resource, so the
 	// root and path-scoped documents are the same body.
 	//
-	// Two acknowledged trades (§4.7, review F6):
+	// Two acknowledged trades:
 	//
 	// - RFC 9728 §3 says this well-known path corresponds to resource identifier
 	//   ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
@@ -4663,7 +4676,7 @@ type ClientInterface interface {
 	//   what the alias exists to satisfy. That is the intended trade.
 	// - The alias squats the deployment's only root PRM slot: a future non-MCP
 	//   protected resource at ``{base}`` cannot get its own root document
-	//   without breaking this fallback. Phase 3's mount must re-confirm the
+	//   without breaking this fallback. The mounted MCP app must re-confirm the
 	//   "exactly one OAuth-protected resource" premise before adding one.
 	//
 	// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
@@ -4671,7 +4684,7 @@ type ClientInterface interface {
 
 	// McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
 	//
-	// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+	// RFC 9728 protected-resource metadata for `{base}/mcp`.
 	//
 	// Names the /mcp-scoped authorization server and the MCP tool scopes. The
 	// same body is also served at the root well-known path for clients that
@@ -4919,7 +4932,7 @@ type ClientInterface interface {
 
 	// ListOauthGrants List OAuth grants
 	//
-	// List consent→agent grants across all clients and agents (§4.8).
+	// List consent→agent grants across all clients and agents.
 	//
 	// The admin cross-view over the grant registry: filter by client, agent,
 	// consenting user, or status. Each item carries the client's display name
@@ -5029,7 +5042,7 @@ type ClientInterface interface {
 
 	// ListAgentOauthGrants List agent OAuth grants
 	//
-	// List OAuth consent grants binding clients to this agent (§4.8).
+	// List OAuth consent grants binding clients to this agent.
 	//
 	// The "Connected clients" surface: every grant carries the client's display
 	// name and redirect-URI origin, the granted scopes, the consenting user,
@@ -5971,7 +5984,7 @@ type ClientInterface interface {
 
 	// RegisterOauthClientEndpointWithBody Register OAuth client (anonymous DCR)
 	//
-	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -5988,7 +6001,7 @@ type ClientInterface interface {
 
 	// RegisterOauthClientEndpoint Register OAuth client (anonymous DCR)
 	//
-	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -6005,7 +6018,7 @@ type ClientInterface interface {
 
 	// RevokeOauthGrant Revoke OAuth grant
 	//
-	// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
 	// Allowed for the grant's owner (the consenting user) or an admin. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
@@ -6039,7 +6052,7 @@ type ClientInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
-	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// ``agent_id`` is posted only by the agent-picker variant
 	// (``consent_model='agent'`` clients); it is validated and the scope math
 	// recomputed entirely server-side — the browser's selection is never
 	// trusted.
@@ -6058,7 +6071,7 @@ type ClientInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
-	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// ``agent_id`` is posted only by the agent-picker variant
 	// (``consent_model='agent'`` clients); it is validated and the scope math
 	// recomputed entirely server-side — the browser's selection is never
 	// trusted.
@@ -6112,7 +6125,34 @@ type ClientInterface interface {
 
 	// RevokeEndpointWithBody Revoke Endpoint
 	//
-	// Revoke a token (RFC 7009). Always returns 200.
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6121,12 +6161,75 @@ type ClientInterface interface {
 
 	// RevokeEndpoint Revoke Endpoint
 	//
-	// Revoke a token (RFC 7009). Always returns 200.
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeEndpointWithFormdataBody Revoke Endpoint
+	//
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
+	RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TokenEndpointWithBody Token Endpoint
 	//
@@ -6796,7 +6899,7 @@ func (c *Client) OauthAuthorizationServer(ctx context.Context, reqEditors ...Req
 
 // McpOauthAuthorizationServer OAuth authorization server metadata for the MCP resource
 //
-// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 //
 // RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
 // the issuer `{base}/mcp` named by the protected-resource document. It
@@ -6820,7 +6923,7 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 
 // McpOauthProtectedResourceRootAlias OAuth protected resource metadata (root alias for the MCP resource)
 //
-// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+// Root-path alias of the MCP protected-resource document.
 //
 // Compatibility fallback for clients that probe the root
 // `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -6828,7 +6931,7 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 // because this deployment has exactly one OAuth-protected resource, so the
 // root and path-scoped documents are the same body.
 //
-// Two acknowledged trades (§4.7, review F6):
+// Two acknowledged trades:
 //
 //   - RFC 9728 §3 says this well-known path corresponds to resource identifier
 //     “{base}“ (no path), and §3.3 has clients validate “resource“ against
@@ -6838,7 +6941,7 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 //     what the alias exists to satisfy. That is the intended trade.
 //   - The alias squats the deployment's only root PRM slot: a future non-MCP
 //     protected resource at “{base}“ cannot get its own root document
-//     without breaking this fallback. Phase 3's mount must re-confirm the
+//     without breaking this fallback. The mounted MCP app must re-confirm the
 //     "exactly one OAuth-protected resource" premise before adding one.
 //
 // Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
@@ -6856,7 +6959,7 @@ func (c *Client) McpOauthProtectedResourceRootAlias(ctx context.Context, reqEdit
 
 // McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
 //
-// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+// RFC 9728 protected-resource metadata for `{base}/mcp`.
 //
 // Names the /mcp-scoped authorization server and the MCP tool scopes. The
 // same body is also served at the root well-known path for clients that
@@ -7374,7 +7477,7 @@ func (c *Client) DenyOauthClient(ctx context.Context, id string, body DenyOauthC
 
 // ListOauthGrants List OAuth grants
 //
-// List consent→agent grants across all clients and agents (§4.8).
+// List consent→agent grants across all clients and agents.
 //
 // The admin cross-view over the grant registry: filter by client, agent,
 // consenting user, or status. Each item carries the client's display name
@@ -7604,7 +7707,7 @@ func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body Updat
 
 // ListAgentOauthGrants List agent OAuth grants
 //
-// List OAuth consent grants binding clients to this agent (§4.8).
+// List OAuth consent grants binding clients to this agent.
 //
 // The "Connected clients" surface: every grant carries the client's display
 // name and redirect-URI origin, the granted scopes, the consenting user,
@@ -9536,7 +9639,7 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 
 // RegisterOauthClientEndpointWithBody Register OAuth client (anonymous DCR)
 //
-// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+// Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
@@ -9563,7 +9666,7 @@ func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, conten
 
 // RegisterOauthClientEndpoint Register OAuth client (anonymous DCR)
 //
-// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+// Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
@@ -9590,7 +9693,7 @@ func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterO
 
 // RevokeOauthGrant Revoke OAuth grant
 //
-// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+// Revoke a consent→agent grant — one of the three revocation kill radii.
 //
 // Allowed for the grant's owner (the consenting user) or an admin. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
@@ -9654,7 +9757,7 @@ func (c *Client) ConsentPage(ctx context.Context, params *ConsentPageParams, req
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
-// “agent_id“ is posted only by the §4.4 agent-picker variant
+// “agent_id“ is posted only by the agent-picker variant
 // (“consent_model='agent'“ clients); it is validated and the scope math
 // recomputed entirely server-side — the browser's selection is never
 // trusted.
@@ -9683,7 +9786,7 @@ func (c *Client) ConsentSubmitWithBody(ctx context.Context, contentType string, 
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
-// “agent_id“ is posted only by the §4.4 agent-picker variant
+// “agent_id“ is posted only by the agent-picker variant
 // (“consent_model='agent'“ clients); it is validated and the scope math
 // recomputed entirely server-side — the browser's selection is never
 // trusted.
@@ -9787,7 +9890,34 @@ func (c *Client) MintEndpoint(ctx context.Context, body MintEndpointJSONRequestB
 
 // RevokeEndpointWithBody Revoke Endpoint
 //
-// Revoke a token (RFC 7009). Always returns 200.
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9806,13 +9936,86 @@ func (c *Client) RevokeEndpointWithBody(ctx context.Context, contentType string,
 
 // RevokeEndpoint Revoke Endpoint
 //
-// Revoke a token (RFC 7009). Always returns 200.
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeEndpointRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeEndpointWithFormdataBody Revoke Endpoint
+//
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
+func (c *Client) RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeEndpointRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -17706,6 +17909,17 @@ func NewRevokeEndpointRequest(server string, body RevokeEndpointJSONRequestBody)
 	return NewRevokeEndpointRequestWithBody(server, "application/json", bodyReader)
 }
 
+// NewRevokeEndpointRequestWithFormdataBody calls the generic RevokeEndpoint builder with application/x-www-form-urlencoded body
+func NewRevokeEndpointRequestWithFormdataBody(server string, body RevokeEndpointFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewRevokeEndpointRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
 // NewRevokeEndpointRequestWithBody constructs an http.Request for the RevokeEndpoint method, with any body, and a specified content type
 func NewRevokeEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -19965,7 +20179,7 @@ type ClientWithResponsesInterface interface {
 
 	// McpOauthAuthorizationServerWithResponse OAuth authorization server metadata for the MCP resource
 	//
-	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 	//
 	// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
 	// the issuer `{base}/mcp` named by the protected-resource document. It
@@ -19981,7 +20195,7 @@ type ClientWithResponsesInterface interface {
 
 	// McpOauthProtectedResourceRootAliasWithResponse OAuth protected resource metadata (root alias for the MCP resource)
 	//
-	// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+	// Root-path alias of the MCP protected-resource document.
 	//
 	// Compatibility fallback for clients that probe the root
 	// `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -19989,7 +20203,7 @@ type ClientWithResponsesInterface interface {
 	// because this deployment has exactly one OAuth-protected resource, so the
 	// root and path-scoped documents are the same body.
 	//
-	// Two acknowledged trades (§4.7, review F6):
+	// Two acknowledged trades:
 	//
 	// - RFC 9728 §3 says this well-known path corresponds to resource identifier
 	//   ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
@@ -19999,7 +20213,7 @@ type ClientWithResponsesInterface interface {
 	//   what the alias exists to satisfy. That is the intended trade.
 	// - The alias squats the deployment's only root PRM slot: a future non-MCP
 	//   protected resource at ``{base}`` cannot get its own root document
-	//   without breaking this fallback. Phase 3's mount must re-confirm the
+	//   without breaking this fallback. The mounted MCP app must re-confirm the
 	//   "exactly one OAuth-protected resource" premise before adding one.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -20009,7 +20223,7 @@ type ClientWithResponsesInterface interface {
 
 	// McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
 	//
-	// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+	// RFC 9728 protected-resource metadata for `{base}/mcp`.
 	//
 	// Names the /mcp-scoped authorization server and the MCP tool scopes. The
 	// same body is also served at the root well-known path for clients that
@@ -20283,7 +20497,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListOauthGrantsWithResponse List OAuth grants
 	//
-	// List consent→agent grants across all clients and agents (§4.8).
+	// List consent→agent grants across all clients and agents.
 	//
 	// The admin cross-view over the grant registry: filter by client, agent,
 	// consenting user, or status. Each item carries the client's display name
@@ -20405,7 +20619,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListAgentOauthGrantsWithResponse List agent OAuth grants
 	//
-	// List OAuth consent grants binding clients to this agent (§4.8).
+	// List OAuth consent grants binding clients to this agent.
 	//
 	// The "Connected clients" surface: every grant carries the client's display
 	// name and redirect-URI origin, the granted scopes, the consenting user,
@@ -21473,7 +21687,7 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterOauthClientEndpointWithBodyWithResponse Register OAuth client (anonymous DCR)
 	//
-	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -21490,7 +21704,7 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterOauthClientEndpointWithResponse Register OAuth client (anonymous DCR)
 	//
-	// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
 	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
@@ -21507,7 +21721,7 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeOauthGrantWithResponse Revoke OAuth grant
 	//
-	// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
 	// Allowed for the grant's owner (the consenting user) or an admin. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
@@ -21547,7 +21761,7 @@ type ClientWithResponsesInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
-	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// ``agent_id`` is posted only by the agent-picker variant
 	// (``consent_model='agent'`` clients); it is validated and the scope math
 	// recomputed entirely server-side — the browser's selection is never
 	// trusted.
@@ -21566,7 +21780,7 @@ type ClientWithResponsesInterface interface {
 	// parameters (user_id, email, scopes, redirect_uri) live server-side and
 	// can't be tampered with or captured from browser history/proxy logs.
 	//
-	// ``agent_id`` is posted only by the §4.4 agent-picker variant
+	// ``agent_id`` is posted only by the agent-picker variant
 	// (``consent_model='agent'`` clients); it is validated and the scope math
 	// recomputed entirely server-side — the browser's selection is never
 	// trusted.
@@ -21620,7 +21834,34 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeEndpointWithBodyWithResponse Revoke Endpoint
 	//
-	// Revoke a token (RFC 7009). Always returns 200.
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21629,12 +21870,75 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeEndpointWithResponse Revoke Endpoint
 	//
-	// Revoke a token (RFC 7009). Always returns 200.
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithResponse(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
+
+	// RevokeEndpointWithFormdataBodyWithResponse Revoke Endpoint
+	//
+	// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+	//
+	// Two client-authentication arms, negotiated on the request content type by
+	// ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+	// requests never reach it):
+	//
+	// - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+	//   the shape MCP OAuth clients send, G11): `token` + optional
+	//   `token_type_hint` + `client_id`. Public (secret-less) clients
+	//   authenticate by client_id **lineage binding** — the call revokes
+	//   anything only when the token exists and was issued to that `client_id`;
+	//   everything else is a 200 no-op (no token-validity oracle). Revoking an
+	//   access token kills that token only; revoking a **refresh token is a full
+	//   disconnect** — every token of the consent grant AND the grant row itself
+	//   die, so reconnecting requires fresh consent (deliberately beyond the
+	//   RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+	//   is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+	//   64 KiB declared body length, and per-IP rate limited; its errors speak
+	//   the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+	// - **JSON** (any other content type — the pre-G11 contract, byte-identical
+	//   including 422 shapes): requires a platform bearer identity; revokes the
+	//   caller's own token (access → that token, refresh → its family). Used by
+	//   `jentic logout`.
+	//
+	// Revocation residual: a revoked **access** token dies on the control-plane
+	// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+	// may honour an already-cached verdict for up to 30 s — the same residual as
+	// the UI `:revoke` kill switch and the G10 transfer sweep.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
+	RevokeEndpointWithFormdataBodyWithResponse(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
 
 	// TokenEndpointWithBodyWithResponse Token Endpoint
 	//
@@ -32047,12 +32351,8 @@ type RevokeEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -32066,19 +32366,9 @@ func (r RevokeEndpointHTTPResp) GetJSON200() *interface{} {
 	return r.JSON200
 }
 
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -36244,7 +36534,7 @@ func (c *ClientWithResponses) OauthAuthorizationServerWithResponse(ctx context.C
 
 // McpOauthAuthorizationServerWithResponse OAuth authorization server metadata for the MCP resource
 //
-// RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 //
 // RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
 // the issuer `{base}/mcp` named by the protected-resource document. It
@@ -36266,7 +36556,7 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 
 // McpOauthProtectedResourceRootAliasWithResponse OAuth protected resource metadata (root alias for the MCP resource)
 //
-// Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+// Root-path alias of the MCP protected-resource document.
 //
 // Compatibility fallback for clients that probe the root
 // `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -36274,7 +36564,7 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 // because this deployment has exactly one OAuth-protected resource, so the
 // root and path-scoped documents are the same body.
 //
-// Two acknowledged trades (§4.7, review F6):
+// Two acknowledged trades:
 //
 //   - RFC 9728 §3 says this well-known path corresponds to resource identifier
 //     “{base}“ (no path), and §3.3 has clients validate “resource“ against
@@ -36284,7 +36574,7 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 //     what the alias exists to satisfy. That is the intended trade.
 //   - The alias squats the deployment's only root PRM slot: a future non-MCP
 //     protected resource at “{base}“ cannot get its own root document
-//     without breaking this fallback. Phase 3's mount must re-confirm the
+//     without breaking this fallback. The mounted MCP app must re-confirm the
 //     "exactly one OAuth-protected resource" premise before adding one.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -36300,7 +36590,7 @@ func (c *ClientWithResponses) McpOauthProtectedResourceRootAliasWithResponse(ctx
 
 // McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
 //
-// RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+// RFC 9728 protected-resource metadata for `{base}/mcp`.
 //
 // Names the /mcp-scoped authorization server and the MCP tool scopes. The
 // same body is also served at the root well-known path for clients that
@@ -36736,7 +37026,7 @@ func (c *ClientWithResponses) DenyOauthClientWithResponse(ctx context.Context, i
 
 // ListOauthGrantsWithResponse List OAuth grants
 //
-// List consent→agent grants across all clients and agents (§4.8).
+// List consent→agent grants across all clients and agents.
 //
 // The admin cross-view over the grant registry: filter by client, agent,
 // consenting user, or status. Each item carries the client's display name
@@ -36930,7 +37220,7 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 
 // ListAgentOauthGrantsWithResponse List agent OAuth grants
 //
-// List OAuth consent grants binding clients to this agent (§4.8).
+// List OAuth consent grants binding clients to this agent.
 //
 // The "Connected clients" surface: every grant carries the client's display
 // name and redirect-URI origin, the granted scopes, the consenting user,
@@ -38592,7 +38882,7 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 
 // RegisterOauthClientEndpointWithBodyWithResponse Register OAuth client (anonymous DCR)
 //
-// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+// Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
@@ -38615,7 +38905,7 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ct
 
 // RegisterOauthClientEndpointWithResponse Register OAuth client (anonymous DCR)
 //
-// Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+// Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
 // “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
@@ -38638,7 +38928,7 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithResponse(ctx contex
 
 // RevokeOauthGrantWithResponse Revoke OAuth grant
 //
-// Revoke a consent→agent grant — one of the three §4.6 kill radii.
+// Revoke a consent→agent grant — one of the three revocation kill radii.
 //
 // Allowed for the grant's owner (the consenting user) or an admin. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
@@ -38696,7 +38986,7 @@ func (c *ClientWithResponses) ConsentPageWithResponse(ctx context.Context, param
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
-// “agent_id“ is posted only by the §4.4 agent-picker variant
+// “agent_id“ is posted only by the agent-picker variant
 // (“consent_model='agent'“ clients); it is validated and the scope math
 // recomputed entirely server-side — the browser's selection is never
 // trusted.
@@ -38721,7 +39011,7 @@ func (c *ClientWithResponses) ConsentSubmitWithBodyWithResponse(ctx context.Cont
 // parameters (user_id, email, scopes, redirect_uri) live server-side and
 // can't be tampered with or captured from browser history/proxy logs.
 //
-// “agent_id“ is posted only by the §4.4 agent-picker variant
+// “agent_id“ is posted only by the agent-picker variant
 // (“consent_model='agent'“ clients); it is validated and the scope math
 // recomputed entirely server-side — the browser's selection is never
 // trusted.
@@ -38805,7 +39095,34 @@ func (c *ClientWithResponses) MintEndpointWithResponse(ctx context.Context, body
 
 // RevokeEndpointWithBodyWithResponse Revoke Endpoint
 //
-// Revoke a token (RFC 7009). Always returns 200.
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -38820,13 +39137,82 @@ func (c *ClientWithResponses) RevokeEndpointWithBodyWithResponse(ctx context.Con
 
 // RevokeEndpointWithResponse Revoke Endpoint
 //
-// Revoke a token (RFC 7009). Always returns 200.
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 func (c *ClientWithResponses) RevokeEndpointWithResponse(ctx context.Context, body RevokeEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error) {
 	rsp, err := c.RevokeEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeEndpointHTTPResp(rsp)
+}
+
+// RevokeEndpointWithFormdataBodyWithResponse Revoke Endpoint
+//
+// Revoke a token (RFC 7009). Always returns 200 for valid requests.
+//
+// Two client-authentication arms, negotiated on the request content type by
+// “_RevocationRoute“ (this function body IS the JSON arm — form-encoded
+// requests never reach it):
+//
+//   - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+//     the shape MCP OAuth clients send, G11): `token` + optional
+//     `token_type_hint` + `client_id`. Public (secret-less) clients
+//     authenticate by client_id **lineage binding** — the call revokes
+//     anything only when the token exists and was issued to that `client_id`;
+//     everything else is a 200 no-op (no token-validity oracle). Revoking an
+//     access token kills that token only; revoking a **refresh token is a full
+//     disconnect** — every token of the consent grant AND the grant row itself
+//     die, so reconnecting requires fresh consent (deliberately beyond the
+//     RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+//     is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+//     64 KiB declared body length, and per-IP rate limited; its errors speak
+//     the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+//   - **JSON** (any other content type — the pre-G11 contract, byte-identical
+//     including 422 shapes): requires a platform bearer identity; revokes the
+//     caller's own token (access → that token, refresh → its family). Used by
+//     `jentic logout`.
+//
+// Revocation residual: a revoked **access** token dies on the control-plane
+// resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+// may honour an already-cached verdict for up to 30 s — the same residual as
+// the UI `:revoke` kill switch and the G10 transfer sweep.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
+func (c *ClientWithResponses) RevokeEndpointWithFormdataBodyWithResponse(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error) {
+	rsp, err := c.RevokeEndpointWithFormdataBody(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -47924,12 +48310,8 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.JSON200 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
+	case rsp.StatusCode == 400:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ProblemDetail
@@ -47938,12 +48320,11 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.ApplicationproblemJSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -47951,6 +48332,9 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case rsp.StatusCode == 429:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail

@@ -10,10 +10,10 @@
 //     strings; ResolveActiveState applies flag overrides + the precedence ladder.
 //  2. State injection into the Cobra context (WithActiveState/FromContext).
 //
-// The pre-activation legacy-read adapter that used to live here (resolving
-// state from the V1 ~/.jentic profile store when no XDG config existed) was
-// removed at activation: the migrate gate (cmdcore/gate.go) now stops every
-// command on an unmigrated machine instead, so nothing downstream ever sees a
+// The pre-activation legacy-read adapter (resolving state from the V1
+// ~/.jentic profile store when no XDG config existed) deliberately does not
+// exist: the migrate gate (cmdcore/gate.go) stops every command on an
+// unmigrated machine instead, so nothing downstream ever sees a
 // compatibility view of the legacy store.
 package clictx
 

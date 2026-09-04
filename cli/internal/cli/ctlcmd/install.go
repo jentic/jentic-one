@@ -780,8 +780,8 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 }
 
 // migrationFailure turns a failed in-container migration into an actionable
-// error. Historically the first failure left behind a half-initialized data
-// volume that poisoned every retry (#992 item 3 — see install/recover.go).
+// error. A first failure can leave behind a half-initialized data
+// volume that poisons every retry (#992 item 3 — see install/recover.go).
 // Fresh volumes (created by this very run) are discarded automatically so a
 // re-run starts clean; pre-existing ones may hold real data, so the operator
 // gets the manual reset command and a backup warning instead.

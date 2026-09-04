@@ -74,7 +74,7 @@ class RegistryService:
         rev_label: str,
         identity: Identity,
     ) -> RevisionPinResult:
-        """Translate a ``vendor:name:version=rev_…`` pin to a ``revision_id`` (§10).
+        """Translate a ``vendor:name:version=rev_…`` pin to a ``revision_id``.
 
         Reads the Registry DB in-process and classifies the pin into a neutral
         :class:`RevisionPinResult` (no registry exceptions cross the boundary):

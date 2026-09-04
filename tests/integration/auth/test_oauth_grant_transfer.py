@@ -10,7 +10,7 @@ the manual ``:revoke`` body (row flip + token sweep + audit + event).
 
 Covers the service seam (``AgentService.update_agent``) and the full REST
 path (``PATCH /agents/{id}``), plus the fail-safe posture: a failed sweep
-rolls the whole transfer back. The consent-vs-transfer race half (review F1)
+rolls the whole transfer back. The consent-vs-transfer race half
 is covered too: ``create_grant`` locks the agent row and re-checks ownership
 inside the mint transaction, so a consent approval racing a transfer is
 refused instead of committing a live grant consented by the old owner.
@@ -278,7 +278,7 @@ async def test_rest_patch_owner_transfer_revokes_grants(
 async def test_consent_mint_racing_transfer_is_refused(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """Two-session race simulation (review F1): the consent screen's ownership
+    """Two-session race simulation: the consent screen's ownership
     validation passes, a transfer commits in between, and the mint is refused
     by the lock + re-check inside ``create_grant``'s transaction — no live
     grant consented by the old owner ever commits.

@@ -1,17 +1,16 @@
 /**
- * "Execution Volume" card — jentic-mini's ApiDailyBarChart, rebuilt on the
+ * "Execution Volume" card — built on the
  * enriched usage endpoint (jentic-one-internal#561): an SVG stacked bar chart
  * colored per entity, with the APIs / Toolkits / Agents grouping toggle, an
  * interactive legend (hovering a chip or segment dims the rest), y-axis
  * gridlines, and a per-segment hover tooltip.
  *
- * Mini bucketed raw TimelinePoints client-side into a handful of display
- * buckets (six 4h slices for 24h, one bar per calendar day for 7d, six range
- * slices for 30d). Here the per-entity series comes from the endpoint's
+ * The per-entity series comes from the endpoint's
  * `top[].trend` — equal segments spanning exactly [since, until), one per
- * aggregate bucket tier — so buildBars re-buckets those segments into the
- * same mini-style display buckets. Rendering the raw segments directly (the
- * old approach) drew 12 bars whose 7d labels straddled 8 calendar dates and
+ * aggregate bucket tier — and buildBars re-buckets those segments into a
+ * handful of display buckets (six 4h slices for 24h, one bar per calendar day
+ * for 7d, six range slices for 30d). Rendering the raw segments directly
+ * would draw 12 bars whose 7d labels straddled 8 calendar dates and
  * crammed the x-axis on mobile. Executions outside the top rows (or
  * unattributed) appear as a muted "Other" remainder derived from the
  * aggregate `buckets`, so bar heights always add up to the real totals.

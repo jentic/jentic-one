@@ -1,4 +1,4 @@
-"""Central secret redaction (§08 E3.2).
+"""Central secret redaction.
 
 A single, app-wide guard so secrets/tokens/decrypted credentials never reach
 logs, traces, or error messages. The redaction is *defence in depth*: callers

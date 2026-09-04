@@ -128,12 +128,12 @@ export const sharedQueryKeys = {
 	 * event (DCR registration, approval) or an `oauth_grant.*` event (the rows
 	 * carry a per-client active-grant count) lands on the live stream —
 	 * otherwise the approval queue sits on its staleTime right after a client
-	 * registers (phase-3a §4.8).
+	 * registers.
 	 */
 	oauthClientsRoot: ['oauth-clients'] as const,
 	/**
 	 * The OAuth-grants root (per-agent "Connected clients" slices,
-	 * `GET /agents/{id}/oauth-grants`, derive from this — phase-3a §4.8). The
+	 * `GET /agents/{id}/oauth-grants`, derive from this). The
 	 * Agents module owns the panel, but grant creation happens out-of-band (a
 	 * consent screen in another tab) and revocation can happen from an admin
 	 * surface, so the shared agent-stream provider invalidates this root when

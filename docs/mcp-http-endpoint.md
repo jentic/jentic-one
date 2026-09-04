@@ -153,4 +153,16 @@ stateless server-side, so no session flags are needed on the client leg:
 For interactive OAuth (Claude/Cursor-style browser consent instead of
 bearer-paste), see [oauth-clients.md](oauth-clients.md) — the `/mcp`
 resource participates in that discovery chain when
-`server.mcp.oauth.enabled` is on.
+`server.mcp.oauth.enabled` is on. Clients that self-register through that
+surface's dynamic registration door land in the admin approval queue and
+stay inactive until an operator approves them — **approval-first is the
+default**. Deployments that accept self-registered clients without review
+can opt in to instant approval explicitly:
+
+```yaml
+server:
+  mcp:
+    oauth:
+      enabled: true
+      auto_approve_clients: true   # default: false (admin approval required)
+```

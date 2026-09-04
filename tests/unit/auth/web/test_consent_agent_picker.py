@@ -1,9 +1,9 @@
-"""Unit tests for the §4.4 agent-picker consent variant (phase-3a, 3a-3).
+"""Unit tests for the agent-picker consent variant.
 
 Pins: the agent-model client renders the picker with only the user's own
 active agents; zero agents → empty-state page with no code; approve mints
 the grant + a grant-bearing code with the recomputed (server-side) scope
-intersection and openid stripped (D11); deny and invalid selections mint
+intersection and openid stripped; deny and invalid selections mint
 nothing; consent_model='user' clients keep today's flow byte-identical.
 """
 
@@ -15,6 +15,7 @@ import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -78,6 +79,7 @@ def _seed_consent_handle(
     *,
     scope: str = "openid apis:read apis:write",
     handle: str = _HANDLE,
+    redirect_uri: str = _REDIRECT_URI,
 ) -> None:
     payload = json.dumps(
         {
@@ -88,7 +90,7 @@ def _seed_consent_handle(
                 "first_name": "Agent",
                 "last_name": "Owner",
             },
-            "redirect_uri": _REDIRECT_URI,
+            "redirect_uri": redirect_uri,
             "original_state": "xyz",
             "client_id": _CLIENT_ID,
             "code_challenge": "challenge",
@@ -161,6 +163,45 @@ def test_agent_model_page_renders_picker_with_own_active_agents(
     svc.list_consentable_agents.assert_awaited_once_with("usr_owner")
     # Rendering must not provision: only the read-only resolver ran.
     svc.provision_from_claims.assert_not_awaited()
+
+
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.routers.authorize.OAuthClientService")
+def test_agent_model_page_renders_private_use_scheme_origin(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+) -> None:
+    """RFC 8252 §7.1 DCR clients: the consent page renders the private-use
+    redirect target (``scheme://authority``) just as prominently as an https
+    origin — it stays the one client-controlled string the user can verify."""
+    client, backend = _make_app()
+    _seed_consent_handle(backend, redirect_uri="cursor://anysphere.cursor-mcp/oauth/callback")
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(
+        return_value=_client_view(allowed_scopes=["apis:read"])
+    )
+    svc = _mock_authorize_svc(agents=[_agent_option()])
+    mock_authorize_cls.return_value = svc
+
+    resp = client.get("/oauth/consent", params={"ch": _HANDLE})
+
+    assert resp.status_code == 200
+    assert "cursor://anysphere.cursor-mcp" in resp.text
+
+
+@pytest.mark.parametrize(
+    ("redirect_uri", "expected"),
+    [
+        ("https://mcpapp.example.com/callback", "https://mcpapp.example.com"),
+        ("cursor://anysphere.cursor-mcp/oauth/callback", "cursor://anysphere.cursor-mcp"),
+        # No authority component — fall back to the full (short) URI rather
+        # than rendering a bare scheme the user can't compare to anything.
+        ("com.example.app:/oauth/callback", "com.example.app:/oauth/callback"),
+    ],
+)
+def test_redirect_origin_renders_sensibly_for_all_accepted_shapes(
+    redirect_uri: str, expected: str
+) -> None:
+    assert authorize._redirect_origin(redirect_uri) == expected
 
 
 @patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
@@ -419,7 +460,7 @@ def test_agent_model_empty_effective_scope_set_rejected(
     mock_authorize_cls: MagicMock,
     mock_grant_cls: MagicMock,
 ) -> None:
-    """§4.4 step 2: an empty server-side intersection (agent has none of the
+    """Step 2: an empty server-side intersection (agent has none of the
     grantable scopes) → error page, no grant, no code."""
     client, backend = _make_app()
     _seed_consent_handle(backend, scope="openid apis:write")
@@ -453,7 +494,7 @@ def test_user_model_submit_byte_identical(
     mock_grant_cls: MagicMock,
 ) -> None:
     """consent_model='user' approve: same calls, same args, same redirect as
-    before 3a-3 — no grant service involvement, scopes passed through
+    before the agent picker existed — no grant service involvement, scopes passed through
     unmodified (openid included), no grant_id on the code."""
     client, backend = _make_app()
     _seed_consent_handle(backend, scope="openid apis:read")

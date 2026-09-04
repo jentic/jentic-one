@@ -21,10 +21,10 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 }
 
 describe('RailEventRow — action slot vs severity (issue #652)', () => {
-	// Regression: real `access_request.filed` events are emitted at INFO
-	// severity. The row previously forced INFO events into a compact 1-line
-	// layout that omits the action slot, so View/Deny never appeared with real
-	// data (they only showed under MSW, which seeded `warning`). An event that
+	// Regression pin: real `access_request.filed` events are emitted at INFO
+	// severity. The row must not force INFO events into a compact 1-line
+	// layout that omits the action slot — View/Deny would never appear with real
+	// data (MSW seeds `warning`, which masks it). An event that
 	// requires a decision must render its actions regardless of severity.
 	it('renders View/Deny for an INFO filed access request that requires action', () => {
 		const ev = makeEvent({

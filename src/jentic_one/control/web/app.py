@@ -56,7 +56,7 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
     """Create the control FastAPI application for standalone deployment.
 
     ``container`` lets the composition root ride its extras (notably the
-    ``/mcp`` mount's installer + lifespan, phase 3) on a standalone control
+    ``/mcp`` mount's installer + lifespan) on a standalone control
     process; ``None`` keeps the default wiring.
     """
     app = create_surface_app(

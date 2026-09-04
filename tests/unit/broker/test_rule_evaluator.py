@@ -58,7 +58,7 @@ def test_path_regex_match_full_match_semantics() -> None:
 
 def test_path_full_match_rejects_trailing_content() -> None:
     # Regression for #578-adjacent behaviour: full-match means the pattern
-    # must describe the whole path — ``/v1/users/\d+`` no longer matches
+    # must describe the whole path — ``/v1/users/\d+`` does not match
     # ``/v1/users/42/roles``.
     rule = PermissionRule(
         effect="allow",

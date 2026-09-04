@@ -264,7 +264,7 @@ export class OAuthClientsService {
     }
     /**
      * Register OAuth client (anonymous DCR)
-     * Register a public OAuth client anonymously (RFC 7591 subset, §4.2).
+     * Register a public OAuth client anonymously (RFC 7591 subset).
      *
      * Returns 201 with the new ``client_id``, or 200 with the **existing** row's
      * ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match

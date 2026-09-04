@@ -309,11 +309,11 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Resilience envelope: admission (§04 R1) + rate limit / circuit (§05).
+// Resilience envelope: admission + rate limit / circuit.
 //
 // The shared-state “backend“ selection drives *both* the rate limiter and
-// the circuit breaker (memory default; Redis is cluster-wide, §06). Queue
-// backpressure / async-credential / retention knobs land in a later §05 slice.
+// the circuit breaker (memory default; Redis is cluster-wide). Queue
+// backpressure / async-credential / retention knobs are future work.
 type BrokerResilienceConfig struct {
 	// Backend corresponds to the JSON schema field "backend".
 	Backend *StateBackendConfig `json:"backend,omitempty,omitzero" yaml:"backend,omitempty" mapstructure:"backend,omitempty"`
@@ -442,7 +442,7 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Per-upstream circuit breaker (§05 R5.1).
+// Per-upstream circuit breaker.
 //
 // Counts failures/totals per rolling “window_s“ on the shared-state
 // backend's atomic counters; when the failure ratio crosses
@@ -869,7 +869,7 @@ func (j *DirectOAuth2ProviderConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Outbound SSRF/egress policy for upstream calls (§08 E2).
+// Outbound SSRF/egress policy for upstream calls.
 //
 // Defaults are **strict** (both lists empty) — identical to the historical
 // hard-coded behaviour: every private range and the cloud-metadata host are
@@ -1075,7 +1075,7 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// “Idempotency-Key“ replay store (§07, PR-E/1 slim).
+// “Idempotency-Key“ replay store.
 //
 // Sync “FULL“-mode replay over the shared-state “AtomicStore“ (memory
 // default; Redis ⇒ cross-instance). Two TTLs: a *short* “pending_ttl_s“ claim
@@ -1086,7 +1086,7 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 // a duplicate side-effect; only byte-for-byte body replay is dropped).
 //
 // Compliance modes (“metadata_only“ / kill-switch), “require_for_mutations“,
-// async same-“job_id“ replay, and at-rest encryption are later §07 slices.
+// async same-“job_id“ replay, and at-rest encryption are future work.
 type IdempotencyConfig struct {
 	// Enabled corresponds to the JSON schema field "enabled".
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
@@ -1239,7 +1239,7 @@ func (j *IngestConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Hardened inbound-JWT verification for the broker edge (§08 E1).
+// Hardened inbound-JWT verification for the broker edge.
 //
 // When “trusted_issuers“ is non-empty the broker verifies self-contained JWTs
 // against the issuers' published JWKS (asymmetric, key-rotation-aware) and
@@ -1325,7 +1325,7 @@ func (j *LoggingConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// “server.mcp“ sub-config (3a-2 seam, extended by phase-3 item 2).
+// “server.mcp“ sub-config.
 type McpConfig struct {
 	// BrokerUrl corresponds to the JSON schema field "broker_url".
 	BrokerUrl string `json:"broker_url,omitempty,omitzero" yaml:"broker_url,omitempty" mapstructure:"broker_url,omitempty"`
@@ -1358,11 +1358,11 @@ func (j *McpConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Interactive-OAuth settings for the MCP surface (phase 3a, design §4.9).
+// Interactive-OAuth settings for the MCP surface.
 //
-// Minimal seam carried by 3a-2 (design §8 E2): phase-3 item 2 owns the full
-// “server.mcp“ sub-config (“server.mcp.enabled“ etc.) and extends this
-// model in place — fields here must keep their names and defaults.
+// Minimal seam: the full “server.mcp“ sub-config (“server.mcp.enabled“
+// etc.) extends this model in place — fields here must keep their names and
+// defaults.
 type McpOAuthConfig struct {
 	// AutoApproveClients corresponds to the JSON schema field "auto_approve_clients".
 	AutoApproveClients bool `json:"auto_approve_clients,omitempty,omitzero" yaml:"auto_approve_clients,omitempty" mapstructure:"auto_approve_clients,omitempty"`
@@ -1386,7 +1386,7 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["auto_approve_clients"]; !ok || v == nil {
-		plain.AutoApproveClients = true
+		plain.AutoApproveClients = false
 	}
 	if v, ok := raw["enabled"]; !ok || v == nil {
 		plain.Enabled = false
@@ -1657,13 +1657,13 @@ func (j *PlatformClientConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Per-caller token-bucket rate limit (§05 R2).
+// Per-caller token-bucket rate limit.
 //
 // Keyed on the resolved “actor_id“ and enforced in a post-auth dependency
 // (the actor isn't known at admission time, so this can't be a plain
 // pre-auth middleware). The token bucket itself lives on the shared-state
 // backend (“RateLimitStore“); with the memory backend the limit is
-// per-instance, with Redis (§06) it is cluster-wide — no call-site change.
+// per-instance, with Redis it is cluster-wide — no call-site change.
 type RateLimitConfig struct {
 	// Burst corresponds to the JSON schema field "burst".
 	Burst int `json:"burst,omitempty,omitzero" yaml:"burst,omitempty" mapstructure:"burst,omitempty"`
@@ -1748,7 +1748,7 @@ func (j *ReleaseCheckConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Idempotency-aware upstream retry (§09 E4.1).
+// Idempotency-aware upstream retry.
 //
 // The “RetryRunner“ decorator retries a failed attempt **only** when it is
 // safe to do so: a connect-phase failure (no bytes on the wire) is retryable
@@ -2299,12 +2299,12 @@ func (j *TrustedIssuerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Bounds for the single shared outbound “httpx.AsyncClient“ (§04, PR-B).
+// Bounds for the single shared outbound “httpx.AsyncClient“.
 //
 // The timeouts are httpx semantics: “read_timeout_s“ is the *between-bytes*
 // gap timeout (per read), **not** a whole-stream cap — a trickle that keeps
 // sending under the limit can hold a pool slot open. The overall transfer
-// deadline is owned by the response-streaming guard (§08/E2.4), not here.
+// deadline is owned by the response-streaming guard, not here.
 type UpstreamClientConfig struct {
 	// ConnectTimeoutS corresponds to the JSON schema field "connect_timeout_s".
 	ConnectTimeoutS float64 `json:"connect_timeout_s,omitempty,omitzero" yaml:"connect_timeout_s,omitempty" mapstructure:"connect_timeout_s,omitempty"`
@@ -2401,7 +2401,7 @@ func (j *UpstreamClientConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Background job-worker durability knobs (§09 E4.2).
+// Background job-worker durability knobs.
 //
 // The worker claims a job, sets a **visibility deadline**
 // (“visibility_timeout_s“

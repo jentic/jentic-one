@@ -773,7 +773,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 
 // TestMCPSession_KillSwitchDisabledAgentExecuteDenied re-verifies the phase-2
 // acceptance kill-switch item on the MCP transport: the broker-side fail-
-// closed re-check is already tested on main (PR #1137) — here the broker
+// closed re-check is covered by the broker's own tests — here the broker
 // double answers as it does for a DISABLED agent's token (401, origin
 // broker), and the MCP surface must relay that as the coded denial envelope
 // (isError, BROKER_DENIED, retryable false), never as success or an opaque

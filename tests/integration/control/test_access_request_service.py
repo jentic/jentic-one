@@ -601,9 +601,9 @@ async def test_decide_not_pending_raises(
 ) -> None:
     """Re-deciding an item with a *different* verdict is a conflict (issue #625).
 
-    decide() no longer hard-fails on a non-pending request (that path is now
-    reconcilable on retry); a genuine conflict — requesting DENY for an item that
-    is already APPROVED — surfaces as an item-level ItemNotPendingError instead.
+    decide() tolerates same-verdict re-decisions (retry-reconcilable); a genuine
+    conflict — requesting DENY for an item that is already APPROVED — surfaces
+    as an item-level ItemNotPendingError.
     """
     filer = _filer_identity()
     filed = await svc.file(

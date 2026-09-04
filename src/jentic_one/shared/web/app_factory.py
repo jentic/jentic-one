@@ -149,7 +149,7 @@ def _start_worker(
     service's config.
 
     ``upstream_executor`` is the broker-side ``UpstreamExecutor`` (the
-    ``PipelineExecutor`` over the shared composed runner, §11 RN-0.3) and
+    ``PipelineExecutor`` over the shared composed runner) and
     ``credential_injector`` is the broker ``CredentialService``; both are built
     by the broker's surface lifespan and stashed on ``app.state`` (so this
     ``shared/`` factory never imports ``broker/``). When the executor is
@@ -161,7 +161,7 @@ def _start_worker(
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
-    client/runners down — see ``_stop_worker`` (§09 E4.3).
+    client/runners down — see ``_stop_worker``.
     """
     if not ctx.has_db("admin"):
         return None
@@ -272,7 +272,7 @@ async def _stop_catalog_update_scanner(
 
 
 async def _stop_worker(handle: tuple[WorkerLoop, asyncio.Task[None]] | None) -> None:
-    """Gracefully drain then stop the worker (§09 E4.3 teardown step 2).
+    """Gracefully drain then stop the worker (teardown step 2).
 
     Drains first (so the in-flight job finishes or is safely reclaimable) **before**
     the surface lifespan closes the shared ``httpx`` client/runners — otherwise a
@@ -407,7 +407,7 @@ def create_surface_app(
 
     ``extra_lifespan`` is an optional surface-owned async context manager entered
     after ``ctx.startup()`` and exited before ``ctx.shutdown()`` — the broker
-    uses it to open/close its shared outbound ``httpx.AsyncClient`` (§04).
+    uses it to open/close its shared outbound ``httpx.AsyncClient``.
 
     ``container`` is the DI seam: when omitted the default is used and behavior is
     unchanged. A caller passes its own container to inject a ``Broker`` (stashed on
@@ -438,7 +438,7 @@ def create_surface_app(
             # Worker starts *inside* the surface lifespan so it can share any
             # surface-owned resource (e.g. the broker's shared upstream
             # executor + credential injector stashed on app.state by
-            # extra_lifespan) — §04 / §11 RN-0.3.
+            # extra_lifespan).
             worker_task = _start_worker(
                 ctx,
                 enabled_apps,
@@ -450,7 +450,7 @@ def create_surface_app(
             try:
                 yield
             finally:
-                # §09 E4.3 drain step 1: signal the admission gate (if any) to
+                # Drain step 1: signal the admission gate (if any) to
                 # report unready + stamp Connection: close, so the LB deregisters
                 # this instance *before* we drain in-flight work and tear down the
                 # worker (step 2) and — in extra_lifespan's exit — the shared

@@ -460,7 +460,7 @@ func (a *Cmd) launchIsolated(ctx context.Context, agentUser, binary, dir string,
 
 // launchAgent starts the confined agent session. Confinement is REQUIRED: it
 // closes the sibling-traversal leak that the coarse ACL grant leaves open, and it
-// is what replaces the old `chmod 700 ~` guarantee. When this machine can't confine
+// is what keeps the agent out of the operator's home. When this machine can't confine
 // the process (no sandbox-exec on macOS; no bwrap / unprivileged userns on Linux)
 // we ERROR CLOSED — refuse the launch rather than silently drop to an unconfined
 // session — and point the operator at an alternative isolation route.

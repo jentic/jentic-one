@@ -1,4 +1,4 @@
-"""Tool-result envelopes for the mounted MCP app — the §3.7 taxonomy in Python.
+"""Tool-result envelopes for the mounted MCP app — the coded result taxonomy in Python.
 
 Mirrors the Go stdio server's ``result``/``softError`` helpers
 (``cli/internal/cli/api/mcp_server.go``): every tool result is the payload
@@ -81,7 +81,7 @@ class ToolError(Exception):
 
 
 def instance_stamp(ctx: Context) -> dict[str, Any]:
-    """The §3.7.4 identity stamp joined to every tool result.
+    """The identity stamp joined to every tool result.
 
     Same keys as the Go client's cached ``GET /instance`` projection
     (``backend``/``host``/``instance_id``/``fetched_at``); values come from the

@@ -16,6 +16,7 @@ from jentic_one.auth.services.errors import (
     InvalidClientMetadataError,
     InvalidGrantError,
     InvalidOwnerError,
+    InvalidRevocationRequestError,
     InvalidTransitionError,
     NoApiKeyError,
     OAuthGrantAccessDeniedError,
@@ -46,6 +47,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     InvalidGrantError: (400, "invalid_grant"),
     InvalidClientMetadataError: (400, "invalid_client_metadata"),
     InvalidOwnerError: (422, "invalid_owner"),
+    InvalidRevocationRequestError: (400, "invalid_request"),
     InvalidTransitionError: (409, "invalid_transition"),
     NoApiKeyError: (409, "no_api_key"),
     OAuthGrantAccessDeniedError: (403, "oauth_grant_access_denied"),
@@ -70,6 +72,17 @@ def _rate_limit_response_hook(
         response.headers["Retry-After"] = str(retry_after_s)
         _rate_limit_counter.add(1, {"path": request.url.path})
     return response
+
+
+def record_rate_limited_request(path: str) -> None:
+    """Bump the rate-limited-requests metric for a 429 built outside this handler.
+
+    The RFC 7009 form arm of ``POST /oauth/revoke`` reshapes its 429 into the
+    RFC 6749 §5.2 error dialect in the router (it must not answer Problem
+    Details), bypassing :func:`_rate_limit_response_hook` — this keeps the
+    metric consistent across both paths.
+    """
+    _rate_limit_counter.add(1, {"path": path})
 
 
 service_error_handler = make_service_error_handler(

@@ -5,9 +5,9 @@ Two discovery surfaces live here:
 - The **root** RFC 8414 document (``/.well-known/oauth-authorization-server``)
   — the platform AS metadata whose ``registration_endpoint`` is the *agent*
   DCR door ``/register``. Its body is pinned byte-identical by a golden
-  regression test (phase-3a acceptance): do not change it when touching the
+  regression test: do not change it when touching the
   MCP-scoped documents below.
-- The **/mcp-scoped** documents (phase-3a §4.7, D10): a path-scoped RFC 8414
+- The **/mcp-scoped** documents: a path-scoped RFC 8414
   doc for the logical issuer ``{base}/mcp`` plus the RFC 9728
   protected-resource doc (path-scoped and a root alias). All are gated by
   ``server.mcp.oauth.enabled`` — off (the default) they answer the
@@ -15,7 +15,7 @@ Two discovery surfaces live here:
   (The *build* still shows routing-level tells — 405+``Allow`` on
   non-registered methods, the slash redirect, the doc paths in the live
   OpenAPI schema — identical in both gate arms; pinned by tests.) The ``/mcp``
-  401 challenge that starts the discovery chain moved to the phase-3 mounted
+  401 challenge that starts the discovery chain moved to the mounted
   MCP app (``jentic_one.mcp``) together with the path itself.
 """
 
@@ -116,13 +116,13 @@ async def auth_idp_descriptor(ctx: Context = Depends(get_ctx)) -> dict[str, Any]
 
 
 class _McpDiscoveryRoute(APIRoute):
-    """Route class owning the ``server.mcp.oauth.enabled`` gate (§4.7).
+    """Route class owning the ``server.mcp.oauth.enabled`` gate.
 
     Runs *before* the FastAPI dependency machinery so the **gate state is
     unobservable**: on a full route match a disabled surface answers the
     framework's own route-not-found 404, and no handler, dependency, or
     ``WWW-Authenticate`` header runs (same posture as the DCR front door's
-    ``_Rfc7591Route``, §4.2). What remains observable is *build* state, not
+    ``_Rfc7591Route``). What remains observable is *build* state, not
     gate state: Starlette answers partial matches (405 + ``Allow`` on
     non-registered methods on the doc paths), issues the ``redirect_slashes``
     307, and lists the doc paths in the live OpenAPI schema before this gate
@@ -160,7 +160,7 @@ _GATED_404_RESPONSE: dict[int | str, dict[str, Any]] = {
 
 
 def _mcp_authorization_server_document(base: str) -> dict[str, Any]:
-    """The /mcp-scoped RFC 8414 document, per D10 (one deliberate deviation).
+    """The /mcp-scoped RFC 8414 document, per D10 (deviation closed by G11).
 
     A *logical* second AS for the path-scoped issuer ``{base}/mcp``: the
     endpoints are shared with the root AS — only the metadata doc is scoped.
@@ -168,21 +168,22 @@ def _mcp_authorization_server_document(base: str) -> dict[str, Any]:
     ``/oauth-clients`` (D1), never the agent ``/register``. Only the public
     secret-less client profile is advertised (``none`` + PKCE S256, D5); CIMD
     (``client_id_metadata_document_supported``) is deliberately **not**
-    advertised yet — flipping it on is the §6 follow-on and non-breaking.
-    Deviation from D10: no ``revocation_endpoint`` (see the field comment).
+    advertised yet — flipping it on is a follow-on and non-breaking.
     """
     return {
         "issuer": f"{base}/mcp",
         "authorization_endpoint": f"{base}/authorize",
         "token_endpoint": f"{base}/oauth/token",
         "registration_endpoint": f"{base}/oauth-clients",
-        # No revocation_endpoint (deliberate deviation from D10, which lists
-        # {base}/oauth/revoke): the platform's /oauth/revoke requires an
-        # authenticated platform Identity and a JSON body, so an RFC 7009
-        # public-client revoke (client_id only, form-encoded) can never
-        # succeed against it. RFC 8414 makes the field optional — omit it;
-        # public clients revoke by grant lifecycle (grant :revoke, client
-        # deactivation) until phase 3 decides otherwise.
+        # G11 closed: /oauth/revoke now carries an RFC 7009-conformant
+        # public-client arm (form-encoded, token + optional client_id lineage
+        # binding, auth method "none"), so D10's revocation_endpoint is
+        # advertised — it was deliberately omitted while the endpoint
+        # required an authenticated platform Identity and a JSON body.
+        # RFC 8414's implicit default for the auth-methods field is
+        # client_secret_basic, so the "none" profile must be explicit.
+        "revocation_endpoint": f"{base}/oauth/revoke",
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["none"],
         "response_types_supported": ["code"],
@@ -209,7 +210,7 @@ def _mcp_protected_resource_document(base: str) -> dict[str, Any]:
 async def mcp_oauth_authorization_server(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> dict[str, Any]:
-    """RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).
+    """RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
 
     RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
     the issuer `{base}/mcp` named by the protected-resource document. It
@@ -230,7 +231,7 @@ async def mcp_oauth_authorization_server(
 async def mcp_oauth_protected_resource(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> dict[str, Any]:
-    """RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).
+    """RFC 9728 protected-resource metadata for `{base}/mcp`.
 
     Names the /mcp-scoped authorization server and the MCP tool scopes. The
     same body is also served at the root well-known path for clients that
@@ -252,7 +253,7 @@ async def mcp_oauth_protected_resource(
 async def oauth_protected_resource(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> dict[str, Any]:
-    """Root-path alias of the MCP protected-resource document (phase-3a §4.7).
+    """Root-path alias of the MCP protected-resource document.
 
     Compatibility fallback for clients that probe the root
     `/.well-known/oauth-protected-resource` instead of following the 401's
@@ -260,7 +261,7 @@ async def oauth_protected_resource(
     because this deployment has exactly one OAuth-protected resource, so the
     root and path-scoped documents are the same body.
 
-    Two acknowledged trades (§4.7, review F6):
+    Two acknowledged trades:
 
     - RFC 9728 §3 says this well-known path corresponds to resource identifier
       ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
@@ -270,16 +271,16 @@ async def oauth_protected_resource(
       what the alias exists to satisfy. That is the intended trade.
     - The alias squats the deployment's only root PRM slot: a future non-MCP
       protected resource at ``{base}`` cannot get its own root document
-      without breaking this fallback. Phase 3's mount must re-confirm the
+      without breaking this fallback. The mounted MCP app must re-confirm the
       "exactly one OAuth-protected resource" premise before adding one.
     """
     base = deployment_base_url(ctx.config.auth, request)
     return _mcp_protected_resource_document(base)
 
 
-# The ``/mcp`` path itself is owned by the phase-3 mounted MCP app
+# The ``/mcp`` path itself is owned by the mounted MCP app
 # (``jentic_one.mcp``, installed on control-plane app shapes by the
-# composition root), which took the 3a-4 placeholder's challenge contract
+# composition root), which took the placeholder's challenge contract
 # with it: a probe without a valid bearer answers 401 with
 # ``WWW-Authenticate: Bearer resource_metadata="{base}{_MCP_PRM_PATH}"``
 # whenever this discovery surface is enabled, and the framework's plain 404

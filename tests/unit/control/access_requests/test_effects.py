@@ -1148,7 +1148,7 @@ def test_plan_governance_matches_cli_four_item_bundle() -> None:
     assert governance["arqi_cbind"].is_governed
     # credential:bind is a "any-intent-lives" rule, so it names every live intent.
     assert governance["arqi_cbind"].governing_intent_ids == frozenset({"arqi_i1", "arqi_i2"})
-    # governing_api is intentionally None on credential:bind (§778 review comment):
+    # governing_api is intentionally None on credential:bind (#778):
     # the rule isn't tied to a specific API tuple.
     assert governance["arqi_cbind"].governing_api is None
     # toolkit:bind is api-scoped, so both facts are populated.

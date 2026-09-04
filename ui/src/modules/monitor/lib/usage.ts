@@ -1,10 +1,9 @@
 /**
  * Usage-aggregation transformers — map `GET /monitoring/usage` responses
  * (`UsageResponse`) into the UI-shaped rows the Overview charts render.
- * Mirrors jentic-mini's `lib/monitor-transformers.ts` (usageToMonitorStats /
- * usageToTopRows / usageToAgentRows), collapsed into one entity-row shape
- * since the jentic-one endpoint returns the same `{key,label,total,success,
- * failed,avg_ms,trend}` rows for every grouping dimension.
+ * A single entity-row shape covers every grouping dimension, since the
+ * endpoint returns the same `{key,label,total,success,
+ * failed,avg_ms,trend}` rows for each.
  */
 import type { UsageResponse } from '@/modules/monitor/api';
 
@@ -56,8 +55,8 @@ export function usageToOverview(usage: UsageResponse): UsageOverview {
  *   toolkit → the raw toolkit_id (NOT NULL column)
  *   agent   → "actor_type/actor_id" (both NOT NULL columns)
  * Keys are therefore never NULL on the wire today; the null branches below
- * are defensive display fallbacks (surfaced as "Unattributed", matching
- * jentic-mini) rather than a backend contract.
+ * are defensive display fallbacks (surfaced as "Unattributed") rather than a
+ * backend contract.
  */
 function formatEntityLabel(groupBy: string, key: string | null | undefined): string {
 	if (!key) return 'Unattributed';
@@ -78,7 +77,7 @@ function formatEntityLabel(groupBy: string, key: string | null | undefined): str
  * Map the response's `top` rows into entity rows, sorted busiest-first.
  * The attribution columns are NOT NULL so keys are always present today;
  * empty/missing keys are still mapped to an explicit "Unattributed" bucket
- * as a display fallback rather than silently dropped, matching jentic-mini.
+ * as a display fallback rather than silently dropped.
  */
 export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsageRow[] {
 	if (!usage) return [];

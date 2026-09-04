@@ -90,9 +90,8 @@ export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
 
 // API-identity display helpers — one humanising rule applied everywhere a
 // machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
-// friendly primary line. Originally lived in `modules/discover/api/adapters.ts`
-// (`titleFromApiId`); moved here so Discover, the credential picker, and the
-// toolkit surfaces all share the same rule.
+// friendly primary line — shared so Discover, the credential picker, and the
+// toolkit surfaces all apply the same rule (implementation: `api-display.ts`).
 export {
 	humanizeDomainSlug,
 	humanizeName,

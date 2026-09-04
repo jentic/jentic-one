@@ -1,6 +1,6 @@
 """Unit tests for the admin grant cross-view (GET /admin/oauth-grants).
 
-The §4.8 admin listing: permission gate (`oauth-clients:read`), the
+The admin listing: permission gate (`oauth-clients:read`), the
 unauthenticated 401 arm, filter forwarding, the tampered-cursor 400 mapping,
 and the wire shape — including the consenting ``user_id`` column (gap G10:
 after an agent ownership transfer the grant stays with the original

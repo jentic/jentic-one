@@ -25,7 +25,6 @@ BINARY_API := $(BINARY_API)$(BIN_EXT)
 
 # Pin the generator via `go run ...@version` (never `go install`) so the global
 # toolchain is untouched and the version is reproducible on every machine/CI.
-# Verified against both real specs on 2026-08-04 (see impl/2.1 §2 spike note).
 OAPI_CODEGEN := go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 
 # Pinned like OAPI_CODEGEN (go run ...@version, no global install) for the same

@@ -167,7 +167,7 @@ async def import_apis(
     # client supplied an explicit `submitted_by` override (e.g. importing on
     # behalf of someone else). The job row's `created_by` records the caller
     # either way; this default carries the same principal through the ingest
-    # pipeline onto ApiRevision.submitted_by, which was previously left null.
+    # pipeline onto ApiRevision.submitted_by.
     sources = [s.model_dump(mode="json") for s in body.sources]
     for source in sources:
         if source.get("submitted_by") is None:

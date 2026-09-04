@@ -377,12 +377,11 @@ export function useLinkAgentToToolkit(toolkitId: string) {
 
 /**
  * Unlink an agent from *this toolkit* (mirror of the agents-module hook that
- * unbinds a toolkit from an agent). The two hooks used to share a name and only
- * differ by argument order, which was a real footgun: both took a ``string`` and
- * their ``.mutate`` calls took a ``string``, so auto-importing the wrong one
- * would compile cleanly and swap the ids at runtime. Renamed
- * to make the direction unambiguous — this one binds the *toolkit* argument, and
- * ``.mutate`` takes the *agent id* to unlink.
+ * unbinds a toolkit from an agent). Named directionally on purpose: both hooks
+ * take a ``string`` and their ``.mutate`` calls take a ``string``, so an
+ * ambiguous name would let an auto-import swap the ids and still compile
+ * cleanly. This one binds the *toolkit* argument, and ``.mutate`` takes the
+ * *agent id* to unlink.
  */
 export function useUnlinkAgentFromToolkit(toolkitId: string) {
 	const queryClient = useQueryClient();

@@ -1,6 +1,6 @@
-"""Unit tests for the /mcp-scoped OAuth discovery surface (phase-3a §4.7, D10).
+"""Unit tests for the /mcp-scoped OAuth discovery surface.
 
-Covers both arms of the ``server.mcp.oauth.enabled`` gate, the D10 document
+Covers both arms of the ``server.mcp.oauth.enabled`` gate, the /mcp-scoped document
 shapes, the ``/mcp`` 401 challenge, the RFC 9728 → RFC 8414 discovery chain,
 and the acceptance-critical regression pin: the **root** RFC 8414 document
 stays byte-identical (the agent ``/register`` remains its advertised DCR
@@ -35,7 +35,7 @@ _MCP_DOC_PATHS = (
 #: the enabled arm challenges before method semantics — review F3/F4).
 _MCP_METHODS = ("GET", "POST", "DELETE", "HEAD", "OPTIONS", "PUT", "PATCH")
 
-#: RFC 8414/OIDC discovery variants MCP clients probe (§2) that this surface
+#: RFC 8414/OIDC discovery variants MCP clients probe that this surface
 #: deliberately does NOT serve: path-appending and OIDC arms must fall through
 #: to 404 in both gate arms so clients land on the served path-insertion doc.
 _UNSERVED_PROBE_PATHS = (
@@ -44,7 +44,7 @@ _UNSERVED_PROBE_PATHS = (
     "/.well-known/openid-configuration/mcp",
 )
 
-#: Byte-identical golden of the ROOT RFC 8414 document (§9 regression pin):
+#: Byte-identical golden of the ROOT RFC 8414 document (regression pin):
 #: the agent ``/register`` stays the advertised agent-DCR endpoint and nothing
 #: the /mcp-scoped documents add may reshape this body.
 _ROOT_AS_GOLDEN = (
@@ -86,11 +86,11 @@ def _make_client(
     server.mcp.oauth.enabled = oauth_enabled
     mock_ctx.config.server = server
     app.state.ctx = mock_ctx
-    # Phase 3: an auth surface WITHOUT control (this test app's shape) carries
-    # the 3a-4 challenge placeholder — exactly what the composition root
+    # An auth surface WITHOUT control (this test app's shape) carries
+    # the challenge placeholder — exactly what the composition root
     # (build_default_container) installs on that shape, so these 44 pins test
     # the real wiring: the discovery pointers land on the challenge, never a
-    # dangling 404, while the real transport stays control-plane-only (§6 Q1).
+    # dangling 404, while the real transport stays control-plane-only.
     install_mcp_challenge_placeholder(app, mock_ctx)
     return TestClient(app)
 
@@ -129,14 +129,14 @@ def test_disabled_mcp_probe_is_plain_404_without_challenge(
         assert resp.json() == {"detail": "Not Found"}
 
 
-# --- the /mcp-scoped RFC 8414 document (D10) --------------------------------
+# --- the /mcp-scoped RFC 8414 document ---------------------------------------
 
 
-def test_mcp_as_document_matches_d10_with_revocation_deviation(
+def test_mcp_as_document_matches_d10(
     enabled_client: TestClient,
 ) -> None:
-    """The D10 document shape, minus the deliberately omitted
-    revocation_endpoint (see test_mcp_as_document_omits_revocation_endpoint)."""
+    """The full /mcp-scoped document shape — including the revocation_endpoint
+    (/oauth/revoke carries an RFC 7009-conformant public-client arm)."""
     resp = enabled_client.get("/.well-known/oauth-authorization-server/mcp")
     assert resp.status_code == 200
     assert resp.json() == {
@@ -144,6 +144,8 @@ def test_mcp_as_document_matches_d10_with_revocation_deviation(
         "authorization_endpoint": f"{_BASE}/authorize",
         "token_endpoint": f"{_BASE}/oauth/token",
         "registration_endpoint": f"{_BASE}/oauth-clients",
+        "revocation_endpoint": f"{_BASE}/oauth/revoke",
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["none"],
         "response_types_supported": ["code"],
@@ -152,22 +154,21 @@ def test_mcp_as_document_matches_d10_with_revocation_deviation(
     }
 
 
-def test_mcp_as_document_omits_revocation_endpoint(enabled_client: TestClient) -> None:
-    """Deliberate deviation from D10: /oauth/revoke requires an authenticated
-    platform Identity and a JSON body, so an RFC 7009 public-client revoke
-    (client_id only, form-encoded) can never succeed against it. RFC 8414
-    makes the field optional — the /mcp doc omits it (public clients revoke by
-    grant lifecycle); the root doc's advertisement is a separate, pre-existing
-    surface pinned by the golden test."""
+def test_mcp_as_document_advertises_rfc7009_revocation(enabled_client: TestClient) -> None:
+    """The /mcp doc advertises ``revocation_endpoint={base}/oauth/revoke``: the
+    endpoint accepts the RFC 7009 public-client shape (form-encoded, token +
+    optional client_id, auth method ``none``). The auth-methods field must be
+    explicit: RFC 8414's implicit default is ``client_secret_basic``, which
+    would contradict the advertised ``none`` client profile."""
     data = enabled_client.get("/.well-known/oauth-authorization-server/mcp").json()
-    assert "revocation_endpoint" not in data
-    assert "revocation_endpoint_auth_methods_supported" not in data
+    assert data["revocation_endpoint"] == f"{_BASE}/oauth/revoke"
+    assert data["revocation_endpoint_auth_methods_supported"] == ["none"]
 
 
 def test_mcp_as_document_advertises_only_the_public_client_profile(
     enabled_client: TestClient,
 ) -> None:
-    """No CIMD flag yet (§6 follow-on), no confidential/JWT profiles, and the
+    """No CIMD flag yet, no confidential/JWT profiles, and the
     registration endpoint is the OAuth-client door — never the agent /register."""
     data = enabled_client.get("/.well-known/oauth-authorization-server/mcp").json()
     assert "client_id_metadata_document_supported" not in data
@@ -238,7 +239,7 @@ def test_mcp_probe_answers_401_with_resource_metadata(
 
 
 def test_discovery_chain_e2e_from_unauthenticated_probe() -> None:
-    """§9 chain: unauthenticated /mcp → 401 resource_metadata → PRM → AS doc.
+    """Discovery chain: unauthenticated /mcp → 401 resource_metadata → PRM → AS doc.
 
     Follows the pointers the way a spec-following MCP client does (RFC 9728
     then RFC 8414 §3.1 path insertion for the path-scoped issuer), against the
@@ -370,7 +371,7 @@ def test_unserved_discovery_probe_arms_fall_through_404(oauth_enabled: bool, pat
 
 @pytest.mark.parametrize("oauth_enabled", [True, False])
 def test_root_as_document_is_byte_identical_golden(oauth_enabled: bool) -> None:
-    """The ROOT RFC 8414 document must not change in either gate arm (§9):
+    """The ROOT RFC 8414 document must not change in either gate arm:
     its registration_endpoint stays the agent /register, byte for byte."""
     client = _make_client(oauth_enabled=oauth_enabled)
     resp = client.get("/.well-known/oauth-authorization-server")

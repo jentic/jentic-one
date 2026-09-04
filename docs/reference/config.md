@@ -84,7 +84,7 @@ Service-level settings (immutable after boot).
 
 ## `worker`
 
-Background job-worker durability knobs (§09 E4.2). The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever.
+Background job-worker durability knobs. The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -129,7 +129,7 @@ HTTP server settings.
 | `server.mcp.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__ENABLED` |  |
 | `server.mcp.broker_url` | string | `"http://127.0.0.1:8100"` | `JENTIC__SERVER__MCP__BROKER_URL` |  |
 | `server.mcp.oauth.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__OAUTH__ENABLED` |  |
-| `server.mcp.oauth.auto_approve_clients` | boolean | `true` | `JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS` |  |
+| `server.mcp.oauth.auto_approve_clients` | boolean | `false` | `JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS` |  |
 | `server.mcp.oauth.registration_gc_days` | integer | `90` | `JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS` |  |
 
 ## `observability`
@@ -229,7 +229,7 @@ Broker surface configuration.
 | `broker.resilience.upstream.max_response_bytes` | integer | `10485760` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__MAX_RESPONSE_BYTES` |  |
 | `broker.resilience.upstream.stream_passthrough_enabled` | boolean | `true` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__STREAM_PASSTHROUGH_ENABLED` |  |
 | `broker.resilience.upstream.transfer_deadline_s` | number | `300.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__TRANSFER_DEADLINE_S` |  |
-| `broker.resilience.backend.backend` | "memory" \| "redis" | `"memory"` | `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` | Which shared-state implementation to build. Defined here as the single source of truth; later PRs (resilience §05) import it from this package rather than defining a second enum. |
+| `broker.resilience.backend.backend` | "memory" \| "redis" | `"memory"` | `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` | Which shared-state implementation to build. Defined here as the single source of truth; consumers import it from this package rather than defining a second enum. |
 | `broker.resilience.backend.redis_url` | string (secret) \| null | `null` | `JENTIC__BROKER__RESILIENCE__BACKEND__REDIS_URL` |  |
 | `broker.resilience.backend.redis_key_prefix` | string | `"jentic:broker:"` | `JENTIC__BROKER__RESILIENCE__BACKEND__REDIS_KEY_PREFIX` |  |
 | `broker.resilience.rate_limit.enabled` | boolean | `true` | `JENTIC__BROKER__RESILIENCE__RATE_LIMIT__ENABLED` |  |

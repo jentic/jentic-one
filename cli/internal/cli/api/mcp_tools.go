@@ -1,6 +1,6 @@
 package api
 
-// mcp_tools.go holds the PR 1-A tool handlers. get_started is the pre-auth
+// mcp_tools.go holds the session's core tool handlers. get_started is the pre-auth
 // diagnosis: it walks the same identity ladder the skill's step 1 teaches
 // (context → credential/registration → approval → instance reachability) and
 // returns the matching operator instruction VERBATIM from the skill/CLI

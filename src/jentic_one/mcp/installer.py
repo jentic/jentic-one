@@ -1,16 +1,16 @@
-"""Installer + lifespan for the ``/mcp`` mount (phase-3 item 1).
+"""Installer + lifespan for the ``/mcp`` mount.
 
 Wired by the composition root (``jentic_one.wiring.build_default_container``)
 onto **control-plane app shapes only** — the combined app and a standalone
-control surface; never the broker (master §6 Q1: the broker stays MCP-free).
+control surface; never the broker (the broker stays MCP-free).
 The installer runs through ``AppContainer.extra_installers`` (after all
-built-in surfaces, so the 3a-4 placeholder's removal from the auth router set
+built-in surfaces, so the challenge placeholder's removal from the auth router set
 and this mount can never race for the path) and the session manager's task
 group runs through ``AppContainer.extra_lifespans``.
 
 The mount is installed **unconditionally on eligible shapes** and gated at
 request time by ``server.mcp.enabled`` (the ``_McpDiscoveryRoute`` posture:
-the disabled arm answers the framework's plain 404 / the 3a-4 discovery
+the disabled arm answers the framework's plain 404 / the discovery
 challenge, so flipping the flag needs no process rebuild and the gate state
 stays unobservable at build level).
 """
@@ -40,11 +40,11 @@ def install_mcp_mount(app: FastAPI, ctx: Context) -> None:
 
     - ``Mount("/mcp")`` never matches the bare ``/mcp`` — Starlette would
       307-redirect every probe to ``/mcp/``, breaking the challenge contract
-      (clients POST ``/mcp`` exactly, and the 3a-4 placeholder answered there).
-    - Sub-paths (the F7 ``/mcp/.well-known/…`` discovery probe variants) keep
+      (clients POST ``/mcp`` exactly, and the challenge placeholder answered there).
+    - Sub-paths (the ``/mcp/.well-known/…`` discovery probe variants) keep
       falling through to the framework's plain route-not-found 404, exactly as
       before, because no prefix route exists to swallow them.
-    - The routing-level tells the 3a-4 tests pinned stay identical: the
+    - The routing-level tells the pinned tests assert stay identical: the
       ``redirect_slashes`` 307 on ``/mcp/``, no ``Allow`` method tell, and the
       path stays out of the OpenAPI schema (a plain ``Route`` is invisible to
       FastAPI's schema walk).
@@ -55,12 +55,12 @@ def install_mcp_mount(app: FastAPI, ctx: Context) -> None:
 
 
 def install_mcp_challenge_placeholder(app: FastAPI, ctx: Context) -> None:
-    """Register the 3a-4 challenge placeholder on ``/mcp`` (auth-sans-control).
+    """Register the discovery challenge placeholder on ``/mcp`` (auth-sans-control).
 
     Wired by the composition root onto shapes that serve the auth surface
-    WITHOUT control: the real mount lives where control lives (§6 Q1), but the
+    WITHOUT control: the real mount lives where control lives, but the
     RFC 9728 discovery pointers this shape serves must not dangle into a plain
-    404 — the placeholder keeps answering the 3a-4 challenge contract. Same
+    404 — the placeholder keeps answering the discovery challenge contract. Same
     exact-path ``Route`` registration mechanics as the mount (no prefix
     ``Mount``), so the routing-level tells stay identical.
     """

@@ -207,7 +207,7 @@ describe('AgentDetailPage', () => {
 		expect(await screen.findByText('Agent not found')).toBeInTheDocument();
 	});
 
-	// --- Phase 3: identity console (KPI strip + tabs) ----------------------
+	// --- Identity console (KPI strip + tabs) --------------------------------
 
 	it('renders the KPI strip from the per-actor usage aggregate', async () => {
 		renderDetail('agnt_active_1');
@@ -418,7 +418,7 @@ describe('AgentDetailPage', () => {
 		expect(await within(dialog).findByText('A reason is required.')).toBeInTheDocument();
 	});
 
-	// --- Phase 4: Settings tab (PATCH /agents/:id + danger zone) -----------
+	// --- Settings tab (PATCH /agents/:id + danger zone) ---------------------
 
 	it('renames an agent from the Settings tab, sending only the dirty field', async () => {
 		const user = userEvent.setup();

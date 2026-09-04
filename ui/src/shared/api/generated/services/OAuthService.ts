@@ -16,7 +16,7 @@ import { request as __request } from '../core/request';
 export class OAuthService {
     /**
      * List OAuth grants
-     * List consent→agent grants across all clients and agents (§4.8).
+     * List consent→agent grants across all clients and agents.
      *
      * The admin cross-view over the grant registry: filter by client, agent,
      * consenting user, or status. Each item carries the client's display name
@@ -150,7 +150,7 @@ export class OAuthService {
     }
     /**
      * Revoke OAuth grant
-     * Revoke a consent→agent grant — one of the three §4.6 kill radii.
+     * Revoke a consent→agent grant — one of the three revocation kill radii.
      *
      * Allowed for the grant's owner (the consenting user) or an admin. Marks
      * the grant ``revoked`` and revokes every outstanding access/refresh token
@@ -247,7 +247,7 @@ export class OAuthService {
      * parameters (user_id, email, scopes, redirect_uri) live server-side and
      * can't be tampered with or captured from browser history/proxy logs.
      *
-     * ``agent_id`` is posted only by the §4.4 agent-picker variant
+     * ``agent_id`` is posted only by the agent-picker variant
      * (``consent_model='agent'`` clients); it is validated and the scope math
      * recomputed entirely server-side — the browser's selection is never
      * trusted.
@@ -329,7 +329,34 @@ export class OAuthService {
     }
     /**
      * Revoke Endpoint
-     * Revoke a token (RFC 7009). Always returns 200.
+     * Revoke a token (RFC 7009). Always returns 200 for valid requests.
+     *
+     * Two client-authentication arms, negotiated on the request content type by
+     * ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+     * requests never reach it):
+     *
+     * - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+     * the shape MCP OAuth clients send, G11): `token` + optional
+     * `token_type_hint` + `client_id`. Public (secret-less) clients
+     * authenticate by client_id **lineage binding** — the call revokes
+     * anything only when the token exists and was issued to that `client_id`;
+     * everything else is a 200 no-op (no token-validity oracle). Revoking an
+     * access token kills that token only; revoking a **refresh token is a full
+     * disconnect** — every token of the consent grant AND the grant row itself
+     * die, so reconnecting requires fresh consent (deliberately beyond the
+     * RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+     * is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+     * 64 KiB declared body length, and per-IP rate limited; its errors speak
+     * the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+     * - **JSON** (any other content type — the pre-G11 contract, byte-identical
+     * including 422 shapes): requires a platform bearer identity; revokes the
+     * caller's own token (access → that token, refresh → its family). Used by
+     * `jentic logout`.
+     *
+     * Revocation residual: a revoked **access** token dies on the control-plane
+     * resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+     * may honour an already-cached verdict for up to 30 s — the same residual as
+     * the UI `:revoke` kill switch and the G10 transfer sweep.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -344,10 +371,12 @@ export class OAuthService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad Request`,
+                400: `Form-encoded (RFC 7009) requests only: missing \`token\` (RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): \`{"error": "invalid_request", "error_description": "..."}\`.`,
                 401: `Unauthorized`,
-                403: `Forbidden`,
+                404: `Form-encoded (RFC 7009) requests only: interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`), so the RFC 7009 arm answers the framework's plain route-not-found 404 (gate state unobservable — same posture as the anonymous DCR door). The bearer-authenticated JSON arm is not gated.`,
+                413: `Form-encoded (RFC 7009) requests only: declared Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect).`,
                 422: `Unprocessable Entity`,
+                429: `Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

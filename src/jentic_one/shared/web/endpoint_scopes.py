@@ -18,8 +18,8 @@ the CLI and docs SPA actually consume.
 Why a curated map exists
 ------------------------
 Most scope checks for the control plane happen in the *service layer*, not at the
-FastAPI dependency, so the route object alone does not know the required scope
-(see ``docs/plans/issue-529-endpoint-scope-tree.md`` §2c). For those operations we
+FastAPI dependency, so the route object alone does not know the required scope.
+For those operations we
 fall back to :data:`PATH_SCOPE_OVERRIDES` / :data:`ACTOR_TYPE_OVERRIDES` below.
 
 Contributing (humans **and** agents)
@@ -194,6 +194,12 @@ NON_IDENTITY_AUTH: dict[tuple[str, str], str] = {
     ("GET", "/register/{agent_id}"): (
         "Authenticated with the Registration-Access-Token issued at registration "
         "(RFC 7592), not a platform bearer token."
+    ),
+    ("POST", "/oauth/revoke"): (
+        "Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth "
+        "client_id lineage binding (public clients, auth method 'none' — the "
+        "token is revoked only if it was issued to the supplied client_id); "
+        "JSON requests keep the platform bearer-token contract."
     ),
 }
 

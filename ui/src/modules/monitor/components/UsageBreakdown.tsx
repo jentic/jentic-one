@@ -1,13 +1,12 @@
 /**
- * UsageBreakdown — ported from jentic-mini's `BreakdownSection`.
+ * UsageBreakdown.
  *
  * The "Breakdown" table with a segmented APIs / Toolkits / Agents toggle and
  * per-row Trend (sparkline), Health (success-rate dot), Volume (relative bar
- * + call count), and Speed (avg latency) columns. Replaces the interim
- * `TopOperations` panel that could only show busiest operations from the old
- * `GET /monitoring/executions` endpoint.
+ * + call count), and Speed (avg latency) columns, fed by the enriched
+ * `GET /monitoring/usage` aggregation.
  *
- * Rows collapse into a stacked layout on narrow viewports, same as mini.
+ * Rows collapse into a stacked layout on narrow viewports.
  */
 import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';

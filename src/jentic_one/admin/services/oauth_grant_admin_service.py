@@ -1,8 +1,8 @@
-"""Admin cross-view over OAuth consent→agent grants (phase-3a §4.8).
+"""Admin cross-view over OAuth consent→agent grants.
 
 The write side of the grant lifecycle (minting at consent, the ``:revoke``
 kill switch) lives in :mod:`jentic_one.auth.services.oauth_grant_service`;
-this service is the read side shared by the §4.8 listing surfaces — the
+this service is the read side shared by the grant listing surfaces — the
 ``GET /admin/oauth-grants`` cross-view and (behind the auth tier's
 owner-or-admin check) the per-agent "Connected clients" panel.
 """
@@ -35,8 +35,9 @@ def viewer_can_revoke(grant_user_id: str, identity: Identity) -> bool:
     the listing surfaces surface it per item as ``can_revoke``, so the two can
     never drift. Note the deliberate divergence from the LIST predicate:
     listing keys on the agent's CURRENT owner, revoke on the grant's
-    consenting user. Since G10 (#1222) the divergence can no longer strand a
-    LIVE grant with an unrevokable consenter — an agent ownership transfer
+    consenting user. The divergence cannot strand a
+    LIVE grant with an unrevokable consenter (G10, #1222) — an agent ownership
+    transfer
     revokes all active grants in the transfer transaction, and the mint path
     locks + re-checks ownership inside the grant transaction, so the
     invariant holds by construction, not by timing. It persists only on
@@ -67,7 +68,7 @@ class OAuthGrantAdminService:
         """List grants newest-first, filtered by agent/client/user/status.
 
         ``client_id`` is the public client identifier (the join key grants
-        store, D3). Each item carries the §4.8 display fields: client name,
+        store, D3). Each item carries the display fields: client name,
         redirect-URI origin, scopes, consenting ``user_id`` (G10), created,
         last-used, status — plus ``can_revoke``, the viewer's ``:revoke``
         capability computed per item via :func:`viewer_can_revoke`.

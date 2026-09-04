@@ -1,4 +1,4 @@
-"""Normalize an upstream's heterogeneous rate-limit signal to integer seconds (§09 E4.1).
+"""Normalize an upstream's heterogeneous rate-limit signal to integer seconds.
 
 Upstreams say "come back later" in mutually-incompatible ways:
 

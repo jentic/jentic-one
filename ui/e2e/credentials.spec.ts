@@ -7,8 +7,7 @@ import { test, expect, type Page } from '@playwright/test';
  * in-browser MSW credentials handlers, so it exercises the real routing +
  * dialog wiring without a live backend.
  *
- * Note: the create flow no longer surfaces the secret after saving — the
- * one-time-secret dialog was removed in favour of a success toast (secrets are
+ * Note: the create flow doesn't surface the secret after saving (secrets are
  * redacted everywhere once stored), so this asserts the toast + the new row.
  */
 

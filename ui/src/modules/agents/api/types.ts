@@ -209,7 +209,7 @@ export interface PermissionCatalogEntry {
 /**
  * One MCP session recorded for an agent — a projection of the
  * `mcp.session_started` internal event. `transport` is what the emitter knew
- * (`stdio` today; `http` when phase 3's mounted app lands) and renders
+ * (`stdio` today; `http` when the mounted `/mcp` app lands) and renders
  * verbatim so a future value degrades gracefully. `clientName`/`clientVersion`
  * come from the relayed MCP clientInfo and are null when the client didn't
  * send it (a SHOULD in the MCP spec) — "client unknown", not an error.
@@ -252,14 +252,14 @@ export interface InstanceIdentityEntity {
 	host: string;
 	/**
 	 * Whether the instance serves the daemon-native Streamable HTTP `/mcp`
-	 * endpoint (`server.mcp.enabled`, phase 3) — gates the config card's HTTP
+	 * endpoint (`server.mcp.enabled`) — gates the config card's HTTP
 	 * variant so the UI never advertises a transport that 404s.
 	 */
 	mcpEnabled: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// OAuth consent grants (phase-3a §4.8) — the detail console's "Connected
+// OAuth consent grants — the detail console's "Connected
 // clients" panel: which OAuth clients hold a live consent→agent grant.
 // ---------------------------------------------------------------------------
 

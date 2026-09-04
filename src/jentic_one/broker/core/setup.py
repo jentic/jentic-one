@@ -30,7 +30,7 @@ from jentic_one.shared.context import Context
 def build_jwt_verifier(broker: BrokerConfig) -> TokenVerifier | None:
     """Pick the JWT verifier from config: hardened JWKS > HS256 secret > disabled.
 
-    Trusted issuers (§08 E1) take precedence — asymmetric, rotation-aware, with
+    Trusted issuers take precedence — asymmetric, rotation-aware, with
     iss/aud/nbf + strict alg allowlist. The legacy HS256 shared secret remains for
     dev/test only. Neither configured ⇒ the JWT path is off (opaque tokens only).
     """

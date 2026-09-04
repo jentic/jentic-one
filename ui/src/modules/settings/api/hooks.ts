@@ -19,7 +19,7 @@ export type OAuthClient = OAuthClientResponse;
 
 // Derived from the shared cross-module root: the agent-stream provider
 // invalidates `sharedQueryKeys.oauthClientsRoot` when a live `oauth_client.*` /
-// `oauth_grant.*` event lands (phase-3a §4.8), which must hit these slices.
+// `oauth_grant.*` event lands, which must hit these slices.
 const QUERY_KEY = sharedQueryKeys.oauthClientsRoot;
 const QUEUE_KEY = [...QUERY_KEY, 'queue'] as const;
 // The permission catalogue is NOT client data — it gets its own root (like the
@@ -45,7 +45,7 @@ export function useOAuthClients(includeInactive = false) {
 }
 
 /**
- * The D7 approval queue (phase-3a §4.8): DCR registrations awaiting a
+ * The D7 approval queue: DCR registrations awaiting a
  * decision, or previously denied rows (deny is reversible — a later approve
  * un-bricks the client). `approval_status=pending|denied` implies
  * `include_inactive` server-side, so no flag is needed here.

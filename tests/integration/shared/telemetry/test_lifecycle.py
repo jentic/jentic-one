@@ -1,4 +1,4 @@
-"""Integration tests for the telemetry lifespan wiring (plan item 29).
+"""Integration tests for the telemetry lifespan wiring.
 
 Exercises ``_start_telemetry`` / ``_stop_telemetry`` against a real admin DB:
 

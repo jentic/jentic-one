@@ -2,8 +2,7 @@
  * WorkspacePage — the user's home base: the APIs registered in this jentic-one
  * instance.
  *
- * Ported from jentic-mini's Workspace home, narrowed to **APIs only** (mini's
- * page also carried workflows + toolkits, which live in other modules here).
+ * Scoped to **APIs only** (workflows + toolkits live in other modules).
  * The page owns the import dialog open-state (a single dialog reachable from
  * both the header button and the empty-state CTA) and an in-memory filter over
  * the loaded rows. Catalog-wide search lives in Discover, not here.

@@ -982,9 +982,9 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 	});
 
 	it('flags a never-connected OAuth credential and warns before adoption', async () => {
-		// The adopt picker previously trusted the operator's choice: a
-		// never-signed-in OAuth credential only failed at execute time. The
-		// redacted listing now carries the derived connect state, so the
+		// The adopt picker must not blindly trust the operator's choice: a
+		// never-signed-in OAuth credential would only fail at execute time. The
+		// redacted listing carries the derived connect state, so the
 		// picker warns BEFORE the pick is committed (#890).
 		const request = authPlanRequest();
 		stubAdoption(request);

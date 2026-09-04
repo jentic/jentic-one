@@ -1,6 +1,6 @@
 """The execute family for the mounted MCP app — control-plane→broker proxy.
 
-Master plan §6 Q1 (resolved 2026-09-02): the broker stays MCP-free, so the
+The broker stays MCP-free, so the
 mounted app forwards ``execute``/``execute_read`` calls server-side to the
 broker configured at ``server.mcp.broker_url``, relaying the caller's own
 bearer — the broker keeps enforcing identity, bindings, permission rules, and
@@ -11,7 +11,7 @@ This is a faithful port of the Go stdio server's execute path
 (``cli/internal/cli/api/mcp_execute.go`` over ``cli/internal/agentops``): the
 same resolve → build → send → classify lifecycle, the same envelope keys
 ({schema_version, status, headers, body, execution_id} — shared goldens pin
-them), the same §3.7 caps (128 KiB body, 8 KiB headers), and the same coded
+them), the same context-protection caps (128 KiB body, 8 KiB headers), and the same coded
 soft-error taxonomy (broker denial with the verbatim ``agent_directive``,
 earned ``retryable`` hints on transport failures, SEC-1 refusal of a bearer
 over plaintext to a non-loopback broker).
@@ -36,7 +36,7 @@ from jentic_one.mcp.envelopes import (
     ToolError,
 )
 
-#: §3.7 context-protection cap on a relayed response body (Go:
+#: Context-protection cap on a relayed response body (Go:
 #: ``defaultMaxResultBytes``). MCP has no chunking — a tool result lands in
 #: the model's context whole.
 MAX_RESULT_BYTES = 128 << 10
@@ -253,7 +253,7 @@ def broker_redirect_error(status: int, headers: httpx.Headers) -> ToolError | No
 
 
 def transport_error(exc: Exception, *, retry_safe: bool) -> ToolError:
-    """§3.7 transport row (Go: ``executeTransportError``).
+    """The coded transport-error row (Go: ``executeTransportError``).
 
     The ``retryable`` hint is earned, not blanket: ``True`` only when the
     caller proved the retry safe (GET/HEAD or an Idempotency-Key) or the
@@ -306,9 +306,9 @@ def execute_result_payload(
 ) -> dict[str, Any]:
     """The tool payload for a relayed broker response (Go: ``executeResultPayload``).
 
-    The exact CLI envelope keys with the §3.7 size caps applied — including
+    The exact CLI envelope keys with the size caps applied — including
     the held (202) envelope, which passes through with its directive intact
-    (§3.4: the model polls with ``get_execution_result``, never re-sends).
+    (the model polls with ``get_execution_result``, never re-sends).
     """
     single_valued = {key: headers[key] for key in headers}
     # Header names arrive lowercase from httpx; the CLI envelope (and the
@@ -345,9 +345,9 @@ def _canonical_header(name: str) -> str:
 
 def _server_user_agent() -> str:
     """``jentic-mcp/<version> (http)`` — the broker's own resolver derives
-    ``Origin.MCP`` from the ``jentic-mcp/`` UA prefix (phase-3 item 6 note:
-    httpx's default UA would classify these executions ``Origin.API`` and the
-    2-E2 per-agent "last active" signal would miss HTTP-mount traffic)."""
+    ``Origin.MCP`` from the ``jentic-mcp/`` UA prefix (httpx's default UA
+    would classify these executions ``Origin.API`` and the
+    per-agent "last active" signal would miss HTTP-mount traffic)."""
     try:
         v = version("jentic-one")
     except PackageNotFoundError:  # pragma: no cover - dev checkouts always resolve
@@ -365,7 +365,7 @@ class BodyTooLargeError(Exception):
 
     The Go twin's ``sdkclient.ReadAllBounded`` posture: fail closed instead of
     buffering without bound — the read stops at the cap, the connection is
-    dropped, and the failure surfaces as the §3.7 transport row (never a
+    dropped, and the failure surfaces as the coded transport row (never a
     truncated success: by the time the cap trips, the envelope caps in
     :func:`execute_result_payload` could no longer report an honest
     ``total_bytes``).

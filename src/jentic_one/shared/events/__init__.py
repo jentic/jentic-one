@@ -249,7 +249,7 @@ async def emit_credential_access(
     api_version: str,
     trace_id: str | None = None,
 ) -> str:
-    """Emit a credential-access audit event (§08 E3.4) and return its ID.
+    """Emit a credential-access audit event and return its ID.
 
     One record per resolve/decrypt of a stored credential, attributing the use
     to an actor. Called from the single resolve→decrypt→inject seam so each

@@ -345,7 +345,7 @@ func (s *mcpServer) executeResolveError(ctx context.Context, target string, err 
 // double-execute, so it gets `retryable: false` plus recovery guidance
 // (verify first, idempotency_key, get_execution_result for held jobs).
 // get_execution_result shares this helper for its own transport failures
-// (finding: they previously surfaced as INTERNAL_ERROR with no hints).
+// so they surface with hints rather than as a bare INTERNAL_ERROR.
 func (s *mcpServer) executeTransportError(ctx context.Context, err error, retrySafe bool) *mcp.CallToolResult {
 	s.logger.Warn("transport failure", "error", err, "retry_safe", retrySafe)
 	coded := asCoded(err)
