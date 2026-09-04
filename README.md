@@ -79,21 +79,19 @@ and runs with development-mode secrets — don't point it at a real credential:
 docker pull ghcr.io/jentic/jentic-one-app:latest
 docker volume create jentic-data
 
-# The three backing stores, as SQLite files on the shared volume
-DB=(-e JENTIC__DATABASES__REGISTRY__BACKEND=sqlite -e JENTIC__DATABASES__REGISTRY__PATH=/data/registry.db
-    -e JENTIC__DATABASES__CONTROL__BACKEND=sqlite  -e JENTIC__DATABASES__CONTROL__PATH=/data/control.db
-    -e JENTIC__DATABASES__ADMIN__BACKEND=sqlite    -e JENTIC__DATABASES__ADMIN__PATH=/data/admin.db)
+# Grab the trial config (SQLite on the volume) — tweak it, or use as is
+curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
 
 # Migrate, then start the two roles
-docker run --rm "${DB[@]}" -v jentic-data:/data \
+docker run --rm --env-file quickstart.env -v jentic-data:/data \
   ghcr.io/jentic/jentic-one-app:latest python -m jentic_one.migrations.run
-docker run -d --name jentic-app "${DB[@]}" -v jentic-data:/data \
+docker run -d --name jentic-app --env-file quickstart.env -v jentic-data:/data \
   -p 127.0.0.1:8000:8000 ghcr.io/jentic/jentic-one-app:latest      # control plane (UI + APIs)
-docker run -d --name jentic-broker "${DB[@]}" -e JENTIC__APPS=broker -v jentic-data:/data \
+docker run -d --name jentic-broker --env-file quickstart.env -e JENTIC__APPS=broker -v jentic-data:/data \
   -p 127.0.0.1:8100:8000 ghcr.io/jentic/jentic-one-app:latest      # data plane (agents call this)
 
 # First admin (prompts for a password), then sign in at http://127.0.0.1:8000
-docker run --rm -it "${DB[@]}" -v jentic-data:/data \
+docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
   ghcr.io/jentic/jentic-one-app:latest python -m jentic_one create-admin --email you@example.com
 ```
 

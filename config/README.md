@@ -6,6 +6,7 @@ Application configuration files for jentic-one.
 
 | File | Purpose |
 |------|---------|
+| `quickstart.env` | Docker trial shape from the [README quickstart](../README.md#self-hosted-docker) — SQLite files on one volume, passed via `--env-file` |
 | `local.yaml` | Local development — matches `docker/local-setup/docker-compose.yaml` ports |
 | `production.yaml.example` | Production template — copy and fill in real values |
 
