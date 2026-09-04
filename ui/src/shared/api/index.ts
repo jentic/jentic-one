@@ -27,7 +27,7 @@ export { SystemService } from '@/shared/api/generated/services/SystemService';
 // Toolkits domain (feat/ui-toolkits). Toolkit CRUD lives on `ToolkitsService`;
 // keys / credential bindings / permission rules were split per-tag into
 // Toolkit{Keys,Credentials,Permissions}Service; agent-side toolkit bindings
-// live on `AgentsService` (the /agents router, formerly `AuthService`).
+// live on `AgentsService` (the /agents router).
 export { ToolkitsService } from '@/shared/api/generated/services/ToolkitsService';
 export { ToolkitKeysService } from '@/shared/api/generated/services/ToolkitKeysService';
 export { ToolkitCredentialsService } from '@/shared/api/generated/services/ToolkitCredentialsService';
@@ -97,8 +97,8 @@ export type { jentic_one__auth__web__schemas__agents__DenyRequest as AgentDenyRe
 export type { jentic_one__auth__web__schemas__service_accounts__DenyRequest as ServiceAccountDenyRequest } from '@/shared/api/generated/models/jentic_one__auth__web__schemas__service_accounts__DenyRequest';
 
 // Agent Rail — the persistent live-event rail consumes the REAL platform event
-// feed (`/events` + `/events/stream` SSE) via `EventsService` (formerly the
-// coarse `AdminService`). These models are already generated; re-exported here
+// feed (`/events` + `/events/stream` SSE) via `EventsService`. These models
+// are already generated; re-exported here
 // (append-only) so the rail's data layer in `shared/lib/agentStream` can stay
 // behind the facade like every other module.
 export type { EventResponse } from '@/shared/api/generated/models/EventResponse';
@@ -209,9 +209,7 @@ export type { JobResponse } from '@/shared/api/generated/models/JobResponse';
 export type { JobListResponse } from '@/shared/api/generated/models/JobListResponse';
 
 // Monitor Overview parity: the enriched usage-aggregation endpoint
-// (GET /monitoring/usage, `MonitoringService.getUsageStats`) added by
-// jentic-one-internal#561; it superseded the coarser #386 stats endpoint
-// (GET /monitoring/executions), whose models are no longer consumed by the UI.
+// (GET /monitoring/usage, `MonitoringService.getUsageStats`).
 // Powers the full jentic-mini Overview port — bubble chart, per-row sparkline
 // trends, latency pills, and the api/toolkit/agent grouping toggle. `GroupBy`
 // is exported as a *value* because callers pass the enum members as the

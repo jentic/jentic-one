@@ -277,9 +277,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	// policy, and a bounded body read into the UX-free result. The broker leg
 	// rides clictx's SEC-20 CA-pinned client — fail closed on a broken
 	// ca_cert_path — with the context's TransportHook composed over it, exactly
-	// like the MCP path (§3.7.2). Previously this called agentops.Do, whose
-	// default client ignored the environment's ca_cert_path, so the cobra
-	// execute silently dropped the operator's trust decision (#1206). Resolved
+	// like the MCP path (§3.7.2). Resolved
 	// AFTER the dry-run gate: rendering a plan needs no transport, so --dry-run
 	// keeps working on a machine whose CA bundle is momentarily broken.
 	hc, err := clictx.BrokerHTTPClient(cmd.Context())

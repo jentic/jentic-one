@@ -359,7 +359,7 @@ export function ProvisioningRequestDialog({
 			if (!cs) return undefined;
 			// Backfill fields older drafts predate (adopt-existing support):
 			// their objects were all wizard-created, so `adopted: false` is the
-			// historically-accurate default, keeping them discardable. The
+			// accurate default for them, keeping them discardable. The
 			// stored JSON may genuinely lack these keys even though the type
 			// declares them, hence the runtime defaults.
 			aligned.push({

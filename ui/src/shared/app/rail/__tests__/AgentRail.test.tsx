@@ -595,12 +595,13 @@ describe('AgentRail — shell-mounted live surface', () => {
 	});
 
 	it('does not hold the feed empty when the cursor rests on the rail during mount', async () => {
-		// Regression: `mouseenter` before the backlog fetch resolves used to
-		// snapshot ZERO visible ids, so every seeded event was held back and the
-		// feed sat at "Holding · 4" with no rows. This is exactly what happens in
-		// browser-mode CI, where the shared pointer can be parked over the rail
-		// when the iframe mounts (and in prod when a user's cursor rests there
-		// during page load). An empty feed must never freeze.
+		// Regression pin: `mouseenter` before the backlog fetch resolves must
+		// not snapshot ZERO visible ids — that would hold back every seeded
+		// event, leaving the feed at "Holding · 4" with no rows. This is exactly
+		// what happens in browser-mode CI, where the shared pointer can be
+		// parked over the rail when the iframe mounts (and in prod when a
+		// user's cursor rests there during page load). An empty feed must
+		// never freeze.
 		renderRail(<AgentRail />);
 		const aside = await screen.findByRole('complementary', { name: 'Agent rail' });
 		fireEvent.mouseEnter(aside);
@@ -1314,7 +1315,7 @@ describe('access-request repository — real contract against the mock', () => {
 		expect(ar.actor_id).toBeTruthy();
 		expect(ar.requested_by).toBeTruthy();
 		expect(ar.actor_id).not.toBe(ar.requested_by);
-		// Required AccessRequestResponse fields the mock previously omitted.
+		// Required AccessRequestResponse fields the mock must include.
 		expect(ar.filed_at).toBeTruthy();
 		expect(ar.expires_at).toBeTruthy();
 		expect((ar as unknown as { approve_url?: string }).approve_url).toMatch(/access-requests/);

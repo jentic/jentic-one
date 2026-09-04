@@ -41,8 +41,8 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
 # ``apis:write`` is included so an agent can request the broader ability to
 # import, update, and delete arbitrary API definitions (URL/inline import via
 # ``POST /apis``) and have a human approve it. Importing an already-cataloged
-# API is now a default agent capability via ``catalog:import`` (in
-# ``DEFAULT_AGENT_SCOPES``), so agents no longer need to file a request just to
+# API is a default agent capability via ``catalog:import`` (in
+# ``DEFAULT_AGENT_SCOPES``), so agents don't need to file a request just to
 # run ``jentic catalog import``. ``apis:write`` is deliberately NOT in
 # ``DEFAULT_AGENT_SCOPES``: the agent must file the request and an owner must
 # approve it.

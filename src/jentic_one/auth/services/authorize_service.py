@@ -355,8 +355,8 @@ class AuthorizeService:
     ) -> None:
         """Audit a user's approve/deny decision on the OAuth consent screen.
 
-        Third-party consent decisions were previously only logged, so the audit
-        trail contained no record of *which* user consented to *which* client
+        Without this record the audit trail would contain no record of *which*
+        user consented to *which* client
         with *which* scopes — impossible to reconstruct after the fact.
         """
         async with self._ctx.admin_db.transaction() as session:

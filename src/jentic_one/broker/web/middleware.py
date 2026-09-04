@@ -1,7 +1,7 @@
 """Broker admission-control middleware (§04 R1, PR-B).
 
 Pure-ASGI middleware (**not** ``BaseHTTPMiddleware``): Starlette's
-``BaseHTTPMiddleware`` wraps the request in a way that has historically broken
+``BaseHTTPMiddleware`` wraps the request in a way that is known to break
 downstream ``request.stream()`` / ``request.body()`` consumption — and the §04
 body cap reads ``request.stream()`` in the handler. A plain ASGI middleware
 avoids that interaction (and is where the §05 rate limiter will key off the

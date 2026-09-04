@@ -15,8 +15,8 @@ import type { CreatedToolkit } from '@/modules/toolkits/api/types';
  * rules, so the form says the broker will default-deny until rules are added.
  *
  * Step 2 (key): the response's one-time plaintext key, rendered through the
- * same `OneTimeKeyDisplay` contract the Keys tab uses — previously this key
- * was silently thrown away on create. The plaintext is wiped from state the
+ * same `OneTimeKeyDisplay` contract the Keys tab uses — it must never be
+ * silently thrown away on create. The plaintext is wiped from state the
  * moment the dialog closes (sensitive-data rule) and the CTA hands off to the
  * new toolkit's detail page.
  */

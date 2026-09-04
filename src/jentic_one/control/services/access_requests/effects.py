@@ -115,9 +115,7 @@ class PlanGovernance:
     Default construction (``PlanGovernance()``) means "not governed by any
     plan" — the plain fulfilment contract applies. ``is_governed`` is the
     single decision point call-sites branch on; the id / API fields are for
-    the diagnostic path (which intent must be fulfilled? which API tuple?),
-    replacing the coarser ``is_provisioning_plan: bool`` that used to be
-    threaded through :meth:`EffectApplicator.validate`.
+    the diagnostic path (which intent must be fulfilled? which API tuple?).
     """
 
     governing_intent_ids: frozenset[str] = field(default_factory=frozenset)

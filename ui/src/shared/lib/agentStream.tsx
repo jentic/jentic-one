@@ -687,8 +687,7 @@ export function AgentStreamProvider({
 					setLatest(ev);
 					// Bridge: a filed/decided access request changes the durable
 					// queue + dashboard counts. Refresh those surfaces so they
-					// stop going stale (the rail used to be the ONLY thing that
-					// reacted to these events). Agent lifecycle events (CLI
+					// don't go stale. Agent lifecycle events (CLI
 					// self-registration, approval) likewise refresh the agent
 					// surfaces the instant they land.
 					if (ev.kind === 'access_request') {

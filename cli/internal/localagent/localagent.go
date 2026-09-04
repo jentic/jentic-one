@@ -990,10 +990,10 @@ func OperatorBinaryPath(ctx context.Context, binary string) string {
 
 // LookupHomeDir resolves the agent account's home directory from the OS account
 // database (os/user), returning an error if the account does not exist. This is
-// the authoritative home — it replaces the old `$(eval echo ~<user>)` shell
-// expansion, which spliced the account name into a command line where a crafted
-// name could have escaped into arbitrary shell. Resolving in Go means the name is
-// never interpreted by a shell at all.
+// the authoritative home. Resolving in Go means the account name is never
+// interpreted by a shell — a shell expansion like `$(eval echo ~<user>)` would
+// splice the name into a command line where a crafted name could escape into
+// arbitrary shell.
 func LookupHomeDir(agentUser string) (string, error) {
 	u, err := user.Lookup(agentUser)
 	if err != nil {

@@ -52,7 +52,7 @@ func installInterceptor(app *App, root *cobra.Command) {
 	}
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Preserve the shipped banner + update nudge (previously PersistentPreRun).
+		// Preserve the shipped banner + update nudge.
 		app.banner(cmd)
 		app.maybeNudgeUpdate(cmd)
 

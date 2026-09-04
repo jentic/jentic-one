@@ -35,8 +35,9 @@ def viewer_can_revoke(grant_user_id: str, identity: Identity) -> bool:
     the listing surfaces surface it per item as ``can_revoke``, so the two can
     never drift. Note the deliberate divergence from the LIST predicate:
     listing keys on the agent's CURRENT owner, revoke on the grant's
-    consenting user. Since G10 (#1222) the divergence can no longer strand a
-    LIVE grant with an unrevokable consenter — an agent ownership transfer
+    consenting user. The divergence cannot strand a
+    LIVE grant with an unrevokable consenter (G10, #1222) — an agent ownership
+    transfer
     revokes all active grants in the transfer transaction, and the mint path
     locks + re-checks ownership inside the grant transaction, so the
     invariant holds by construction, not by timing. It persists only on

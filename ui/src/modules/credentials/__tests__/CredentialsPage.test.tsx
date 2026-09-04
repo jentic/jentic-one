@@ -23,9 +23,8 @@ import {
 } from '@/shared/credentials/mocks/handlers';
 
 /**
- * The success toast that previously lived as a one-time-secret dialog is now
- * mounted at the app shell. Page-level tests need an explicit `<Toaster />`
- * sibling to observe it.
+ * The success toast is mounted at the app shell. Page-level tests need an
+ * explicit `<Toaster />` sibling to observe it.
  */
 function renderPage() {
 	return renderWithProviders(

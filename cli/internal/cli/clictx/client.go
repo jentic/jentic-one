@@ -32,8 +32,8 @@ func configFromState(state *ActiveState) (client.Config, error) {
 	}
 	// SEC-3/SEC-20: a per-environment custom CA bundle is honored by building an
 	// HTTPClient whose transport verifies against that pool. When ca_cert_path is
-	// set but cannot be loaded, we FAIL CLOSED (SEC-20) — previously this silently
-	// fell back to system roots, downgrading the operator's explicit trust
+	// set but cannot be loaded, we FAIL CLOSED (SEC-20) — silently falling back
+	// to system roots would downgrade the operator's explicit trust
 	// decision without a word. A corrupted/deleted bundle is a hard error the
 	// operator must fix, not a silent trust widening.
 	hc, err := caCertHTTPClient(state.CACertPath)
@@ -98,8 +98,8 @@ func stateForClient(state *ActiveState) (*ActiveState, error) {
 }
 
 // BrokerHTTPClient builds the base *http.Client for the broker leg of an
-// execute from the active context. Local-MCP §3.7.2: `execute`'s broker leg
-// historically built its own un-pinned client; the MCP path routes through
+// execute from the active context. Local-MCP §3.7.2: both `execute`'s broker
+// leg and the MCP path route through
 // this constructor so broker calls honor the same trust decision as every
 // other backend call. Callers pass the result to client.BrokerTransport, which
 // decorates the retry/backoff policy on the outside.

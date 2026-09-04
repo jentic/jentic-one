@@ -223,7 +223,7 @@ async def test_execution_failed_carries_error_source_and_origin_together() -> No
 
 @pytest.mark.asyncio
 async def test_execution_completed_carries_origin_tag() -> None:
-    """EXECUTION_COMPLETED (previously tag-less) now accepts the Origin tag."""
+    """EXECUTION_COMPLETED accepts the Origin tag."""
     sink = _RecordingSink(enabled=True)
     create = _fake_create()
 

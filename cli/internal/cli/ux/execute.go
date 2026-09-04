@@ -13,13 +13,12 @@ import (
 // ExecuteEnvelope is the versioned success envelope for `jentic execute` (and
 // any other surface — e.g. an MCP handler — that relays a brokered upstream
 // response): {schema_version, status, headers, body, execution_id?}, matching
-// the agent-commands contract. It replaces the ad-hoc inline map the execute
-// command used to build, so the CLI and future callers share one struct.
+// the agent-commands contract. The CLI and future callers share this one struct.
 //
 // FIELD ORDER IS LOAD-BEARING: encoding/json emits struct fields in declaration
-// order, and the golden-pinned envelope was historically marshaled from a map —
-// alphabetical key order. The fields are declared alphabetically by JSON key so
-// the emitted document stays byte-identical to the frozen contract.
+// order, and the golden-pinned envelope uses alphabetical key order. The fields
+// are declared alphabetically by JSON key so the emitted document stays
+// byte-identical to the frozen contract.
 type ExecuteEnvelope struct {
 	// Body is the upstream response body: parsed JSON when it decodes, else the
 	// raw body as a string.

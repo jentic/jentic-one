@@ -45,13 +45,13 @@ func TestBadFlagKV(t *testing.T) {
 }
 
 // TestExecuteMalformedHeaderWinsOverInsecureBroker freezes the doubly-invalid
-// precedence the agentops extraction changed (PR #1179 review #2): ParseKVs on
-// --header now runs BEFORE BuildRequest's SEC-1 secure-transport guard, so a
+// precedence (PR #1179 review #2): ParseKVs on
+// --header runs BEFORE BuildRequest's SEC-1 secure-transport guard, so a
 // malformed --header combined with a SEC-1-violating broker target (plaintext
-// http to a non-loopback host) surfaces MISSING_ARGUMENT — previously SEC-1 ran
-// first and TRANSPORT_ERROR won. Both codes map to exit 1 (ux/contract.go), so
+// http to a non-loopback host) surfaces MISSING_ARGUMENT, not
+// TRANSPORT_ERROR. Both codes map to exit 1 (ux/contract.go), so
 // exit parity holds; error_code is part of the closed machine contract (13
-// §3a), so the new order is pinned here as a decision, not an accident.
+// §3a), so the order is pinned here as a decision, not an accident.
 func TestExecuteMalformedHeaderWinsOverInsecureBroker(t *testing.T) {
 	app := testApp(t)
 	// Loopback control plane; never dialed — GET:/v1/pets short-circuits the
@@ -1222,10 +1222,10 @@ func TestExecuteRemoteBrokerGuardHonoursExplicitLoopback(t *testing.T) {
 	}
 }
 
-// TestExecuteCmdBrokerLegHonorsCAPin is the #1206 regression, modeled on
+// TestExecuteCmdBrokerLegHonorsCAPin is the #1206 pin, modeled on
 // TestMCPExecute_BrokerLegHonorsCAPinAndHook (§3.7.2): the COBRA execute
-// path's broker leg must ride clictx's SEC-20 CA-pinned client — previously it
-// fell through agentops.Do's default, un-pinned client, silently ignoring the
+// path's broker leg must ride clictx's SEC-20 CA-pinned client — a default
+// un-pinned client would silently ignore the
 // environment's ca_cert_path. The broker here serves a cert only the
 // environment's bundle trusts, so success proves the pinned client carried the
 // request; the un-pinned default would fail TLS verification.
@@ -1274,8 +1274,8 @@ func TestExecuteCmdBrokerLegHonorsCAPin(t *testing.T) {
 	}
 
 	// SEC-20 fail-closed: a set-but-broken bundle is an error, never a silent
-	// fallback to system roots (which is exactly what the un-pinned default
-	// client used to do).
+	// fallback to system roots (which is exactly what an un-pinned default
+	// client would do).
 	state.CACertPath = filepath.Join(t.TempDir(), "missing.pem")
 	err := app.executeE(cmd, opts, "GET:/v1/pets")
 	if err == nil {

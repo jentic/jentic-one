@@ -69,10 +69,8 @@ func NewSkillCmd(app *cmdcore.App) *cobra.Command {
 			"and AGENTS.md content lives in named managed blocks, so re-running never\n" +
 			"clobbers your own edits around them.",
 		// UX-20: bare `jentic skill` shows help like every other group parent
-		// (context/env/identity/access/api) — it must NOT mutate. Previously it
-		// aliased to `skill init`, which non-interactively wrote SKILL.md into
-		// every detected operator home with no confirmation. Writes now live only
-		// under the explicit `skill init` subcommand.
+		// (context/env/identity/access/api) — it must NOT mutate. Writes live
+		// only under the explicit `skill init` subcommand.
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
