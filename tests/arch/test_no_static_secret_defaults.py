@@ -1,11 +1,9 @@
 """Enforce that no config secret ships a static default value.
 
 Shipped images must not contain default credentials: AWS Marketplace's
-container policy rejects hardcoded/default passwords found in image layers
-(their scanner flags the literal itself — a boot-time production guard does
-not help). This was found in review: the ``CHANGE-ME-IN-PRODUCTION``
-placeholder defaults were cited as "static/default passwords" and blocked the
-listing.
+container policy rejects hardcoded/default passwords found in image layers.
+Their scanner flags the secret-shaped literal itself, so a boot-time
+production guard does not satisfy the policy — the literal must not exist.
 
 The rule enforced here: every ``SecretStr``-typed field reachable from
 ``AppConfig`` must default to empty/None/required. Dev ergonomics are provided

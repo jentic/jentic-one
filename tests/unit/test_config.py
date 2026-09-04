@@ -221,6 +221,34 @@ def test_empty_jwt_secret_rejected_in_production(blank: str):
         AdminAuthConfig(jwt_secret=SecretStr(blank))
 
 
+@pytest.mark.parametrize("placeholder", ["change-me-in-production", "ChangeMe-2026"])
+def test_placeholder_jwt_secret_rejected_in_production(placeholder: str):
+    """A change-me placeholder in production is as unsafe as an empty value.
+
+    Placeholder values come from published examples and configs, so they are
+    publicly known — signing tokens with one means anyone can forge admin
+    JWTs. Boot must fail closed, exactly as it does for a blank.
+    """
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
+    ):
+        AdminAuthConfig(jwt_secret=SecretStr(placeholder))
+
+
+def test_placeholder_jwt_secret_replaced_in_development():
+    """A change-me placeholder in dev is treated as unset, never signed with.
+
+    The generated per-process secret takes its place, so a copied example
+    config still boots locally without ever using the publicly-known value.
+    """
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        cfg = AdminAuthConfig(jwt_secret=SecretStr("change-me-in-production"))
+    generated = cfg.jwt_secret.get_secret_value()
+    assert generated.strip()
+    assert generated != "change-me-in-production"
+
+
 def test_session_lifetime_defaults():
     """Defaults: 1 h JWT, 12 h absolute session window."""
     with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):

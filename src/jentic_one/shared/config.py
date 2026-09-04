@@ -35,6 +35,13 @@ _logger = structlog.get_logger(__name__)
 # production guard would reject them at boot).
 _EPHEMERAL_DEV_SECRETS: dict[str, SecretStr] = {}
 
+# A configured value matching this is a forgotten placeholder (copied from an
+# old example or config), never a real secret — any such value is publicly
+# known, so signing with it is equivalent to signing with no key at all.
+# Expressed as a pattern, not a literal, so no secret-shaped string ships in
+# the image.
+_PLACEHOLDER_SECRET_RE = re.compile(r"change.?me", re.IGNORECASE)
+
 
 def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretStr:
     """Return the configured secret, or mint a per-process one for dev.
@@ -43,20 +50,25 @@ def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretS
     (admin ``jwt_secret``, invite ``pepper``, connect ``state_secret``). The
     shipped default for all of them is empty:
 
-    - ``JENTIC_ENV=production``: an empty/whitespace value is a hard
-      ``ConfigError`` — the install path (jenticctl install, the Helm chart's
-      generated Secret) provides real values, so a blank reaching production
-      means that step was skipped.
+    - ``JENTIC_ENV=production``: an empty/whitespace value — or a change-me
+      placeholder — is a hard ``ConfigError``. The install path (jenticctl
+      install, the Helm chart's generated Secret) provides real values, so an
+      unusable value reaching production means that step was skipped.
     - development/test: generate a random per-process secret so the app still
       boots with zero configuration. Cached per ``field_path`` so repeated
       loads in one process agree; deliberately NOT persisted, so restarts
       rotate it (dev sessions ending on restart beats shipping a known key).
+      Per-process means multi-process dev setups (standalone surfaces,
+      ``--workers > 1``) each mint their own value; each secret is consumed
+      only by its own surface, so a shared value is never assumed.
     """
-    if value.get_secret_value().strip():
+    secret = value.get_secret_value()
+    if secret.strip() and not _PLACEHOLDER_SECRET_RE.search(secret):
         return value
     if os.environ.get("JENTIC_ENV", "development") == "production":
         raise ConfigError(
-            f"{field_path} must be explicitly configured in production "
+            f"{field_path} must be explicitly configured in production — "
+            "empty and placeholder values are rejected "
             "(jenticctl install generates one automatically)"
         )
     if field_path not in _EPHEMERAL_DEV_SECRETS:
