@@ -130,6 +130,13 @@ def test_private_use_scheme_redirects_accepted_on_dcr_door(uri: str) -> None:
         "file:///etc/passwd",
         "cursor://anysphere.cursor-mcp/cb#fragment",
         "cursor://",
+        # review-1246 F1/F2/F3/F5 pins on the DCR door's taxonomy.
+        "intent://scan/",
+        "cursor://h/cb#",
+        "cursor://h/cb\n",
+        "cursor://h/cb\x00",
+        "http://evil.com@localhost/cb",
+        "http://evil.com\\@localhost/cb",
     ],
 )
 def test_dangerous_or_malformed_private_use_redirects_rejected(uri: str) -> None:

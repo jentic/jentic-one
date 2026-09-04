@@ -414,3 +414,86 @@ async def test_admin_client_creation_door_still_rejects_private_use_schemes(
             .all()
         )
     assert list(rows) == []
+
+
+async def test_dcr_http_door_rejects_dispatch_schemes_and_control_chars(
+    native_flow_ctx: Context, clean_grants: None, clean_dcr_clients: None
+) -> None:
+    """Pin (review-1246 F1/F2 at the HTTP door): ``intent://`` and raw
+    control-char/whitespace redirect URIs are 400s, and no row is written."""
+    ctx = native_flow_ctx
+    app = _make_app(ctx)
+    async with _web_client(app) as client:
+        for bad_redirect in (
+            "intent://scan/",
+            "cursor://h/cb\n",
+            "cursor://h/cb\x00",
+            " cursor://h/cb",
+            "cursor://h/cb#",
+        ):
+            resp = await client.post(
+                "/oauth-clients",
+                json={
+                    "client_name": "Hostile",
+                    "redirect_uris": [bad_redirect],
+                    "token_endpoint_auth_method": "none",
+                },
+            )
+            assert resp.status_code == 400, (bad_redirect, resp.text)
+    async with ctx.admin_db.session() as session:
+        rows = (
+            (await session.execute(select(OAuthClient).where(OAuthClient.name == "Hostile")))
+            .scalars()
+            .all()
+        )
+    assert list(rows) == []
+
+
+async def test_mid_flow_redirect_narrowing_invalidates_inflight_code(
+    native_flow_ctx: Context, clean_grants: None, clean_dcr_clients: None
+) -> None:
+    """review-1246 F6: an admin narrowing the client's redirect set inside the
+    code TTL invalidates codes minted for the removed URI — the token leg
+    re-validates against the client's *live* set, not just the code row."""
+    ctx = native_flow_ctx
+    owner_id = await seed_user(ctx, "usr_native_narrow")
+    agent_id = await seed_agent(
+        ctx, owner_id=owner_id, scopes=["apis:read"], name="native-narrow-agent"
+    )
+    await _link_external_identity(ctx, user_id=owner_id, external_subject="ext-native-narrow")
+
+    app = _make_app(ctx)
+    async with _web_client(app) as client:
+        client_id = await _register_cursor_client(client)
+        await _approve_client(ctx, client_id)
+
+        code = await _mint_code_via_consent(
+            app,
+            client,
+            client_id=client_id,
+            external_subject="ext-native-narrow",
+            email=f"{owner_id}@grants.test",
+            agent_id=agent_id,
+            state="narrow-state-1",
+        )
+
+        # Narrow the live redirect set out from under the in-flight code.
+        # (Simulated at the row level: the admin PATCH door is strict and
+        # cannot even re-submit a cursor:// set — see the strict-door pins.)
+        async with ctx.admin_db.transaction() as session:
+            row = (
+                await session.execute(select(OAuthClient).where(OAuthClient.client_id == client_id))
+            ).scalar_one()
+            row.redirect_uris = ["https://replaced.example.com/cb"]
+
+        resp = await client.post(
+            "/oauth/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": CODE_VERIFIER,
+                "redirect_uri": _CURSOR_REDIRECT,
+                "client_id": client_id,
+            },
+        )
+        assert resp.status_code == 400, resp.text

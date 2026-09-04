@@ -44,17 +44,71 @@ _MAX_REDIRECT_URI_LENGTH = 2048
 _LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 #: Schemes that must never be a redirect target, even where RFC 8252 §7.1
-#: private-use schemes are accepted (the anonymous DCR door): browser-
-#: executable schemes (``javascript``/``data``/``vbscript``/``blob``/
-#: ``about``), local-resource schemes (``file``/``chrome``), and registered
-#: transport schemes a native app has no business claiming as a callback
-#: (``ws``/``wss``/``ftp``). Matched case-insensitively.
+#: private-use schemes are accepted (the anonymous DCR door). A denylist can
+#: never cover attacker-installed *local* handlers — that residual is inherent
+#: to §7.1 and PKCE/consent-compensated — but schemes with **built-in** UA/OS
+#: dispatch behavior (no local install needed) are the server's job to block.
+#: Matched case-insensitively against the RAW scheme (see the charset check
+#: below); schemes ending in ``-extension`` are rejected as a class.
 _PRIVATE_USE_SCHEME_DENYLIST = frozenset(
-    {"javascript", "data", "file", "vbscript", "blob", "about", "chrome", "ws", "wss", "ftp"}
+    {
+        # Browser-executable / script schemes.
+        "javascript",
+        "data",
+        "vbscript",
+        "blob",
+        "about",
+        # Local-resource / browser-internal schemes (extension schemes are
+        # additionally caught by the ``-extension`` suffix rule).
+        "file",
+        "chrome",
+        "chrome-extension",
+        "moz-extension",
+        "safari-extension",
+        "view-source",
+        "filesystem",
+        "resource",
+        "res",
+        "jar",
+        # OS dispatch schemes with side effects and no install step: Android
+        # intents / app links, the Windows protocol-handler CVE class
+        # (ms-msdt is Follina), packaged-app schemes.
+        "intent",
+        "android-app",
+        "ms-msdt",
+        "search-ms",
+        "ms-officecmd",
+        "ms-appx",
+        "ms-appx-web",
+        # Compose/dialer schemes — dispatch side effects, never a callback.
+        "mailto",
+        "tel",
+        "sms",
+        "callto",
+        # Registered transport/remote-session schemes a native app has no
+        # business claiming as a callback.
+        "ws",
+        "wss",
+        "ftp",
+        "ssh",
+        "vnc",
+        "smb",
+    }
 )
 
 #: RFC 3986 §3.1 scheme grammar: ``ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )``.
 _RFC3986_SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
+
+#: The full RFC 3986 URI character set (unreserved + gen-delims + sub-delims
+#: + ``%``), enforced against the RAW string *before* any parsing on every
+#: door. ``urlparse`` strips ``\t\r\n`` anywhere and leading/trailing
+#: C0-controls/space before parsing (CVE-era hardening), so without this
+#: check a raw string carrying control bytes validates clean yet is stored —
+#: and later emitted into a ``Location`` header — with the bytes intact
+#: (and a NUL byte 500s on Postgres TEXT while SQLite accepts it: a backend
+#: divergence). This also rejects raw ``\\``, whitespace, and unencoded
+#: non-ASCII, which WHATWG browsers parse differently from ``urlparse``.
+_RFC3986_URI_CHARS_RE = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]*\Z")
 
 
 @functools.cache
@@ -74,6 +128,12 @@ def _dummy_argon2_hash() -> str:
 
 def _validate_redirect_uris(uris: list[str], *, allow_private_use_schemes: bool = False) -> None:
     """Validate redirect URIs: HTTPS always; http only for the loopback hosts.
+
+    Every door additionally requires the RAW string to stay inside the
+    RFC 3986 URI character set (no whitespace/control bytes — they survive
+    ``urlparse``'s pre-parse stripping and would otherwise be stored and
+    emitted verbatim), bans ``#`` outright, and rejects userinfo in http(s)
+    authorities (WHATWG/urlparse authority-parsing divergence).
 
     ``allow_private_use_schemes=True`` is the anonymous-DCR arm (RFC 8252
     §7.1): native apps redirect to a private-use scheme they control, e.g.
@@ -97,27 +157,52 @@ def _validate_redirect_uris(uris: list[str], *, allow_private_use_schemes: bool 
             raise InvalidInputError(
                 f"redirect_uri exceeds maximum length of {_MAX_REDIRECT_URI_LENGTH}"
             )
+        # Charset gate on the RAW string, before urlparse can sanitize: no
+        # whitespace, no control chars (NUL/CR/LF/TAB included), no backslash,
+        # no unencoded non-ASCII — on every door (review-1246 F2).
+        if not _RFC3986_URI_CHARS_RE.fullmatch(uri):
+            raise InvalidInputError(
+                f"redirect_uri contains characters outside the RFC 3986 URI set: {uri!r}"
+            )
+        # Fragment ban checked as raw '#' presence: ``parsed.fragment`` is
+        # falsy for a trailing bare ``#`` (``cursor://h/cb#``), which would
+        # otherwise slip through and mint ``…#?code=…`` redirects violating
+        # RFC 6749 §3.1.2 byte-wise (review-1246 F3).
+        if "#" in uri:
+            raise InvalidInputError(f"redirect_uri must not contain a fragment component: {uri}")
+        # The scheme is taken from the RAW string (prefix up to the first
+        # ':') so grammar and denylist checks can never be masked by parser
+        # sanitization; the charset gate above guarantees urlparse sees the
+        # same bytes we validate (review-1246 F2).
+        raw_scheme, colon, _ = uri.partition(":")
+        scheme = raw_scheme.lower() if colon else ""
         parsed = urlparse(uri)
-        scheme = parsed.scheme.lower()
         is_web_scheme = scheme in ("https", "http")
         # An authority (netloc) is required for https/http on every door, and
         # for every scheme on the strict door (preserves its historic "invalid
         # redirect_uri" rejection of opaque forms like ``javascript:alert(1)``).
         requires_netloc = is_web_scheme or not allow_private_use_schemes
-        if not parsed.scheme or (requires_netloc and not parsed.netloc):
+        if not scheme or (requires_netloc and not parsed.netloc):
             raise InvalidInputError(f"invalid redirect_uri: {uri}")
-        if parsed.fragment:
-            raise InvalidInputError(f"redirect_uri must not contain a fragment component: {uri}")
         if is_web_scheme:
+            # Userinfo has no place in a redirect target, and WHATWG browsers
+            # split the authority around '@' differently from urlparse —
+            # ``http://evil.com@localhost/cb`` validates as loopback here but
+            # navigates a browser to evil.com. Backslash divergence is already
+            # excluded by the charset gate above (review-1246 F5).
+            if "@" in parsed.netloc:
+                raise InvalidInputError(
+                    f"redirect_uri must not contain userinfo in the authority: {uri}"
+                )
             if scheme == "http" and parsed.hostname not in _LOOPBACK_HOSTS:
                 raise InvalidInputError(f"http redirect_uri only allowed for localhost: {uri}")
             continue
         if not allow_private_use_schemes:
             raise InvalidInputError(f"redirect_uri must use https or http: {uri}")
         # --- private-use (custom) scheme arm — anonymous DCR door only ---
-        if not _RFC3986_SCHEME_RE.fullmatch(parsed.scheme):
+        if not _RFC3986_SCHEME_RE.fullmatch(raw_scheme):
             raise InvalidInputError(f"invalid redirect_uri scheme: {uri}")
-        if scheme in _PRIVATE_USE_SCHEME_DENYLIST:
+        if scheme in _PRIVATE_USE_SCHEME_DENYLIST or scheme.endswith("-extension"):
             raise InvalidInputError(f"redirect_uri scheme '{scheme}' is not allowed: {uri}")
         if not parsed.netloc and not parsed.path:
             raise InvalidInputError(f"invalid redirect_uri: {uri}")
