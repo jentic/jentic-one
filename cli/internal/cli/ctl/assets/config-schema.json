@@ -31,7 +31,7 @@
           "type": "integer"
         },
         "jwt_secret": {
-          "default": "**********",
+          "default": "",
           "format": "password",
           "title": "Jwt Secret",
           "type": "string",
@@ -70,7 +70,7 @@
       "description": "Admin invite token settings.",
       "properties": {
         "pepper": {
-          "default": "**********",
+          "default": "",
           "format": "password",
           "title": "Pepper",
           "type": "string",
@@ -366,7 +366,7 @@
       "description": "Configuration for the OAuth connect flow.",
       "properties": {
         "state_secret": {
-          "default": "**********",
+          "default": "",
           "format": "password",
           "title": "State Secret",
           "type": "string",
