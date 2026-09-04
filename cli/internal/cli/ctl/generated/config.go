@@ -75,7 +75,7 @@ func (j *AdminAuthConfig) UnmarshalJSON(value []byte) error {
 		plain.FailedLoginLockoutThreshold = 5
 	}
 	if v, ok := raw["jwt_secret"]; !ok || v == nil {
-		plain.JwtSecret = "**********"
+		plain.JwtSecret = ""
 	}
 	if v, ok := raw["jwt_ttl_seconds"]; !ok || v == nil {
 		plain.JwtTtlSeconds = 3600
@@ -123,7 +123,7 @@ func (j *AdminInviteConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["pepper"]; !ok || v == nil {
-		plain.Pepper = "**********"
+		plain.Pepper = ""
 	}
 	if v, ok := raw["ttl_days"]; !ok || v == nil {
 		plain.TtlDays = 7
@@ -634,7 +634,7 @@ func (j *ConnectConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["state_secret"]; !ok || v == nil {
-		plain.StateSecret = "**********"
+		plain.StateSecret = ""
 	}
 	if v, ok := raw["state_ttl_seconds"]; !ok || v == nil {
 		plain.StateTtlSeconds = 600
