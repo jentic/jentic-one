@@ -53,7 +53,7 @@ Connect agents:
 Operate the catalog:
 
 - [Fix a spec with an overlay](guides/overlays.md) — patching imported API descriptions
-- [How credential resolution works](guides/credentials-and-toolkits.md) — the credential/toolkit model
+- [How credential resolution works](guides/credentials-and-toolkits.md) — how secrets stay server-side, encrypted, and audited
 
 Integrate apps:
 

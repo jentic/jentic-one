@@ -24,8 +24,8 @@ Operate the catalog:
 
 - [Fix a spec with an overlay](overlays.md) — patching an imported API
   description without forking it.
-- [How credential resolution works](credentials-and-toolkits.md) — the
-  credential/toolkit model and its invariants.
+- [How credential resolution works](credentials-and-toolkits.md) — how
+  secrets stay server-side: encrypted storage, providers, injection, audit.
 
 Integrate apps:
 
