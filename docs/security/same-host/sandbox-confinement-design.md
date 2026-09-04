@@ -1,56 +1,46 @@
-# Plan — confine the agent process with `sandbox-exec` / `bwrap`
+# Process confinement with `sandbox-exec` / `bwrap` — design rationale
 
-> **Implemented.** This began as the design for a per-session process-confinement
-> layer on top of the agent-account + allow-ACL model, replacing the `chmod 700 ~`
-> default-deny. It now ships in `cli/internal/localagent/confine.go`; this doc is
-> kept as the reference for *why* the profile is shaped the way it is. The mechanics
-> it builds on live in [`filesystem-access-model.md`](filesystem-access-model.md);
-> the flows it slots into live in [`local-agent-isolation.md`](local-agent-isolation.md).
-> Two boundaries hardened since the first draft: the deny covers **all** human-home
-> roots (`/Users`, `/home`), not just the operator's home, and the agent's
+> The per-session process-confinement layer sits on top of the agent-account +
+> allow-ACL model and ships in
+> [`cli/internal/localagent/confine.go`](../../../cli/internal/localagent/confine.go).
+> This doc is the reference for *why* the profile is shaped the way it is. The
+> mechanics it builds on live in
+> [`filesystem-access-model.md`](filesystem-access-model.md); the flows it slots
+> into live in [`local-agent-isolation.md`](local-agent-isolation.md). Two
+> boundaries beyond the core idea: the deny covers **all** human-home roots
+> (`/Users`, `/home`), not just the operator's home, and the agent's
 > executable/CLI routes are mounted **read-only** — see
 > [Non-negotiable boundaries](filesystem-access-model.md#non-negotiable-boundaries).
 
 ## Why
 
-The [sibling-traversal residual](filesystem-access-model.md#the-sibling-traversal-residual-closed-by-confinement)
+The [sibling-traversal leak](filesystem-access-model.md#the-sibling-traversal-leak--why-acls-alone-cannot-close-it)
 cannot be closed portably by ACLs/modes alone: POSIX ACLs (Linux) have no `deny`
 primitive, and macOS has no native bind mount. The
-[settled division of labour](filesystem-access-model.md#chosen-division-of-labour--account--allow-acl--sandbox)
-moves per-entry control onto **process confinement** — restrict what the *launched
+[division of labour](filesystem-access-model.md#division-of-labour--account--allow-acl--sandbox)
+puts per-entry control on **process confinement** — restrict what the *launched
 agent process* can see, rather than stamping the tree. Native on both OSes,
 unprivileged, writes nothing to disk, self-cleans on process exit.
 
-## The three layers after this change
+## The three layers
 
-1. **Agent Unix account (floor, unchanged).** The credential boundary rests on
+1. **Agent Unix account (the floor).** The credential boundary rests on
    ownership — unconditional, independent of any profile being correct or
-   `sandbox-exec` surviving a future macOS. Kept exactly as-is.
-2. **Allow-only ACL grants (unchanged).** Traverse-walk + recursive rwx-leaf open
+   `sandbox-exec` surviving a future macOS.
+2. **Allow-only ACL grants.** Traverse-walk + recursive rwx-leaf open
    the one chosen path to the agent uid. Still required — the sandbox is
    **intersection-only** and can never grant a uid access its ownership denies. We
    add **no** default-deny / inherited-deny / per-sibling deny ACEs.
-3. **Per-session confinement profile (new).** A Seatbelt profile (macOS) / a
+3. **The per-session confinement profile.** A Seatbelt profile (macOS) / a
    `bwrap` namespace (Linux) that **denies every human-home root (`/Users`,
    `/home`) except the granted subpaths and the agent's own home**, and marks the
    agent's executable routes **read-only**. This is what closes the sibling leak.
    See [Profile model](#profile-model--targeted-home-deny-not-deny-default) for why
    this is a *targeted deny* rather than a strict `(deny default)` allow-list.
 
-## What changes in code
-
-Small, additive. The ACL machinery is untouched.
-
-| # | Change | File(s) |
-|---|--------|---------|
-| 1 | **Stop enforcing `chmod 700 ~`.** Remove the `LockOperatorHomeCmd` call from setup. Keep the function only if still referenced; otherwise delete it and its test. | `cli/internal/cmd/agentuser.go`, `cli/internal/localagent/localagent.go` |
-| 2 | **Confinement launcher shim.** New `ConfineLaunchCmd(...)` (or wrap `LaunchCmd`) that runs the agent under `sandbox-exec -f <profile>` (macOS) / `bwrap ...` (Linux). When confinement is **unavailable** it does **not** fall back to an unconfined run — it **errors closed** (see below). | `cli/internal/localagent/` (new file, e.g. `confine.go` + `confine_darwin.go` / `confine_linux.go`) |
-| 3 | **Profile generation.** Build the deny-set (operator home) and allow-set (granted dirs + runtime needs) from `cfg.GrantedDirs`. Written to a temp file owned/readable by the agent, removed on exit. | same package |
-| 4 | **Wire into `jentic run`.** Launch through the shim instead of `LaunchCmd` directly. | `cli/internal/cmd/run.go` |
-| 5 | **Availability detection + error-closed.** Detect `sandbox-exec` (macOS) / unprivileged userns + `bwrap` (Linux); on absence, **refuse the launch** with a clear message that fully locked-down sessions aren't available on this machine and point the operator at an alternative (e.g. Dockerising the agent). Never launch unconfined. | shim |
-
-**Config:** `GrantedDirs` already persists the allow-set (`config/file.go`) — the
-profile is derived from it, nothing new to store.
+The profile is derived per launch from the recorded grants (`GrantedDirs` in the
+operator's agent state) — there is no separate profile state to manage, so
+revoke and reset take effect on the next launch automatically.
 
 ## Profile model — targeted home-deny, not `(deny default)`
 
@@ -131,67 +121,55 @@ provider config the agent legitimately owns — is already permitted by
 write-deny on exec routes). This is precisely the brittleness a `(deny default)`
 profile would have incurred, and why the targeted-deny model avoids it.
 
-## What stays the same
+## What the profile does not replace
 
-- **`localagent.Classify` and the sensitivity rules stay.** The home root and
-  sensitive dotfile dirs remain un-grantable even with 700 removed — the classifier
-  is a gate on what the CLI *offers*, not DAC enforcement, and this change does not
-  relax it. It now returns a two-class verdict (soft ban vs hard-subtree ban), and
-  banned paths get **no grant option at all**, but the sensitivity set is unchanged.
-- **Traverse-walk + rwx-leaf ACLs stay.** Removing our `chmod 700` does **not** set
-  `~` to `0755`; on macOS a login home is `0700` by OS default, so the agent still
-  needs the execute-only traverse ACEs to reach a grant. The leaf grant is still
-  required for the agent uid to read/write at all.
-- **Lifecycle (grant / list / revoke / reset) unchanged** — grants still persist in
-  config; the profile is regenerated from config each launch, so revoke/reset just
-  work.
+- **`localagent.Classify` and the sensitivity rules.** The home root and
+  sensitive dotfile dirs remain un-grantable — the classifier is a gate on what
+  the CLI *offers*, not DAC enforcement. It returns a two-class verdict (soft
+  ban vs hard-subtree ban), and banned paths get **no grant option at all**.
+- **The traverse-walk + rwx-leaf ACLs.** The operator home keeps its OS-default
+  mode (`0700` on macOS), so the agent still needs the execute-only traverse
+  ACEs to reach a grant, and the leaf grant is still required for the agent uid
+  to read/write at all.
+- **The grant lifecycle (grant / list / revoke / reset).** Grants persist in the
+  operator's agent state; the profile is regenerated from it each launch, so
+  revoke and reset just work.
 
-## The trust shift (explicit)
+## The trust boundary (explicit)
 
-Today, world-readable-sibling confidentiality rests on `chmod 700 ~`
-(ownership/mode). After this change it rests on **the confinement profile being
-applied**. Consequences:
+World-readable-sibling confidentiality inside `~` rests on **the confinement
+profile being applied**, not on ownership or mode:
 
-- **Real secrets (0700 dotfiles) are unaffected** — ownership protects them
-  regardless; the sandbox only ever subtracts.
-- **World-readable siblings are protected by the profile, not the mode.** Since the
-  in-`~` confidentiality now depends on the profile, we must never launch without
-  it — see error-closed below.
+- **Real secrets (0700 dotfiles) are protected by ownership regardless** — the
+  sandbox only ever subtracts.
+- **World-readable siblings are protected by the profile, not the mode.** Since
+  in-`~` confidentiality depends on the profile, a session must never launch
+  without it — see error-closed below.
 
 ## Error-closed — no unconfined fallback
 
 When confinement is unavailable — `sandbox-exec` absent/removed on macOS, or no
 unprivileged user namespaces / no `bwrap` on Linux — `jentic run` **refuses to
 launch**. It does *not* fall back to an unconfined session, because that would
-silently reinstate the very sibling leak the layer exists to close, now without the
-`chmod 700 ~` that used to backstop it.
+silently reinstate the very sibling leak the layer exists to close.
 
-The failure is not meant to be a big deal for the operator: we surface a clear
-message that **fully locked-down agent sessions aren't available on this machine**
-and point them at an alternative isolation route (e.g. Dockerising their agent),
-rather than dumping a low-level error. The agent account + ACL grants still exist;
-what's missing is the process-confinement layer, so the honest thing is to decline
-the locked-down launch and say why.
+The failure is not meant to be a big deal for the operator: `jentic run` surfaces
+a clear message that **fully locked-down agent sessions aren't available on this
+machine** and points at an alternative isolation route (e.g. Dockerising the
+agent), rather than dumping a low-level error. The agent account + ACL grants
+still exist; what's missing is the process-confinement layer, so the honest thing
+is to decline the locked-down launch and say why. Setup checks the same
+prerequisites (`localagent.AgentUserPrereqs`) before creating the account, so the
+setup-time and launch-time gates can never disagree.
 
-## Open risks (carried from the model doc)
+## Known risks
 
 - **macOS `sandbox-exec` is deprecated/undocumented** (still functional; underlies
-  the App Sandbox). Risk is a *future* macOS removing the CLI wrapper — at which
-  point confinement is unavailable and we **error closed** (above), not silently
-  downgrade.
-- **Linux unprivileged userns is gated on some hardened distros** → detection, then
-  error-closed with the same guidance if unavailable.
-- **Profile authoring** — the targeted-home-deny model keeps this tractable (we only
-  name `~` and the granted subpaths), but a smoke test should still confirm a
-  granted dir is reachable and a world-readable sibling is not.
-
-## Sequencing
-
-1. **This doc** (design first). ✅
-2. Confinement shim + profile generation, gated on availability detection; when
-   unavailable it errors closed (never launches unconfined). ✅
-   (`cli/internal/localagent/confine.go`)
-3. Remove the `chmod 700 ~` enforcement. ✅
-4. Smoke: confined launch can reach a granted dir and **cannot** read a
-   world-readable sibling; the unavailable path refuses to launch with the
-   Docker-alternative guidance.
+  the App Sandbox). The risk is a *future* macOS removing the CLI wrapper — at
+  which point confinement is unavailable and `jentic run` **errors closed**
+  (above), never silently downgrades.
+- **Linux unprivileged userns is gated on some hardened distros** → detection,
+  then error-closed with the same guidance when unavailable.
+- **Profile authoring** — the targeted-home-deny model keeps this tractable (only
+  the human-home roots and the granted subpaths are named), and the smoke check
+  is that a granted dir is reachable while a world-readable sibling is not.

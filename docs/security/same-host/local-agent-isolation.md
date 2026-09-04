@@ -1,4 +1,4 @@
-# Design: run the agent as its own Unix user, wrapped by `jentic`
+# Run the agent as its own Unix user, wrapped by `jentic`
 
 > Builds on the [threat model](threat-model.md). The structural fix is: run a CLI coding
 > agent (Claude Code is the worked example) under a **dedicated, unprivileged OS
@@ -11,8 +11,7 @@
 > operators should never have to type them. **The `jentic` CLI wraps the whole
 > lifecycle** — the shell snippets in this doc are what the commands run under
 > the hood, shown so the behaviour is auditable, not so anyone runs them by hand.
-> Platform details are as of 2026-07 and deliberately avoid depending on any
-> machine's group defaults.
+> Platform details deliberately avoid depending on any machine's group defaults.
 
 ## The operator's whole workflow — three commands
 
@@ -48,10 +47,8 @@ jentic run claude --revoke  ~/work/api   # remove a grant, then exit
 ```
 
 Any command that prints the directory tree ends with a one-line reminder of how
-to revoke a grant. (The V1 `jentic profile view` access map was removed with the
-`profile` surface in the V2 activation; `--list-grants` is how the agent's
-filesystem reach is inspected, and `jentic access whoami` covers the API side of
-"what can I do?".)
+to revoke a grant. `--list-grants` is how the agent's filesystem reach is
+inspected; `jentic access whoami` covers the API side of "what can I do?".
 
 ### Forwarding arguments to the agent
 
@@ -274,10 +271,9 @@ Three things worth calling out, because they're the load-bearing parts:
 - **Per-session process confinement is the isolation guarantee.** `jentic run`
   launches the agent under a confinement profile (sandbox-exec on macOS, bwrap on
   Linux) that denies the operator's home except the granted subpaths, and **errors
-  closed** if confinement is unavailable. This replaces the earlier blanket `chmod
-  700 ~`: it closes the same read path *and* the sibling-traversal leak a whole-home
-  700 could not, without changing the operator home's own permissions. Real secrets
-  keep their own `0700` modes regardless. See
+  closed** if confinement is unavailable. It closes the in-home read path and the
+  sibling-traversal leak without changing the operator home's own permissions.
+  Real secrets keep their own `0700` modes regardless. See
   [`sandbox-confinement-design.md`](sandbox-confinement-design.md) and the
   [filesystem-access model](filesystem-access-model.md).
 - **The agent's home is the shared space.** It lives under an existing shared
@@ -327,17 +323,6 @@ writer, one source of truth, one refreshed projection.
 > longer record `config_dir`; the field is retained read-only so `jentic migrate`
 > can rescue profiles from an old agent home and `jentic reset` keeps removing the
 > legacy directory on teardown.
-
-> **Future improvement — default agent home under the operator's home.** Today the
-> agent home lives under a shared parent (`/Users/Shared/<agent>`, `/opt/<agent>`).
-> A nicer default would be `~/jentic-agents/<agent-name>` — discoverable, clearly
-> owned by the operator's account tree, and self-documenting. It would require
-> granting the agent an **execute-only traverse** on the operator's home (the same
-> Layer-1 mechanism [Step 4](#step-4--directory-access-traverse-walk--rwx-leaf--confinement)
-> uses for working dirs) so it can reach `~/jentic-agents/<agent>` without *reading*
-> anything else in `~`. The tradeoff is a **persistent** execute ACE on `~`, with
-> open questions still to resolve. **Deferred; not implemented** — the full
-> plan is kept in internal planning notes.
 
 ### Optional: passwordless launch
 
@@ -395,18 +380,12 @@ can never be granted even if the trusted list and classification ever drifted. T
 is the same precedence the whole grant flow follows: the boundaries cancel out
 anything an offer would otherwise propose.
 
-> **Applies to every selected agent binary (forward-looking).** Agent selection is
-> **single-choice today**, so this runs for the one binary picked (e.g.
-> `claude`), reading **its** trusted-projects list. Selection will become
-> **multi-choice** — the operator will be able to pick several agent binaries
-> (`claude`, `hermes`, …) in one setup run. When it does, this workspace offer must
-> run for **each** selected binary. Unlike a home-wide marker scan, the
-> trusted-projects source is **per-binary** (Claude Code's `~/.claude.json` here;
-> another agent would have its own), so each binary reads **its own** trusted list
-> — `TrustedWorkspaces` already dispatches on the agent descriptor. Wire the
-> multi-binary loop so each selected binary's own trusted set is offered; because
-> there is a single shared account, all the resulting grants land as one
-> consolidated `granted_dirs` list on that one account (one uid, one ACL set).
+> **The offer is per-binary.** Agent selection is single-choice, so the offer
+> runs for the one binary picked (e.g. `claude`) and reads **its** trusted-projects
+> source (`TrustedWorkspaces` dispatches on the agent descriptor — Claude Code's
+> `~/.claude.json` here; another agent has its own). Because there is a single
+> shared account, every grant lands in the one consolidated `granted_dirs` list on
+> that account (one uid, one ACL set).
 
 ## `jentic run <agent>` — the daily driver
 
@@ -451,8 +430,7 @@ and token state (0600, fsynced), chowned to the agent. The `jentic` the agent
 runs resolves that store from disk like any other user, so it acts as the
 operator's current identity with no flags and no environment-variable injection;
 switching contexts as the operator re-points the next launch automatically, with
-no drifting second copy. (This replaces the V1 model of profile check-out plus a
-`JENTIC_PROFILE` variable injected into the session.)
+no drifting second copy.
 
 What it does, in order:
 
@@ -582,7 +560,7 @@ single agent user; the operator's own access is never touched) in three layers:
 
 - **Layer 0** — the default-deny is the per-session confinement profile
   (sandbox-exec/bwrap), which denies the operator home except the granted subpaths;
-  we add **no** ACL to `~` itself and no longer `chmod 700 ~`.
+  we add **no** ACL to `~` itself and never change its mode.
 - **Layer 1 — traverse-walk** — execute-only (search, not list, not read) on each
   ancestor from `~` down to the leaf's parent, so the agent can pass *through* to a
   known path without enumerating it.
@@ -748,9 +726,9 @@ Design requirements baked into that plan:
   is a full teardown, so it walks the recorded ancestor chains and drops the
   execute-only entries it added. (Contrast `--revoke`, which intentionally leaves
   traverse grants in place for the next grant.)
-- **It never changes the operator home's own permissions** — setup no longer locks
-  it, and teardown only drops the agent's named-user ACLs — and never touches the
-  operator's own files; the "NOT touched" block states this explicitly so the
+- **It never changes the operator home's own permissions** — setup never changes
+  its mode, and teardown only drops the agent's named-user ACLs — and never touches
+  the operator's own files; the "NOT touched" block states this explicitly so the
   operator can see the blast radius stops at the agent.
 
 ### Order of operations
@@ -810,9 +788,8 @@ call would only add `http 401` noise).
 
 Finer-grained removal is deliberately **not** reset's job: `jentic context
 delete` / `jentic identity delete` remove a single context or identity and leave
-the agent account, its grants, and everything else alone. (The V1
-`jentic reset <profile>` single-profile arm was removed with the profile surface
-in the V2 activation.) Two properties keep the identity wipe safe:
+the agent account, its grants, and everything else alone. Two properties keep the
+identity wipe safe:
 
 - **Scoped to the invoking account.** Because `reset` runs *as the operator* (never
   `sudo jentic reset`), the wipe can only touch the account's own store
@@ -837,8 +814,10 @@ a `jentic reset` with no agent account is a valid identity-only clean slate.
 "Clean slate" means agent + identity, not bare metal. Four things are left intact
 by design:
 
-- **Skills** — the generated skill files (see [below](#not-yet-implemented--skill-cleanup)).
-- **The operator home's permissions** — setup never locks them and reset never
+- **Skills** — reset does not remove the generated skill files that
+  `setup`/`wizard` wrote into the operator's agent runtimes. Remove them with the
+  `jentic skill` tooling (`jentic skill remove`) or by hand.
+- **The operator home's permissions** — setup never changes them and reset never
   changes them; teardown only drops the agent's named-user ACLs.
 - **The agent home** — preserved and re-owned to the operator by default (the
   agent's work survives); deleting it is the separate, explicit home confirmation.
@@ -851,17 +830,6 @@ by design:
   store and any legacy `~/.jentic/profiles`) and the `agent_account:` object, but
   leaves other settings (telemetry consent, theme) and the config files themselves
   in place. It resets your *identity and agent account*, not every preference.
-
-### Not yet implemented — skill cleanup
-
-One further teardown responsibility belongs to `jentic reset` by design but is
-**not implemented yet**: removing the generated skill files. `setup`/`wizard`
-write the Jentic CLI-usage skill into each operator's native layout; a full
-decommission should delete the managed skill block/files it added for the agent, the
-inverse of the skill step, just as reset already inverts the account/ACL/sudoers/
-config steps. Until this lands, operators must remove skill files by hand (or re-run
-`jentic skill` tooling). The **"NOT touched"** block above remains accurate on this
-one point: reset does not currently remove skill files.
 
 ## GUI IDEs (Cursor / VS Code)
 

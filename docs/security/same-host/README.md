@@ -41,7 +41,7 @@ analysis and design rationale behind it:
 | [`threat-model.md`](threat-model.md) | **The problem.** The same-user attack paths (AP-1…AP-4) and why isolating the *agent* is strictly stronger than isolating Jentic One. The design docs below cite its AP codes. |
 | [`local-agent-isolation.md`](local-agent-isolation.md) | **The design.** Run the agent as a dedicated Unix user, wrapped by the `jentic` CLI: account creation folded into `setup` / `wizard`, then `jentic run <agent>`, directory grants, and `jentic reset`. |
 | [`filesystem-access-model.md`](filesystem-access-model.md) | **The permission mechanics.** How the agent's and operator's accounts reach — and are kept out of — each other's files: traverse-walk + rwx-leaf ACLs, the inherited operator grant, per-session process confinement, and the grant/revoke/reset lifecycle. |
-| [`sandbox-confinement-design.md`](sandbox-confinement-design.md) | **The confinement layer.** The per-session process confinement (`sandbox-exec` on macOS, `bwrap` on Linux) that closes the sibling-traversal leak and replaces the `chmod 700 ~` default-deny: why it's a targeted human-home deny, why it errors closed, and the non-negotiable boundaries (whole-`/Users`+`/home` deny, read-only exec routes). |
+| [`sandbox-confinement-design.md`](sandbox-confinement-design.md) | **The confinement layer.** The per-session process confinement (`sandbox-exec` on macOS, `bwrap` on Linux) that closes the sibling-traversal leak: why it's a targeted human-home deny, why it errors closed, and the non-negotiable boundaries (whole-`/Users`+`/home` deny, read-only exec routes). |
 
 For the broader deployment guidance (network postures, tiers, the production
 checklist) see [`../security.md`](../security.md).

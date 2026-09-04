@@ -14,12 +14,11 @@ boundary runs in **both** directions across them:
 | Operator home `~` (e.g. `/Users/alice`) | operator | per-session **process confinement** (sandbox-exec/bwrap) hides all but granted paths | **per-directory named-user ACLs**, granted on demand |
 | Agent home (e.g. `/Users/Shared/alice-local-agent`) | agent | agent-owned, under a **shared** parent | an **inherited operator ACL**, laid down at creation |
 
-> **Note.** An earlier iteration closed `~` with a blanket `chmod 700`. That is
-> gone: in-home confidentiality against the agent is now enforced per session by the
-> [process-confinement layer](sandbox-confinement-design.md) (`jentic run` launches under
-> sandbox-exec/bwrap and **errors closed** if confinement is unavailable), which
-> also closes the sibling-traversal leak a blanket 700 could not. Real secrets keep
-> their own `0700` modes regardless.
+> **Note.** In-home confidentiality against the agent is enforced per session by
+> the [process-confinement layer](sandbox-confinement-design.md): `jentic run`
+> launches under sandbox-exec/bwrap and **errors closed** if confinement is
+> unavailable. The model never changes the operator home's own mode; real secrets
+> keep their own `0700` modes regardless.
 
 The asymmetry is deliberate: the operator's home is the thing worth protecting,
 so it is closed by default and opened one path at a time; the agent's home is
@@ -43,8 +42,8 @@ The agent process is launched under a per-session confinement profile
 [`sandbox-confinement-design.md`](sandbox-confinement-design.md). The re-allow list is the agent's
 own home, the granted directories, and metadata-traversal on their ancestors;
 everything else **under `/Users` and `/home`** is invisible to the agent regardless
-of its mode. We add **no** ACL to `~` itself, and we no longer `chmod 700 ~`. Because
-in-home confidentiality now rests on the profile being applied, `jentic run`
+of its mode. We add **no** ACL to `~` itself and never change its mode. Because
+in-home confidentiality rests on the profile being applied, `jentic run`
 **errors closed** when confinement is unavailable rather than launching an exposed
 session. This is the layer that makes the per-entry non-negotiable (grant `~/a`,
 hide `~/b`) hold — the ACLs below only ever *open* access; they never trim it.
@@ -161,16 +160,13 @@ grant flow:
    its own sandbox on the *next* `jentic run`. Because it protects the launcher
    itself, it is a default that the grant flow never opens.
 
-### The sibling-traversal residual (closed by confinement)
+### The sibling-traversal leak — why ACLs alone cannot close it
 
-> **Resolved.** This section states the problem and the candidate fixes it drove.
-> The chosen answer — a per-session confinement profile — is now implemented; see
-> [`sandbox-confinement-design.md`](sandbox-confinement-design.md). The analysis below is retained
-> because it explains *why* the ACL layer alone cannot close the leak.
+The confinement layer exists because the ACL layer has a structural gap.
 
-**Symptom.** With `~` closed, the agent can touch nothing under it. Grant `~/a`
-and the agent can now also reach `~/b` — a sibling it was never granted. Concretely
-it can `ls ~/b` (and read its contents) when `~/b` happens to be world-readable.
+**Symptom.** Grant `~/a` and the agent could — without confinement — also reach
+`~/b`, a sibling it was never granted, whenever `~/b` happens to be
+world-readable.
 
 **Root cause — directory execute is not per-entry.** To reach `~/a`, the kernel
 checks *execute (search)* on every path component: `/` → `/Users` → `~` → `~/a`.
@@ -181,150 +177,47 @@ the agent can search `~`:
 
 - it still **cannot `ls ~`** — enumerating siblings needs *read* on `~`, which we
   never grant — so it can't discover names it doesn't already know; but
-- it **can reach any sibling it can name**, and whether it can then read/list that
-  sibling falls entirely to *that sibling's own mode*:
-  - `~/b` at `0700`/`0750` → stays closed (the common case for real secrets). ✅
-  - `~/b` at `0755` (world-readable — e.g. a checked-out repo, a `Public` dir) →
-    the agent reads it as the "other" class. ❌ **This is the leak.**
+- it **can reach any sibling it can name**, and whether it can then read that
+  sibling falls entirely to *that sibling's own mode*: `0700`/`0750` stays closed
+  (the common case for real secrets), while `0755` — a checked-out repo, a
+  `Public` dir — is readable. That is the leak.
 
-**Blast radius.** Bounded to *world-readable* siblings — material any local user
-could already read. Genuinely sensitive dirs (`~/.ssh`, `~/.aws`, `~/.jentic`, …)
-are `0700`/`0750` and unaffected. The concern is precisely that the isolated agent
-is meant to be *less* trusted than a normal local user, so "any local user could
-read it" is not the bar we want.
+No in-place ACL/mode arrangement closes it portably: Linux POSIX ACLs have no
+`deny` primitive, macOS has no native bind mount, and stripping the world bit
+from the operator's own directories would mutate their files. The answer is on a
+different axis: control the **process's view** of the tree, not the tree. The
+per-session confinement profile denies the human-home roots and re-opens only the
+granted paths, so `~/b` is invisible to the agent process regardless of its mode —
+per-entry control with nothing stamped on disk, torn down when the session exits.
+[`sandbox-confinement-design.md`](sandbox-confinement-design.md) is the design
+reference for the profile.
 
-**The hard constraint.** Any *in-place* access to `~/a` requires execute on `~`.
-The only way to leave `~` untouched is to make the agent's path to the content
-**not pass through `~`** at all.
+### Division of labour — account + allow-ACL + sandbox
 
-**Candidate recourse** (no free lunch — closing it in place means either mutating
-the operator's own files or a non-`~` path):
-
-| # | Approach | Closes leak? | Cost / caveat |
-|---|----------|:---:|---|
-| 1 | **Bind-mount outside `~`** — expose `~/a` at e.g. `/Users/Shared/agent-grants/<agent>/a`, grant there, add **no** ACL to `~` | fully | The clean fix. Linux `mount --bind`; **macOS has no native bind mount** → needs macFUSE/`bindfs` (kernel-ext dep). Stateful: persist + tear down on revoke/reset/reboot. Root. |
-| 2 | **Neutralize the world bit** — `chmod o-rwx` the operator's world-readable dirs under `~` at grant time (record + restore on reset) | existing siblings | Mutates the operator's *own* files; may break their tools; TOCTOU — dirs created after the grant leak again. |
-| 3 | **Explicit deny ACEs** — add `deny read` for the agent on each sibling | existing siblings | macOS-only (POSIX ACLs have no deny); same enumerate-at-grant / new-sibling-leaks churn as #2; N siblings = N ACEs. |
-| 4 | **Keep workspaces out of `~`** — steer agent-shared projects to `/Users/Shared/…`; `~` is never traversed | fully (by avoidance) | Cheapest, no new machinery; requires the workflow change that agent-touched code doesn't live under `~`. |
-| 5 | **Status quo** — accept the residual; rely on the danger-classifier + real secrets being `0700` | bounded | Already implemented + documented (here). |
-
-Why none of #1–#3 is a clean answer to the non-negotiable ("grant `~/a` without
-implicitly exposing `~/b`"):
-
-- **The ACL/mode approaches (#2, #3) fight per-directory search semantics and are
-  asymmetric across platforms.** The exposure is only ever *world-readable*
-  siblings, so the set to neutralize is the top-level *children* of each traversed
-  ancestor — dozens, not the tree — which makes them far lighter than a recursive
-  inherited-deny. But **Linux POSIX ACLs have no `deny` primitive at all**, so #3
-  is macOS-only; on Linux the sole lever is stripping the operator's own world bit
-  (#2), which mutates their files and can break their tooling. Both are stateful
-  (record + restore) and TOCTOU-prone (a sibling created after the grant leaks
-  until re-scanned).
-- **The clean structural fix (#1) is not portable.** A bind mount gives a
-  genuinely non-`~` path, but macOS has no native bind mount — it needs a
-  third-party kernel extension (macFUSE/`bindfs`), which we've ruled out.
-
-This is why the honest conclusion is that **ACLing the shared tree cannot satisfy
-the non-negotiable portably** — every in-place variant either can't express deny
-on Linux or has to mutate the operator's own files. That pushes the search toward
-a different axis entirely: instead of controlling *the tree*, control *the
-process's view of the tree*.
-
-### A different axis — confine the process, not the tree
-
-The primitives above all answer "who may touch this inode?" The alternative is to
-answer "what can *this process* see?" — launch the agent into a restricted view
-where only the granted paths exist (or are reachable) and everything else in `~`
-is absent or denied, regardless of its mode. This is per-*process*, not
-per-*inode*, so it gives true per-entry control (grant `~/a`, `~/b` is invisible)
-**without stamping or mutating anything on disk**, and it tears down when the
-session process exits. There is no single cross-platform API, but each OS has a
-native mechanism with the same shape:
-
-| OS | Primitive | How it confines | Privilege | Teardown | Maturity / caveat |
-|----|-----------|-----------------|-----------|----------|-------------------|
-| **Linux** | **Mount namespace** (`unshare`/`clone` `CLONE_NEWNS`) + user namespace, or **`bwrap`** (bubblewrap) | New empty mount ns; `--ro-bind`/`--bind` only the granted dirs in — everything else on the host is *invisible*, `~` never appears | **Unprivileged** via user namespaces (no root/setuid) | **Automatic** — ns + its mounts are destroyed when the last member process exits | Mature (Flatpak uses bwrap). Needs `CONFIG_USER_NS` + unprivileged userns enabled (some distros gate it) |
-| **Linux (alt)** | **Landlock LSM** | Process restricts *itself* to a ruleset of allowed path FDs; unlisted paths denied. Doesn't hide, but denies — `~/b` unreadable even if `0755` | **Unprivileged** (needs `no_new_privs`) | Automatic — dies with the process; cannot be relaxed, inherited by children | Linux **5.13+** only; ABI is versioned/best-effort. Complements, doesn't replace, the namespace |
-| **macOS** | **Seatbelt** sandbox profile via **`sandbox-exec -f profile.sb`** (SBPL) | `(deny default)` then `(allow file-read* (subpath "~/a"))` — a default-deny profile that only permits the granted subpaths; `~/b` reads denied by the kernel | **Unprivileged** (wraps the launched command) | Automatic — policy is per-process, gone when it exits | ⚠ **`sandbox-exec`/SBPL is deprecated and undocumented by Apple** (still functional, and is how the App Sandbox works under the hood). Depending on an undocumented interface is the central risk |
-
-**Why this is the promising axis.** It's the only family that (a) satisfies the
-per-entry non-negotiable exactly, (b) needs no root, (c) writes nothing to disk
-and self-cleans on exit, and (d) has a real native mechanism on *both* OSes — so
-"works on Linux and macOS" is met by a thin per-OS launcher shim rather than one
-portable call.
-
-> **What actually shipped is the *targeted-home-deny* variant of this axis, not
-> the idealized `(deny default)` above.** The table presents the conceptual
-> primitive (deny everything, re-allow the grants); the implementation
-> ([`confine.go`](../../../cli/internal/localagent/confine.go)) keeps the base
-> **permissive** — `(allow default)` on macOS, `--dev-bind / /` on Linux — then
-> denies the human-home roots and re-opens the grants, so the agent's own runtime
-> deps never break on an OS/agent update. The per-entry guarantee inside `/Users`
-> and `/home` still holds (grant `~/a`, `~/b` invisible); the difference is that
-> paths *outside* a human home (network, `/tmp`, `/etc`, process-exec) stay
-> reachable. See Layer 0 above for the precise scope. The `chmod 700 ~` step this
-> section originally paired with confinement has since been **removed**, so the
-> profile is now the *sole* in-home barrier — there is no 700-home fallback behind
-> it.
-
-**Open risks to resolve before committing.**
-
-- **macOS deprecation (open, but de-risked).** `sandbox-exec` is the load-bearing
-  piece and Apple marks it deprecated. It is, however, **confirmed still functional
-  on current macOS**, and it is the same Seatbelt machinery the App Sandbox itself
-  runs on — so it is not going away quietly. The residual risk is a *future* macOS
-  removing the CLI wrapper; there is no supported alternative for our case (the App
-  Sandbox proper requires an entitled, signed app — not applicable to wrapping a
-  third-party agent binary we don't control). Verdict: **sandbox-exec might be
-  viable to build on**, with a fallback to the ACL model if a future OS drops it.
-- **Linux userns availability.** Unprivileged user namespaces are disabled by
-  default on some hardened distros; need a detection + fallback story (Landlock,
-  or the ACL model, when unavailable).
-- **SBPL profile authoring.** Getting a default-deny profile that allows *just*
-  the granted subpaths while still letting the agent binary, its dylibs, its own
-  home, and the loopback socket to Jentic One work is fiddly and version-sensitive.
-- **Interaction with the CLI-tool PATH sharing and provider config** — those
-  paths (`/opt/homebrew/bin`, the agent's own `~/.aws`) must be allowed in the
-  profile/binds too.
-
-**Current leaning** (provisional, to be revisited): **process confinement** is the
-most promising route to the non-negotiable and the next thing to prototype —
-`bwrap` on Linux (mature, unprivileged, self-cleaning) and a `sandbox-exec` SBPL
-profile on macOS (confirmed still functional; deprecation is a manageable future
-risk, not a blocker). Keep **#4** (workspaces outside `~`) as the recommended
-zero-machinery posture regardless, and retain the current 700 + ACL grants as the
-defense-in-depth layer underneath. Treat #2/#3 as non-defaults, and consider #1
-dead for our purposes (no portable macOS bind mount).
-
-### Chosen division of labour — account + allow-ACL + sandbox
-
-> **Provisional, but settled enough to prototype against.** The three layers are
-> orthogonal and each does the one thing it is good at:
+The three layers are orthogonal and each does the one thing it is good at:
 
 - **The dedicated agent account is the floor.** The credential boundary
   (`~/.jentic`, the DB, Keychain, the operator's browser/SSH) rests on Unix
   *ownership* — unconditional, and independent of any sandbox profile being correct
-  or `sandbox-exec` surviving a future macOS. This stays.
-- **ACL grants stay *allow-only* and coarse.** The existing traverse-walk +
+  or `sandbox-exec` surviving a future macOS.
+- **ACL grants are *allow-only* and coarse.** The traverse-walk +
   rwx-leaf grants open the one chosen path to the agent uid — that is all they do.
   The macOS sandbox is **intersection-only** (a process reaches a file only if
   *both* its uid's DAC check *and* the profile allow it; the sandbox can only ever
   *subtract*, never grant a uid access its ownership denies), so a DAC grant is
   still required to let the agent uid reach an operator-owned path under `~`, and
-  ACLs remain the least-invasive form of it. **We do not add default-deny,
-  inherited-deny, or per-sibling deny ACEs** — approaches #2/#3 are off the table;
-  the ACL layer stays exactly as simple as it is today.
-- **`sandbox-exec` closes the sibling leak on top.** A `(deny default)` profile
-  that allows only the granted subpath means that even though the coarse ACL grant
-  plus home traversal *could* expose a world-readable sibling `~/b`, the profile
-  denies the agent process any path it wasn't granted. The residual stops being an
-  ACL problem and becomes a profile the launcher writes per session — no tree
-  mutation, self-cleaning on exit.
+  ACLs are the least-invasive form of it. **We do not add default-deny,
+  inherited-deny, or per-sibling deny ACEs** — the ACL layer stays exactly this
+  simple.
+- **The confinement profile closes the sibling leak on top.** Even though the
+  coarse ACL grant plus home traversal *could* expose a world-readable sibling
+  `~/b`, the profile denies the agent process any in-home path it wasn't granted.
+  The residual stops being an ACL problem and becomes a profile the launcher
+  writes per session — no tree mutation, self-cleaning on exit.
 
 Net: **agent account (floor) + allow-only ACL grant (opens the path) +
-`sandbox-exec`/`bwrap` default-deny profile (trims to just the grant).** The
-sibling non-negotiable is met by the confinement layer, not by making the ACLs
-cleverer.
+`sandbox-exec`/`bwrap` profile (trims to just the grant).** The sibling
+non-negotiable is met by the confinement layer, not by making the ACLs cleverer.
 
 ---
 
@@ -356,43 +249,12 @@ Why the operator needs it:
   `add_subdirectory` (the macOS `write` shorthand omits it) and the inherit bits
   (without `file_inherit`/`directory_inherit` the operator loses access to
   whatever the agent creates afterwards).
-- **Profile discovery reads the agent's own home.** An agent registered as its
-  own Unix user writes its identity into `<agent-home>/.jentic/profiles`, at
-  `0700`. Because the grant is applied **recursively over existing entries** (not
-  just inherited onto future ones), those profile files stay operator-readable, so
-  `jentic profile list` / `jentic profile view` can surface agent-owned profiles.
-  Without the recursive stamp, the operator would see only their own profiles —
-  the bug this direction's recursive grant fixes.
-- **`jentic profile view` shows the real session mount set.** The directory tree
-  it prints is not hand-built from the config; it is computed by
-  `localagent.SessionAccess(agentHome, grantedDirs)` — the **same** function the
-  launcher's confinement builders (`SandboxProfile` on macOS, `bwrapArgs` on
-  Linux) consume. So the display lists exactly what a confined session can reach:
-  the agent home and each grant (read/write), plus the executable routes on its
-  PATH (shown read-only). Sourcing both from one function is deliberate — it
-  prevents the "what the agent can see" display from silently drifting from what
-  the sandbox actually mounts.
-- **`jentic profile view` runs with no argument.** Bare `jentic profile view`
-  (no profile name) resolves the currently active profile (flag < `JENTIC_PROFILE`
-  < configured default) and non-interactively prints its access map. This is the
-  command an agent runs to answer "what directories can I reach?" for itself,
-  without needing to know its own profile name — the filesystem counterpart to
-  `jentic access whoami`, which points at it. Every command that prints the access
-  tree (`profile view`, `run <agent> --list-grants`) closes with a one-line footer
-  showing how to take a grant back (`jentic run <agent> --revoke <dir>`), so
-  revocation is always one command away from wherever access is shown.
-- **Run-as needs no re-exec because of this recursive ACL.** Switching the
-  operator's active profile to an agent-owned one (`jentic profile use
-  <agent-profile>`) is no longer refused: it sets the operator's own
-  `default_profile` to that name, and profile-scoped commands (`execute`, catalog)
-  then resolve *that* profile's tokens from the agent store and call the
-  control-plane **in-process as the operator** (loopback + the agent's bearer
-  token). Because the operator already holds this recursive **rwX** ACL over the
-  agent home, a token refresh writing back to `<agent-home>/.jentic/profiles` is a
-  legitimate operator write — so run-as needs **no** re-exec as the agent Unix user
-  and **no** filesystem confinement. This is distinct from `jentic run`, which
-  *does* launch the agent binary as the agent Unix user under the confinement
-  profile.
+- **The per-launch identity export refreshes agent-owned files.** Every
+  `jentic run` exports the operator's active context into the agent home's own
+  XDG store (`<agent home>/.config/jentic`, `<agent home>/.local/state/jentic`)
+  and chowns it to the agent. Because the grant is applied **recursively over
+  existing entries** (not just inherited onto future ones), the operator can
+  overwrite the previous launch's now-agent-owned files on the next export.
 
 This grant is **additive and idempotent** — re-applying only ever widens — so it
 is re-asserted on the account-reuse path where a prior `reset` may have left a
@@ -411,31 +273,34 @@ automatic.
 | Action | Command | Effect on Direction-1 ACLs |
 | ------ | ------- | -------------------------- |
 | **Grant** | in-launch **Allow**, or `jentic run <agent> --grant <dir>` | lays down Layer-1 traverse on new ancestors + Layer-2 rwx-leaf on the target |
-| **List** | `jentic run <agent> --list-grants` | none — shows recorded grants (danger-flagged) so access can't quietly sprawl |
+| **List** | `jentic run <agent> --list-grants` | none — shows recorded grants (danger-flagged) so access can't quietly sprawl; closes with the revoke one-liner |
 | **Revoke** | `jentic run <agent> --revoke <dir>` | drops the **leaf** allow only; **ancestor traverse grants stay** (kept for the next grant). With the leaf gone the agent can't read/write the dir — and, unless world-readable, can't reach its contents |
-| **Reset (profile)** | `jentic reset <profile>` | removes just that profile; the account's grants stay in place — **unless** it was the last agent-owned profile, in which case reset offers to tear the whole account down (walking the ancestor chain and dropping the traverse grants **too**, settling the home, removing the account) |
-| **Reset (full)** | `jentic reset` | the whole shared account (all ACLs, sudoers, Unix user, home, every agent profile), then the operator's own `~/.jentic` |
+| **Reset** | `jentic reset` | full teardown of the shared account: walks the recorded ancestor chains and drops the traverse grants **too**, settles the home, removes the account and sudoers drop-in, then wipes the operator's own identity state |
 
 The key revoke-vs-reset distinction: **`--revoke` intentionally leaves ancestor
-traverse ACLs in place** (so re-granting a sibling later is cheap), whereas a
-**full account teardown walks the ancestor chain and removes them**, returning the
-path to its pristine 700-closed state.
+traverse ACLs in place** (so re-granting a sibling later is cheap), whereas
+**`jentic reset` walks the ancestor chain and removes them**, leaving no agent
+ACE behind. To remove a single context or identity instead of everything, use
+`jentic context delete` / `jentic identity delete` — finer-grained removal is
+not reset's job.
 
-Recorded grants live in the operator's `~/.jentic/config.yaml` as the single
-`agent_account:` object's `granted_dirs` list — one consolidated list, because the
-grants are one uid's ACLs regardless of which agent binary made them. `reset`'s
-survey re-scans the on-disk ACLs live and flags any **drift** between what's
-recorded and what's actually present.
+Recorded grants live in the operator's agent state at
+`~/.config/jentic/agent-account.yaml`, as the single `agent_account:` object's
+`granted_dirs` list — one consolidated list, because the grants are one uid's
+ACLs regardless of which agent binary made them (older releases kept the record
+in `~/.jentic/config.yaml`; it is read as a fallback and adopted on the first
+write). `reset`'s survey re-scans the on-disk ACLs live and flags any **drift**
+between what's recorded and what's actually present.
 
 ---
 
 ## What this model does *not* do
 
-- It never changes the operator home's own permissions — setup no longer locks it
-  to 700, and teardown only removes the agent's named-user ACLs.
+- It never changes the operator home's own permissions — setup never changes its
+  mode, and teardown only removes the agent's named-user ACLs.
 - It never touches the operator's *own* access to their files — every ACL is a
   **named-user** entry scoped to the single agent account.
-- It does not share anything under the operator's 700 home by symlink or PATH —
+- It does not share anything under the operator's home by symlink or PATH —
   those resolve with the agent's credentials and dangle at the home boundary (see
   the CLI-tool-sharing note in [`local-agent-isolation.md`](local-agent-isolation.md)).
 - It never lets the agent **write** the binaries it is launched with. Executable
