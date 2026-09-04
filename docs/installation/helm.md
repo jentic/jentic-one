@@ -64,7 +64,7 @@ images on a local cluster).
 
 The repo's own tooling creates the cluster, loads the images, and installs
 the chart with the dev values
-([`deploy/helm/values/local-combined.yaml`](../../deploy/helm/values/) —
+([`deploy/helm/values/local-combined.yaml`](../../deploy/helm/values/local-combined.yaml) —
 bundled Postgres, dev secrets, app published on `localhost:8000`):
 
 ```bash
@@ -299,8 +299,8 @@ annotations are covered in the
 ## Upgrading
 
 0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
-1. Build/push the new release's images (step 1) and re-vendor the chart at
-   the **new** release tag.
+1. Get (or build and push) the new release's images (step 1) and re-vendor
+   the chart at the **new** release tag.
 2. `helm upgrade jentic ./deploy/helm/jentic-one …` with the new
    `global.image.tag`. On the bundled-DB path the migrate hook re-runs
    automatically; against an external database, re-run migrations first

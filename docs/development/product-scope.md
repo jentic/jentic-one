@@ -54,7 +54,8 @@ Supported specifics worth knowing (so the harness doesn't mis-score them as out 
 scope):
 
 - **Credential schemes:** API key (header/query/cookie), basic, static bearer,
-  session token, and OAuth2 (client-credentials, authorization-code, implicit), plus
+  session token, OAuth2 (client-credentials, authorization-code, implicit), and
+  AWS SigV4, plus
   no-auth ([`shared/models/credentials.py`](../../src/jentic_one/shared/models/credentials.py)).
 - **Database backends:** Postgres **and** SQLite — SQLite is a supported *production*
   target, not dev-only ([`shared/db/backends/sqlite.py`](../../src/jentic_one/shared/db/backends/sqlite.py)).

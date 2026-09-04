@@ -79,7 +79,7 @@ and runs with development-mode secrets — don't point it at a real credential:
 docker pull ghcr.io/jentic/jentic-one-app:latest
 docker volume create jentic-data
 
-# Grab the trial config (SQLite on the volume; fetched from main — fine for the trial) — tweak it, or use as is
+# Grab the trial config (SQLite on the volume; fetched from main, fine for the trial) — tweak it, or use as is
 curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
 
 # Migrate, then start the two roles

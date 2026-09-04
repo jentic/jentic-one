@@ -105,7 +105,7 @@ reverse — expose the operator's home/keys/browser to the agent.
 ### What this model does *not* protect — residual risks
 
 The Unix-user boundary hardens the agent against the *operator's* environment. It
-deliberately does **not** partition the agent account against itself. Two limits
+deliberately does **not** partition the agent account against itself. Four limits
 are worth calling out plainly, because operators must not assume protections that
 aren't there:
 

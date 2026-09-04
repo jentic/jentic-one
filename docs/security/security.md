@@ -56,8 +56,9 @@ secured*. (See "How the agent and CLI connect" below.)
 
 Everything that uses Jentic One — a coding agent, a running service, and the
 `jentic` CLI (`register`, `catalog`, `execute`) — reaches Jentic One over HTTPS
-at a configurable base URL (e.g. the CLI's `--broker-scheme` / `--broker-host`,
-or the equivalent config/profile) plus a scoped bearer token. There is **no
+at a configurable base URL (set with `jentic register --url` / `--broker-url`,
+and recorded in the active context's environment) plus a scoped bearer token.
+There is **no
 requirement that any of them run on the same machine as Jentic One.**
 
 So when Jentic One is remote or inside a private network/VPC, clients reach it
@@ -91,8 +92,8 @@ you store.
 | Tier | Who it's for | Posture | Residual risk |
 |---|---|---|---|
 | **T0 — Local, same user** | Trying it out | Jentic One + agent run as your user on your laptop | A compromised or prompt-injected agent can read the key/DB. **Do not store real high-value credentials.** |
-| **T1 — Sandbox the agent** | Local dev with some real creds | Jentic One still local, but the agent is isolated: the CLI's own **`jentic run`** (a dedicated Unix user + per-session confinement; see [same-host/](same-host/README.md)), or the agent's built-in OS sandbox with **network default-deny**, allowlisting only Jentic One's address, and unable to read Jentic One's files (provided they are not mounted in the agent's container) | Built-in agent sandboxes filter by hostname without TLS inspection and have escape hatches → defense-in-depth, not a hard wall. Containerising agents is the best form of local sandboxing if available |
-| **T2 — Separate users on one host** | Serious local use | Jentic One runs under a **dedicated non-root user** (or rootless container) so its key/DB aren't readable by the agent's user; the agent runs in a container with default-deny egress and reaches Jentic One over loopback/HTTP | Shared kernel |
+| **T1 — Sandbox the agent** | Local dev with some real creds | Jentic One still local, but the agent is isolated: the CLI's own **`jentic run`** (a dedicated Unix user + per-session confinement; see [same-host/](same-host/README.md)), or the agent's built-in OS sandbox with **network default-deny**, allowlisting only Jentic One's address, and unable to read Jentic One's files (provided they are not mounted in the agent's container) | Built-in agent sandboxes filter by hostname without TLS inspection and have escape hatches — defense-in-depth, not a hard wall. Containerising the agent is the strongest local sandboxing option. |
+| **T2 — Separate users on one host** | Serious local use | Jentic One runs under a **dedicated non-root user** (or rootless container) so its key/DB aren't readable by the agent's user; the agent runs in a container with default-deny egress and reaches Jentic One over loopback/HTTP | Shared kernel; and isolating the instance closes AP-1/AP-2 only — the operator's browser still runs next to the agent, so the operator-browser path (AP-3) stays open (see [same-host/](same-host/README.md)) |
 | **T3 — Separate host / private network** *(recommended for real use)* | Teams / production | Jentic One + database on a **separate host/VM in a private network**, reachable only over that private network (VPN / private DNS / authenticated reverse proxy). Provisioned agents/services run inside the network; operators use the CLI over the VPN. The agent never shares a machine with the key store | Standard cloud hardening applies |
 | **T4 — Strong isolation** | Untrusted agents / high-value creds | Agent in a **microVM** (e.g. Firecracker) or **gVisor** sandbox; Jentic One in a private subnet with restrictive security groups and default-deny egress; clients reach it only over private networking | Highest ops cost, smallest attack surface |
 
@@ -202,8 +203,6 @@ Before pointing Jentic One at production credentials:
       generate a real 32-byte key:
       `python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`.
 - [ ] `admin.auth.jwt_secret` and other placeholder secrets are set to real values.
-- [ ] Jentic One is **not exposed to the public internet** (private network / VPN /
-      authenticated proxy).
 - [ ] TLS is terminated in front of Jentic One.
 - [ ] The audit log is shipped to durable storage.
 - [ ] Telemetry is set as you intend (it is **off by default**; see

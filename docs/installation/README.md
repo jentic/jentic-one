@@ -17,7 +17,7 @@ Production installs run from released artifacts only: the published container im
 | Runtime (default **on**) | `raw.githubusercontent.com` (`catalog.manifest_url`) | Public API catalog manifest refresh + update sweep | `catalog.manifest_max_age_seconds: 0` and `catalog.update_check_interval_seconds: 0` |
 | Runtime (default **off**) | `api.jentic.com` | Anonymous product telemetry | Off unless `telemetry.enabled: true` |
 
-(Defaults verified against [`docs/reference/config.md`](../reference/config.md).
+(Defaults: [config reference](../reference/config.md).
 Brokered API calls go wherever your imported APIs point — that egress is the
 product.)
 

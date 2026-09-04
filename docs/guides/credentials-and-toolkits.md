@@ -41,9 +41,10 @@ sequenceDiagram
 
 What can leave the platform is bounded:
 
-- **No export path.** No API returns credential plaintext, and a
-  [backup](../operations/backup-restore.md) contains only ciphertext —
-  "there is no export-secrets path" is the product's core guarantee.
+- **No export path.** No API returns a *stored* secret (`POST /credentials`
+  echoes the just-supplied value once, in its own response, and never
+  again), and a [backup](../operations/backup-restore.md) contains only
+  ciphertext — there is no export-secrets path, by design.
 - **Redacted reads.** `GET /credentials` and `GET /credentials/{id}` return
   redacted views. Error bodies disclose at most `last4` — the tail of the
   non-secret credential *id*, never the secret.
@@ -82,9 +83,12 @@ bind time: binding a second active credential for an API a toolkit already
 covers is rejected with `409 conflicting_api_binding`. Unbind the existing
 credential first to replace it.
 
-A credential may be **reused across toolkits** (e.g. a broad read-only key in
-one toolkit and a scoped key in another) — the one-per-API rule is scoped to
-a single toolkit, not global.
+A **single credential may be bound to many toolkits** — the guard blocks a
+second *distinct* credential for an API a toolkit already covers, not reuse.
+Note the runtime resolver searches by vendor, not by toolkit: two different
+active credentials for the same API identity collide with
+`409 ambiguous_credential` on any call that does not disambiguate (by
+specificity or by name, below), even when they live in different toolkits.
 
 ### Most specific wins; an explicit name wins over that
 
@@ -133,8 +137,9 @@ prefixed with the id of the key that produced it (`<key_id>:<payload>`), so
 retired keys keep decrypting old rows. An unknown key id or a failed GCM
 authentication raises `DecryptionError`, which the broker maps to
 `424 credential_undecryptable` with a prompt-human directive — the agent
-cannot self-recover; an operator must re-add the credential. That module is
-the only one permitted to import `cryptography`, enforced by an architecture
+cannot self-recover; an operator must re-add the credential. The crypto
+facade (`encryption.py` and its sibling `signing.py`) is the only code
+permitted to import `cryptography`, enforced by an architecture
 test ([`tests/arch/test_encryption_facade.py`](../../tests/arch/test_encryption_facade.py)).
 
 The keyset reaches the process one of three ways:
@@ -219,8 +224,8 @@ Two append-only records in the admin DB, browsable in the UI and API — see
 
 - **`audit_entries`** — who changed what: `CREATE` on store, `UPDATE` on a
   completed connect, `ENABLE`/`DISABLE`/`DELETE` on lifecycle changes, and
-  `GRANT`/`REVOKE` on every toolkit bind/unbind, each with actor, target,
-  and origin.
+  `GRANT`/`REVOKE` on every toolkit bind/unbind, each with actor and
+  target (and origin, where the acting surface records one).
 - **Events** — every resolve → decrypt → inject emits exactly one
   `credential.accessed` event carrying actor, credential id, provider, wire
   type, and API identity, stamped with the execution's trace id so a

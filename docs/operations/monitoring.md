@@ -25,9 +25,9 @@ monitoring needs two more probes:
   instance before the broker starts shedding requests. Note the Helm chart's
   broker readinessProbe currently defaults to `/health` — point it at
   `/ready` to get saturation-aware draining.
-- **A database-sensitive check.** No unauthenticated endpoint touches the
-  database, so an uptime monitor pointed only at `/health` cannot detect a
-  database outage. Use an authenticated read that does, e.g.
+- **A database-sensitive check.** No unauthenticated endpoint fails on a
+  database outage, so an uptime monitor pointed only at `/health` cannot
+  detect one. Use an authenticated read that does, e.g.
   `GET /executions?limit=1` with a token holding `executions:read`.
 
 ## Logs

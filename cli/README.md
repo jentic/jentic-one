@@ -137,7 +137,8 @@ Grab the archive for your platform from the
 install it yourself. The full recipe — `cosign verify-blob` over
 `checksums.txt`, the sha256 check, the install step, and the separate
 `jenticctl` archive — is in
-[docs/installation/cli.md → Verify](../docs/installation/cli.md#verify).
+[docs/installation/cli.md](../docs/installation/cli.md) (Manual download,
+Verify, and Install).
 
 **Windows.** `jentic` ships a Windows build as
 `jentic_${VER}_windows_amd64.zip` (and `_arm64`). Download it from the

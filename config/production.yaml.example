@@ -89,7 +89,9 @@ auth:
 
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
 # WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
-# var — fill it here and treat the whole file as a secret. Generate material:
+# var — fill it here and treat the whole file as a secret, or inject each
+# entry via the indexed env vars (JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID
+# and …__0__MATERIAL). Generate material:
 #   python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
 credentials:
   encryption:

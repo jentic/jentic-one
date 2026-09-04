@@ -3,7 +3,7 @@
 An **overlay** is an operator/agent-contributed patch to a registered API's OpenAPI
 spec — a small JSONPath-based document that fixes a broken or incomplete upstream
 spec without forking it. This page documents the **stacking contract** and how
-overlays interact with the Flow-3 catalog-update loop, so the behaviour is
+overlays interact with the catalog-update loop, so the behaviour is
 predictable rather than surprising. For the endpoint list and scopes, see
 [`reference/endpoints.md`](../reference/endpoints.md); for the agent-facing authoring
 workflow, see the [`contribute-spec-fix`](../../skills/contribute-spec-fix/SKILL.md) skill.
@@ -52,7 +52,7 @@ for pinning an overlay to an arbitrary historical revision, and we do not build
 per-target materialization until there is a concrete need. Treating
 `target_revision_id` as more than advisory is the trap this contract forecloses.
 
-## The update loop (Flow-3)
+## The update loop
 
 A background sweep conditionally re-fetches each registered API's upstream spec and,
 on a real change, emits an actionable event:

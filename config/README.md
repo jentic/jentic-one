@@ -8,7 +8,9 @@ Application configuration files for jentic-one.
 |------|---------|
 | `quickstart.env` | Docker trial shape from the [README quickstart](../README.md#self-hosted-docker) — SQLite files on one volume, passed via `--env-file` |
 | `local.yaml` | Local development — matches `docker/local-setup/docker-compose.yaml` ports |
+| `local-sqlite.yaml` | Local development on embedded SQLite — one `.db` file per surface under `./.data/`, no external services; used by `make migrate-sqlite` and `make start-app-sqlite` |
 | `production.yaml.example` | Production template — copy and fill in real values |
+| `config-schema.json` | Generated JSON Schema of the backend config, serialised from the `AppConfig` Pydantic model by `make config-schema` (`tools/config_schema_export.py`) — never hand-edit; a drift test keeps it in sync, the Go installer's config struct is generated from it, and [`docs/reference/README.md`](../docs/reference/README.md) points at it |
 
 ## Usage
 

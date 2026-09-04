@@ -9,8 +9,9 @@ every documented verification command starts rejecting genuine artifacts —
 and nothing else ties the two together.
 
 This gate extracts the ``.github/workflows/<name>`` segment from every
-identity value in tracked markdown files and ``tools/install.sh`` and asserts
-the workflow file exists in the repo. Segment existence only — the OIDC
+identity value in tracked markdown files, ``tools/install.sh``, and the CLI
+self-updater's pinned constant (``cli/internal/update/``) and asserts the
+workflow file exists in the repo. Segment existence only — the OIDC
 issuer, repo owner, and ref pattern are cosign's concern, not a referential
 fact this repo can check.
 """
@@ -27,9 +28,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 INSTALL_SCRIPT = REPO_ROOT / "tools" / "install.sh"
 
-#: Lines that carry a cosign identity value: the flag itself in docs, or the
-#: ``COSIGN_CERT_IDENTITY*`` variables that feed the flag in install.sh.
-_IDENTITY_LINE_RE = re.compile(r"certificate-identity|COSIGN_CERT_IDENTITY")
+#: The Go self-updater pins the same identity in a constant
+#: (``cosignCertIdentityRegexp`` in download.go); a workflow rename that
+#: misses it breaks the CLI's own artifact verification.
+CLI_UPDATE_DIR = REPO_ROOT / "cli" / "internal" / "update"
+
+#: Lines that carry a cosign identity value: the flag itself in docs, the
+#: ``COSIGN_CERT_IDENTITY*`` variables that feed the flag in install.sh, or
+#: the Go constant in the CLI updater.
+_IDENTITY_LINE_RE = re.compile(r"certificate-identity|COSIGN_CERT_IDENTITY|(?i:certidentity)")
 
 #: The workflow-path segment inside an identity value. Values are regex
 #: patterns, so dots arrive escaped (``release\.yml`` — doubly so in shell:
@@ -41,6 +48,7 @@ _WORKFLOW_SEGMENT_RE = re.compile(r"\.github/workflows/[\w\\.-]+")
 def _identity_lines() -> list[tuple[Path, int, str]]:
     """``(file, lineno, line)`` for every identity-bearing line in scope."""
     files = [INSTALL_SCRIPT]
+    files.extend(sorted(CLI_UPDATE_DIR.glob("*.go")))
     tracked = subprocess.run(
         ["git", "ls-files", "-z", "*.md"],
         cwd=REPO_ROOT,
@@ -78,13 +86,13 @@ def test_cosign_identity_workflow_paths_exist() -> None:
                 violations.append(
                     f"{path.relative_to(REPO_ROOT)}:{lineno} — cosign identity pins "
                     f"{segment!r}, but {workflow.relative_to(REPO_ROOT)} does not exist "
-                    "(workflow renamed? update every documented verify command and "
-                    "tools/install.sh)"
+                    "(workflow renamed? update every documented verify command, "
+                    "tools/install.sh, and cli/internal/update/download.go)"
                 )
 
     assert segments_found > 0, (
-        "No cosign identity workflow paths found in tracked *.md or tools/install.sh — "
-        "either the identity pinning moved (update this gate's file set) or the "
-        "extraction regexes rotted"
+        "No cosign identity workflow paths found in tracked *.md, tools/install.sh, "
+        "or cli/internal/update/ — either the identity pinning moved (update this "
+        "gate's file set) or the extraction regexes rotted"
     )
     assert not violations, "Cosign identities pin missing workflow paths:\n" + "\n".join(violations)

@@ -42,8 +42,9 @@ There are two structurally different moves, and they are **not** equally powerfu
   `~/.jentic`, the DB, *or* the operator's browser profile. Closes **every** gap,
   AP-1 through AP-4. This is the real fix.
 - **Isolate *Jentic One*** (own user / separate host) — closes AP-1/AP-2, but the
-  operator's browser still runs next to the agent, so **AP-3 stays open** (pair it
-  with WebAuthn step-up on dangerous mutations to close that).
+  operator's browser still runs next to the agent, so **AP-3 stays open** (a
+  WebAuthn step-up on dangerous mutations could close that, but no such step-up
+  exists in the product today — pair with operator-browser hygiene instead).
 
 So **agent isolation ⊃ Jentic-One isolation.** The classic "put it on a VPC"
 advice is the weaker of the two: necessary for teams, but on a single dev machine
@@ -51,9 +52,12 @@ it leaves the browser gap. The only reason to prefer it is that it needs nothing
 of the agent client — and the hard constraint here is that **we do not own the
 agent client**, so any agent-side ask must be near-zero-effort.
 
-The rest of this analysis is defense-in-depth (key out of config, subset-bound
-scopes, short least-privilege tokens, DPoP, posture banner, reveal-never arch
-test). All worth doing; none closes a structural gap on its own.
+The rest of this analysis is defense-in-depth. Part of it is shipped: the
+encryption keyset can be injected via environment rather than a file, agent
+tokens are short-lived, least-privilege, and subset-bound in scope. The rest is
+possible future hardening that does **not** exist in the product today: DPoP,
+a WebAuthn step-up, a same-host posture banner, a reveal-never arch test. All
+worth doing; none closes a structural gap on its own.
 
 The concrete design that responds to this analysis —
 [`local-agent-isolation.md`](local-agent-isolation.md) and

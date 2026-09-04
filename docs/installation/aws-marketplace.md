@@ -146,6 +146,8 @@ instance first.
 
 ## Upgrades and removal
 
+0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
+
 Upgrade to a new version with `--reset-values`, re-passing your explicit
 overrides:
 

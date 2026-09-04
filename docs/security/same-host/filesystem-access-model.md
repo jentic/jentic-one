@@ -119,8 +119,8 @@ escape hatch. The two ban classes differ only in *which* paths they cover:
 
 | Class | Meaning | Examples | A **subdirectory** below it? |
 | ----- | ------- | -------- | ---------------------------- |
-| **Soft ban** | The directory holds secrets *directly*, so it can't be granted as-is — but a subdirectory beneath it is ordinary and grantable. | the operator's own home root; any other user's home (`/Users/<name>`, `/home/<name>`) | **grantable** |
-| **Hard-subtree ban** | Nothing anywhere in the subtree may be granted — the path *and every descendant* is off-limits. | `~/.ssh`, `~/.jentic`, `~/.aws`, `~/.config`, `~/.gnupg`, `~/.gcloud`, `~/.kube`, `~/.docker`, Keychain paths, browser profiles; system trees (`/etc`, `/usr`, `/var`, `/System`, `/Library`, `/bin`, `/sbin`, `/`) | **also banned** |
+| **Soft ban** | The directory holds secrets *directly*, so it can't be granted as-is — but a subdirectory beneath it is ordinary and grantable. | the operator's own home root; any other user's home (`/Users/<name>`, `/home/<name>`); the `~/.config` root — its credential-bearing children are hard-banned (see below), but a safe child like `~/.config/nvim` is grantable | **grantable** |
+| **Hard-subtree ban** | Nothing anywhere in the subtree may be granted — the path *and every descendant* is off-limits. | `~/.ssh`, `~/.jentic`, `~/.aws`, `~/.gnupg`, `~/.gcloud`, `~/.kube`, `~/.docker`, the credential-bearing children of `~/.config` (`gcloud`, `gh`, `jentic`, `google-chrome`, `chromium`), Keychain paths, browser profiles; system trees (`/etc`, `/usr`, `/var`, `/System`, `/Library`, `/bin`, `/sbin`, `/`) | **also banned** |
 
 So `~` itself is a *soft* ban (you can still grant `~/projects/api`), while
 `~/.ssh` is a *hard* ban (neither `~/.ssh` nor `~/.ssh/keys/prod` can ever be
@@ -152,7 +152,10 @@ grant flow:
    table.
 3. **The binaries `jentic run` executes stay read-only.** The profile marks every
    executable route on the agent's PATH (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`,
-   `/usr/local/bin`, and the sanctioned tool dirs such as `/opt/homebrew/bin`)
+   `/usr/local/bin`, the sanctioned tool dirs such as `/opt/homebrew/bin`, **and
+   the agent's own `~/.local/bin`** — where the launched binary itself lands, and
+   the route that matters most: it sits inside the read/write agent home, so
+   without this deny it would be agent-writable)
    **read-only** (SBPL `(deny file-write* (subpath …))` on macOS, `--ro-bind` on
    Linux). Read and execute are preserved; only writes are denied. This closes a
    **self-escape** path: without it, a compromised or prompt-injected agent could

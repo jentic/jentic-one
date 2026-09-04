@@ -79,12 +79,49 @@ def _tracked_markdown_files() -> list[Path]:
 
 
 def _relative_targets(doc: Path) -> list[tuple[int, str]]:
-    """``(lineno, target)`` for every relative link/image target in *doc*."""
+    """``(lineno, target)`` for every relative link/image target in *doc*.
+
+    Fenced code blocks are skipped: links there are examples, not references
+    (they neither render nor navigate), so they must not be validated and
+    must not count toward reachability.
+    """
     targets: list[tuple[int, str]] = []
+    in_fence = False
     for lineno, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         for target in _MD_LINK_RE.findall(line):
             targets.append((lineno, target))
     return targets
+
+
+def _tracked_paths() -> tuple[frozenset[Path], frozenset[Path]]:
+    """All git-tracked files, plus every directory holding one.
+
+    Target existence is judged against the *tracked* tree, not the local
+    filesystem: a link to a gitignored file, or a wrong-case link on a
+    case-insensitive filesystem, must fail here rather than only on a clean
+    CI checkout. Falls back to empty sets when git is unavailable (callers
+    then fall back to a filesystem check).
+    """
+    try:
+        tracked = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return frozenset(), frozenset()
+    files = frozenset(REPO_ROOT / name for name in tracked.split("\0") if name)
+    dirs: set[Path] = set()
+    for file in files:
+        dirs.update(file.parents)
+    return files, frozenset(dirs)
 
 
 def _resolve(doc: Path, target: str) -> Path:
@@ -97,16 +134,23 @@ def test_markdown_relative_links_resolve() -> None:
     """Every relative link or image in every tracked markdown file must resolve.
 
     Targets are resolved against the linking file's own directory (standard
-    markdown semantics), so a moved or deleted file fails here with the
-    file:line of every stale reference instead of shipping a dead link.
+    markdown semantics) and must name a git-tracked file or directory, so a
+    moved or deleted file fails here with the file:line of every stale
+    reference instead of shipping a dead link.
     """
+    tracked_files, tracked_dirs = _tracked_paths()
     violations: list[str] = []
     for doc in _tracked_markdown_files():
         for lineno, target in _relative_targets(doc):
-            if not _resolve(doc, target).exists():
+            resolved = _resolve(doc, target)
+            if tracked_files or tracked_dirs:
+                exists = resolved in tracked_files or resolved in tracked_dirs
+            else:
+                exists = resolved.exists()
+            if not exists:
                 violations.append(
                     f"{doc.relative_to(REPO_ROOT)}:{lineno} — links to {target!r}, which "
-                    "does not exist (fix the link or restore the file)"
+                    "is not a tracked file or directory (fix the link or restore the file)"
                 )
     assert not violations, "Markdown files link to missing paths:\n" + "\n".join(violations)
 

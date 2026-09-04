@@ -108,8 +108,11 @@ roots (to deny them) and the paths that must be re-opened **inside** them:
   `file-read-metadata` (SBPL literals) so the kernel can traverse down to it through
   the denied root.
 - **Deny writes on the executable routes** — `/usr/bin`, `/bin`, `/usr/sbin`,
-  `/sbin`, `/usr/local/bin`, and the sanctioned tool dirs (`/opt/homebrew/bin`, …),
-  emitted **last** so the write-deny wins. Read + execute stay (they're covered by
+  `/sbin`, `/usr/local/bin`, the sanctioned tool dirs (`/opt/homebrew/bin`, …),
+  and the agent's own `~/.local/bin` (where the launched binary itself lands —
+  it sits inside the read/write agent home, so the agent could otherwise rewrite
+  its own launched binary), emitted **last** so the write-deny wins. Read +
+  execute stay (they're covered by
   `(allow default)`); only writes are refused, so the agent can't overwrite the
   binaries its next launch runs. See
   [Non-negotiable boundaries](filesystem-access-model.md#non-negotiable-boundaries).

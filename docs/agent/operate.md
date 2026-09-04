@@ -83,8 +83,8 @@ docker compose -p jentic -f ~/.jentic/docker-compose.yaml up -d
 
 Check the schema state without modifying anything by appending `--check` to
 the migration command (it prints an `OVERALL current|uninitialized|pending`
-verdict; a non-zero exit with `pending` means migrations are needed, by
-design). Migrations are forward-only: the snapshot *is* the rollback.
+verdict and exits non-zero unless `OVERALL current`, by design).
+Migrations are forward-only: the snapshot *is* the rollback.
 
 ## Reinstall / reconfigure
 
