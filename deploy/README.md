@@ -4,7 +4,7 @@ This directory turns the source tree into runnable artifacts: Docker images,
 Helm charts, and Terraform modules that install the charts. Three design
 rules shape everything here:
 
-- One Python package (`src/jentic_one/`) produces every image; the surface
+- One Python package ([`src/jentic_one/`](../src/jentic_one/)) produces every image; the surface
   set is chosen at **runtime** via `JENTIC__APPS`, not at build time. The
   process shapes this enables (combined / parts / broker-scaled) are mapped
   in [`docs/architecture/composition-and-processes.md`](../docs/architecture/composition-and-processes.md#deployment-topologies).
@@ -64,8 +64,8 @@ deploy/
     └── envs/{dev,prod}/             # Compose the modules per env (values are placeholders)
 ```
 
-The same shape applies to anything new: one folder under each of `docker/`,
-`helm/jentic-one/charts/`, and a Terraform call per env.
+The same shape applies to anything new: one folder under each of [`docker/`](docker/),
+[`helm/jentic-one/charts/`](helm/jentic-one/charts/), and a Terraform call per env.
 
 ## How a build flows
 
@@ -177,7 +177,7 @@ pyproject.toml [project].version
         └── deploy/helm/jentic-one/Chart.yaml (appVersion) ──> chart image tag default
 ```
 
-`scripts/version.sh` reads `[project].version` from `pyproject.toml`; Make
+[`scripts/version.sh`](../scripts/version.sh) reads `[project].version` from `pyproject.toml`; Make
 uses it for the image tag. The Helm chart's `appVersion` is bumped in
 lockstep by release-please (its Release PR touches `pyproject.toml`,
 `uv.lock`, and every `Chart.yaml` together — see
@@ -208,7 +208,7 @@ a digest if you need to.
 ## .dockerignore
 
 `.dockerignore` at the repo root keeps the build fast (only
-`pyproject.toml`, `uv.lock`, `README.md`, `src/`, and `openapi/` reach the
+`pyproject.toml`, `uv.lock`, `README.md`, [`src/`](../src/), and [`openapi/`](../openapi/) reach the
 Docker daemon as context) and safe (`.env*`, `config/production.yaml`, and
 any `jentic-one.yaml` are excluded so they can never leak into a build cache
 layer). If you add a new top-level folder that should not be inside images,

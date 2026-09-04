@@ -14,9 +14,9 @@ real one. The rest of the guides are indexed in [`README.md`](README.md).
 An agent calls an API by sending the broker a method and the full upstream
 URL, authenticated with its Jentic token — never the API's secret. The
 broker resolves the credential from the control DB, decrypts it in-process,
-and attaches it to the outbound request (`broker/core/injection.py`, driven
+and attaches it to the outbound request ([`broker/core/injection.py`](../../src/jentic_one/broker/core/injection.py), driven
 by the resolve → refresh → inject orchestrator in
-`broker/services/credentials/orchestrator.py`). The upstream response is
+[`broker/services/credentials/orchestrator.py`](../../src/jentic_one/broker/services/credentials/orchestrator.py)). The upstream response is
 mirrored back; the injected auth material is not part of it.
 
 ```mermaid
@@ -126,7 +126,7 @@ so the caller can pick which to remove. Each candidate carries `id`, `name`,
 ## Where secrets live
 
 Every stored secret is encrypted with **AES-256-GCM envelope encryption**
-(`shared/crypto/encryption.py`) before it touches the database. The keyset
+([`shared/crypto/encryption.py`](../../src/jentic_one/shared/crypto/encryption.py)) before it touches the database. The keyset
 is versioned: `credentials.encryption.entries` is a list of
 `(id, 32-byte key)` pairs and `active_id` names the write key. Each blob is
 prefixed with the id of the key that produced it (`<key_id>:<payload>`), so
@@ -135,7 +135,7 @@ authentication raises `DecryptionError`, which the broker maps to
 `424 credential_undecryptable` with a prompt-human directive — the agent
 cannot self-recover; an operator must re-add the credential. That module is
 the only one permitted to import `cryptography`, enforced by an architecture
-test (`tests/arch/test_encryption_facade.py`).
+test ([`tests/arch/test_encryption_facade.py`](../../tests/arch/test_encryption_facade.py)).
 
 The keyset reaches the process one of three ways:
 
@@ -155,7 +155,7 @@ spelled out in [Upgrades](../operations/upgrades.md#what-an-upgrade-never-does).
 
 Every credential names a **provider** — the component that acquires and
 maintains its secret. Three ship
-(`control/services/credentials/providers/`):
+([`control/services/credentials/providers/`](../../src/jentic_one/control/services/credentials/providers/)):
 
 | Provider | Managed | Stored locally (encrypted) | Stays remote |
 | -------- | ------- | -------------------------- | ------------ |
@@ -169,7 +169,7 @@ deployment under `credentials.providers.<name>` in the
 `jentic admin config providers` CLI.
 
 Managed providers acquire tokens through the **connect flow**
-(`control/services/credentials/connect_service.py`):
+([`control/services/credentials/connect_service.py`](../../src/jentic_one/control/services/credentials/connect_service.py)):
 
 ```mermaid
 sequenceDiagram
@@ -193,7 +193,7 @@ completed connect writes an audit entry and a `credential.connected` event,
 a failed one a `credential.connection_failed` event.
 
 **The extension seam.** All three implement the `CredentialProvider`
-Protocol (`providers/base.py`): `begin_connect` / `complete_connect` /
+Protocol ([`providers/base.py`](../../src/jentic_one/control/services/credentials/providers/base.py)): `begin_connect` / `complete_connect` /
 `refresh`, plus `managed` and `supported_types`, resolved by name through a
 `ProviderRegistry`. This Protocol is where an external vault would plug in.
 No HashiCorp Vault or AWS Secrets Manager integration ships today — an
@@ -203,7 +203,7 @@ vault, storing only an account reference locally) and registers it.
 ## Server-side token refresh
 
 An expired OAuth2 access token is refreshed by the broker mid-call, before
-injection (`broker/services/credentials/refresh.py`) — the agent never
+injection ([`broker/services/credentials/refresh.py`](../../src/jentic_one/broker/services/credentials/refresh.py)) — the agent never
 handles a refresh token and never sees the refresh happen. The refresh is
 lazy and single-flight: a per-credential advisory lock (Postgres) or process
 lock (SQLite) plus a double-check after acquiring, so concurrent calls

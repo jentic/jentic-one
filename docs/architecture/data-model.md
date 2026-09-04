@@ -4,9 +4,9 @@ Jentic One persists into **three databases** — `registry`, `control`, and
 `admin` — that are Postgres schemas in production and separate SQLite files
 in a local install. Each ORM model inherits exactly one of three declarative
 bases (`RegistryBase` / `ControlBase` / `AdminBase` in
-`shared/db/base.py`), each database has its own Alembic version tree under
-`src/jentic_one/migrations/`, and each tree keeps a single head
-(`tests/arch/test_migration_single_head.py`).
+[`shared/db/base.py`](../../src/jentic_one/shared/db/base.py)), each database has its own Alembic version tree under
+[`src/jentic_one/migrations/`](../../src/jentic_one/migrations/), and each tree keeps a single head
+([`tests/arch/test_migration_single_head.py`](../../tests/arch/test_migration_single_head.py)).
 
 ## Why three, and why no foreign keys between them
 
@@ -81,7 +81,7 @@ spec files. `Overlay` rows record catalog edits; `CatalogSnapshot` and
 
 `Credential` is the polymorphic core row (typed detail tables carry
 API-key/basic/OAuth/SigV4 material, encrypted at rest via the
-`shared/crypto/encryption.py` facade). A `Toolkit` groups permission rules
+[`shared/crypto/encryption.py`](../../src/jentic_one/shared/crypto/encryption.py) facade). A `Toolkit` groups permission rules
 (`ToolkitPermissionRule` — the default-deny allowlist the broker evaluates)
 with credential bindings. `AccessRequest`/`AccessRequestItem` implement the
 approval flow; `ToolkitKey` and `CustomerAPIKey` are bearer-key rows for
@@ -100,10 +100,10 @@ approval flow; `ToolkitKey` and `CustomerAPIKey` are bearer-key rows for
 ## Conventions that hold across all three
 
 - **Transactions** happen in services via `DatabaseSession.transaction()`;
-  manual `commit()` calls are rejected by `tests/arch/test_no_manual_commit.py`.
+  manual `commit()` calls are rejected by [`tests/arch/test_no_manual_commit.py`](../../tests/arch/test_no_manual_commit.py).
 - **Row-level visibility** is applied by each surface's `scoping/filters.py`
   — see [surfaces and layering](surfaces-and-layering.md#the-scoping-packages).
-- **ORM style** is pinned by `tests/arch/test_orm_conventions.py` and
+- **ORM style** is pinned by [`tests/arch/test_orm_conventions.py`](../../tests/arch/test_orm_conventions.py) and
   `test_no_backref.py` (explicit `back_populates`, typed `Mapped[]` columns).
 - **Secrets** never appear as plain `str` config or columns
   (`test_secrets_are_secretstr.py`, admin secrets isolation tests).

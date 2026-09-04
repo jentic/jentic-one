@@ -14,7 +14,7 @@ release gate. Two constraints to know up front (the
 list):
 
 - The chart is **not published** to any registry. Vendor
-  `deploy/helm/jentic-one/` from a checkout of this repository **at the
+  [`deploy/helm/jentic-one/`](../../deploy/helm/jentic-one/) from a checkout of this repository **at the
   release tag** you are deploying.
 - Only one image is published to GHCR: `ghcr.io/jentic/jentic-one-app`. It
   runs the broker too — point `broker.image.repository` at it and set

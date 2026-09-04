@@ -226,7 +226,7 @@ daemon under a dedicated service user, reached through the credential-less
 sudoers line, and no Docker-daemon power — the OS's peer-credential check on
 the daemon's unix socket is the boundary. It has its own page,
 [mcp-daemon.md](mcp-daemon.md), and ready-made systemd/launchd templates in
-`deploy/mcp-daemon/`.
+[`deploy/mcp-daemon/`](../../../deploy/mcp-daemon/).
 
 ## Choosing a rung
 

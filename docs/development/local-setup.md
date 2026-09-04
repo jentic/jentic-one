@@ -19,7 +19,7 @@ no-op when it is already satisfied. It performs, in order:
 2. **Database fixtures + migrations.** If Postgres is already reachable it just
    re-applies `alembic upgrade head` for each schema (a no-op when current);
    otherwise it starts the Docker fixtures and runs the full setup
-   (`scripts/setup.sh` → compose up, create schemas, migrate).
+   ([`scripts/setup.sh`](../../scripts/setup.sh) → compose up, create schemas, migrate).
 3. **UI bundle.** If `ui/dist` has no built `index.html` it runs `make ui-build`;
    otherwise it skips. (If Node is unavailable it warns and continues — the
    backend API still runs, only the `/app` SPA is unavailable.)

@@ -19,14 +19,14 @@ python -m jentic_one
   setup, the `create-admin` first-run subcommand, and the guard that disables
   `server.reload` on a SQLite admin DB (a single-file DB cannot take multiple
   writer processes).
-- **`Context`** (`shared/context.py`) carries config plus lazily-opened
+- **`Context`** ([`shared/context.py`](../../src/jentic_one/shared/context.py)) carries config plus lazily-opened
   database handles, gated by `allowed_dbs` (below).
 - **`wiring.py`** is the composition root (see
   [surfaces and layering](surfaces-and-layering.md)); it builds the
   `AppContainer` — the DI seam carrying an optional injected `Broker`, extra
   routers, extra installers, and extra lifespans. The enterprise overlay and
   other downstream packages extend the system here, not inside surfaces.
-- **The app factories** (`shared/web/app_factory.py`) assemble either one
+- **The app factories** ([`shared/web/app_factory.py`](../../src/jentic_one/shared/web/app_factory.py)) assemble either one
   standalone surface app (`SURFACE_MODULES[surface].create_app`) or a
   combined app that includes every selected surface's routers in one shared
   root namespace — only the per-surface health routers carry a prefix
@@ -127,7 +127,7 @@ Three loops start inside the lifespan:
 
 | Loop | Runs when | Job |
 | ---- | --------- | --- |
-| `WorkerLoop` (`shared/jobs/worker.py`) | the admin DB is reachable and a handler registered | Claims queued jobs from the admin DB's jobs table. The `IMPORT` handler registers only on registry shapes; the `EXECUTION` handler only where the broker's upstream executor exists. A broker process therefore never claims import jobs, and an app process never claims executions. |
+| `WorkerLoop` ([`shared/jobs/worker.py`](../../src/jentic_one/shared/jobs/worker.py)) | the admin DB is reachable and a handler registered | Claims queued jobs from the admin DB's jobs table. The `IMPORT` handler registers only on registry shapes; the `EXECUTION` handler only where the broker's upstream executor exists. A broker process therefore never claims import jobs, and an app process never claims executions. |
 | `CredentialExpiryScanner` | control shapes | Emits expiry warnings for credentials nearing their end date. |
 | `CatalogUpdateScanner` | registry shapes | Watches imported APIs' sources for upstream changes and raises update-available notifications. |
 

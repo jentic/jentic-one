@@ -1,6 +1,6 @@
 # Surfaces and layering
 
-How `src/jentic_one/` is organized, and the import rules that keep it that
+How [`src/jentic_one/`](../../src/jentic_one/) is organized, and the import rules that keep it that
 way. The rules are not aspirational: each one is pinned by a test in
 [`tests/arch/`](../../tests/arch/), so a violating import fails CI.
 
@@ -26,23 +26,23 @@ src/jentic_one/
 
 **Surfaces do not import each other**, with one sanctioned seam. Every
 forbidden edge has a dedicated test in
-`tests/arch/test_module_boundaries.py`
+[`tests/arch/test_module_boundaries.py`](../../tests/arch/test_module_boundaries.py)
 (`test_broker_does_not_import_control`, `test_control_does_not_import_admin`,
 …, `test_shared_does_not_import_auth`). The seam:
-`broker/services/credentials/` imports control's OAuth provider and token
+[`broker/services/credentials/`](../../src/jentic_one/broker/services/credentials/) imports control's OAuth provider and token
 repo to refresh expired tokens during injection
-(`broker/services/credentials/refresh.py`), and
+([`broker/services/credentials/refresh.py`](../../src/jentic_one/broker/services/credentials/refresh.py)), and
 `test_broker_does_not_import_control` excludes exactly that path. All other
 cross-surface needs are met three ways:
 
-- **`shared/`** — config, `Context`, the DB session layer, the `Broker`
+- **[`shared/`](../../src/jentic_one/shared/)** — config, `Context`, the DB session layer, the `Broker`
   protocol, jobs, events, audit, scopes, telemetry. Its independence is
   enforced only in specific directions: `shared/` never imports `broker`,
   never imports `auth`, and never imports `admin.core.permissions`
   (`test_module_boundaries.py`). It does reach other surfaces where it
-  assembles them — `shared/web/app_factory.py` imports registry's
-  `ImportHandler`, `shared/auth/verify.py` builds admin's
-  `PermissionService`, and `shared/release_check.py` reuses registry's
+  assembles them — [`shared/web/app_factory.py`](../../src/jentic_one/shared/web/app_factory.py) imports registry's
+  `ImportHandler`, [`shared/auth/verify.py`](../../src/jentic_one/shared/auth/verify.py) builds admin's
+  `PermissionService`, and [`shared/release_check.py`](../../src/jentic_one/shared/release_check.py) reuses registry's
   catalog fetcher.
 - **`wiring.py`** — the composition root, deliberately outside every surface
   package so it may import several of them. It builds the `AppContainer` and
@@ -50,7 +50,7 @@ cross-surface needs are met three ways:
   the broker resolve operations without importing `jentic_one.registry`).
 - **Raw SQL at a named seam** — when the control plane must write an
   admin-DB row (approving an access request binds a toolkit to an agent),
-  `control/repos/effects_repo.py` uses raw SQL rather than importing admin's
+  [`control/repos/effects_repo.py`](../../src/jentic_one/control/repos/effects_repo.py) uses raw SQL rather than importing admin's
   ORM models. The [worked example below](#a-request-layer-by-layer) traces
   this seam in action.
 
@@ -85,7 +85,7 @@ and the test that enforces each:
 
 ### The `scoping/` packages
 
-`registry/`, `control/`, and `admin/` each carry a `scoping/filters.py` whose
+[`registry/`](../../src/jentic_one/registry/), [`control/`](../../src/jentic_one/control/), and [`admin/`](../../src/jentic_one/admin/) each carry a `scoping/filters.py` whose
 `build_access_filters(identity, model)` returns the WHERE clauses a repo
 applies for row-level visibility: `org:admin` sees everything, an owner sees
 their own rows, and an operator holding a delegation scope
@@ -100,7 +100,7 @@ model these filters implement.
 access request — exercises every rule above, including the cross-database
 seam:
 
-1. **`web/`** — the router (`control/web/routers/access_requests.py`)
+1. **`web/`** — the router ([`control/web/routers/access_requests.py`](../../src/jentic_one/control/web/routers/access_requests.py))
    declares its auth dependency, receives the resolved `Identity`, converts
    the body to plain data, and calls `AccessRequestService.decide()`. No DB
    import, no business logic; a failure surfaces as an RFC 9457 problem
@@ -129,12 +129,12 @@ its own arch test:
 
 | Concern | Single home | Test |
 | ------- | ----------- | ---- |
-| Encryption primitives (`cryptography`) | `shared/crypto/encryption.py` | `test_encryption_facade.py` |
-| JWKS key operations | `shared/auth/jwks.py` | `test_jwks_single_source.py` |
-| Metrics exporters | `shared/metrics.py` | `test_metrics_facade.py` |
-| Tracing/OTel instrumentation | `shared/tracing.py` | `test_tracing_facade.py` |
-| Upstream HTTP transport | `broker/adapters/runners/http.py` (the `UpstreamRunner` seam) | `test_broker_runner_seam.py` |
-| Structured logging (no stdlib `logging`) | `shared/logging.py` (structlog) | `test_no_stdlib_logging.py` |
+| Encryption primitives (`cryptography`) | [`shared/crypto/encryption.py`](../../src/jentic_one/shared/crypto/encryption.py) | `test_encryption_facade.py` |
+| JWKS key operations | [`shared/auth/jwks.py`](../../src/jentic_one/shared/auth/jwks.py) | `test_jwks_single_source.py` |
+| Metrics exporters | [`shared/metrics.py`](../../src/jentic_one/shared/metrics.py) | `test_metrics_facade.py` |
+| Tracing/OTel instrumentation | [`shared/tracing.py`](../../src/jentic_one/shared/tracing.py) | `test_tracing_facade.py` |
+| Upstream HTTP transport | [`broker/adapters/runners/http.py`](../../src/jentic_one/broker/adapters/runners/http.py) (the `UpstreamRunner` seam) | `test_broker_runner_seam.py` |
+| Structured logging (no stdlib `logging`) | [`shared/logging.py`](../../src/jentic_one/shared/logging.py) (structlog) | `test_no_stdlib_logging.py` |
 
 The full `tests/arch/` suite also carries the drift guards for generated
 artifacts (OpenAPI, endpoint tree, config schema/reference, skills, install

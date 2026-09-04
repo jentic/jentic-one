@@ -23,7 +23,7 @@ and smoke-test workflow.
 - The chart is **not published** to any registry (the AWS Marketplace ECR
   copy is the exception — see
   [marketplace publishing](../../docs/development/marketplace-publishing.md)).
-  Vendor `deploy/helm/jentic-one/` from a checkout at the release tag.
+  Vendor [`deploy/helm/jentic-one/`](jentic-one/) from a checkout at the release tag.
 - Subcharts default to locally-built `jentic-one/<svc>` image repos. Only the
   `app` subchart can be pointed at the published GHCR image
   (`--set app.image.repository=… --set app.image.tag=…`); the `broker`
@@ -173,7 +173,7 @@ Knobs worth knowing:
   [`values/local-observability.yaml`](values/local-observability.yaml) keep
   the stack under ~2 GiB on a single kind node; persistence is off.
 - **No `--otel`** — apps run with no sidecar, no overhead; logs still flow.
-- **Adding a component** — add a subchart to `observability/Chart.yaml`;
+- **Adding a component** — add a subchart to [`observability/Chart.yaml`](observability/Chart.yaml);
   it's a normal Helm umbrella.
 
 This stack is for **local dev / smoke**. For production, run the same charts
@@ -225,5 +225,5 @@ helm upgrade jentic deploy/helm/jentic-one \
 
 Adding custom instruments in app code? Go through `get_meter()` in
 [`src/jentic_one/shared/metrics.py`](../../src/jentic_one/shared/metrics.py)
-(enforced by `tests/arch/test_metrics_facade.py`) and keep label cardinality
+(enforced by [`tests/arch/test_metrics_facade.py`](../../tests/arch/test_metrics_facade.py)) and keep label cardinality
 bounded — route templates and enums, never raw paths or user-supplied IDs.

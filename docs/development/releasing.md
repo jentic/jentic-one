@@ -108,7 +108,7 @@ The automation is inert until these are provisioned:
 
 Both Windows-channel secrets are **optional**: while unset, GoReleaser skips
 that publisher with a log line and the release stays green (the
-`skip_upload` templates in `cli/.goreleaser.yaml`). Provisioning the secret
+`skip_upload` templates in [`cli/.goreleaser.yaml`](../../cli/.goreleaser.yaml)). Provisioning the secret
 is what turns the channel on.
 
 cosign signing needs no secret — it uses the release job's OIDC token (keyless,
@@ -125,7 +125,7 @@ until then self-hosters cannot `docker pull` without authenticating. GHCR's
 against re-pushes, but breaks the full-re-run recovery path above (a full
 re-run cannot overwrite `X.Y.Z`) — enable it only if you accept recovering
 via "Re-run failed jobs" or `Release-As` instead. The image is cosign-signed
-with an SBOM attestation; the verify commands live in `deploy/README.md`
+with an SBOM attestation; the verify commands live in [`deploy/README.md`](../../deploy/README.md)
 ("Verify the signature").
 
 Also consider a **repository ruleset restricting `v*` tag creation** to the

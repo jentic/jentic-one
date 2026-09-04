@@ -12,7 +12,7 @@ anything not listed as tested should be treated as best-effort.
 | Server — from source (`make dev`) | ✅ Supported | ✅ Supported | ❌ Unsupported — POSIX `Makefile` and shell scripts | ✅ Supported (as Linux) |
 | `jentic` — agent CLI | ✅ Supported (amd64, arm64) | ✅ Supported (amd64, arm64) | ✅ Supported (amd64; arm64 builds but is untested) | ✅ Supported |
 | `jenticctl` — operator CLI | ✅ Supported (amd64, arm64) | ✅ Supported (amd64, arm64) | ❌ Not shipped — its surface is Docker/compose lifecycle; use WSL2 | ✅ Supported |
-| `tools/install.sh` installer | ✅ Supported | ✅ Supported | ❌ Unsupported — bash script | ✅ Supported |
+| [`tools/install.sh`](../../tools/install.sh) installer | ✅ Supported | ✅ Supported | ❌ Unsupported — bash script | ✅ Supported |
 | `jentic run` — local-agent confinement | ✅ Supported (`bwrap` + user namespaces) | ✅ Supported (`sandbox-exec`) | ❌ Unsupported — no confinement backend | ❌ Unsupported — needs unprivileged user namespaces inside WSL; untested |
 | `jentic mcp` — local MCP stdio server | ✅ Supported | ✅ Supported | ✅ Supported (wherever `jentic` runs) | ✅ Supported |
 
@@ -37,7 +37,7 @@ Step-by-step path: [windows.md](windows.md). The shape:
 | Leg | Coverage |
 | --- | -------- |
 | `ubuntu-24.04` | Full test suite, headless Docker install, live-stack smoke |
-| `macos-latest` | Build via `tools/install.sh`, OS-sensitive Go tests, offline smoke |
+| `macos-latest` | Build via [`tools/install.sh`](../../tools/install.sh), OS-sensitive Go tests, offline smoke |
 | `windows-latest` (amd64) | Binary build, OS-sensitive Go tests, offline smoke (PowerShell) |
 
 Windows arm64 binaries cross-compile in release builds but are not smoke-tested

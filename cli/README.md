@@ -1,7 +1,7 @@
 # Jentic CLI
 
 The Jentic CLI ships as **two Go binaries** built from one module, sharing the
-same `internal/` packages. Their state is split: `jenticctl` (the installer)
+same [`internal/`](internal/) packages. Their state is split: `jenticctl` (the installer)
 keeps its install/lifecycle state under `~/.jentic`, while the `jentic` agent
 CLI stores its config/state in the **XDG layout** (`~/.config/jentic`,
 `~/.local/state/jentic` — see the XDG section below).
@@ -486,7 +486,7 @@ choose — nothing pre-seeded, nothing to rotate.
 > plain text — standard for a self-contained local stack. For any deployed
 > environment, do **not** ship these files: source secrets from Docker secrets,
 > Kubernetes secrets, or an external secret manager (the production path is
-> configured via Helm values under `deploy/helm/values/`, not this wizard).
+> configured via Helm values under [`deploy/helm/values/`](../deploy/helm/values/), not this wizard).
 
 The generated file mirrors
 [`jentic_one.shared.config.AppConfig`](../src/jentic_one/shared/config.py). Since

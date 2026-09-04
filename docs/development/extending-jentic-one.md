@@ -130,7 +130,7 @@ def build_app(ctx: Context):
 
 The container stashes your `broker` on `app.state.broker`. It is honored by
 **both** callers of the "one pipeline, two callers" seam — the sync router
-(`broker/web/routers/execute.py`) and the async worker
+([`broker/web/routers/execute.py`](../../src/jentic_one/broker/web/routers/execute.py)) and the async worker
 (`PipelineExecutor`) — so an injected broker reaches the sync **and** async
 paths, not just one of them.
 
@@ -169,7 +169,7 @@ class TestMyStrategyCompliance(BaseSearchStrategyComplianceTest):
 
 These `Test*` subclasses are collected by pytest and fail loudly if your
 implementation diverges from the built-in contract — the same guard the OSS
-suite runs against its own defaults (`tests/unit/testing/test_compliance_oss.py`).
+suite runs against its own defaults ([`tests/unit/testing/test_compliance_oss.py`](../../tests/unit/testing/test_compliance_oss.py)).
 
 ### 4. (Optional) Compose your own CLI binary
 

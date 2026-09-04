@@ -1,10 +1,10 @@
 # Broker execution
 
 What happens between an agent's `jentic execute` and the upstream API's
-response. The broker (`src/jentic_one/broker/`) is a credential-injecting
+response. The broker ([`src/jentic_one/broker/`](../../src/jentic_one/broker/)) is a credential-injecting
 forward proxy with essentially one route: a catch-all
 `/{upstream_url:path}` that accepts every HTTP method
-(`broker/web/routers/execute.py`).
+([`broker/web/routers/execute.py`](../../src/jentic_one/broker/web/routers/execute.py)).
 
 ## A brokered call, end to end
 
@@ -37,9 +37,9 @@ sequenceDiagram
 
 ## One pipeline, two callers
 
-The docstring rule in `broker/services/execution/pipeline.py` is
+The docstring rule in [`broker/services/execution/pipeline.py`](../../src/jentic_one/broker/services/execution/pipeline.py) is
 "one pipeline, two callers": the execution use-case (`run_execution` in
-`broker/services/execution/service.py`) is invoked by exactly two paths, and
+[`broker/services/execution/service.py`](../../src/jentic_one/broker/services/execution/service.py)) is invoked by exactly two paths, and
 neither re-implements any step.
 
 - **The sync router.** The catch-all route awaits `run_execution` and adapts
@@ -47,13 +47,13 @@ neither re-implements any step.
 - **The async worker.** A request carrying `Prefer: respond-async` is not
   executed inline: the router enqueues a `JobKind.EXECUTION` job and answers
   `202` with a `/jobs/{job_id}` link. The shared `WorkerLoop`
-  (`shared/jobs/worker.py`) later hands the job to `ExecutionHandler`
-  (`shared/jobs/execution_handler.py`), which re-validates the URL, injects
+  ([`shared/jobs/worker.py`](../../src/jentic_one/shared/jobs/worker.py)) later hands the job to `ExecutionHandler`
+  ([`shared/jobs/execution_handler.py`](../../src/jentic_one/shared/jobs/execution_handler.py)), which re-validates the URL, injects
   the credential, and dispatches through the same runner stack. The seam is
   two protocols (`UpstreamExecutor`, `CredentialInjector` in
-  `shared/jobs/protocols.py`) implemented broker-side by `PipelineExecutor`
-  and `CredentialService` — so `shared/jobs/` never imports `broker/`
-  (enforced by `tests/arch/test_worker_no_inline_dispatch.py`).
+  [`shared/jobs/protocols.py`](../../src/jentic_one/shared/jobs/protocols.py)) implemented broker-side by `PipelineExecutor`
+  and `CredentialService` — so [`shared/jobs/`](../../src/jentic_one/shared/jobs/) never imports [`broker/`](../../src/jentic_one/broker/)
+  (enforced by [`tests/arch/test_worker_no_inline_dispatch.py`](../../tests/arch/test_worker_no_inline_dispatch.py)).
 
 Results of async executions are polled through the jobs API
 (`GET /jobs/{job_id}`, `GET /jobs/{job_id}/result`) or the
@@ -61,9 +61,9 @@ Results of async executions are polled through the jobs API
 
 ## The Broker protocol and `DefaultBroker`
 
-`shared/broker/broker.py` defines the `Broker` protocol — `execute()`
+[`shared/broker/broker.py`](../../src/jentic_one/shared/broker/broker.py) defines the `Broker` protocol — `execute()`
 (buffered) and `execute_streaming()` (passthrough). `DefaultBroker`
-(`broker/default_broker.py`) is the stock implementation wrapping the
+([`broker/default_broker.py`](../../src/jentic_one/broker/default_broker.py)) is the stock implementation wrapping the
 `BrokerExecutionPipeline`; a deployment (or the enterprise overlay) can
 inject its own via `app.state.broker` / `app.state.broker_factory`, and
 `BaseBrokerComplianceTest` in `jentic_one.testing` pins the contract.
@@ -71,10 +71,10 @@ inject its own via `app.state.broker` / `app.state.broker_factory`, and
 ## The resilience stack
 
 The outbound call is a decorator chain over one shared `httpx.AsyncClient`
-(the runners live in `broker/adapters/runners/`), composed in two stages:
-the broker app lifespan (`broker/web/app.py`) wraps the transport with the
+(the runners live in [`broker/adapters/runners/`](../../src/jentic_one/broker/adapters/runners/)), composed in two stages:
+the broker app lifespan ([`broker/web/app.py`](../../src/jentic_one/broker/web/app.py)) wraps the transport with the
 SigV4 signer and the optional circuit breaker, then `build_runner`
-(`broker/services/execution/pipeline.py`) adds the retry loop and the
+([`broker/services/execution/pipeline.py`](../../src/jentic_one/broker/services/execution/pipeline.py)) adds the retry loop and the
 outermost deadline:
 
 ```
@@ -94,22 +94,22 @@ DeadlineRunner( RetryRunner( CircuitBreakerRunner( SigV4SigningRunner( HttpRunne
 - **`SigV4SigningRunner`** — innermost signer for AWS-shaped credentials;
   re-signs on every retry attempt; a no-op otherwise.
 - **`HttpRunner`** — the only place a request actually leaves the process
-  (pinned by `tests/arch/test_broker_runner_seam.py`); per-host concurrency
+  (pinned by [`tests/arch/test_broker_runner_seam.py`](../../tests/arch/test_broker_runner_seam.py)); per-host concurrency
   bulkhead, mid-stream response-size cap, raw-byte streaming.
 
 At the web edge, admission control sheds load when too many requests are in
-flight (`broker/web/middleware.py`) and a per-caller rate limiter answers
-`429` with `RateLimit-*` headers (`broker/web/deps.py`).
+flight ([`broker/web/middleware.py`](../../src/jentic_one/broker/web/middleware.py)) and a per-caller rate limiter answers
+`429` with `RateLimit-*` headers ([`broker/web/deps.py`](../../src/jentic_one/broker/web/deps.py)).
 
 ## Egress controls
 
 Two layers keep the proxy from being used against the network it runs in:
 
-- **Pre-request validation** (`shared/url_validation.py`) — `http`/`https`
+- **Pre-request validation** ([`shared/url_validation.py`](../../src/jentic_one/shared/url_validation.py)) — `http`/`https`
   only; private, loopback, and link-local ranges refused; cloud metadata
   endpoints are a hard, non-overridable deny. Operators can exempt specific
   private subnets/domains via `EgressConfig`.
-- **Connection-time DNS pinning** (`shared/egress.py`) — re-resolves and
+- **Connection-time DNS pinning** ([`shared/egress.py`](../../src/jentic_one/shared/egress.py)) — re-resolves and
   re-validates at connect time and pins the connection to the validated IP,
   closing DNS-rebinding races. Redirects are not followed
   (`follow_redirects=False`); the egress layer owns redirect policy.
@@ -119,7 +119,7 @@ and async callers, so an injected variable cannot smuggle in a new host.
 
 ## Credential injection
 
-`CredentialService` (`broker/services/credentials/orchestrator.py`) is the
+`CredentialService` ([`broker/services/credentials/orchestrator.py`](../../src/jentic_one/broker/services/credentials/orchestrator.py)) is the
 one place a secret meets a request:
 
 1. **Resolve** against the control DB by the API identity tuple
@@ -129,23 +129,23 @@ one place a secret meets a request:
    the candidates. See [How credential resolution works](../guides/credentials-and-toolkits.md).
 2. **Refresh** OAuth tokens when expired (transient failures and
    needs-reconnect are distinct errors).
-3. **Inject** per credential type (`broker/core/injection.py`): bearer or
+3. **Inject** per credential type ([`broker/core/injection.py`](../../src/jentic_one/broker/core/injection.py)): bearer or
    basic `Authorization` headers, API keys into header/query/cookie, SigV4
    as signing material for the runner. The response path never carries the
    secret back.
 4. **Audit** — every resolve/decrypt emits a `CREDENTIAL_ACCESSED` event.
 
 Before any of that, the toolkit deriver
-(`broker/repos/caching_toolkit_deriver.py`) works out which toolkit serves
+([`broker/repos/caching_toolkit_deriver.py`](../../src/jentic_one/broker/repos/caching_toolkit_deriver.py)) works out which toolkit serves
 the call from the agent's bindings (none → `403`, several → `409` asking for
 `Jentic-Toolkit-Id`), and the toolkit's permission rules are evaluated
 **default-deny**: no matching rule, no call
-(`broker/repos/rule_evaluator.py`).
+([`broker/repos/rule_evaluator.py`](../../src/jentic_one/broker/repos/rule_evaluator.py)).
 
 ## What gets recorded
 
 Every execution lands as an append-only `ExecutionRecord` in the admin DB
-(`shared/executions/ingest.py`): status, duration, operation and API
+([`shared/executions/ingest.py`](../../src/jentic_one/shared/executions/ingest.py)): status, duration, operation and API
 identity, HTTP status, actor, origin, and the credential used (by id and
 name, never the secret). Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential

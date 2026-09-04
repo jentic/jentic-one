@@ -123,7 +123,7 @@ Autogenerate compares the target database's base metadata (e.g. `RegistryBase.me
 ### Configuration
 
 - `alembic.ini` — multi-database config with `[registry]`, `[control]`, `[admin]` sections
-- `src/jentic_one/migrations/env.py` — shared async env that resolves the active section to the correct database URL and metadata
+- [`src/jentic_one/migrations/env.py`](../../src/jentic_one/migrations/env.py) — shared async env that resolves the active section to the correct database URL and metadata
 - `src/jentic_one/migrations/{registry,control,admin}/versions/` — per-database migration scripts
 
 ## Runtime configuration
@@ -168,7 +168,7 @@ curl -s http://127.0.0.1:8000/instance
   hosted install run elsewhere. It is a hint for humans/agents, not an
   authorization signal.
 - `canonical_base_url` / `host` come from `auth.canonical_base_url` (set in
-  `config/local.yaml` to `http://127.0.0.1:8000` for local runs; a hosted
+  [`config/local.yaml`](../../config/local.yaml) to `http://127.0.0.1:8000` for local runs; a hosted
   platform sets its own). This is the instance describing *itself*, so it is
   the value to trust over any client-side assumption. Any userinfo embedded in
   the configured URL is stripped before echoing.

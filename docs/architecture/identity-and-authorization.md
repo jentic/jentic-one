@@ -9,8 +9,8 @@ surface's protocol details (discovery documents, registration endpoints) in
 ## Actors
 
 Every authenticated request resolves to one `Identity`
-(`shared/auth/identity.py`) with an explicit `actor_type`
-(`shared/models/actors.py`) — verification fails closed on a token that
+([`shared/auth/identity.py`](../../src/jentic_one/shared/auth/identity.py)) with an explicit `actor_type`
+([`shared/models/actors.py`](../../src/jentic_one/shared/models/actors.py)) — verification fails closed on a token that
 doesn't name one:
 
 | Actor | Who it is | Typical credential |
@@ -49,7 +49,7 @@ sequenceDiagram
     AU-->>G: tokens
 ```
 
-1. **Register** (`auth/` surface, RFC 7591/7592 dynamic client
+1. **Register** ([`auth/`](../../src/jentic_one/auth/) surface, RFC 7591/7592 dynamic client
    registration): the agent submits metadata plus a JWKS containing at least
    one **Ed25519** public key (`registration_service.py` rejects anything
    else, including any private-key material).
@@ -64,14 +64,14 @@ sequenceDiagram
 
 Operators and the SPA use session JWTs minted at login; API keys
 (`jak_`/`sak_`) are the long-lived alternative, resolved by prefix against
-the admin DB (`shared/auth/api_key_resolver.py`). JWT verification for
+the admin DB ([`shared/auth/api_key_resolver.py`](../../src/jentic_one/shared/auth/api_key_resolver.py)). JWT verification for
 asymmetric tokens allows only asymmetric algorithms — `alg: none` and all
-HMAC algorithms are rejected (`shared/auth/jwt_verification.py`).
+HMAC algorithms are rejected ([`shared/auth/jwt_verification.py`](../../src/jentic_one/shared/auth/jwt_verification.py)).
 
 ## Scopes
 
 Scopes shared across surfaces are canonical constants in
-`shared/scopes.py`. The shape of the system:
+[`shared/scopes.py`](../../src/jentic_one/shared/scopes.py). The shape of the system:
 
 - **`capabilities:execute`** is the one scope the broker's data plane
   requires. Every accepted credential kind must carry it.
@@ -95,10 +95,10 @@ Authorization is checked at three distinct layers, and they answer
 different questions:
 
 1. **Route admission** (`web/`): every non-health router declares an auth
-   dependency (enforced by `tests/arch/test_web_layer.py`); the dependency
+   dependency (enforced by [`tests/arch/test_web_layer.py`](../../tests/arch/test_web_layer.py)); the dependency
    verifies the credential, resolves the `Identity`, and checks the route's
    scope. On the broker, `CachedTokenValidator`
-   (`broker/core/token_validation.py`) fronts the resolvers with a short-TTL
+   ([`broker/core/token_validation.py`](../../src/jentic_one/broker/core/token_validation.py)) fronts the resolvers with a short-TTL
    cache keyed on the token's SHA-256 (both hits and misses cached, LRU
    bounded).
 2. **Row visibility** (`scoping/`): services pass the identity's access
