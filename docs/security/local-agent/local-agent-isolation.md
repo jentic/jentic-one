@@ -344,7 +344,7 @@ writer, one source of truth, one refreshed projection.
 Without this, each `jentic run` prompts for the operator's password (cached
 per-terminal ~5 min). `setup`/`wizard` offer this as a **consent gate during
 account setup** (defaulting to yes): accept it and the CLI installs a scoped
-`sudoers` drop-in; decline and you simply keep entering your login password on
+`sudoers` drop-in; decline and you keep entering your login password on
 each launch. The rule it writes is exactly:
 
 ```
@@ -662,7 +662,7 @@ password prompt is never a surprise.
 
 Running as the operator (rather than under `sudo`) also removes a whole class of
 bugs: there is no `SUDO_USER` indirection to unwind and no risk of reading root's
-config trees instead of the operator's — the current user simply *is* the operator.
+config trees instead of the operator's — the current user *is* the operator.
 
 It tears down the whole shared agent account (and wipes the operator's own
 identity state — the full clean slate).

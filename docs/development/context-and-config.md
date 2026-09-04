@@ -137,8 +137,8 @@ local install and a remote one are both reachable it is easy for two clients to
 disagree: e.g. an MCP server still bound to a remote backend while the CLI talks
 to a fresh local install. The two backends have independent registries and
 credentials, so a tool call answered by the *other* backend looks like data loss
-("APIs disappeared", "credentials vanished", ID-format mismatches) when the
-systems are simply different.
+("APIs disappeared", "credentials vanished", ID-format mismatches) when nothing
+was lost — the two clients are talking to different backends.
 
 ### The `GET /instance` identity probe
 
