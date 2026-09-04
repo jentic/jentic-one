@@ -72,16 +72,33 @@ cd cli && make build
 ### Self-hosted (Docker)
 
 One image (`ghcr.io/jentic/jentic-one-app`) runs both the control plane and the
-broker — write a small config file, run migrations, then start each role:
+broker. The trial shape below keeps everything in SQLite files on one volume
+and runs with development-mode secrets — don't point it at a real credential:
 
 ```bash
 docker pull ghcr.io/jentic/jentic-one-app:latest
-docker run -d --name jentic-app -p 127.0.0.1:8000:8000 \
-  ghcr.io/jentic/jentic-one-app:latest   # control plane (UI + APIs)
+docker volume create jentic-data
+
+# The three backing stores, as SQLite files on the shared volume
+DB=(-e JENTIC__DATABASES__REGISTRY__BACKEND=sqlite -e JENTIC__DATABASES__REGISTRY__PATH=/data/registry.db
+    -e JENTIC__DATABASES__CONTROL__BACKEND=sqlite  -e JENTIC__DATABASES__CONTROL__PATH=/data/control.db
+    -e JENTIC__DATABASES__ADMIN__BACKEND=sqlite    -e JENTIC__DATABASES__ADMIN__PATH=/data/admin.db)
+
+# Migrate, then start the two roles
+docker run --rm "${DB[@]}" -v jentic-data:/data \
+  ghcr.io/jentic/jentic-one-app:latest python -m jentic_one.migrations.run
+docker run -d --name jentic-app "${DB[@]}" -v jentic-data:/data \
+  -p 127.0.0.1:8000:8000 ghcr.io/jentic/jentic-one-app:latest      # control plane (UI + APIs)
+docker run -d --name jentic-broker "${DB[@]}" -e JENTIC__APPS=broker -v jentic-data:/data \
+  -p 127.0.0.1:8080:8000 ghcr.io/jentic/jentic-one-app:latest      # data plane (agents call this)
+
+# First admin (prompts for a password), then sign in at http://127.0.0.1:8000
+docker run --rm -it "${DB[@]}" -v jentic-data:/data \
+  ghcr.io/jentic/jentic-one-app:latest python -m jentic_one create-admin --email you@example.com
 ```
 
-The full sequence — config, credential-encryption keyset, migrations, and the
-broker container — is in [docs/installation/docker.md](docs/installation/docker.md).
+The production shape — external Postgres, image pinned and verified by digest,
+real secrets, TLS — is in [docs/installation/docker.md](docs/installation/docker.md).
 
 ### Install the CLI
 
