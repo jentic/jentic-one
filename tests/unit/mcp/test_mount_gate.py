@@ -7,9 +7,14 @@ Pins the four ``server.mcp.enabled`` x ``server.mcp.oauth.enabled`` arms:
 ====================  =====================  =======================================
 off (default)         off (default)          the framework's plain 404 (as pre-placeholder)
 off                   on                     the placeholder's discovery challenge, verbatim
-on                    off                    401 bare ``Bearer`` without a credential
+on                    off                    401 bare ``Bearer`` on a rejected credential
 on                    on                     401 + ``resource_metadata`` pointer
 ====================  =====================  =======================================
+
+On the enabled arms a credential-LESS GET/HEAD is the exception to the
+challenge: it answers the 405 stream refusal (no stream is served to any
+caller, and the 401 triggered mcp-remote's concurrent-flow PKCE clobber —
+issue #1256).
 
 plus the mount-owned request checks on the enabled arms: strict ``Origin``
 validation (403 on spoof), the pre-auth whitelist (``tools/list`` without a
@@ -153,9 +158,14 @@ def test_oauth_only_arm_falls_back_to_request_host_when_canonical_empty() -> Non
 # --- arms 3+4: endpoint on — auth required, challenge shape per oauth arm ----
 
 
-@pytest.mark.parametrize("method", ("GET", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS"))
+@pytest.mark.parametrize("method", ("DELETE", "PUT", "PATCH", "OPTIONS"))
 def test_enabled_credential_less_non_post_is_challenged(method: str) -> None:
-    """Only POSTed pre-auth JSON-RPC methods pass without a credential."""
+    """Only POSTed pre-auth JSON-RPC methods pass without a credential.
+
+    GET/HEAD are deliberately absent: a credential-less GET/HEAD answers the
+    stream refusal (405) instead of the challenge — see
+    ``test_credential_less_get_is_405_stream_refusal`` and issue #1256.
+    """
     with make_client(oauth_enabled=True) as client:
         resp = client.request(method, "/mcp")
         assert resp.status_code == 401
@@ -165,9 +175,10 @@ def test_enabled_credential_less_non_post_is_challenged(method: str) -> None:
 def test_enabled_with_oauth_off_challenges_with_bare_bearer() -> None:
     """No discovery surface → nothing to point at: the challenge is scheme-only
     (the PRM path would 404, so advertising it would break spec-following
-    clients mid-chain)."""
+    clients mid-chain). A credential must be OFFERED to draw the challenge on
+    GET (credential-less GET is the 405 stream refusal — issue #1256)."""
     with make_client(oauth_enabled=False) as client:
-        resp = client.get("/mcp")
+        resp = client.get("/mcp", headers={"Authorization": "Bearer at_garbage"})
         assert resp.status_code == 401
         assert resp.headers["www-authenticate"] == "Bearer"
 
@@ -229,11 +240,61 @@ def test_authenticated_get_is_405_and_never_reaches_the_sse_arm() -> None:
         assert resp.json() == {"detail": "Method Not Allowed"}
 
 
-def test_credential_less_get_stays_401_not_405() -> None:
-    """Auth precedes method semantics: an unauthenticated GET keeps answering
-    the 401 challenge (the placeholder contract), never a method tell."""
-    with make_client(oauth_enabled=True) as client:
+@pytest.mark.parametrize("oauth_enabled", [True, False])
+def test_credential_less_get_is_405_stream_refusal(oauth_enabled: bool) -> None:
+    """Issue #1256: a GET offering NO credential answers the stream refusal
+    (405 + ``Allow: POST``), never the challenge.
+
+    This endpoint is stateless — it serves no GET stream to ANY caller (the
+    authenticated arm answers the same 405), so a challenge here invites a
+    token that unlocks nothing. Worse, it is the exact trigger for
+    mcp-remote's (≤ 0.8.3) concurrent-OAuth-flow PKCE clobber: the SDK's
+    fallback-test and main-transport GET-stream arms each launch a
+    fire-and-forget flow off this 401 while the tools/call arm launches the
+    one flow that actually consumes the code — one per-process ``state``, a
+    verifier file keyed by state, guaranteed ``invalid_grant``. The MCP
+    Streamable HTTP spec's own answer for "server does not offer an SSE
+    stream at this endpoint" is 405, which the SDK handles without entering
+    its auth path. (This flips the pre-#1256 pin that auth preceded method
+    semantics on GET — deliberately.)
+    """
+    with make_client(oauth_enabled=oauth_enabled) as client:
         resp = client.get("/mcp", headers={"Accept": "text/event-stream"})
+        assert resp.status_code == 405
+        assert resp.headers["allow"] == "POST"
+        assert "www-authenticate" not in resp.headers
+        assert resp.json() == {"detail": "Method Not Allowed"}
+
+
+def test_credential_less_head_mirrors_the_get_stream_refusal() -> None:
+    """HEAD answers GET's status and headers without a body (RFC 9110
+    §9.3.2) — a credential-less HEAD gets the same 405 refusal, not the
+    challenge, so the two probes never disagree about the resource."""
+    with make_client(oauth_enabled=True) as client:
+        resp = client.head("/mcp")
+        assert resp.status_code == 405
+        assert resp.headers["allow"] == "POST"
+        assert "www-authenticate" not in resp.headers
+        assert resp.content == b""
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Authorization": "Bearer at_garbage"},  # garbage bearer
+        {"Authorization": "Basic dXNlcjpwYXNz"},  # non-Bearer scheme
+        {"X-Jentic-Api-Key": "jak_garbage"},  # garbage API key
+    ],
+)
+def test_get_offering_a_bad_credential_keeps_the_401_challenge(
+    headers: dict[str, str],
+) -> None:
+    """Issue #1256 keeps the challenge contract for every request that
+    ATTEMPTS to authenticate: a presented-but-rejected credential (any
+    ``Authorization`` scheme, or the API-key header) still draws the 401 +
+    ``WWW-Authenticate`` — only the credential-LESS GET/HEAD moved to 405."""
+    with make_client(oauth_enabled=True) as client:
+        resp = client.get("/mcp", headers=headers)
         assert resp.status_code == 401
         assert resp.headers["www-authenticate"] == _CHALLENGE
         assert "allow" not in resp.headers

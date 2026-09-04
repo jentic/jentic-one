@@ -38,7 +38,15 @@ Flipping the flag needs no rebuild; the gate is evaluated per request. The
 endpoint accepts only `POST` (stateless — no SSE stream, no `Mcp-Session-Id`),
 validates the `Origin` header strictly (403 on mismatch), and requires a
 credential for everything except surface discovery (`tools/list`, `ping`,
-the resource listings).
+the resource listings). A `GET`/`HEAD` that offers **no** credential answers
+`405 Method Not Allowed` (`Allow: POST`) rather than an auth challenge: no
+caller ever gets a stream here, and the MCP SDK reads the 405 as "no stream
+offered" without starting an OAuth flow — challenging that probe made
+OAuth-capable bridges (`mcp-remote` ≤ 0.8.3) launch concurrent flows that
+clobbered each other's PKCE verifier
+([#1256](https://github.com/jentic/jentic-one/issues/1256)). A request that
+presents a credential — valid, expired, or garbage — keeps the standard
+401-challenge contract on every method.
 
 ## Connecting an HTTP-capable MCP client
 
