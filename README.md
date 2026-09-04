@@ -68,48 +68,17 @@ cd cli && make build
 
 ### Self-hosted (Docker)
 
+One image (`ghcr.io/jentic/jentic-one-app`) runs both the control plane and the
+broker — write a small config file, run migrations, then start each role:
+
 ```bash
-# Pull the image — one image runs both the app and the broker
 docker pull ghcr.io/jentic/jentic-one-app:latest
-
-# Minimal config needed (all options: docs/reference/config.md)
-cat > jentic-one.yaml <<EOF
-databases:
-  registry: {backend: sqlite, path: /data/registry.db, schema_name: registry}
-  control:  {backend: sqlite, path: /data/control.db,  schema_name: control}
-  admin:    {backend: sqlite, path: /data/admin.db,    schema_name: admin}
-server: {host: 0.0.0.0, port: 8000}
-credentials:
-  encryption:
-    active_id: v1
-    entries:
-      - id: v1
-        material: "$(openssl rand -base64 32)"
-EOF
-
-# Initialise the databases (also the upgrade step — re-run it on a new image)
-docker run --rm \
-  -v jentic-data:/data \
-  -v "$PWD/jentic-one.yaml":/etc/jentic/jentic-one.yaml:ro \
-  -e JENTIC_CONFIG_FILE=/etc/jentic/jentic-one.yaml \
-  ghcr.io/jentic/jentic-one-app:latest python -m jentic_one.migrations.run
-
-# Start the control plane (UI + APIs)
-docker run -d --name jentic-app \
-  -v jentic-data:/data \
-  -v "$PWD/jentic-one.yaml":/etc/jentic/jentic-one.yaml:ro \
-  -e JENTIC_CONFIG_FILE=/etc/jentic/jentic-one.yaml \
-  -p 127.0.0.1:8000:8000 ghcr.io/jentic/jentic-one-app:latest
-
-# Start the broker (the execution edge agents call)
-docker run -d --name jentic-broker -v jentic-data:/data \
-  -v "$PWD/jentic-one.yaml":/etc/jentic/jentic-one.yaml:ro \
-  -e JENTIC_CONFIG_FILE=/etc/jentic/jentic-one.yaml -e JENTIC__APPS=broker \
-  -p 127.0.0.1:8100:8000 ghcr.io/jentic/jentic-one-app:latest
-
-# Open the web UI and create the admin account
-open http://127.0.0.1:8000
+docker run -d --name jentic-app -p 127.0.0.1:8000:8000 \
+  ghcr.io/jentic/jentic-one-app:latest   # control plane (UI + APIs)
 ```
+
+The full sequence — config, credential-encryption keyset, migrations, and the
+broker container — is in [docs/installation/docker.md](docs/installation/docker.md).
 
 ### Install the CLI
 
