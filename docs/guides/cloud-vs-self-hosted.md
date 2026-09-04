@@ -1,7 +1,7 @@
 # The Jentic cloud platform vs self-hosted Jentic One
 
-Jentic offers two distinct products that are easy to conflate —
-especially for an AI agent (or its operator) that has used both:
+Jentic offers two distinct products that are easy to conflate,
+especially if you have used both:
 
 |  | Jentic cloud platform | Jentic One (this repo) |
 | --- | --- | --- |

@@ -235,7 +235,7 @@ process's view of the tree*.
 The primitives above all answer "who may touch this inode?" The alternative is to
 answer "what can *this process* see?" — launch the agent into a restricted view
 where only the granted paths exist (or are reachable) and everything else in `~`
-is simply absent or denied, regardless of its mode. This is per-*process*, not
+is absent or denied, regardless of its mode. This is per-*process*, not
 per-*inode*, so it gives true per-entry control (grant `~/a`, `~/b` is invisible)
 **without stamping or mutating anything on disk**, and it tears down when the
 session process exits. There is no single cross-platform API, but each OS has a

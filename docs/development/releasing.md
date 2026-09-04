@@ -70,7 +70,7 @@ Release-As: 0.14.3
 release-please then opens a `chore(main): release 0.14.3` PR; merging it cuts the
 tag and re-runs `release.yml` (now from the fixed workflow on `main`), producing
 a complete set of signed binaries + the Homebrew cask. A failed release version
-is simply superseded by the next one — every release rebuilds all artifacts from
+is superseded by the next one — every release rebuilds all artifacts from
 scratch, so nothing is lost by skipping it.
 
 
