@@ -344,3 +344,56 @@ def test_render_app_secrets_conflict_with_config_file() -> None:
     )
     assert result.returncode != 0
     assert "mutually exclusive" in result.stderr
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_reach_every_python_surface() -> None:
+    """generate=true mounts the release Secret on ALL Python surfaces.
+
+    Found live: admin and registry never had the app-secrets wiring, which the
+    old CHANGE-ME jwt_secret code default masked — every pod silently agreed on
+    the placeholder. Once the default became generate-per-process (the AWS
+    Marketplace static-password fix), parts-mode pods disagreed on jwt_secret
+    and cross-surface JWT verification 401'd. The issuer (admin) and every
+    verifier must mount the SAME Secret.
+    """
+    result = _helm_template(
+        "--set",
+        "app.enabled=false",
+        "--set",
+        "admin.enabled=true",
+        "--set",
+        "registry.enabled=true",
+        "--set",
+        "control.enabled=true",
+        "--set",
+        "global.appSecrets.generate=true",
+        "--set",
+        "global.databases.registry.password=x",
+        "--set",
+        "global.databases.control.password=x",
+        "--set",
+        "global.databases.admin.password=x",
+        "--set",
+        "postgresql.auth.password=x",
+    )
+    assert result.returncode == 0, result.stderr
+    # admin + registry + control each mount the generated Secret and point
+    # the loader at it (app disabled here; broker is off by default).
+    assert result.stdout.count("mountPath: /etc/jentic/app-secrets") == 3
+    assert result.stdout.count("name: JENTIC_CONFIG_FILE") == 3
+
+
+@pytest.mark.smoke
+def test_render_parts_overlay_shares_jwt_secret() -> None:
+    """The parts smoke overlay pins one jwt_secret across issuer + verifiers.
+
+    Dev overlays use inline env (not appSecrets — control's configFile keyset
+    is mutually exclusive with it), so the shared value must be stated
+    explicitly on every surface that mints or checks admin JWTs. Without it,
+    each pod generates its own per-process secret and POST /apis 401s — the
+    exact failure the v0.38.2 release smoke caught.
+    """
+    result = _helm_template("-f", str(VALUES_DIR / "local-parts.yaml"))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("name: JENTIC__ADMIN__AUTH__JWT_SECRET") == 3
