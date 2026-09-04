@@ -177,8 +177,10 @@ JENTIC_INSTALL_METHOD="${JENTIC_INSTALL_METHOD:-auto}"
 JENTIC_INSTALL_BINARIES="${JENTIC_INSTALL_BINARIES:-both}"
 
 # cosign keyless-signing identity, mirrored from docs/development/releasing.md and the Go
-# updater (cli/internal/update/download.go). Used to verify checksums.txt.sig.
-COSIGN_CERT_IDENTITY_REGEXP="https://github.com/${JENTIC_REPO}/.*"
+# updater (cli/internal/update/download.go): pinned to the release workflow on a
+# version tag, with the repo still parameterised for forks. Used to verify
+# checksums.txt.sig.
+COSIGN_CERT_IDENTITY_REGEXP="^https://github.com/${JENTIC_REPO}/\\.github/workflows/release\\.yml@refs/tags/"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
 # Minimum Go version required to build the CLI (mirrors the `go` directive in
