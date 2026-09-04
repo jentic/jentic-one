@@ -132,6 +132,66 @@ homebrew_casks:
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/jentic"]
           end
 
+# Winget (Windows). Publishes the manifest set for the `jentic` zip archives
+# (amd64 + arm64) into the jentic fork of microsoft/winget-pkgs and opens the
+# upstream PR — after that lands, `winget install Jentic.Jentic` works with no
+# bucket/tap setup. jenticctl is excluded by design (not shipped for Windows).
+#
+# The token is a CLASSIC PAT with `public_repo` scope (fine-grained tokens
+# cannot open PRs against repos they aren't installed on, and the PR targets
+# microsoft/winget-pkgs). When WINGET_TOKEN is unset/empty the entry is
+# skipped with a log line instead of failing the release — publishing starts
+# once the secret + fork exist (docs/development/releasing.md, one-time setup).
+winget:
+  - name: Jentic # second segment of the identifier; keeps the manifest path
+    # (manifests/j/Jentic/Jentic/<ver>) aligned with package_identifier, which
+    # winget-pkgs validation requires.
+    package_identifier: Jentic.Jentic
+    package_name: Jentic
+    publisher: Jentic
+    publisher_url: https://jentic.com
+    publisher_support_url: https://github.com/jentic/jentic-one/issues
+    homepage: https://jentic.com
+    short_description: "Jentic One agent CLI — search, inspect and execute governed API calls through the broker"
+    license: Apache-2.0
+    license_url: https://github.com/jentic/jentic-one/blob/main/LICENSE
+    release_notes_url: https://github.com/jentic/jentic-one/releases/tag/{{ .Tag }}
+    ids: [jentic]
+    tags: [cli, agents, api]
+    skip_upload: '{{ if envOrDefault "WINGET_TOKEN" "" }}false{{ else }}true{{ end }}'
+    repository:
+      owner: jentic
+      name: winget-pkgs
+      token: '{{ envOrDefault "WINGET_TOKEN" "" }}'
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
+# Scoop (Windows, zero-review alternative to winget — the bucket is ours, so
+# the manifest is installable the moment the release is cut, while the winget
+# PR waits on microsoft/winget-pkgs review):
+#   scoop bucket add jentic https://github.com/jentic/scoop-bucket
+#   scoop install jentic
+# Same graceful-skip contract as winget: unset/empty SCOOP_BUCKET_TOKEN skips
+# the push (fine-grained PAT, contents: write on jentic/scoop-bucket only —
+# same shape as HOMEBREW_TAP_TOKEN).
+scoops:
+  - name: jentic
+    ids: [jentic]
+    homepage: https://jentic.com
+    description: "Jentic One agent CLI — search, inspect and execute governed API calls through the broker"
+    license: Apache-2.0
+    skip_upload: '{{ if envOrDefault "SCOOP_BUCKET_TOKEN" "" }}false{{ else }}true{{ end }}'
+    # Manifest lands at the bucket root (jentic.json) — `scoop bucket list`
+    # only counts root-level manifests.
+    repository:
+      owner: jentic
+      name: scoop-bucket
+      token: '{{ envOrDefault "SCOOP_BUCKET_TOKEN" "" }}'
+
 release:
   github:
     owner: jentic

@@ -101,15 +101,16 @@ real secrets, TLS — is in [docs/installation/docker.md](docs/installation/dock
 ### Install the CLI
 
 ```bash
-# Auto-detects OS/arch and resolves the latest release.
-# Full matrix + verification: docs/installation/cli.md — or: brew install jentic/tap/jentic
-VER=$(curl -fsSL https://api.github.com/repos/jentic/jentic-one/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
-OS=$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-curl -fsSL "https://github.com/jentic/jentic-one/releases/download/v${VER}/jentic_${VER}_${OS}_${ARCH}.tar.gz" | tar xz jentic
-sudo install jentic /usr/local/bin/
+brew install --cask jentic/tap/jentic    # macOS / Linux
+winget install Jentic.Jentic             # Windows
 
 jentic register   # connect this machine to the instance
 ```
+
+No package manager? Manual download, checksum + signature verification, and
+air-gapped transfer are in [docs/installation/cli.md](docs/installation/cli.md)
+— along with our Scoop bucket, which carries brand-new releases before winget
+review completes.
 
 ### Managed install
 

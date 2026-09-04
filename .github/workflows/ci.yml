@@ -862,6 +862,32 @@ jobs:
           fi
           # linux/darwin tarballs must still be produced (byte-shape invariant).
           ls "${dist}"/jentic_*_linux_amd64.tar.gz "${dist}"/jenticctl_*_linux_amd64.tar.gz >/dev/null
+      # The Windows package channels are generated from the zips above (the
+      # publish is skipped in snapshot mode, manifest GENERATION is not). A
+      # broken winget/scoops stanza — or one that drifts from the commands the
+      # docs advertise (`winget install Jentic.Jentic`, `scoop install jentic`)
+      # — otherwise only surfaces at tag time. The docs↔config identifier
+      # match itself is pinned by tests/arch/test_install_docs_conformance.py;
+      # this asserts the config actually yields manifests.
+      - name: Assert winget + scoop manifests generated
+        run: |
+          set -euo pipefail
+          dist=""
+          for d in dist cli/dist; do
+            [ -d "$d" ] && { dist="$d"; break; }
+          done
+          test -n "${dist}" || { echo "::error::goreleaser produced no dist dir"; exit 1; }
+          installer="$(find "${dist}/winget" -name '*.installer.yaml' 2>/dev/null | head -n1 || true)"
+          test -n "${installer}" || { echo "::error::no winget installer manifest generated under ${dist}/winget"; exit 1; }
+          echo "winget installer manifest: ${installer}"
+          grep -q '^PackageIdentifier: Jentic.Jentic$' "${installer}" \
+            || { echo "::error::winget manifest lost the Jentic.Jentic identifier the docs advertise"; exit 1; }
+          grep -q 'RelativeFilePath: jentic.exe' "${installer}" \
+            || { echo "::error::winget manifest does not install jentic.exe"; exit 1; }
+          test -f "${dist}/scoop/jentic.json" \
+            || { echo "::error::no scoop manifest generated at ${dist}/scoop/jentic.json"; exit 1; }
+          grep -q '"jentic.exe"' "${dist}/scoop/jentic.json" \
+            || { echo "::error::scoop manifest does not install jentic.exe"; exit 1; }
 
   installer:
     name: Installer script tests

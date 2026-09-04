@@ -226,7 +226,7 @@ Prefer one file over two `docker run`s? Two worked compose examples:
 ## 7. Connect the CLIs
 
 - **Admin host:** install `jenticctl` from the release archive
-  ([download + verify](../../cli/README.md#3-manual-download--verify)).
+  ([download + verify](../../cli/README.md#4-manual-download--verify)).
 - **Every host using the instance:** install `jentic` the same way, then
   register — an operator approves each agent in the UI:
 

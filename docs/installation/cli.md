@@ -7,11 +7,31 @@ Two Go binaries, each its own release archive — no runtime, no dependencies:
 | `jentic` | Agent CLI — `register`, `search`, `inspect`, `execute` | Every host inside the network that calls the instance |
 | `jenticctl` | Operator CLI — install, lifecycle, admin | The admin host only |
 
-Alternatives to the manual download below: `brew install jentic/tap/jentic`
-(installs both), or the [one-line installer](../../cli/README.md#2-one-line-download-verified-binary-no-compiler)
+## Package managers (start here)
+
+```bash
+brew install --cask jentic/tap/jentic      # macOS / Linux — installs BOTH binaries
+```
+
+```powershell
+winget install Jentic.Jentic               # Windows — jentic (agent CLI) only
+
+# or, via our Scoop bucket (no Microsoft review lag on brand-new releases):
+scoop bucket add jentic https://github.com/jentic/scoop-bucket
+scoop install jentic
+```
+
+All three resolve your CPU architecture, verify the download hash, put the
+binary on `PATH`, and upgrade with the manager's native command (`brew
+upgrade`, `winget upgrade`, `scoop update`). `jenticctl` is not shipped for
+native Windows — use WSL ([windows.md](windows.md)).
+
+Everything below is the manual path: locked-down hosts, air-gapped transfer,
+or when you want to verify the supply chain yourself. There is also a
+[one-line installer script](../../cli/README.md#3-one-line-download-verified-binary-no-compiler)
 which downloads, sha256-checks, and cosign-verifies for you.
 
-## Download
+## Manual download
 
 The archive name is `<binary>_<version>_<os>_<arch>.tar.gz`. Auto-detect the
 platform and resolve the latest version:
