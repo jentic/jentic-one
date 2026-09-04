@@ -153,7 +153,7 @@ without touching the key.
 
 The full index is at [docs/README.md](docs/README.md).
 
-- [Installation](docs/installation/quickstart.md) — [Docker](docs/installation/docker.md), [systemd](docs/installation/systemd.md), [Helm](docs/installation/helm.md), [AWS Marketplace](docs/installation/aws-marketplace.md)
+- [Installation](docs/installation/README.md) — [Docker](docs/installation/docker.md), [systemd](docs/installation/systemd.md), [Helm](docs/installation/helm.md), [AWS Marketplace](docs/installation/aws-marketplace.md)
 - [First brokered call](docs/guides/first-call.md) — from a running instance to a real API response
 - [CLI](cli/README.md) — `jentic` (agent) and `jenticctl` (operator)
 - [Deploying securely](docs/security/security.md) — read before pointing an instance at a real credential

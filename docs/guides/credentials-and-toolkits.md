@@ -2,7 +2,10 @@
 
 How stored credentials relate to the APIs they authenticate and the toolkits
 that expose them, and the invariants the platform enforces to keep credential
-resolution unambiguous.
+resolution unambiguous. Storing a credential and granting an agent access are
+walked through in [Your first brokered call](first-call.md) (steps 3–4); read
+[Deploying Jentic One securely](../security/security.md) before storing a real
+one. The rest of the guides are indexed in [`README.md`](README.md).
 
 ## Model
 

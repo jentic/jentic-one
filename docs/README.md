@@ -18,7 +18,7 @@ overview → one scoped guide → [generated reference](#reference-generated--ne
 
 ## Install
 
-- [Installation overview](installation/quickstart.md) — artifacts, verification, air-gapped transfer
+- [Installation overview](installation/README.md) — artifacts, verification, air-gapped transfer
 - [Platform support](installation/platform-support.md) — what runs on Linux / macOS / Windows / WSL2
 - [Windows](installation/windows.md) — the WSL2 + native-CLI path, step by step
 - [CLI binaries](installation/cli.md) — `jentic` / `jenticctl` download matrix and verification
@@ -46,7 +46,7 @@ Get going:
 
 Connect agents:
 
-- [Connecting an agent](guides/connecting-agents.md) — the four integration paths, and how self-hosted differs from the Jentic cloud platform
+- [Connect an agent](guides/connecting-agents.md) — the four integration paths, and how self-hosted differs from the Jentic cloud platform
 - [Run coding agents in isolation](guides/local-agent.md) — `jentic run` and the local-agent sandbox
 - [Serve MCP over HTTP](guides/mcp-http-endpoint.md) — the optional hosted `/mcp` endpoint
 
@@ -74,7 +74,7 @@ Agent runbook: [use](agent/use.md) — discover → request access → execute, 
 - [Extending Jentic One](development/extending-jentic-one.md)
 - [Context and configuration](development/context-and-config.md)
 - [Releasing](development/releasing.md)
-- [Product scope](development/product-scope.md)
+- [Product scope](development/product-scope.md) — the product-fit rubric the issue-intake harness scores against
 - [deploy/README.md](../deploy/README.md) — build architecture: images, charts, Terraform, multi-arch
 - [Helm charts & local cluster](../deploy/helm/README.md) — chart docs, kind workflow, smoke tests, observability stack
 - [AWS Marketplace publishing](development/marketplace-publishing.md) — the seller/maintainer side of the listing

@@ -12,7 +12,7 @@ rules shape everything here:
   subchart, one line in `Makefile`'s `SERVICES`.
 
 **Looking to install, not build?** The install guides live under
-[`docs/installation/`](../docs/installation/quickstart.md) — Docker,
+[`docs/installation/`](../docs/installation/README.md) — Docker,
 docker-compose, systemd, Helm, AWS Marketplace. This page is the build
 architecture; [`helm/README.md`](helm/README.md) is the chart + local-cluster
 workflow (including the smoke tests CI runs).
@@ -251,7 +251,7 @@ No core code or shared template needs to change.
 
 | Topic | Where |
 | ----- | ----- |
-| Installing (Docker, compose, systemd, Helm, Windows) | [`docs/installation/`](../docs/installation/quickstart.md) |
+| Installing (Docker, compose, systemd, Helm, Windows) | [`docs/installation/`](../docs/installation/README.md) |
 | Chart docs, local kind cluster, smoke tests, observability stack | [`helm/README.md`](helm/README.md) |
 | Kubernetes secrets (generated vs your own) | [`docs/installation/helm.md`](../docs/installation/helm.md#secrets) |
 | Day-2 operations (monitoring, backups, upgrades) | [`docs/operations/`](../docs/operations/README.md) |

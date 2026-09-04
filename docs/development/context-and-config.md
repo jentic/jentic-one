@@ -1,4 +1,4 @@
-# Context & Configuration
+# Context and configuration
 
 ## Overview
 

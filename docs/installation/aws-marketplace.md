@@ -12,7 +12,7 @@ on every upgrade. A bundled PostgreSQL runs in-cluster by default; an
 external database such as RDS is supported.
 
 For self-hosted installs outside AWS Marketplace, use the
-[installation quickstart](quickstart.md) instead.
+[installation index](README.md) instead.
 
 ## Prerequisites
 

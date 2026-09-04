@@ -45,6 +45,6 @@ on any runner. WSL2 is not exercised in CI; it is expected to behave as Linux.
 
 ## See also
 
-- [quickstart.md](quickstart.md) — pick an install path
+- [the installation index](README.md) — pick an install path
 - [cli.md](cli.md) — CLI download matrix and verification
 - [docker.md](docker.md) / [helm.md](helm.md) / [systemd.md](systemd.md) — per-platform installs

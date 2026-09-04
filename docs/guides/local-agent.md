@@ -1,4 +1,4 @@
-# Running coding agents in isolation — `jentic run`
+# Run coding agents in isolation — `jentic run`
 
 This is the operator guide to the **local-agent sandbox**: launching a CLI coding
 agent (Claude Code, Codex, Cursor's `cursor-agent`, Hermes) as its **own

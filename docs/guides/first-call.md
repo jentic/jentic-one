@@ -5,7 +5,7 @@ seeing your credentials. This page is the route map — each step is short and
 links to the guide that owns the detail.
 
 **No instance yet?** Install one first and come back — the
-[installation guide](../installation/quickstart.md) covers every path (Docker,
+[installation guide](../installation/README.md) covers every path (Docker,
 systemd, Helm, AWS Marketplace); the [README quickstart](../../README.md#quickstart)
 is the fastest local trial. Everything below assumes the app
 (`http://127.0.0.1:8000` on a local install) and the broker are running.
@@ -93,13 +93,14 @@ after the check, forwards the request, and writes an audit record.
 
 ## Where to go next
 
-- **Have a coding agent do this for you.** [AGENTS.md](../../AGENTS.md) has an
-  install-and-connect section an agent can follow end to end.
+- **Have a coding agent do this for you.** The
+  [agent runbooks](../agent/README.md) cover install through the
+  discover → access → execute loop as directly executable steps.
 - **Full CLI reference.** Every `jenticctl` and `jentic` command:
   [`cli/README.md`](../../cli/README.md).
 - **In-app API reference.** A running deployment serves its own interactive
   API reference at `/docs`, generated from code.
 - **Endpoint & scope reference.** Every HTTP route and the scope it requires:
   [endpoint reference](../reference/endpoints.md).
-- **Run it somewhere real.** The [installation guides](../installation/quickstart.md),
+- **Run it somewhere real.** The [installation guides](../installation/README.md),
   then the [security hardening guide](../security/security.md).

@@ -1,4 +1,4 @@
-# Product Scope
+# Product scope
 
 > **Purpose.** This document gives the issue-intake harness (see
 > [`.harness/ISSUE_INTAKE_STANDARDS.md`](../../.harness/ISSUE_INTAKE_STANDARDS.md)) a

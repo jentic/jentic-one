@@ -97,7 +97,7 @@ exposure vector in past audits.
 
 - Pin the image by digest (`ghcr.io/jentic/jentic-one-app@sha256:…`) and
   verify cosign signatures before the image crosses into a locked-down
-  network: [installation/quickstart.md](../installation/quickstart.md).
+  network: [installation/README.md](../installation/README.md).
 - Keep `runtime.debug: false` and `log_level: INFO` in production; the JSON
   log sink (`~/.jentic/logs/app.jsonl`) redacts secrets by design, but debug
   logging is noisier and slower.

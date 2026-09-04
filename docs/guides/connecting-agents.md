@@ -1,4 +1,4 @@
-# Connecting an agent
+# Connect an agent
 
 You have a running deployment; this page is how an agent talks to it. There
 are four supported paths, and they share one identity model: a per-agent

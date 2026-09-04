@@ -2,6 +2,10 @@
 
 Production installs run from released artifacts only: the published container image and the two Go CLI binaries. Nothing is built from source on the target hosts, and once the artifacts are inside your network nothing needs outbound internet access.
 
+> Evaluating first? The five-minute SQLite trial — no Postgres, three
+> `docker run`s — is the [README quickstart](../../README.md#quickstart).
+> This section is the production path.
+
 ## The artifacts
 
 | Artifact | Role | Distribution |

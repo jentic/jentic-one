@@ -2,7 +2,7 @@
 
 Day-2: what to watch, how to upgrade, what a backup must contain. Each page
 here owns the install-method-agnostic contract; the exact commands for your
-install shape live in the [installation guides](../installation/quickstart.md),
+install shape live in the [installation guides](../installation/README.md),
 and the compose-shaped runbook an agent can execute is
 [`agent/operate.md`](../agent/operate.md).
 

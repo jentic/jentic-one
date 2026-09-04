@@ -1,4 +1,4 @@
-# Releasing jentic-one
+# Releasing Jentic One
 
 Operational runbook for cutting a release. The *why* (versioning policy, the
 decisions behind this setup) lives in [`VERSIONING.md`](../../VERSIONING.md); this

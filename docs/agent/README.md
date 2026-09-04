@@ -5,7 +5,7 @@ Jentic One instance on a human's behalf — imperative steps, explicit human
 gates, and verification after every stage. Everything runs with `docker`,
 `curl`, and the `jentic` CLI; no interactive setup tooling is involved.
 (Humans are welcome too; the human-first guides live in
-[`docs/installation/`](../installation/quickstart.md).)
+[`docs/installation/`](../installation/README.md).)
 
 Start at the repository root's [`llms.txt`](../../llms.txt), then:
 

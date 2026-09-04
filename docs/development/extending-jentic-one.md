@@ -1,4 +1,4 @@
-# Extending jentic-one
+# Extending Jentic One
 
 `jentic-one` ships a set of **backward-compatible seams** so an integrator can
 inject alternate implementations and mount extra components **without editing

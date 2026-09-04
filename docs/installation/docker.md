@@ -41,7 +41,7 @@ cosign verify \
 ```
 
 Air-gapped? Pull and verify on a connected machine, `docker save`/`docker load`
-the tarball across (see the [quickstart](quickstart.md#air-gapped-transfer)).
+the tarball across (see the [installation index](README.md#air-gapped-transfer)).
 
 ## 2. Write the config
 

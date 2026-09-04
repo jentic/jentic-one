@@ -45,7 +45,7 @@ above) and re-run migrations.
 
 The package may be private on this network: `docker login ghcr.io` or mirror
 the image, then retry. Digest pinning and cosign verification:
-[installation/quickstart.md](../installation/quickstart.md).
+[installation/README.md](../installation/README.md).
 
 ## Migrations fail
 
