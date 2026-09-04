@@ -22,8 +22,9 @@ def redirect_uris_fingerprint(redirect_uris: list[str]) -> str:
     Order-insensitive and duplicate-insensitive (the list is normalized to a
     sorted set before hashing, matching the set comparison the DCR service's
     dedupe re-verify performs) and exact — any added, removed, or altered URI
-    changes the fingerprint. Together with ``software_id`` this is the D8
-    dedupe key for DCR registrations. URIs cannot contain raw newlines (they
+    changes the fingerprint. Paired with ``software_id`` (or with the client
+    name, for software_id-less registrations) this forms the D8/G13 dedupe
+    key for DCR registrations. URIs cannot contain raw newlines (they
     are validated URLs), so the newline join is unambiguous.
     """
     return hashlib.sha256("\n".join(sorted(set(redirect_uris))).encode()).hexdigest()
@@ -131,6 +132,38 @@ class OAuthClientRepository:
             .where(
                 OAuthClient.software_id == software_id,
                 OAuthClient.redirect_uris_fingerprint == fingerprint,
+                OAuthClient.registration_source == OAuthRegistrationSource.DCR.value,
+            )
+            .order_by(OAuthClient.created_at.asc(), OAuthClient.id.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def list_dcr_by_name_dedupe_key(
+        session: AsyncSession, name: str, fingerprint: str
+    ) -> list[OAuthClient]:
+        """List DCR rows matching the software_id-less fallback dedupe key.
+
+        The G13 fallback for clients that register without a ``software_id``
+        (Cursor, mcp-remote): exact ``(name, redirect_uris_fingerprint)``
+        match, restricted to rows that *also* carry no ``software_id`` — a
+        registration without a software identity must never adopt a row that
+        was registered with one (and the software_id path never matches NULL
+        rows), so the two key spaces stay disjoint by construction.
+
+        Same contract as :meth:`list_dcr_by_dedupe_key` otherwise: callers
+        must re-verify the exact redirect-URI set (the fingerprint is a
+        hash — collision guard), rows come back oldest first, and the caller
+        picks the dedupe winner. ``software_id IS NULL`` keys into the same
+        ``(software_id, redirect_uris_fingerprint)`` covering index.
+        """
+        stmt = (
+            select(OAuthClient)
+            .where(
+                OAuthClient.software_id.is_(None),
+                OAuthClient.redirect_uris_fingerprint == fingerprint,
+                OAuthClient.name == name,
                 OAuthClient.registration_source == OAuthRegistrationSource.DCR.value,
             )
             .order_by(OAuthClient.created_at.asc(), OAuthClient.id.asc())
