@@ -60,7 +60,7 @@ class RateLimitStore(Protocol):
 
 @runtime_checkable
 class AtomicStore(Protocol):
-    """Atomic-counter + claim role: circuit counters (§05) and idempotency (§07)."""
+    """Atomic-counter + claim role: circuit counters and idempotency."""
 
     async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int: ...
 

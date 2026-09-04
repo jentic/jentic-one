@@ -1,6 +1,6 @@
 """Anonymous OAuth-client DCR request/response schemas (RFC 7591 subset).
 
-Schemas for ``POST /oauth-clients`` — the phase-3a §4.2 front door. Unknown
+Schemas for ``POST /oauth-clients`` — the anonymous-DCR front door. Unknown
 metadata fields are ignored (RFC 7591 servers SHOULD ignore what they don't
 use); the accepted-and-constrained subset is validated here and in
 :mod:`jentic_one.auth.services.oauth_dcr_service`.
@@ -21,7 +21,7 @@ class OAuthClientRegistrationRequest(BaseModel):
     # Bounded to the oauth_clients.name column (String(255)): the endpoint is
     # anonymous and the name flows into event summaries on operator surfaces.
     # Client-claimed and untrusted (phishing) — consent UIs render the
-    # redirect-URI origin prominently, never the name alone (§4.2).
+    # redirect-URI origin prominently, never the name alone.
     client_name: str = Field(min_length=1, max_length=255)
     redirect_uris: list[str] = Field(min_length=1, max_length=20)
     token_endpoint_auth_method: str | None = Field(

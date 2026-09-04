@@ -1,8 +1,8 @@
-"""Admin cross-view over OAuth consent→agent grants (phase-3a §4.8).
+"""Admin cross-view over OAuth consent→agent grants.
 
 The write side of the grant lifecycle (minting at consent, the ``:revoke``
 kill switch) lives in :mod:`jentic_one.auth.services.oauth_grant_service`;
-this service is the read side shared by the §4.8 listing surfaces — the
+this service is the read side shared by the grant listing surfaces — the
 ``GET /admin/oauth-grants`` cross-view and (behind the auth tier's
 owner-or-admin check) the per-agent "Connected clients" panel.
 """
@@ -68,7 +68,7 @@ class OAuthGrantAdminService:
         """List grants newest-first, filtered by agent/client/user/status.
 
         ``client_id`` is the public client identifier (the join key grants
-        store, D3). Each item carries the §4.8 display fields: client name,
+        store, D3). Each item carries the display fields: client name,
         redirect-URI origin, scopes, consenting ``user_id`` (G10), created,
         last-used, status — plus ``can_revoke``, the viewer's ``:revoke``
         capability computed per item via :func:`viewer_can_revoke`.

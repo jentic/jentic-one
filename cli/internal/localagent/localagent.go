@@ -1458,8 +1458,9 @@ func shellQuote(s string) string {
 }
 
 // BanClass describes how a path is protected from being handed to the agent.
-// The two classes are handled differently at the grant prompt (see run.go): a
-// SoftBan blocks only the path itself, a HardBan blocks its whole subtree.
+// The two classes are handled differently at the grant prompt (see
+// localagentcmd/run.go): a SoftBan blocks only the path itself, a HardBan
+// blocks its whole subtree.
 type BanClass int
 
 const (

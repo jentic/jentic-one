@@ -11,7 +11,7 @@ import type { CreatedToolkit } from '@/modules/toolkits/api/types';
  *
  * Step 1 (form): name + description + an optional credential multi-select —
  * `POST /toolkits` has always accepted `credential_ids[]` for inline binds,
- * the UI just never offered it (phase-4 gap). Inline binds land with zero
+ * and the form offers it here. Inline binds land with zero
  * rules, so the form says the broker will default-deny until rules are added.
  *
  * Step 2 (key): the response's one-time plaintext key, rendered through the

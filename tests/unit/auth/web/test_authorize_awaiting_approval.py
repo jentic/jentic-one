@@ -1,4 +1,4 @@
-"""Unit tests for the /authorize awaiting-approval page (D7, design §4.3).
+"""Unit tests for the /authorize awaiting-approval page.
 
 A registered-but-unapproved client must get a human HTML page (200) — never an
 OAuth error redirect — and the page must not reveal pending vs denied.
@@ -97,7 +97,7 @@ def test_unapproved_client_gets_human_page_not_redirect(
     assert resp.headers["content-type"].startswith("text/html")
     assert "awaiting administrator approval" in resp.text
     assert "Cursor" in resp.text
-    # Consent-grade security headers on the human page (§9 security-shaped).
+    # Consent-grade security headers on the human page.
     assert resp.headers["X-Frame-Options"] == "DENY"
     assert resp.headers["Cache-Control"] == "no-store"
 

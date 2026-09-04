@@ -1,22 +1,21 @@
 /**
- * Overview tab — the headline usage lens, ported from jentic-mini's Overview
- * (jentic-one-internal#561).
+ * Overview tab — the headline usage lens (jentic-one-internal#561).
  *
  * Powered by `GET /monitoring/usage` (`useUsageStats`): HealthStrip (health +
  * latency pills, active-APIs cluster), the Execution Volume chart (sub-day
  * buckets on the 24h window), the bubble chart, and the Breakdown table with
  * per-row sparkline trends — each of the latter two with an APIs / Toolkits /
  * Agents grouping toggle. The tab fires one usage query per grouping
- * dimension (same pattern as jentic-mini's MonitorPage) so toggling lenses is
+ * dimension so toggling lenses is
  * instant; buckets/overall stats are read off the API-grouped response since
  * they're identical across groupings.
  *
- * Intentional divergences from jentic-mini:
- * - Window options are 24h/7d/30d only. Mini also offered `1h`/`all`, but the
+ * Deliberate design points:
+ * - Window options are 24h/7d/30d only (no `1h`/`all`): the
  *   `?days` URL param is shared with the list tabs' filter bar, which speaks
  *   integer days — sub-day and unbounded windows would fork that contract.
- * - All-zero data swaps the page for an EmptyState with guidance. Mini
- *   rendered a (misleading) 100%-healthy strip over empty charts.
+ * - All-zero data swaps the page for an EmptyState with guidance rather than
+ *   a (misleading) 100%-healthy strip over empty charts.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
@@ -100,9 +99,9 @@ export function OverviewTab() {
 	// already-elapsed bound would hide the current partial step's executions
 	// from the charts while the executions tab lists them (#913). The
 	// multi-day windows are aligned to local calendar days — midnight
-	// (days-1) days ago through the end of today — matching jentic-mini's
+	// (days-1) days ago through the end of today — to suit the
 	// day-bucketed volume chart: a rolling now-7d bound straddles 8 calendar
-	// dates, so the day axis showed "more than 7 days". Day alignment also
+	// dates, so the day axis would show "more than 7 days". Day alignment also
 	// makes the window an exact multiple of the backend's bucket tier, so the
 	// per-entity trend segments land on day boundaries (their `until` is
 	// end-of-today, i.e. in the future, so they never had the exclusion

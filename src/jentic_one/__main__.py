@@ -55,7 +55,7 @@ def _expand_allowed_dbs(apps: list[str], config: AppConfig) -> set[str]:
     for surface in apps:
         allowed |= SURFACE_DB_DEPS.get(surface, set())
     # The /mcp mount's search/inspect/catalog tools call the registry services
-    # in-process (phase-3 item 1), so a control-plane process serving the
+    # in-process, so a control-plane process serving the
     # mount needs the registry DB even when the registry surface itself is
     # deployed elsewhere. Gated on the flag: with MCP off nothing widens.
     if "control" in apps and config.server.mcp.enabled:
@@ -73,7 +73,7 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
         mod = importlib.import_module(SURFACE_MODULES[surface])
         # Standalone control carries the composition container so the /mcp
         # mount (installer + session-manager lifespan) rides it; standalone
-        # auth carries it for the 3a-4 /mcp challenge placeholder (the
+        # auth carries it for the /mcp discovery-challenge placeholder (the
         # discovery pointers it serves must not dangle) — the other surfaces
         # keep their own default wiring.
         if surface in ("control", "auth"):

@@ -1,4 +1,4 @@
-"""RFC 7009 token revocation for registered OAuth clients (G11, phase 3).
+"""RFC 7009 token revocation for registered OAuth clients.
 
 The service side of the public-client revocation arm of ``POST /oauth/revoke``:
 a form-encoded request carrying ``token`` (+ optional ``token_type_hint`` and
@@ -19,7 +19,7 @@ Semantics (decision Manuel, 2026-09-03 — full disconnect):
   fresh consent. This deliberately exceeds RFC 7009 §2.1 (which only SHOULD
   revoke related refresh/access tokens and says nothing about the underlying
   authorization) to keep ONE revocation semantics everywhere: the UI grant
-  kill switch (3a-5), the G10 transfer sweep, and this endpoint all run
+  kill switch, the G10 transfer sweep, and this endpoint all run
   :func:`~jentic_one.auth.services.oauth_grant_service.revoke_grant_and_sweep_tokens`
   — same sweep, same audit shape, same ``oauth_grant.revoked`` event (with the
   cause-in-data ``data.reason``).

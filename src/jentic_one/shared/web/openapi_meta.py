@@ -789,7 +789,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "tokenEndpoint",
         "authorizeEndpoint",
         "registerEndpoint",
-        # Anonymous OAuth-client DCR front door (phase-3a §4.2): flagship MCP
+        # Anonymous OAuth-client DCR front door: flagship MCP
         # clients register anonymously; the boundary is admin approval +
         # consent, not registration. Rate limited and config-gated instead.
         "registerOauthClientEndpoint",
@@ -804,7 +804,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # Unauthenticated discovery metadata.
         "jwks",
         "oauthAuthorizationServer",
-        # /mcp-scoped discovery documents (phase-3a §4.7): RFC 8414 for the
+        # /mcp-scoped discovery documents: RFC 8414 for the
         # path-scoped issuer, RFC 9728 protected-resource metadata, and its
         # root-path alias. Unauthenticated by spec; config-gated (404) instead.
         "mcpOauthAuthorizationServer",

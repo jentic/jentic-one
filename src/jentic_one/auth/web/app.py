@@ -54,7 +54,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
     return [
         (make_health_router("auth"), "/auth", []),
         (discovery.router, "", []),
-        # /mcp-scoped OAuth discovery (phase-3a §4.7): RFC 8414 + RFC 9728 docs,
+        # /mcp-scoped OAuth discovery: RFC 8414 + RFC 9728 docs,
         # the root protected-resource alias, and the /mcp 401 challenge. All
         # gated by server.mcp.oauth.enabled (404 when off).
         (discovery.mcp_router, "", []),
@@ -182,8 +182,8 @@ def _make_auth_verifier(ctx: Context) -> Any:
 def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
     """Create the auth FastAPI application for standalone deployment.
 
-    ``container`` lets the composition root ride its extras (notably the 3a-4
-    ``/mcp`` challenge placeholder on auth-sans-control shapes, phase 3) on a
+    ``container`` lets the composition root ride its extras (notably the
+    ``/mcp`` discovery challenge placeholder on auth-sans-control shapes) on a
     standalone auth process; ``None`` keeps the default wiring.
     """
     app = create_surface_app(

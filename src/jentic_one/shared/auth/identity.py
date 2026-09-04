@@ -62,7 +62,7 @@ class Identity(BaseModel):
     expires_at: datetime | None = None
     active: bool = True
     oauth_client_id: str | None = None
-    # Set on grant-channel tokens (phase-3a §4.5): the `oauth_client_grants`
+    # Set on grant-channel tokens: the `oauth_client_grants`
     # row this token was minted under. Lets audit/telemetry separate
     # key-channel from grant-channel agent traffic.
     oauth_grant_id: str | None = None

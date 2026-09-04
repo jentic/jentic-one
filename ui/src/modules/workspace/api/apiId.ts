@@ -2,7 +2,7 @@
  * Composite API identity helpers.
  *
  * jentic-one addresses an API by the `(vendor, name, version)` triple — there
- * is no single opaque `apiId` like jentic-mini had. The registry routes embed
+ * is no single opaque `apiId`. The registry routes embed
  * the three as path segments (`/apis/{vendor}/{name}/{version}`), and the UI
  * route mirrors them (`/app/workspace/:vendor/:name/:version`).
  *

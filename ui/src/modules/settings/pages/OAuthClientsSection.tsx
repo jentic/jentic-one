@@ -497,7 +497,7 @@ const QUEUE_FILTER_OPTIONS: SegmentedToggleOption<QueueFilter>[] = [
 ];
 
 /**
- * The DCR approval queue (phase-3a §4.8, D7): registrations land `pending` +
+ * The DCR approval queue (D7): registrations land `pending` +
  * inactive; Approve activates them, Deny keeps the row (reversible — the
  * Denied filter re-offers Approve as the recovery path). With auto-approve on
  * (D9, the OSS default) the queue is normally empty — it is chiefly a manual

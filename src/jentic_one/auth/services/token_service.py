@@ -74,7 +74,7 @@ def _apply_scope_ceiling(scopes: list[str], ceiling: frozenset[str] | None) -> l
 async def _resolve_grant_gate(
     session: AsyncSession, oauth_grant_id: str | None
 ) -> tuple[bool, frozenset[str] | None]:
-    """Look up a grant-channel token's consent grant (phase-3a D4, §4.5).
+    """Look up a grant-channel token's consent grant.
 
     ``active`` is True when the token has no grant OR the grant row exists and
     is ``active`` — a missing or revoked row fails closed, mirroring the D7
@@ -301,7 +301,7 @@ class TokenService:
                     # replayed, already-consumed token must always trigger the
                     # family sweep and the "reuse detected" audit row — that
                     # telemetry must not be lost just because the consent
-                    # grant was revoked in the meantime (review A8). The grant
+                    # grant was revoked in the meantime. The grant
                     # gate below still fails rotation closed either way.
                     await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
                     await AccessTokenRepository.revoke_family(session, rt.token_family_id)
@@ -318,7 +318,7 @@ class TokenService:
                     )
                 else:
                     if rt.oauth_grant_id is not None:
-                        # Grant re-check on every rotation (phase-3a §4.5): a
+                        # Grant re-check on every rotation: a
                         # revoked consent grant must fail refresh closed even
                         # if the family's token rows were somehow missed by
                         # the revoke sweep.
@@ -538,7 +538,7 @@ class TokenService:
 
             grant_scope_ceiling: frozenset[str] | None = None
             if at.oauth_grant_id is not None:
-                # The grant gate (phase-3a D4, §4.5): a grant-channel token
+                # The grant gate: a grant-channel token
                 # whose consent grant is missing or revoked must stop
                 # resolving immediately — the per-grant kill switch's live
                 # half (the revoke sweep is the other). Fail closed like the
@@ -572,7 +572,7 @@ class TokenService:
                 scopes = [s for s in scopes if s in client_scope_ceiling]
 
             if grant_scope_ceiling is not None:
-                # Fourth leg of the quadruple intersection (§4.5): token
+                # Fourth leg of the quadruple intersection: token
                 # snapshot ∩ agent live grants ∩ client ceiling ∩ grant scopes.
                 scopes = [s for s in scopes if s in grant_scope_ceiling]
 

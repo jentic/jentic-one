@@ -7,7 +7,8 @@ in-process discovery → credential resolution → header assembly → **delegat
 the shared ``BrokerExecutionPipeline``** → adapt the result to a ``Response``
 (mirroring the upstream status, passing headers through, adding ``Jentic-*``).
 No resilience/credential/post-processing logic is inlined here — those are
-pipeline stages / runner decorators (added in later PRs).
+pipeline stages / runner decorators (``services/execution/pipeline.py``,
+``adapters/runners/``).
 """
 
 from __future__ import annotations
@@ -178,7 +179,7 @@ async def _persist_streaming_outcome(
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
-    """Resolve the body cap for a request from its Content-Type (§04).
+    """Resolve the body cap for a request from its Content-Type.
 
     Matched most-specific-first: exact (``application/json``) → wildcard
     (``audio/*``) → global ``max_request_bytes``. A missing/unknown type falls
@@ -301,7 +302,7 @@ def _context_from_discovery(
         method=method,
         trace_id=_derive_trace_id(headers),
         # toolkit_id is intentionally left unset here — it is derived from the
-        # discovered API identity by ``select_toolkit`` after discovery (§03),
+        # discovered API identity by ``select_toolkit`` after discovery,
         # never taken verbatim from the inbound header.
         toolkit_id=None,
         operation_id=resolved.operation_id,
@@ -409,7 +410,7 @@ async def select_toolkit(
     header_toolkit: str | None,
     instance: str,
 ) -> str:
-    """Derive the toolkit for this execution from the caller's bindings (§03).
+    """Derive the toolkit for this execution from the caller's bindings.
 
     ``0 → 403`` (no binding / credential identity mismatch), ``1 → use it``,
     ``N → 409`` (caller must disambiguate with ``Jentic-Toolkit-Id``). A supplied
@@ -418,7 +419,7 @@ async def select_toolkit(
 
     Non-agent actors (service accounts, users) currently follow the **same**
     derivation rule — there is no implicit bypass. Broadening this for service
-    accounts is an explicit future decision, not an accident (§03/3).
+    accounts is an explicit future decision, not an accident.
 
     A **toolkit key** (``ActorType.TOOLKIT``) is the exception: it authenticates
     *as the toolkit itself*, so the agent→binding derivation does not apply — the
@@ -461,7 +462,7 @@ async def select_toolkit(
             # agent-recovery contract like every other broker denial — point it at
             # the toolkits it *is* bound to (switch_toolkit) or, if it has none,
             # at the correct provisioning/binding/credential-fix step. A bare
-            # Forbidden here would be a dead-end 403 with no directive (§03 invariant).
+            # Forbidden here would be a dead-end 403 with no directive.
             if candidates:
                 raise ActionDeniedError(
                     f"Not bound to toolkit '{header_toolkit}' for this API",
@@ -513,7 +514,7 @@ def _metadata_headers(ctx_req: ExecuteRequestContext, execution_id: str) -> dict
         meta[JenticHeader.CREDENTIAL_NAME.value] = header_safe_value(ctx_req.credential_name)
     # Echo the jentic= tracestate member (same who/what payload as the outbound
     # request) so a caller can correlate the response to its distributed trace
-    # without re-deriving it (§04 / OpenAPI Tracestate).
+    # without re-deriving it.
     member = pack_jentic_tracestate(
         execution_id=execution_id,
         toolkit_id=ctx_req.toolkit_id,
@@ -531,7 +532,7 @@ async def _resolve_credentials(
     identity: Identity,
     credential_name: str | None = None,
 ) -> InjectedAuth:
-    """Resolve + inject credentials via the shared ``CredentialService`` (§02b)."""
+    """Resolve + inject credentials via the shared ``CredentialService``."""
     return await CredentialService(ctx).inject(
         api_vendor=ctx_req.api_vendor or "",
         api_name=ctx_req.api_name or "",
@@ -549,7 +550,7 @@ def _apply_injection(
 
     Server-variable creds are substituted into the URL template; query-param
     creds are merged into the URL query; cookie creds are **appended** to the
-    inbound ``Cookie`` header (never overwriting forwarded cookies, §02 §5).
+    inbound ``Cookie`` header (never overwriting forwarded cookies).
     """
     if injection.server_variables:
         upstream_url = apply_server_variables(upstream_url, injection.server_variables)
@@ -607,7 +608,7 @@ async def _handle(
 
     resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
 
-    # §10: parse the multi-valued Jentic-Revision header at the edge. A malformed
+    # Parse the multi-valued Jentic-Revision header at the edge. A malformed
     # value raises InvalidRevisionPinError (→ 422) here, before any registry
     # lookup — never an uncaught 500 mid-discovery.
     pins = parse_revisions(_revision_header(request))
@@ -619,7 +620,7 @@ async def _handle(
             type="operation_not_found",
         )
 
-    # §10: if a pin applies to the discovered API, translate it to a revision_id
+    # If a pin applies to the discovered API, translate it to a revision_id
     # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
     pinned_revisions: dict[str, str] | None = None
     if pins:
@@ -651,7 +652,7 @@ async def _handle(
     # region-mismatch hint on an upstream 401/403 (#638).
     ctx_req.has_server_variable = has_host_server_variable(upstream_url)
     # Toolkit is derived from the discovered API identity (never the inbound header
-    # verbatim); drives credential injection and execution attribution (§03).
+    # verbatim); drives credential injection and execution attribution.
     try:
         ctx_req.toolkit_id = await select_toolkit(
             deriver=deriver,
@@ -726,7 +727,7 @@ async def _handle(
     idem_key = request.headers.get("idempotency-key")
     upstream_cfg = ctx.config.broker.resilience.upstream
 
-    # §08 E2.4: stream the response straight through for sync, non-idempotent
+    # Stream the response straight through for sync, non-idempotent
     # requests — idempotent requests fall to the buffered path below because
     # replay needs the whole body. Disabled requests / non-streaming runners
     # also fall through.
@@ -740,8 +741,8 @@ async def _handle(
     # Buffer the body once (needed for the idempotency fingerprint and the call).
     body = await _read_request_body(request, method, ctx)
 
-    # §07: claim/replay on Idempotency-Key. Async same-job_id replay is a later
-    # slice — only the sync path is idempotent here.
+    # Claim/replay on Idempotency-Key. Async same-job_id replay is future
+    # work — only the sync path is idempotent here.
     fp: str | None = None
     if idempotency is not None and idem_key:
         fp = fingerprint(method, ctx_req.upstream_url, ctx_req.toolkit_id or "", body)
@@ -809,7 +810,7 @@ async def _handle_streaming(
     runner: StreamingUpstreamRunner,
     upstream_cfg: UpstreamClientConfig,
 ) -> Response:
-    """Sync, non-idempotent streaming passthrough (§08 E2.4).
+    """Sync, non-idempotent streaming passthrough.
 
     Same credential resolution + header assembly as the buffered path, but the
     upstream body streams straight to the client (no whole-buffering) under the
@@ -871,7 +872,7 @@ def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> s
 
     Returns ``None`` when it does not apply. The hint is surfaced via the
     ``Jentic-Hint`` response header — the mirrored upstream body is left verbatim
-    (§6b B-002 passthrough invariant).
+    (the passthrough invariant).
     """
     if status_code in (401, 403) and ctx_req.has_server_variable:
         return REGION_MISMATCH_HINT
@@ -898,7 +899,7 @@ def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext
 
 
 def _replay_response(stored: StoredResponse) -> Response:
-    """Re-emit a stored idempotent response, tagged ``Idempotent-Replayed: true`` (§07).
+    """Re-emit a stored idempotent response, tagged ``Idempotent-Replayed: true``.
 
     The stored headers (which already carry the original ``Jentic-*`` metadata)
     were scrubbed of sensitive values + body-encoding headers on the original
@@ -994,6 +995,6 @@ async def proxy(
     )
 
 
-# ``switch_toolkit_directive`` is re-exported for the worker / mirrored-error
-# enrichment in later PRs.
+# ``switch_toolkit_directive`` is re-exported here for callers that already
+# import this router module.
 __all__ = ["router", "switch_toolkit_directive"]

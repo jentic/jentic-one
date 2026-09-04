@@ -109,8 +109,8 @@ class PlanGovernance:
     must stamp before this bind can approve, and — for ``toolkit:bind`` — the
     canonical ``(vendor, name)`` slug key that made those intents relevant.
     ``credential:bind`` items intentionally leave ``governing_api`` at
-    ``None``: the credential-bind governance rule is "any live intent" (§778
-    review), not tied to a specific API.
+    ``None``: the credential-bind governance rule is "any live intent" (#778),
+    not tied to a specific API.
 
     Default construction (``PlanGovernance()``) means "not governed by any
     plan" — the plain fulfilment contract applies. ``is_governed`` is the

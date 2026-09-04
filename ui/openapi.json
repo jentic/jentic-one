@@ -5240,7 +5240,7 @@
           },
           "active_grant_count": {
             "default": 0,
-            "description": "Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.",
+            "description": "Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.",
             "title": "Active Grant Count",
             "type": "integer"
           },
@@ -5672,7 +5672,7 @@
           },
           "active_grant_count": {
             "default": 0,
-            "description": "Number of active consent→agent grants for this client (§4.8 per-client grant count). Computed on the read endpoints (list/get); write-path responses report 0.",
+            "description": "Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.",
             "title": "Active Grant Count",
             "type": "integer"
           },
@@ -10280,7 +10280,7 @@
     },
     "/.well-known/oauth-authorization-server/mcp": {
       "get": {
-        "description": "RFC 8414 metadata for the path-scoped issuer `{base}/mcp` (phase-3a §4.7).\n\nRFC 8414 §3.1 path insertion: this is the metadata URL clients derive for\nthe issuer `{base}/mcp` named by the protected-resource document. It\nadvertises the anonymous OAuth-client registration door (`/oauth-clients`)\nand the public-client profile (`none` + PKCE S256) — the root document is a\nseparate, unchanged surface whose `registration_endpoint` remains the agent\n`/register`.",
+        "description": "RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.\n\nRFC 8414 §3.1 path insertion: this is the metadata URL clients derive for\nthe issuer `{base}/mcp` named by the protected-resource document. It\nadvertises the anonymous OAuth-client registration door (`/oauth-clients`)\nand the public-client profile (`none` + PKCE S256) — the root document is a\nseparate, unchanged surface whose `registration_endpoint` remains the agent\n`/register`.",
         "operationId": "mcpOauthAuthorizationServer",
         "responses": {
           "200": {
@@ -10382,7 +10382,7 @@
     },
     "/.well-known/oauth-protected-resource": {
       "get": {
-        "description": "Root-path alias of the MCP protected-resource document (phase-3a §4.7).\n\nCompatibility fallback for clients that probe the root\n`/.well-known/oauth-protected-resource` instead of following the 401's\n`resource_metadata` pointer (the documented Claude Code behaviour). Safe\nbecause this deployment has exactly one OAuth-protected resource, so the\nroot and path-scoped documents are the same body.\n\nTwo acknowledged trades (§4.7, review F6):\n\n- RFC 9728 §3 says this well-known path corresponds to resource identifier\n  ``{base}`` (no path), and §3.3 has clients validate ``resource`` against\n  the resource they queried. This body claims ``resource={base}/mcp`` — a\n  strict path-deriving validator would reject it, but Claude's fallback\n  validates against the MCP server URL (``{base}/mcp``), which is exactly\n  what the alias exists to satisfy. That is the intended trade.\n- The alias squats the deployment's only root PRM slot: a future non-MCP\n  protected resource at ``{base}`` cannot get its own root document\n  without breaking this fallback. Phase 3's mount must re-confirm the\n  \"exactly one OAuth-protected resource\" premise before adding one.",
+        "description": "Root-path alias of the MCP protected-resource document.\n\nCompatibility fallback for clients that probe the root\n`/.well-known/oauth-protected-resource` instead of following the 401's\n`resource_metadata` pointer (the documented Claude Code behaviour). Safe\nbecause this deployment has exactly one OAuth-protected resource, so the\nroot and path-scoped documents are the same body.\n\nTwo acknowledged trades:\n\n- RFC 9728 §3 says this well-known path corresponds to resource identifier\n  ``{base}`` (no path), and §3.3 has clients validate ``resource`` against\n  the resource they queried. This body claims ``resource={base}/mcp`` — a\n  strict path-deriving validator would reject it, but Claude's fallback\n  validates against the MCP server URL (``{base}/mcp``), which is exactly\n  what the alias exists to satisfy. That is the intended trade.\n- The alias squats the deployment's only root PRM slot: a future non-MCP\n  protected resource at ``{base}`` cannot get its own root document\n  without breaking this fallback. The mounted MCP app must re-confirm the\n  \"exactly one OAuth-protected resource\" premise before adding one.",
         "operationId": "mcpOauthProtectedResourceRootAlias",
         "responses": {
           "200": {
@@ -10484,7 +10484,7 @@
     },
     "/.well-known/oauth-protected-resource/mcp": {
       "get": {
-        "description": "RFC 9728 protected-resource metadata for `{base}/mcp` (phase-3a §4.7).\n\nNames the /mcp-scoped authorization server and the MCP tool scopes. The\nsame body is also served at the root well-known path for clients that\nignore the 401's `resource_metadata` pointer.",
+        "description": "RFC 9728 protected-resource metadata for `{base}/mcp`.\n\nNames the /mcp-scoped authorization server and the MCP tool scopes. The\nsame body is also served at the root well-known path for clients that\nignore the 401's `resource_metadata` pointer.",
         "operationId": "mcpOauthProtectedResource",
         "responses": {
           "200": {
@@ -13631,7 +13631,7 @@
     },
     "/admin/oauth-grants": {
       "get": {
-        "description": "List consent→agent grants across all clients and agents (§4.8).\n\nThe admin cross-view over the grant registry: filter by client, agent,\nconsenting user, or status. Each item carries the client's display name\nand redirect-URI origin plus the consenting ``user_id`` — after an agent\nownership transfer the grant stays with the original consenter, so this\ncolumn is how an admin spots stranded grants.",
+        "description": "List consent→agent grants across all clients and agents.\n\nThe admin cross-view over the grant registry: filter by client, agent,\nconsenting user, or status. Each item carries the client's display name\nand redirect-URI origin plus the consenting ``user_id`` — after an agent\nownership transfer the grant stays with the original consenter, so this\ncolumn is how an admin spots stranded grants.",
         "operationId": "listOauthGrants",
         "parameters": [
           {
@@ -15089,7 +15089,7 @@
     },
     "/agents/{agent_id}/oauth-grants": {
       "get": {
-        "description": "List OAuth consent grants binding clients to this agent (§4.8).\n\nThe \"Connected clients\" surface: every grant carries the client's display\nname and redirect-URI origin, the granted scopes, the consenting user,\nand created/last-used timestamps. Allowed for the agent's owner or an\nadmin — authorization is enforced in the service layer, mirroring the\n``:revoke`` semantics.",
+        "description": "List OAuth consent grants binding clients to this agent.\n\nThe \"Connected clients\" surface: every grant carries the client's display\nname and redirect-URI origin, the granted scopes, the consenting user,\nand created/last-used timestamps. Allowed for the agent's owner or an\nadmin — authorization is enforced in the service layer, mirroring the\n``:revoke`` semantics.",
         "operationId": "listAgentOauthGrants",
         "parameters": [
           {
@@ -28514,7 +28514,7 @@
     },
     "/oauth-clients": {
       "post": {
-        "description": "Register a public OAuth client anonymously (RFC 7591 subset, §4.2).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match\n(D8). No client_secret is ever issued here and no registration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
+        "description": "Register a public OAuth client anonymously (RFC 7591 subset).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match\n(D8). No client_secret is ever issued here and no registration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
         "operationId": "registerOauthClientEndpoint",
         "requestBody": {
           "content": {
@@ -28584,7 +28584,7 @@
     },
     "/oauth-grants/{grant_id}:revoke": {
       "post": {
-        "description": "Revoke a consent→agent grant — one of the three §4.6 kill radii.\n\nAllowed for the grant's owner (the consenting user) or an admin. Marks\nthe grant ``revoked`` and revokes every outstanding access/refresh token\nminted under it in the same transaction; the live resolvers also re-check\ngrant status on every verdict (belt + braces). The client's next token\nuse or refresh fails closed. Idempotent on an already-revoked grant.",
+        "description": "Revoke a consent→agent grant — one of the three revocation kill radii.\n\nAllowed for the grant's owner (the consenting user) or an admin. Marks\nthe grant ``revoked`` and revokes every outstanding access/refresh token\nminted under it in the same transaction; the live resolvers also re-check\ngrant status on every verdict (belt + braces). The client's next token\nuse or refresh fails closed. Idempotent on an already-revoked grant.",
         "operationId": "revokeOauthGrant",
         "parameters": [
           {
@@ -28971,7 +28971,7 @@
         ]
       },
       "post": {
-        "description": "Process the consent form submission. Mints the auth code only on approval.\n\n``consent_token`` is the opaque handle emitted by the callback. It never\nleaves the state backend as anything more than an ID — the actual consent\nparameters (user_id, email, scopes, redirect_uri) live server-side and\ncan't be tampered with or captured from browser history/proxy logs.\n\n``agent_id`` is posted only by the §4.4 agent-picker variant\n(``consent_model='agent'`` clients); it is validated and the scope math\nrecomputed entirely server-side — the browser's selection is never\ntrusted.",
+        "description": "Process the consent form submission. Mints the auth code only on approval.\n\n``consent_token`` is the opaque handle emitted by the callback. It never\nleaves the state backend as anything more than an ID — the actual consent\nparameters (user_id, email, scopes, redirect_uri) live server-side and\ncan't be tampered with or captured from browser history/proxy logs.\n\n``agent_id`` is posted only by the agent-picker variant\n(``consent_model='agent'`` clients); it is validated and the scope math\nrecomputed entirely server-side — the browser's selection is never\ntrusted.",
         "operationId": "consentSubmit",
         "requestBody": {
           "content": {

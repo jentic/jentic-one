@@ -43,7 +43,7 @@ class InProcessTokenResolver:
         # oauth_client_approved is the D7 approval gate at the same layer: a
         # pending/denied row — even one force-set active — must fail closed
         # here too, matching the auth-surface resolver.
-        # oauth_grant_active is the phase-3a grant gate (§4.5-4.6): a
+        # oauth_grant_active is the OAuth consent-grant gate: a
         # grant-channel token (t.oauth_grant_id set) whose consent grant is
         # missing or revoked fails closed — NULL (row gone) is as dead as
         # status != 'active'. oauth_grant_scopes carries the consent-time

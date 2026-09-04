@@ -1,7 +1,7 @@
 """Execution service — runs the shared pipeline and persists the result.
 
 Services layer (00-overview): orchestrates the runner + persistence. The
-transport is the RN-0 ``HttpRunner`` (folded in); both the sync router and the
+transport is the ``HttpRunner`` (folded in); both the sync router and the
 async worker call ``run_execution`` so they share one execution path, one
 runner, and one persistence step. Status mirroring / header passthrough is the
 caller's concern (the runner returns the verbatim upstream result).
@@ -84,10 +84,10 @@ def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
 
 
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
-    """Build the Phase-1 pipeline around the given runner + default post stages.
+    """Build the default pipeline around the given runner + default post stages.
 
-    The runner is **required** (no implicit per-request ``HttpRunner()``): §04
-    (PR-B) made the upstream client a single shared, lifespan-owned instance, so
+    The runner is **required** (no implicit per-request ``HttpRunner()``): the
+    upstream client is a single shared, lifespan-owned instance, so
     the caller builds an ``HttpRunner`` over the injected client and passes it in.
     """
     return BrokerExecutionPipeline(runner)
@@ -134,7 +134,7 @@ async def run_execution(
     On a transport-level failure the broker's pipeline raises a ``BrokerError``;
     we persist a FAILED record before re-raising so the central handler can map
     it to problem+json. The ``broker`` (and thus the shared upstream client it
-    wraps) is supplied by the caller (§04 — one client per process); the default
+    wraps) is supplied by the caller (one client per process); the default
     builds a :class:`DefaultBroker` per request, a caller may inject its own.
 
     ``execution_id`` lets the async worker reuse the id already handed to the

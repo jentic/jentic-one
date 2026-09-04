@@ -80,7 +80,7 @@ class BrokerError(Exception):
         # (connect-phase). A pre-send failure is safe to retry for ANY method —
         # the upstream cannot have acted; a post-send failure (read timeout, drop
         # after send) is only safe to retry for idempotent methods / with an
-        # Idempotency-Key (§09 E4.1). Defaults to False (assume bytes were sent).
+        # Idempotency-Key. Defaults to False (assume bytes were sent).
         self.pre_send = pre_send
 
 
@@ -109,19 +109,19 @@ class UpgradeNotSupportedError(BrokerError):
 
 
 class PayloadTooLargeError(BrokerError):
-    """Request body exceeds the broker body cap (413, §04)."""
+    """Request body exceeds the broker body cap (413)."""
 
 
 class MutationRequiresIdempotencyKeyError(BrokerError):
-    """An opt-in agent-safety guard requiring an Idempotency-Key on a mutation (428, §07)."""
+    """An opt-in agent-safety guard requiring an Idempotency-Key on a mutation (428)."""
 
 
 class IdempotencyConflictError(BrokerError):
-    """An Idempotency-Key was reused with a *different* request fingerprint (409, §07)."""
+    """An Idempotency-Key was reused with a *different* request fingerprint (409)."""
 
 
 class IdempotencyInProgressError(BrokerError):
-    """An Idempotency-Key retry arrived while the original is still in-flight (409, §07).
+    """An Idempotency-Key retry arrived while the original is still in-flight (409).
 
     Distinct ``type`` from :class:`IdempotencyConflictError` (same status) so the
     client can tell "same key, different body" (don't retry) from "original still
@@ -130,7 +130,7 @@ class IdempotencyInProgressError(BrokerError):
 
 
 class InvalidRevisionPinError(BrokerError):
-    """A ``Jentic-Revision`` pin that fails the spec regex / is unknown / is archived (422, §10).
+    """A ``Jentic-Revision`` pin that fails the spec regex / is unknown / is archived (422).
 
     Covers the parameter-shape failure (malformed value), an unknown revision,
     and an ``archived`` revision — all parameter-validation failures the agent
@@ -139,7 +139,7 @@ class InvalidRevisionPinError(BrokerError):
 
 
 class UnauthorizedRevisionPinError(BrokerError):
-    """A ``Jentic-Revision`` pin to a ``draft`` revision the caller may not access (403, §10).
+    """A ``Jentic-Revision`` pin to a ``draft`` revision the caller may not access (403).
 
     Distinct from :class:`InvalidRevisionPinError` (422): the pin is well-formed
     and the revision exists, but it is an unpublished ``draft`` the caller does
@@ -148,15 +148,15 @@ class UnauthorizedRevisionPinError(BrokerError):
 
 
 class CircuitOpenError(BrokerError):
-    """The circuit breaker is open for the target upstream (503, §05 R5.1)."""
+    """The circuit breaker is open for the target upstream (503)."""
 
 
 class RateLimitExceededError(BrokerError):
-    """A broker-side rate limit was exceeded (429, §05 R2)."""
+    """A broker-side rate limit was exceeded (429)."""
 
 
 class CredentialNotProvisionedError(BrokerError):
-    """No credential is provisioned for the resolved API/caller (424, §02b)."""
+    """No credential is provisioned for the resolved API/caller (424)."""
 
 
 class CredentialUndecryptableError(BrokerError):
@@ -179,11 +179,11 @@ class CredentialUndecryptableError(BrokerError):
 
 
 class CredentialNeedsReconnectError(BrokerError):
-    """The OAuth2 grant was revoked/disconnected — the caller must reconnect (401, §02b)."""
+    """The OAuth2 grant was revoked/disconnected — the caller must reconnect (401)."""
 
 
 class CredentialRefreshTransientError(BrokerError):
-    """The IdP returned a transient error during token refresh (502, §02b)."""
+    """The IdP returned a transient error during token refresh (502)."""
 
 
 class InvalidCredentialNameError(BrokerError):
@@ -206,11 +206,11 @@ class CredentialIdentityMismatchError(BrokerError):
 
 
 class UpstreamTimeoutError(BrokerError):
-    """The upstream did not respond within the deadline (504, §04/§09)."""
+    """The upstream did not respond within the deadline (504)."""
 
 
 class DeadlineExceededError(BrokerError):
-    """The overall request deadline elapsed before the call completed (504, §09 E4.1).
+    """The overall request deadline elapsed before the call completed (504).
 
     Distinct from :class:`UpstreamTimeoutError` (a single attempt's connect/read
     timeout): this is the **whole-call wall-clock budget** the ``DeadlineRunner``
@@ -222,7 +222,7 @@ class DeadlineExceededError(BrokerError):
 
 
 class UpstreamResponseTooLargeError(BrokerError):
-    """The upstream response body exceeded the broker's response-size cap (502, §08 E2.4).
+    """The upstream response body exceeded the broker's response-size cap (502).
 
     Enforced mid-stream so a hostile/large upstream can't OOM the instance — the
     response-side counterpart to :class:`PayloadTooLargeError`. ``upstream`` origin
@@ -232,7 +232,7 @@ class UpstreamResponseTooLargeError(BrokerError):
 
 
 class RunnerSchemeUnsupportedError(BrokerError):
-    """No runner is registered for the upstream URL's scheme (501, §11 RN-0.3).
+    """No runner is registered for the upstream URL's scheme (501).
 
     The broker has no transport that can speak this scheme (e.g. an ``ftp://``
     upstream when only the HTTP runner is registered). Distinct from a
@@ -243,7 +243,7 @@ class RunnerSchemeUnsupportedError(BrokerError):
 
 
 class RunnerUnavailableError(BrokerError):
-    """A runner exists for the scheme but is degraded/unavailable (503, §11 RN-0.3).
+    """A runner exists for the scheme but is degraded/unavailable (503).
 
     A runner whose ``startup()`` failed is marked unavailable rather than aborting
     app start (so a flaky non-HTTP runner never blocks HTTP proxying). A request

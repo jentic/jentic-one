@@ -935,7 +935,7 @@ export async function fetchInstanceIdentity(): Promise<InstanceIdentityEntity> {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth consent grants (phase-3a §4.8) — the "Connected clients" panel.
+// OAuth consent grants — the "Connected clients" panel.
 // ---------------------------------------------------------------------------
 
 function grantToEntity(r: OAuthGrantResponse): OAuthGrantEntity {

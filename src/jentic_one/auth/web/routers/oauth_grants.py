@@ -1,6 +1,6 @@
-"""OAuth consent-grant endpoints — revoke + per-agent listing (phase-3a §4.6/§4.8).
+"""OAuth consent-grant endpoints — revoke + per-agent listing.
 
-The ``:revoke`` verb shipped in 3a-3; 3a-5 adds the per-agent "Connected
+The ``:revoke`` verb, the per-agent "Connected
 clients" listing. The admin cross-view lives on the admin router
 (``GET /admin/oauth-grants``).
 """
@@ -62,7 +62,7 @@ async def list_agent_oauth_grants(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = None,
 ) -> OAuthGrantListResponse:
-    """List OAuth consent grants binding clients to this agent (§4.8).
+    """List OAuth consent grants binding clients to this agent.
 
     The "Connected clients" surface: every grant carries the client's display
     name and redirect-URI origin, the granted scopes, the consenting user,
@@ -91,7 +91,7 @@ async def revoke_oauth_grant(
     identity: Identity = get_current_identity(),
     grant_svc: OAuthGrantService = Depends(get_oauth_grant_service),
 ) -> Response:
-    """Revoke a consent→agent grant — one of the three §4.6 kill radii.
+    """Revoke a consent→agent grant — one of the three revocation kill radii.
 
     Allowed for the grant's owner (the consenting user) or an admin. Marks
     the grant ``revoked`` and revokes every outstanding access/refresh token

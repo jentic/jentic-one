@@ -1,4 +1,4 @@
-"""Response schemas for the OAuth grant listing surfaces (phase-3a §4.8)."""
+"""Response schemas for the OAuth grant listing surfaces."""
 
 from __future__ import annotations
 

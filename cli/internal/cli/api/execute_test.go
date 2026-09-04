@@ -45,7 +45,7 @@ func TestBadFlagKV(t *testing.T) {
 }
 
 // TestExecuteMalformedHeaderWinsOverInsecureBroker freezes the doubly-invalid
-// precedence (PR #1179 review #2): ParseKVs on
+// precedence: ParseKVs on
 // --header runs BEFORE BuildRequest's SEC-1 secure-transport guard, so a
 // malformed --header combined with a SEC-1-violating broker target (plaintext
 // http to a non-loopback host) surfaces MISSING_ARGUMENT, not

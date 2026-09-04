@@ -1,9 +1,9 @@
-"""Unit tests for the §4.4 agent-picker consent variant (phase-3a, 3a-3).
+"""Unit tests for the agent-picker consent variant.
 
 Pins: the agent-model client renders the picker with only the user's own
 active agents; zero agents → empty-state page with no code; approve mints
 the grant + a grant-bearing code with the recomputed (server-side) scope
-intersection and openid stripped (D11); deny and invalid selections mint
+intersection and openid stripped; deny and invalid selections mint
 nothing; consent_model='user' clients keep today's flow byte-identical.
 """
 
@@ -419,7 +419,7 @@ def test_agent_model_empty_effective_scope_set_rejected(
     mock_authorize_cls: MagicMock,
     mock_grant_cls: MagicMock,
 ) -> None:
-    """§4.4 step 2: an empty server-side intersection (agent has none of the
+    """Step 2: an empty server-side intersection (agent has none of the
     grantable scopes) → error page, no grant, no code."""
     client, backend = _make_app()
     _seed_consent_handle(backend, scope="openid apis:write")
@@ -453,7 +453,7 @@ def test_user_model_submit_byte_identical(
     mock_grant_cls: MagicMock,
 ) -> None:
     """consent_model='user' approve: same calls, same args, same redirect as
-    before 3a-3 — no grant service involvement, scopes passed through
+    before the agent picker existed — no grant service involvement, scopes passed through
     unmodified (openid included), no grant_id on the code."""
     client, backend = _make_app()
     _seed_consent_handle(backend, scope="openid apis:read")

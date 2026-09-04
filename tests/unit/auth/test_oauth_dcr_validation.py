@@ -1,4 +1,4 @@
-"""Unit tests for the anonymous OAuth-client DCR service validation (§4.2).
+"""Unit tests for the anonymous OAuth-client DCR service validation.
 
 Pure-validation matrix — the DB-backed register flow is covered by
 ``tests/integration/auth/test_oauth_dcr_registration.py``.
@@ -81,7 +81,7 @@ def test_unsupported_response_types_rejected() -> None:
         ["https://app.example.com/cb#fragment"],
         ["http://evil.example.com/cb"],
         ["not-a-url"],
-        # Duplicates are rejected: the D8 dedupe key is the exact redirect-URI
+        # Duplicates are rejected: the dedupe key is the exact redirect-URI
         # *set*, and ["a", "a"] vs ["a"] must not mint two rows for one set.
         ["https://app.example.com/cb", "https://app.example.com/cb"],
     ],
@@ -102,11 +102,11 @@ def test_invalid_redirect_uris_rejected_as_client_metadata(uris: list[str]) -> N
     ],
 )
 def test_localhost_http_and_https_redirects_accepted(uri: str) -> None:
-    """application_type=native desktop apps use localhost http redirects (§2)."""
+    """application_type=native desktop apps use localhost http redirects."""
     _validate(redirect_uris=[uri])
 
 
-# ---------- scope capping (§4.2: capped to the MCP tool-scope set) ----------
+# ---------- scope capping (capped to the MCP tool-scope set) ----------
 
 
 def test_no_scope_claim_caps_to_full_mcp_tool_scope_set() -> None:
@@ -132,8 +132,8 @@ def test_all_scopes_outside_cap_rejected() -> None:
 
     An empty ceiling ``[]`` is falsy and the admin view layer collapses it to
     ``None`` — the "no allowlist" sentinel — so storing it would make the
-    client *unrestricted* at /authorize (the opposite of §4.2's "never
-    unrestricted").
+    client *unrestricted* at /authorize (violating the "never
+    unrestricted" rule).
     """
     with pytest.raises(InvalidClientMetadataError, match="no overlap"):
         _cap_scopes("org:admin")

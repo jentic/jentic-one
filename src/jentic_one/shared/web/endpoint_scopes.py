@@ -18,8 +18,8 @@ the CLI and docs SPA actually consume.
 Why a curated map exists
 ------------------------
 Most scope checks for the control plane happen in the *service layer*, not at the
-FastAPI dependency, so the route object alone does not know the required scope
-(see ``docs/plans/issue-529-endpoint-scope-tree.md`` §2c). For those operations we
+FastAPI dependency, so the route object alone does not know the required scope.
+For those operations we
 fall back to :data:`PATH_SCOPE_OVERRIDES` / :data:`ACTOR_TYPE_OVERRIDES` below.
 
 Contributing (humans **and** agents)

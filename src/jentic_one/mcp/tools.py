@@ -1,4 +1,4 @@
-"""Tool handlers for the mounted MCP app — the phase-1 surface, in-process.
+"""Tool handlers for the mounted MCP app — the pinned tool surface, in-process.
 
 Each handler is the Python twin of the Go stdio server's handler for the same
 tool (``cli/internal/cli/api/mcp_tools.go`` / ``mcp_discovery.go`` /
@@ -8,9 +8,9 @@ mapping — the golden contract tests replay identical tool calls against both
 implementations. Where the Go server calls REST routes, these handlers call
 the owning services **in-process** (registry search/inspect/catalog, admin
 jobs, auth identity); the execute family proxies to the broker server-side
-(master §6 Q1 — the broker stays MCP-free).
+(the broker stays MCP-free).
 
-Scope enforcement mirrors the REST routes fronted (§3.2): the same
+Scope enforcement mirrors the REST routes fronted: the same
 ``required_permissions`` the routers declare, checked against the resolved
 identity through the same ``compute_effective`` expansion + ``org:admin``
 bypass ``get_current_identity`` applies. A scope failure maps exactly like the
@@ -178,7 +178,7 @@ def _coerce(spec: ParamSpec, value: Any) -> Any:
     return value
 
 
-# ── scope enforcement (§3.2 — same scopes as the REST routes fronted) ────────
+# ── scope enforcement (same scopes as the REST routes fronted) ──────────────
 
 
 def require_scopes(identity: Identity, required: list[str]) -> None:
@@ -541,11 +541,11 @@ async def _execute_tool(
     """The shared execute/execute_read handler (Go: ``executeTool``).
 
     Resolve → build → send → classify, with the broker leg proxied
-    control-plane→broker server-side (master §6 Q1): the caller's own bearer
+    control-plane→broker server-side: the caller's own bearer
     rides the hop, so the broker enforces identity/bindings/rules exactly as
     if the agent had dialed it directly. The held (202) envelope passes
     through as a normal result — the model polls with get_execution_result
-    and never re-sends (§3.4).
+    and never re-sends.
     """
     tool_name = "execute_read" if read_only_variant else "execute"
     args = normalize_tool_args(arguments, _EXECUTE_PARAMS)
@@ -725,7 +725,7 @@ async def dispatch_tool_call(
 ) -> mcp_types.CallToolResult:
     """Route one authenticated tools/call to its handler.
 
-    ``ToolError`` renders as the coded ``isError`` result (§3.7: diagnosable
+    ``ToolError`` renders as the coded ``isError`` result (diagnosable
     states are data the model acts on); unexpected failures degrade to
     INTERNAL_ERROR instead of a protocol error, matching the Go posture.
     """

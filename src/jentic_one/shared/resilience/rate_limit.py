@@ -5,7 +5,7 @@ The bucket math (refill, burst, retry-after) lives in the shared-state backend
 which key namespace callers share, and the RFC 6585 / draft ``RateLimit-*``
 response headers an enforcer attaches to a ``429``.
 
-Memory backend ⇒ per-instance limit; Redis backend (§06) ⇒ cluster-wide — the
+Memory backend ⇒ per-instance limit; Redis backend ⇒ cluster-wide — the
 limiter is identical either way (it only sees the ``RateLimitStore`` protocol).
 """
 

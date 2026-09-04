@@ -76,7 +76,7 @@ def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class AgentConsentOption:
-    """One row of the agent-picker consent page (phase-3a §4.4).
+    """One row of the agent-picker consent page.
 
     ``scopes`` is the agent's *live* scope set (its current
     ``actor_scope_grants``) — the consent page intersects it with the request
@@ -223,7 +223,7 @@ class AuthorizeService:
         return await self._resolve_or_create_user(claims)
 
     async def resolve_existing_user_id(self, claims: IdpClaims) -> str | None:
-        """Read-only user resolution for the agent-picker consent page (§4.4).
+        """Read-only user resolution for the agent-picker consent page.
 
         The deferred-provisioning contract holds — rendering the consent page
         must not create a user row — but the agent picker needs to know whose
@@ -248,11 +248,11 @@ class AuthorizeService:
     async def list_consentable_agents(self, user_id: str) -> list[AgentConsentOption]:
         """The consenting user's own ``status='active'`` agents + live scopes.
 
-        Only admin-approved (active) agents are bindable (§4.4); pending,
+        Only admin-approved (active) agents are bindable; pending,
         denied, disabled, and archived agents never appear on the picker.
         """
         async with self._ctx.admin_db.session() as session:
-            # limit=1000 (review A7): §4.4 specifies no picker ceiling, but the
+            # limit=1000: the design specifies no picker ceiling, but the
             # repo API is limit-shaped. The bound is explicit and generous —
             # beyond it the newest-first (created_at DESC) order deterministically
             # drops the *oldest* agents from both render and submit (the same
@@ -263,7 +263,7 @@ class AuthorizeService:
                 limit=1000,
                 filters=[Agent.status == ActorStatus.ACTIVE.value],
             )
-            # One batch query for every candidate's live scopes (review A7:
+            # One batch query for every candidate's live scopes (a
             # avoids a per-agent actor_scope_grants round-trip, run twice
             # because the submit path re-runs this predicate).
             grants = await ActorScopeGrantRepository.list_for_actors(
@@ -405,7 +405,7 @@ class AuthorizeService:
         """Exchange auth code + PKCE verifier for tokens.
 
         Returns (access_token, refresh_token, id_token). Grant-bearing codes
-        (phase-3a §4.5) mint actor=AGENT tokens bound to the consent grant and
+        mint actor=AGENT tokens bound to the consent grant and
         return ``id_token=None`` (D11 — no OIDC identity on the agent
         channel); plain codes keep the act-as-user path with an id_token.
         """
@@ -441,7 +441,7 @@ class AuthorizeService:
             await AuthorizationCodeRepository.consume(session, auth_code.id, now)
 
             if auth_code.grant_id is not None:
-                # Grant-channel exchange (§4.5): every leg is re-checked at
+                # Grant-channel exchange: every leg is re-checked at
                 # exchange time and fails closed with invalid_grant — the
                 # consent-time snapshot is not trusted across the code TTL.
                 grant = await OAuthClientGrantRepository.get_by_id(session, auth_code.grant_id)

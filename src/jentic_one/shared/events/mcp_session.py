@@ -6,7 +6,7 @@ sets, the events-table lookup, and the partial unique index on
 
 - **stdio** (lane D, issue #1177): once per session UUID relayed by the Go
   server — :func:`schedule_mcp_session_emit`, described below.
-- **HTTP** (phase-3 item 6): the daemon-native ``/mcp`` mount sees MCP
+- **HTTP**: the daemon-native ``/mcp`` mount sees MCP
   protocol traffic directly, and under spec 2026-07-28 there is no
   ``initialize`` and no session id — clientInfo optionally rides each
   request's ``_meta``. One long-lived daemon serves many identities, so the
@@ -84,7 +84,7 @@ _MCP_UA_RE = re.compile(
     re.IGNORECASE,
 )
 
-#: Transport for the header-seam path. Phase-3's mounted HTTP app emits with
+#: Transport for the header-seam path. The mounted HTTP app emits with
 #: its own transport value and windowed dedupe key — not through this module's
 #: once-per-session-id path.
 _STDIO_TRANSPORT = "stdio"
@@ -92,7 +92,7 @@ _STDIO_TRANSPORT = "stdio"
 #: Transport for the mounted ``/mcp`` app's windowed emit path.
 _HTTP_TRANSPORT = "http"
 
-#: The HTTP emit window (phase-3 item 6): at most one ``mcp.session_started``
+#: The HTTP emit window: at most one ``mcp.session_started``
 #: per (agent identity x clientInfo name/version) per **6-hour, UTC-aligned
 #: window**. Decision + rationale (recorded in this PR, per the phase doc):
 #:
@@ -119,7 +119,7 @@ _HTTP_TRANSPORT = "http"
 MCP_HTTP_WINDOW_SECONDS = 6 * 60 * 60
 
 #: Per-agent cap on *distinct* clientInfo dedupe keys admitted per window
-#: (review M1). Without it an authenticated agent varying ``_meta`` clientInfo
+#:. Without it an authenticated agent varying ``_meta`` clientInfo
 #: per request mints one events-table row per request for the whole window —
 #: the unique index dedupes identical keys only, never distinct ones. Sixteen
 #: distinct (name, version) pairs per 6-hour bucket is far beyond any legit
@@ -147,7 +147,7 @@ _SEEN_SESSIONS_MAX = 4096
 #: retries.
 _in_flight: set[str] = set()
 
-#: Cap on concurrently in-flight emits (review M1): each entry holds a
+#: Cap on concurrently in-flight emits: each entry holds a
 #: background task with an open admin-DB transaction, so the transient
 #: population must not be attacker-paced. At the cap new emits are *dropped*
 #: (never cleared — clearing would orphan keys whose tasks still run): the key
@@ -376,7 +376,7 @@ def schedule_mcp_http_session_emit(
 ) -> None:
     """Fire-and-forget ``mcp.session_started`` from the mounted ``/mcp`` app.
 
-    Called on every authenticated POST the mount serves (phase-3 item 6); the
+    Called on every authenticated POST the mount serves; the
     dedupe key is the per-window synthetic id, so within one window the fast
     path is one set-membership check. clientInfo comes from the request's
     ``_meta`` (``io.modelcontextprotocol/clientInfo``) and is a SHOULD — an

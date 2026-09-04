@@ -136,8 +136,8 @@ class OAuthClientResponse(BaseModel):
     )
     active_grant_count: int = Field(
         default=0,
-        description="Number of active consent→agent grants for this client (§4.8 "
-        "per-client grant count). Computed on the read endpoints (list/get); "
+        description="Number of active consent→agent grants for this client. "
+        "Computed on the read endpoints (list/get); "
         "write-path responses report 0.",
     )
     created_at: datetime

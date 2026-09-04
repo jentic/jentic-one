@@ -134,7 +134,7 @@ async def _is_allowed_redirect_uri(
     Third-party clients are looked up in the oauth_clients registry.
     Unknown client_ids are rejected, and so are unapproved (pending/denied)
     rows — the D7 approval gate fails closed on the existing error path.
-    (The human "awaiting approval" page is 3a-2 scope.)
+    (The human "awaiting approval" page is future work.)
     """
     if _is_platform_client(client_id, ctx):
         return _platform_client_allows_redirect(redirect_uri, client_id, ctx)
@@ -487,7 +487,7 @@ _AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-# The §4.4 agent-picker consent variant (consent_model='agent' clients only —
+# The agent-picker consent variant (consent_model='agent' clients only —
 # the 'user' template above stays byte-identical). Differences: the
 # redirect-URI origin is rendered prominently (client-claimed names are
 # untrusted — phishing counter), and the permission list is replaced by an
@@ -712,7 +712,7 @@ _AGENT_OPTION_TEMPLATE = """<label class="agent">
     </ul>
 </label>"""
 
-# Zero active agents → an empty-state page, HTTP 200, no code minted (§4.4).
+# Zero active agents → an empty-state page, HTTP 200, no code minted.
 _NO_AGENTS_PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -846,7 +846,7 @@ async def authorize_endpoint(
     If an external IdP is configured, redirects to the upstream provider.
     Otherwise returns an error (direct login requires a separate credential exchange).
     """
-    # D7 approval gate (§4.3): a registered-but-unapproved client renders a
+    # D7 approval gate: a registered-but-unapproved client renders a
     # human page — NEVER an OAuth error redirect (clients can't observe
     # browser-side rejections; a hard authorize-time rejection bricks Claude
     # Code permanently). This branch runs BEFORE redirect-URI failure handling
@@ -1116,7 +1116,7 @@ async def _consume_consent_handle(ch: str, request: Request) -> bool:
 def _redirect_origin(redirect_uri: str) -> str:
     """The redirect-URI origin, rendered prominently on the agent consent page.
 
-    Client-claimed names are untrusted (§4.2 phishing counter) — the origin is
+    Client-claimed names are untrusted (a phishing counter) — the origin is
     the one client-controlled string the user can actually verify.
     """
     parts = urlsplit(redirect_uri)
@@ -1160,7 +1160,7 @@ def _render_agent_options(
     agents: list[AgentConsentOption],
     candidate_scopes: list[str],
 ) -> str:
-    """Render the §4.4 agent picker: one radio per active agent.
+    """Render the agent picker: one radio per active agent.
 
     Each agent shows the candidate scope set (requested ∩ client allowlist,
     OIDC stripped) marked granted/lacking against its live scopes — the user
@@ -1258,7 +1258,7 @@ async def _render_agent_consent_page(
     consent_token: str,
     authorize_svc: AuthorizeService,
 ) -> HTMLResponse:
-    """The §4.4 agent-picker consent variant for ``consent_model='agent'`` clients.
+    """The agent-picker consent variant for ``consent_model='agent'`` clients.
 
     Lists only the consenting user's own ``status='active'`` agents; zero
     agents (or an unresolvable user — deferred provisioning means the row may
@@ -1323,7 +1323,7 @@ async def consent_submit(
     parameters (user_id, email, scopes, redirect_uri) live server-side and
     can't be tampered with or captured from browser history/proxy logs.
 
-    ``agent_id`` is posted only by the §4.4 agent-picker variant
+    ``agent_id`` is posted only by the agent-picker variant
     (``consent_model='agent'`` clients); it is validated and the scope math
     recomputed entirely server-side — the browser's selection is never
     trusted.
@@ -1389,7 +1389,7 @@ async def consent_submit(
     nonce = str(raw_nonce) if raw_nonce else None
 
     if oauth_client is not None and oauth_client.consent_model == OAuthConsentModel.AGENT.value:
-        # §4.4 consent→agent binding: validate the posted agent server-side
+        # Consent→agent binding: validate the posted agent server-side
         # (exists + active + owned by the consenting user — the picker's
         # option list IS that predicate), recompute the D2 scope
         # intersection, mint the grant row (+ audit + oauth_grant.created),

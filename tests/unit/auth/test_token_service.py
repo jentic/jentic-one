@@ -618,7 +618,7 @@ async def test_refresh_deactivated_user_rejected(
 async def test_refresh_unapproved_issuing_client_rejected(
     mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_client_repo: MagicMock
 ) -> None:
-    """The D7 gate at refresh: a pending issuing client — even if force-set
+    """The client approval gate at refresh: a pending issuing client — even if force-set
     active — must not rotate tokens."""
     ctx = _make_ctx()
     rt_row = _make_refresh_token_row()
@@ -807,7 +807,7 @@ async def test_resolve_null_allowed_scopes_is_unrestricted(
     assert set(resolved.permissions) == {"agents:read", "agents:write"}
 
 
-# ---------- D7 approval gate at the live resolvers (MAJOR-1, PR #1218 review) ----------
+# ---------- client approval gate at the live resolvers (MAJOR-1, PR #1218 review) ----------
 
 
 @pytest.mark.parametrize("approval_status", ["pending", "denied"])
@@ -848,7 +848,7 @@ async def test_introspect_unapproved_client_access_token_inactive(
     mock_user_repo: MagicMock,
     approval_status: str,
 ) -> None:
-    """Introspection shares the resolver's D7 verdict via _resolve_client_gate."""
+    """Introspection shares the resolver's approval-gate verdict via _resolve_client_gate."""
     ctx = _make_ctx()
     at_row = _make_access_token_row()
     at_row.oauth_client_id = "oc_gated"
@@ -921,7 +921,7 @@ async def test_resolve_approved_active_client_still_resolves(
     assert resolved.active is True
 
 
-# --- grant-channel gates (phase-3a D4, §4.5-4.6) ---------------------------
+# --- grant-channel gates ----------------------------------------------------
 
 
 def _make_grant_row(*, status: str = "active", scopes: list[str] | None = None) -> MagicMock:
@@ -1131,7 +1131,7 @@ async def test_refresh_rechecks_grant_status(
     mock_client_repo: MagicMock,
     mock_grant_repo: MagicMock,
 ) -> None:
-    """§4.5: rotation re-checks the grant on every refresh — revoked → fail
+    """Rotation re-checks the grant on every refresh — revoked → fail
     closed without consuming the token or minting."""
     ctx = _make_ctx()
     rt_row = _make_refresh_token_row()

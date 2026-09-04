@@ -1,7 +1,7 @@
-"""Shared seed helpers for the phase-3a grant-channel integration tests.
+"""Shared seed helpers for the grant-channel integration tests.
 
 Used by ``test_oauth_grant_channel.py`` (service-level) and
-``test_oauth_consent_web.py`` (web-level, review F-1). All rows are stamped
+``test_oauth_consent_web.py`` (web-level). All rows are stamped
 ``created_by=SEED_MARKER`` so the shared ``clean_grants`` fixture (in this
 package's ``conftest.py``) can remove them without touching unrelated state.
 """

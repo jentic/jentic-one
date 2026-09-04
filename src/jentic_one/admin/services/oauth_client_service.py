@@ -573,7 +573,7 @@ class OAuthClientService:
           secret is required — and none is accepted: a supplied secret on a
           public client is a loud misconfiguration → invalid_client.
         - Unknown, inactive, or unapproved (D7) clients fail closed.
-        - Rows violating the none↔NULL-hash coupling invariant (§4.1) fail
+        - Rows violating the none↔NULL-hash coupling invariant fail
           closed: a confidential-method row with a NULL hash must not be
           treated as a public client, and a ``none`` row carrying a stray
           hash must not authenticate either way.

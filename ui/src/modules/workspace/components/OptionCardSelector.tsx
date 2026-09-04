@@ -1,8 +1,8 @@
 /**
  * OptionCardSelector — single-select, radio-group card grid.
  *
- * Faithful port of jentic-mini's workspace import picker so the Import dialog
- * reads the same here as it does there: each option is a bordered card with a
+ * Used by the Import dialog's source picker:
+ * each option is a bordered card with a
  * leading icon, a bold label, an optional one-line description (default
  * variant), and a right-aligned circular check that fills with the primary
  * colour when selected.

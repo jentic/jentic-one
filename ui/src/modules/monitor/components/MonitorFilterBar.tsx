@@ -51,7 +51,7 @@ export function MonitorFilterBar({ tab }: MonitorFilterBarProps) {
 
 	return (
 		<div className="border-border/60 flex flex-wrap items-center gap-3 rounded-lg border border-dashed px-3 py-2">
-			{/* TODO(#624): mount a debounced free-text search input here once the
+			{/* TODO: mount a debounced free-text search input here once the
 			    Monitor list endpoints support a `search` query param. The list
 			    param interfaces in client.ts are ready to thread it through. */}
 			<div className="flex items-center gap-2">

@@ -12,7 +12,7 @@ class JobStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     # Exhausted its retry budget after repeated handler failures; parked here
-    # (poison-message handling) instead of looping forever (§09 E4.2).
+    # (poison-message handling) instead of looping forever.
     DEAD_LETTER = "dead_letter"
 
 

@@ -1,6 +1,6 @@
-"""Web-level integration tests for the §4.4 consent ownership predicate.
+"""Web-level integration tests for the consent ownership predicate.
 
-Review F-1 (3a-3): every consent web test mocks ``list_consentable_agents``
+Coverage gap closed here: every unit-level consent web test mocks ``list_consentable_agents``
 and the service-level integration suite enters below the predicate, so the
 actual query that stops cross-user / pending / disabled agent binding — and
 the ``resolve_existing_user_id`` ``email_verified`` guard — had no coverage
@@ -113,7 +113,7 @@ async def _grant_rows_for_agent(ctx: Context, agent_id: str) -> list[OAuthClient
 async def test_ownership_predicate_at_render_and_submit(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """§4.4: only the consenting user's OWN ACTIVE agents are pickable at
+    """Only the consenting user's OWN ACTIVE agents are pickable at
     render and accepted at submit — asserted against the real query, with a
     second user's active agent and the user's own pending/disabled agents
     seeded in the database."""
@@ -189,7 +189,7 @@ async def test_ownership_predicate_at_render_and_submit(
 async def test_unverified_email_never_exposes_another_accounts_agents(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """``resolve_existing_user_id`` email arm (§4.4, review F-1): claims with
+    """``resolve_existing_user_id`` email arm: claims with
     an unlinked subject resolve by email ONLY when the IdP asserts
     ``email_verified`` — an unverified email must not expose the matching
     account's agent list at render, and submit fails closed (the provision

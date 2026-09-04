@@ -1,4 +1,4 @@
-"""Service-layer views for OAuth consent→agent grants (phase-3a §4.8)."""
+"""Service-layer views for OAuth consent→agent grants."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class OAuthGrantView(BaseModel):
 
 
 def redirect_uri_origin(client: OAuthClient | None) -> str | None:
-    """The client's first redirect-URI origin (§4.8 "authorized apps" pattern)."""
+    """The client's first redirect-URI origin (the "authorized apps" pattern)."""
     if client is None or not client.redirect_uris:
         return None
     parsed = urlparse(client.redirect_uris[0])

@@ -1,9 +1,9 @@
 """Broker-specific FastAPI dependencies for token validation and authorization.
 
-Toolkit *selection* no longer lives here: it needs the discovered API identity,
-which is only known inside the handler (after discovery). These dependencies do
-auth + scope only; the handler calls ``select_toolkit`` (see ``routers/execute``)
-through the injected ``get_toolkit_deriver`` provider (§03 / §00 DI convention).
+Toolkit *selection* happens in the handler (see ``routers/execute``): it needs
+the discovered API identity, which is only known after discovery. These
+dependencies do auth + scope only; the handler calls ``select_toolkit``
+through the injected ``get_toolkit_deriver`` provider.
 """
 
 from __future__ import annotations
@@ -158,7 +158,7 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
     """Auth + scope, then enforce the per-caller rate limit keyed on ``sub``.
 
     Enforced here — a post-auth dependency — because the actor isn't resolved at
-    admission time (§04 middleware runs before auth). The limiter lives on
+    admission time (the admission middleware runs before auth). The limiter lives on
     ``app.state``; when rate limiting is disabled it is ``None`` and this is a
     pure pass-through of ``require_execute_scope``. A deny surfaces directly as a
     ``429`` carrying ``RateLimit-*`` + ``Retry-After`` (we are at the web edge).
@@ -185,9 +185,9 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
 def get_http_runner(request: Request) -> UpstreamRunner:
     """Select the upstream runner for this request via the scheme→runner registry.
 
-    Handlers reach the runner only through this provider (§04 DI convention),
+    Handlers reach the runner only through this provider (DI convention),
     never by reading ``request.app.state`` inline. The runner is chosen by the
-    upstream URL's **scheme** through the :class:`RunnerRegistry` (§11 RN-0.3):
+    upstream URL's **scheme** through the :class:`RunnerRegistry`:
     an unsupported scheme raises ``501`` and a degraded runner ``503``, before
     any operation discovery. A test swaps the runner via
     ``app.dependency_overrides[get_http_runner]``.
@@ -198,7 +198,7 @@ def get_http_runner(request: Request) -> UpstreamRunner:
 
 
 def get_idempotency_store(request: Request) -> SharedStateIdempotencyStore | None:
-    """Provide the idempotency store, or ``None`` when idempotency is disabled (§07).
+    """Provide the idempotency store, or ``None`` when idempotency is disabled.
 
     The handler treats ``None`` as "no idempotency": an ``Idempotency-Key`` is
     ignored and the request executes normally. A test swaps the store via

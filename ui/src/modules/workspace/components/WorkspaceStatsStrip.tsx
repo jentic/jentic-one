@@ -1,13 +1,13 @@
 /**
  * WorkspaceStatsStrip — compact dashboard ribbon below the page header.
  *
- * Faithful to jentic-mini's `WorkspaceStatsStrip` visual (a low-noise,
- * labelled, never-clickable strip) but scoped to what the Workspace module
+ * A low-noise,
+ * labelled, never-clickable strip, scoped to what the Workspace module
  * owns here: APIs are the only domain on this surface, so the numbers are
  * derived from the already-loaded API list rather than fanning out to the
  * credentials / toolkits / traces endpoints other modules own. That keeps the
  * module boundary clean (no cross-module service calls) while preserving the
- * at-a-glance ribbon mini users expect.
+ * at-a-glance ribbon.
  */
 import { Boxes, GitBranch, ShieldCheck, Zap, FileClock } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';

@@ -1,11 +1,10 @@
 /**
  * VendorIcon — deterministic gradient + initials avatar for an API vendor.
  *
- * jentic-mini resolves real brand logos from a `vendor-registry` (CDN slugs,
- * brand colours); that registry is mini-specific infra and out of scope here.
- * This is a self-contained gradient+initials fallback seeded by the vendor key,
+ * A self-contained gradient+initials fallback seeded by the vendor key,
  * so the same vendor always renders the same colour — enough visual
- * differentiation for the grids with no network dependency. When an `iconUrl`
+ * differentiation for the grids with no network dependency (there is no
+ * brand-logo vendor registry). When an `iconUrl`
  * is known (Workspace's `icon_url`) the real logo is rendered instead.
  *
  * Shared by Discover and Workspace (both render vendor avatars in their grids

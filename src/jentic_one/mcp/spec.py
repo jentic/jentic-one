@@ -1,7 +1,7 @@
-"""Loader for the pinned phase-1 tool-surface spec (``docs/reference/mcp-tools.json``).
+"""Loader for the pinned tool-surface spec (``docs/reference/mcp-tools.json``).
 
 The Go stdio server's ``toolSpecs()`` is the single source of truth for the
-MCP tool surface (master §3.2); ``cli/internal/cli/api/mcp_spec_test.go`` pins
+MCP tool surface; ``cli/internal/cli/api/mcp_spec_test.go`` pins
 it into ``docs/reference/mcp-tools.json``, and this module loads that file so
 the mounted app **consumes** the spec instead of re-declaring it — names,
 titles, descriptions, input schemas, and annotations can never drift from the
@@ -22,12 +22,12 @@ from typing import Any
 
 import mcp.types as mcp_types
 
-#: The tools this mount serves — the subset of the phase-1 surface whose
+#: The tools this mount serves — the subset of the pinned surface whose
 #: dispatch is clean in-process (registry search/inspect/catalog, admin jobs,
-#: auth whoami) or a server-side broker proxy (the execute family, §6 Q1).
+#: auth whoami) or a server-side broker proxy (the execute family).
 #: ``get_started`` (CLI setup diagnosis), ``import_api`` (job tracking +
 #: promotion loop), and ``request_access`` (token re-mint semantics) stay
-#: stdio-only until their own phase-3 slices.
+#: stdio-only for now.
 SERVED_TOOLS: tuple[str, ...] = (
     "whoami",
     "search_apis",

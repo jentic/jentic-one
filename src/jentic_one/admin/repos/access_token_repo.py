@@ -73,7 +73,7 @@ class AccessTokenRepository:
 
     @staticmethod
     async def revoke_by_grant(session: AsyncSession, oauth_grant_id: str) -> int:
-        """Revoke every live token minted under one consent grant (§4.6).
+        """Revoke every live token minted under one consent grant.
 
         The grant ``:revoke`` sweep — belt to the resolvers' live grant-gate
         braces. Returns the number of rows revoked.

@@ -89,7 +89,7 @@ export type StreamTokens = {
 	name?: string;
 	version?: string;
 	overlay_id?: string;
-	// OAuth surface (phase-3a §4.8): DCR/approval events carry the client's
+	// OAuth surface: DCR/approval events carry the client's
 	// INTERNAL id (`oauth_client_id` = the admin row's ksuid); grant events
 	// carry the grant id plus the client's PUBLIC client_id under the same
 	// `oauth_client_id` data key (the token-lineage join key).
@@ -165,8 +165,8 @@ const KNOWN_KINDS = new Set<StreamKind>([
  * so they collapse into a single `catalog` kind — one filter chip, one label,
  * one deep-link target (the affected API's Workspace detail page).
  *
- * `oauth_client.*` and `oauth_grant.*` likewise collapse into one `oauth` kind
- * (phase-3a §4.8): client registration/approval and consent-grant lifecycle
+ * `oauth_client.*` and `oauth_grant.*` likewise collapse into one `oauth` kind:
+ * client registration/approval and consent-grant lifecycle
  * are two halves of the same interactive-OAuth surface.
  */
 export function kindForType(type: string): StreamKind {
@@ -313,7 +313,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		name: stringField(data, 'name'),
 		version: stringField(data, 'version'),
 		overlay_id: stringField(data, 'overlay_id'),
-		// OAuth events (phase-3a §4.8): both halves stamp `oauth_client_id`;
+		// OAuth events: both halves stamp `oauth_client_id`;
 		// grant lifecycle events also carry the grant id (and an `agent_id`,
 		// picked up by the shared field above).
 		oauth_client_id: stringField(data, 'oauth_client_id'),
@@ -481,7 +481,7 @@ export function AgentStreamProvider({
 	 * Refresh the interactive-OAuth surfaces (Settings approval queue + client
 	 * rows with their grant counts, per-agent "Connected clients" panels). A
 	 * DCR registration, an approval decision, or a consent grant all land as
-	 * `oauth_client.*` / `oauth_grant.*` SSE events (phase-3a §4.8); without
+	 * `oauth_client.*` / `oauth_grant.*` SSE events; without
 	 * this bridge those surfaces sat on their staleTime right after the change.
 	 */
 	const invalidateOAuthSurfaces = useCallback(() => {
@@ -1084,7 +1084,7 @@ const NAV = {
 		if (!vendor || !name || !version) return null;
 		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
 	},
-	// The Settings OAuth approval queue (phase-3a §4.8/D7) — where the
+	// The Settings OAuth approval queue (D7) — where the
 	// approve/deny verbs for a pending DCR registration live. Static target:
 	// the queue tab lists every pending client.
 	oauthQueue: () => '/settings?tab=queue',
@@ -1112,7 +1112,7 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else if (ev.type === 'oauth_client.registered') {
-			// A DCR client registration awaiting approval (phase-3a §4.8) — route
+			// A DCR client registration awaiting approval — route
 			// the operator to the Settings approval queue, where the D7
 			// approve/deny verbs live, alongside Acknowledge.
 			actions.push({ kind: 'view_oauth_queue', label: 'Review', href: NAV.oauthQueue });

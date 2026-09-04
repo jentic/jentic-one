@@ -15,10 +15,10 @@
  *   - McpSessionsCard  → session history from `mcp.session_started` internal
  *     events plus "last active" from the newest MCP-origin execution. The
  *     label vocabulary is "started / last active" — NEVER "connected":
- *     stdio liveness is unknowable server-side and phase 3's `/mcp` is
+ *     stdio liveness is unknowable server-side and the `/mcp` endpoint is
  *     stateless by design, so request-level recency is the honest signal.
  *
- * The HTTP variant is instance-gated: phase 3 created `server.mcp` and the
+ * The HTTP variant is instance-gated: the
  * instance endpoint exposes `server.mcp.enabled`, so the config card renders
  * the Streamable HTTP snippet exactly when this instance actually serves
  * `/mcp` (advertising it unconditionally would show a transport that 404s on
@@ -45,7 +45,7 @@ import { MetaItem } from '@/modules/agents/components/detail/shared';
 
 /**
  * The streamable-HTTP variant renders only when the instance reports
- * `server.mcp.enabled` (phase 3). Kept as an explicit predicate (and exported
+ * `server.mcp.enabled`. Kept as an explicit predicate (and exported
  * for the test suite) so the gate is one auditable expression: flipping it to
  * ignore the instance flag would advertise a transport that 404s.
  */
@@ -110,7 +110,7 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 		null,
 		2,
 	);
-	// The daemon-native Streamable HTTP endpoint (phase 3): per-request bearer
+	// The daemon-native Streamable HTTP endpoint: per-request bearer
 	// auth against this instance's /mcp — the agent's API key (or an access
 	// token) goes in the Authorization header, no CLI or context needed on the
 	// agent machine.
@@ -215,7 +215,8 @@ export function McpSessionsCard({ agentId }: { agentId: string }) {
 			key: 'transport',
 			header: 'Transport',
 			className: 'w-28',
-			// Rendered verbatim (`stdio` today, `http` when phase 3 lands) so a
+			// Rendered verbatim (`stdio` today, `http` when the mounted `/mcp`
+			// app lands) so a
 			// future transport value degrades gracefully instead of breaking.
 			render: (row) => (
 				<span className="text-muted-foreground font-mono text-xs">

@@ -75,7 +75,7 @@ class RefreshTokenRepository:
 
     @staticmethod
     async def revoke_by_grant(session: AsyncSession, oauth_grant_id: str) -> int:
-        """Revoke every live refresh token minted under one consent grant (§4.6)."""
+        """Revoke every live refresh token minted under one consent grant."""
         stmt = (
             update(RefreshToken)
             .where(RefreshToken.oauth_grant_id == oauth_grant_id)

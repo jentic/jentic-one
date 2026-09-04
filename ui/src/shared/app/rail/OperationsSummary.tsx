@@ -20,8 +20,8 @@ import { OperationsDialog } from '@/shared/app/rail/OperationsDialog';
  * shows its effect + method/path and at most a handful of example operations;
  * the full set (which can be 100+ operations) lives in the dedicated
  * {@link OperationsDialog}, reached via "View all N operations". That keeps a
- * card's height constant regardless of how large the grant is — the wall of
- * chips that a big grant used to produce can't happen here.
+ * card's height constant regardless of how large the grant is — a big grant
+ * can never produce an unbounded wall of chips here.
  *
  * Read-only by design: the `:decide` verb only accepts approve/deny + reason,
  * so narrowing the rule set is a separate `:amend` concern, not something this

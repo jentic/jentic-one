@@ -1,9 +1,9 @@
-"""Integration tests for the 3a-5 grant listing surfaces (design §4.8, §9).
+"""Integration tests for the grant listing surfaces.
 
 Covers the read side of the grant registry end-to-end at the service layer:
 the per-agent "Connected clients" listing with its owner-or-admin
 authorization matrix, the admin cross-view with its filters and keyset
-pagination (including the id tiebreaker on ``created_at`` ties), the §4.8
+pagination (including the id tiebreaker on ``created_at`` ties), the
 display enrichment (client name + redirect-URI origin + consenting
 ``user_id`` — gap G10), the per-item ``can_revoke`` capability (the G10
 list/revoke predicate divergence made explicit), and the per-client
@@ -62,7 +62,7 @@ async def _force_created_at(ctx: Context, grant_ids: list[str], created_at: date
         await session.commit()
 
 
-# --- per-agent listing: authorization matrix (§4.8 / §9) ---------------------
+# --- per-agent listing: authorization matrix ---------------------------------
 
 
 async def test_list_grants_for_agent_owner_or_admin_matrix(
@@ -109,7 +109,7 @@ async def test_list_grants_for_agent_owner_or_admin_matrix(
 async def test_list_grants_for_agent_enrichment_and_status_filter(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """Items carry the §4.8 display fields — client name, redirect-URI origin,
+    """Items carry the display fields — client name, redirect-URI origin,
     consenting ``user_id`` (G10) — and the status filter separates the active
     row from revoked history."""
     owner_id = await _seed_user(integration_context, "usr_l_enrich")
@@ -118,7 +118,7 @@ async def test_list_grants_for_agent_enrichment_and_status_filter(
     grant_svc = OAuthGrantService(integration_context)
     owner = Identity(sub=owner_id, email="")
 
-    # Two consents for the same pair: the §4.1 collapse revokes the first.
+    # Two consents for the same pair: the pair-collapse revokes the first.
     await grant_svc.create_grant(
         user_id=owner_id, oauth_client_id=_CLIENT_ID, agent_id=agent_id, scopes=["apis:read"]
     )
@@ -146,12 +146,12 @@ async def test_list_grants_for_agent_enrichment_and_status_filter(
     assert everything.data[0].id == active_id
 
 
-# --- admin cross-view: filters + pagination (§4.8) ---------------------------
+# --- admin cross-view: filters + pagination ----------------------------------
 
 
 async def test_admin_cross_view_filters(integration_context: Context, clean_grants: None) -> None:
     """GET /admin/oauth-grants filters: agent, consenting user, client, status
-    — each narrowing the §4.8 cross-view independently."""
+    — each narrowing the cross-view independently."""
     user_a = await _seed_user(integration_context, "usr_l_xa")
     user_b = await _seed_user(integration_context, "usr_l_xb")
     agent_a = await _seed_agent(
@@ -208,7 +208,7 @@ async def test_admin_cross_view_keyset_pagination(
     await _seed_client(integration_context, allowed_scopes=["apis:read"])
     grant_svc = OAuthGrantService(integration_context)
 
-    # Distinct (client, agent) pairs so the §4.1 collapse leaves all rows alive.
+    # Distinct (client, agent) pairs so the pair-collapse leaves all rows alive.
     expected: list[str] = []
     for i in range(3):
         agent_id = await _seed_agent(
@@ -292,7 +292,7 @@ async def test_list_grants_for_agent_pagination_walks_created_at_ties(
     )
     grant_svc = OAuthGrantService(integration_context)
 
-    # Distinct clients on ONE agent so the §4.1 pair-collapse keeps all rows.
+    # Distinct clients on ONE agent so the pair-collapse keeps all rows.
     grant_ids: list[str] = []
     for i in range(4):
         client_id = await _seed_client(
@@ -387,7 +387,7 @@ async def test_can_revoke_matrix_consenter_transfer_and_admin_arms(
     assert [(g.id, g.can_revoke) for g in cross.data] == [(grant_id, True)]
 
 
-# --- per-client active-grant counts (§4.8) -----------------------------------
+# --- per-client active-grant counts -------------------------------------------
 
 
 async def test_client_listing_carries_active_grant_count(
@@ -425,6 +425,6 @@ async def test_client_listing_carries_active_grant_count(
     assert views[_CLIENT_ID].active_grant_count == 1
     assert views[other_client].active_grant_count == 1
 
-    # get() scopes its aggregate to the one requested client (review F4).
+    # get() scopes its aggregate to the one requested client.
     got = await client_svc.get(views[_CLIENT_ID].id)
     assert got.active_grant_count == 1

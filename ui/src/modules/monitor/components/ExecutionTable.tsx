@@ -1,19 +1,18 @@
 /**
- * ExecutionTable — the columned execution log, ported from jentic-mini's
- * `execution-log/ExecutionTable.tsx`.
+ * ExecutionTable — the columned execution log.
  *
- * Renders `GET /executions` rows in the same table vocabulary mini used:
+ * Renders `GET /executions` rows as:
  * Status | API (vendor chip) | Operation | Toolkit | Agent | Duration | When,
  * with a trailing open-affordance glyph. Built on the shared `<DataTable>`
- * (keyboard-activatable rows, scroll-region a11y) instead of mini's simpler
- * grid, and on jentic-one's `<VendorIcon>` (deterministic gradient+initials —
- * mini's brand-logo vendor registry is mini-specific infra).
+ * (keyboard-activatable rows, scroll-region a11y) and on jentic-one's
+ * `<VendorIcon>` (deterministic gradient+initials — there is no brand-logo
+ * vendor registry).
  *
- * Deliberate adaptations from mini:
+ * Deliberate design points:
  * - No `JobBadge` column chip: jentic-one execution records carry no `job_id`
  *   (the Jobs lens links the other way, job → execution).
- * - Cursor paging lives in the parent (`CursorPager`); mini's page-numbered
- *   `<Pagination>` doesn't fit the backend's cursor contract.
+ * - Cursor paging lives in the parent (`CursorPager`); a page-numbered
+ *   `<Pagination>` wouldn't fit the backend's cursor contract.
  * - On phones the table renders as stacked cards (shared DataTable feature)
  *   rather than horizontally scrolling.
  */

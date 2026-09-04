@@ -49,7 +49,7 @@ def test_auth_without_control_carries_the_challenge_placeholder(
     sample_config_dict: dict[str, Any],
 ) -> None:
     """A standalone auth shape serves the RFC 8414/9728 discovery documents,
-    so its /mcp must keep answering the 3a-4 challenge contract (never a
+    so its /mcp must keep answering the discovery challenge contract (never a
     dangling 404) — the placeholder rides instead of the real mount."""
     container = build_default_container(_ctx(sample_config_dict, ["auth"]))
     assert install_mcp_challenge_placeholder in container.extra_installers
@@ -61,7 +61,7 @@ def test_standalone_auth_app_answers_the_challenge_when_oauth_enabled(
     sample_config_dict: dict[str, Any],
 ) -> None:
     """End-to-end through _build_app: the auth-standalone shape answers the
-    discovery-chain 401 challenge on /mcp (3a-4 verbatim), and the plain 404
+    discovery-chain 401 challenge on /mcp (verbatim), and the plain 404
     with the oauth gate off — even though the real transport lives with
     control."""
     config = {**sample_config_dict, "apps": ["auth"]}

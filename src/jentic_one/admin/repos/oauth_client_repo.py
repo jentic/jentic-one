@@ -17,7 +17,7 @@ from jentic_one.shared.models.oauth_clients import (
 
 
 def redirect_uris_fingerprint(redirect_uris: list[str]) -> str:
-    """SHA-256 hex of the sorted, deduplicated redirect-URI set (design §4.1).
+    """SHA-256 hex of the sorted, deduplicated redirect-URI set.
 
     Order-insensitive and duplicate-insensitive (the list is normalized to a
     sorted set before hashing, matching the set comparison the DCR service's
@@ -99,7 +99,7 @@ class OAuthClientRepository:
     async def list_by_client_ids(session: AsyncSession, client_ids: list[str]) -> list[OAuthClient]:
         """Fetch client rows for a set of public ``client_id`` strings.
 
-        Used to enrich grant listings (§4.8: client name + redirect-URI
+        Used to enrich grant listings (client name + redirect-URI
         origin) without an N+1 per grant row.
         """
         if not client_ids:
@@ -115,7 +115,7 @@ class OAuthClientRepository:
         """List DCR rows matching the D8 dedupe key, via its covering index.
 
         Hits the non-unique ``(software_id, redirect_uris_fingerprint)`` index
-        (§4.1) instead of scanning every row claiming the ``software_id``.
+        instead of scanning every row claiming the ``software_id``.
         Callers must still verify the exact redirect-URI set on the returned
         rows — the fingerprint is a hash, so equality is necessary evidence,
         not proof (collision guard).

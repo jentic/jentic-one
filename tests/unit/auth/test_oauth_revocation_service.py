@@ -1,4 +1,4 @@
-"""Unit tests for OAuthRevocationService (RFC 7009 public-client revocation, G11).
+"""Unit tests for OAuthRevocationService (RFC 7009 public-client revocation).
 
 Repo-mocked (the SQLite end-to-end matrix lives in
 ``tests/integration/auth/test_oauth_rfc7009_revocation.py``). Pins the RFC

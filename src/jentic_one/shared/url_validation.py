@@ -2,7 +2,7 @@
 
 The default policy is strict: every private/loopback range, the cloud-metadata
 hosts, and non-HTTP schemes are rejected. A caller may pass an :class:`EgressConfig`
-(§08 E2) to **opt in** to specific internal targets — a corporate install bridging
+to **opt in** to specific internal targets — a corporate install bridging
 to internal/legacy APIs — via CIDR exemptions (``allowed_private_subnets``) and
 resolved-domain-suffix exemptions (``allowed_internal_domains``). The cloud-metadata
 IPs are a **hard, non-overridable** deny regardless of any allowlist.
@@ -99,7 +99,7 @@ def assert_ip_allowed(
     """Raise ValueError if *addr* is blocked and not exempted by the egress policy.
 
     The reusable core of the SSRF check, shared by URL validation and the
-    connection-time DNS-pinning guard (§08 E2) so the rebind check uses the exact
+    connection-time DNS-pinning guard so the rebind check uses the exact
     same block rules, metadata hard-deny, and allowlist exemptions.
     """
     if addr in _METADATA_IPS:

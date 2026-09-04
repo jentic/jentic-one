@@ -137,7 +137,7 @@ class CredentialResolver:
             # Among the remaining covering credentials, most-specific-wins: a
             # vendor.name.version pin beats a vendor.name which beats a bare
             # vendor wildcard, so a vendor-wide credential coexisting with a pin
-            # no longer forces a spurious 409.
+            # doesn't force a spurious 409.
             best = max(credential_specificity(s) for (_, s) in covering)
             matches = [c for (c, s) in covering if credential_specificity(s) == best]
 

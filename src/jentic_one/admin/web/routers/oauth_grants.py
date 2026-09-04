@@ -1,4 +1,4 @@
-"""OAuth grants admin router — the §4.8 cross-view over consent→agent grants."""
+"""OAuth grants admin router — the admin cross-view over consent→agent grants."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ async def list_oauth_grants(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = None,
 ) -> OAuthGrantAdminListResponse:
-    """List consent→agent grants across all clients and agents (§4.8).
+    """List consent→agent grants across all clients and agents.
 
     The admin cross-view over the grant registry: filter by client, agent,
     consenting user, or status. Each item carries the client's display name

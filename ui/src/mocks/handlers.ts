@@ -169,7 +169,7 @@ export const handlers = [
 	...workspaceHandlers,
 	...railEventsHandlers,
 	// Settings owns the admin OAuth-client registry (/admin/oauth-clients),
-	// including the phase-3a approval queue.
+	// including the DCR approval queue.
 	...settingsHandlers,
 	// Monitor owns the full observability surface (/executions, /jobs, /events
 	// + SSE, /audit). Several of these paths are ALSO mocked by the dashboard
