@@ -2199,8 +2199,10 @@ type OAuthClientRegistrationRequest struct {
 	ClientName      string  `json:"client_name"`
 
 	// GrantTypes Subset of ['authorization_code', 'refresh_token'].
-	GrantTypes   *[]string `json:"grant_types,omitempty"`
-	RedirectUris []string  `json:"redirect_uris"`
+	GrantTypes *[]string `json:"grant_types,omitempty"`
+
+	// RedirectUris 1-20 redirect URIs. `https` always; `http` for loopback hosts only; RFC 8252 §7.1 private-use (custom) schemes are accepted for native apps (browser-executable and other dangerous schemes are rejected).
+	RedirectUris []string `json:"redirect_uris"`
 
 	// ResponseTypes Only ['code'] is supported.
 	ResponseTypes   *[]string `json:"response_types,omitempty"`
