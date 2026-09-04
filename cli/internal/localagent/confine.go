@@ -24,7 +24,7 @@ import (
 // dependencies outside ~ are untouched, so it can't fail to start on an OS/agent
 // update) and scoped to the one thing the sandbox uniquely does — the per-entry
 // distinction inside ~ that DAC cannot express. See
-// docs/security/local-agent/sandbox-exec-plan.md for the full rationale.
+// docs/security/local-agent/sandbox-confinement-design.md for the full rationale.
 //
 // Confinement is REQUIRED, not best-effort: when the platform mechanism is
 // unavailable the caller must error closed (refuse the launch) rather than fall

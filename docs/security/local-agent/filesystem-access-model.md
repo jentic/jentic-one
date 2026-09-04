@@ -16,7 +16,7 @@ boundary runs in **both** directions across them:
 
 > **Note.** An earlier iteration closed `~` with a blanket `chmod 700`. That is
 > gone: in-home confidentiality against the agent is now enforced per session by the
-> [process-confinement layer](sandbox-exec-plan.md) (`jentic run` launches under
+> [process-confinement layer](sandbox-confinement-design.md) (`jentic run` launches under
 > sandbox-exec/bwrap and **errors closed** if confinement is unavailable), which
 > also closes the sibling-traversal leak a blanket 700 could not. Real secrets keep
 > their own `0700` modes regardless.
@@ -40,7 +40,7 @@ path under `~` is built from three layers.
 The agent process is launched under a per-session confinement profile
 (sandbox-exec on macOS, bwrap on Linux) that **denies every human-home root
 (`/Users`, `/home`) except the paths this session legitimately needs** — see
-[`sandbox-exec-plan.md`](sandbox-exec-plan.md). The re-allow list is the agent's
+[`sandbox-confinement-design.md`](sandbox-confinement-design.md). The re-allow list is the agent's
 own home, the granted directories, and metadata-traversal on their ancestors;
 everything else **under `/Users` and `/home`** is invisible to the agent regardless
 of its mode. We add **no** ACL to `~` itself, and we no longer `chmod 700 ~`. Because
@@ -165,7 +165,7 @@ grant flow:
 
 > **Resolved.** This section states the problem and the candidate fixes it drove.
 > The chosen answer — a per-session confinement profile — is now implemented; see
-> [`sandbox-exec-plan.md`](sandbox-exec-plan.md). The analysis below is retained
+> [`sandbox-confinement-design.md`](sandbox-confinement-design.md). The analysis below is retained
 > because it explains *why* the ACL layer alone cannot close the leak.
 
 **Symptom.** With `~` closed, the agent can touch nothing under it. Grant `~/a`

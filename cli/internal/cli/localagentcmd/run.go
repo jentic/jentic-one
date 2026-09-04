@@ -477,7 +477,7 @@ func (a *Cmd) launchAgent(ctx context.Context, acct config.AgentAccount, agentUs
 		b.WriteString("  jentic run won't start an unconfined session, because that would expose the operator's\n")
 		b.WriteString("  home beyond the directories granted. Install the prerequisites above and re-run, or run\n")
 		b.WriteString("  this agent in isolation another way (e.g. inside Docker). See ")
-		b.WriteString("docs/security/local-agent/sandbox-exec-plan.md")
+		b.WriteString("docs/security/local-agent/sandbox-confinement-design.md")
 		return confinementUnavailableErr(b.String())
 	}
 

@@ -13,8 +13,8 @@ When to use which:
 - **Stdio (`jentic mcp`) stays the default for a runtime that can spawn a
   process** — the agent's key never leaves its machine, and registration
   (`jentic setup`) is unchanged. See
-  [cloud-vs-self-hosted.md](guides/cloud-vs-self-hosted.md) for the integration
-  paths and [security/mcp-same-host-hardening.md](security/mcp-same-host-hardening.md)
+  [cloud-vs-self-hosted.md](cloud-vs-self-hosted.md) for the integration
+  paths and [../security/mcp-same-host-hardening.md](../security/mcp-same-host-hardening.md)
   for same-host recipes.
 - **The HTTP endpoint is the daemon-native shape**: headless agents, other
   machines, runtimes that cannot spawn processes, and the many-users-one-URL

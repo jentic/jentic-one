@@ -150,7 +150,7 @@ aren't there:
    running under `jentic run` can make arbitrary outbound network connections, the
    same as any process running as that Unix user. Restricting egress was explicitly
    **out of scope** for this work — the confinement profile is a filesystem
-   boundary, not an egress jail (see [`sandbox-exec-plan.md`](sandbox-exec-plan.md),
+   boundary, not an egress jail (see [`sandbox-confinement-design.md`](sandbox-confinement-design.md),
    "Why not `(deny default)`"). Operators who need to constrain where the agent can
    reach on the network must do so with a separate mechanism (host firewall, a
    proxy the agent is forced through, network namespaces/VPN egress rules); jentic
@@ -171,7 +171,7 @@ aren't there:
    kill the operator's processes (different uid); what it *can* do within its own uid
    (spawn helpers, talk to system services) is intentionally left open so that
    Node-based agents like `claude` launch and run reliably. See
-   [`sandbox-exec-plan.md`](sandbox-exec-plan.md) for why a stricter `(deny
+   [`sandbox-confinement-design.md`](sandbox-confinement-design.md) for why a stricter `(deny
    default)` profile was rejected as too brittle.
 
 None of these undoes the core hardening: running the agent as a **separate Unix
@@ -278,7 +278,7 @@ Three things worth calling out, because they're the load-bearing parts:
   700 ~`: it closes the same read path *and* the sibling-traversal leak a whole-home
   700 could not, without changing the operator home's own permissions. Real secrets
   keep their own `0700` modes regardless. See
-  [`sandbox-exec-plan.md`](sandbox-exec-plan.md) and the
+  [`sandbox-confinement-design.md`](sandbox-confinement-design.md) and the
   [filesystem-access model](filesystem-access-model.md).
 - **The agent's home is the shared space.** It lives under an existing shared
   parent (`/Users/Shared/…`, `/opt/…`), owned by the agent, with an *inherited*
@@ -335,10 +335,9 @@ writer, one source of truth, one refreshed projection.
 > granting the agent an **execute-only traverse** on the operator's home (the same
 > Layer-1 mechanism [Step 4](#step-4--directory-access-traverse-walk--rwx-leaf--confinement)
 > uses for working dirs) so it can reach `~/jentic-agents/<agent>` without *reading*
-> anything else in `~`. The tradeoff — a **persistent** execute ACE on `~`, and the
-> open questions around it — is worked through in
-> [`agent-home-under-operator-home-plan.md`](agent-home-under-operator-home-plan.md).
-> **Documented and deferred; not implemented.**
+> anything else in `~`. The tradeoff is a **persistent** execute ACE on `~`, with
+> open questions still to resolve. **Deferred; not implemented** — the full
+> plan is kept in internal planning notes.
 
 ### Optional: passwordless launch
 
