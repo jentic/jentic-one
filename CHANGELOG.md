@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.39.0](https://github.com/jentic/jentic-one/compare/v0.38.0...v0.39.0) (2026-09-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **auth:** deployments that relied on the old default (DCR clients auto-approved at registration) must now either set server.mcp.oauth.auto_approve_clients: true explicitly or approve pending clients through the admin queue.
+
+### Features
+
+* **auth:** default MCP OAuth DCR to admin approval, not auto-approve ([#1247](https://github.com/jentic/jentic-one/issues/1247)) ([dccb57d](https://github.com/jentic/jentic-one/commit/dccb57d0995bfcfa29095919c06ba65a34cfb740))
+* **auth:** RFC 7009 token revocation for MCP OAuth clients (closes G11) ([#1237](https://github.com/jentic/jentic-one/issues/1237)) ([29a98b3](https://github.com/jentic/jentic-one/commit/29a98b303b6070e68dfcfeb2235c4e5dc55cfda8))
+
+
+### Bug Fixes
+
+* **auth:** accept RFC 8252 private-use redirect schemes on the anonymous DCR door ([#1246](https://github.com/jentic/jentic-one/issues/1246)) ([5e243ce](https://github.com/jentic/jentic-one/commit/5e243ce4ff8f1fcab481c419bc561a1f6bcea26c))
+* **auth:** omit unset optional members from OAuth responses ([#1259](https://github.com/jentic/jentic-one/issues/1259)) ([25f10b7](https://github.com/jentic/jentic-one/commit/25f10b70a9250bdd26e1000137dd52fcbbf8ab78))
+* **auth:** omit unset optional metadata from the anonymous DCR response ([#1250](https://github.com/jentic/jentic-one/issues/1250)) ([749fa18](https://github.com/jentic/jentic-one/commit/749fa1854fba417b07e10531c4c45f246194ed8d))
+* **config:** remove static placeholder secret defaults from the shipped image ([#1255](https://github.com/jentic/jentic-one/issues/1255)) ([305f4e2](https://github.com/jentic/jentic-one/commit/305f4e2c8b23d6585e79362495ebe2a4b38a0fd1))
+* **deploy:** mount app-secrets on admin/registry and share the parts-mode jwt_secret ([#1258](https://github.com/jentic/jentic-one/issues/1258)) ([b485fb6](https://github.com/jentic/jentic-one/commit/b485fb616d50efdbcc8505622202be362c856bd9))
+* **mcp:** answer 405, not the 401 challenge, to credential-less GET /mcp ([#1257](https://github.com/jentic/jentic-one/issues/1257)) ([464de56](https://github.com/jentic/jentic-one/commit/464de56ac4b45cdc89500fe7376bbd44c65c5d80)), closes [#1256](https://github.com/jentic/jentic-one/issues/1256)
+
+
+### Documentation
+
+* **comments:** remove how-it-used-to-be context from code comments ([#1248](https://github.com/jentic/jentic-one/issues/1248)) ([2096b7c](https://github.com/jentic/jentic-one/commit/2096b7cdb345e435503c77fada4eee1ad81ec876))
+
+
+### Build System
+
+* **deps-dev:** bump @testing-library/react in /ui in the testing group ([#1269](https://github.com/jentic/jentic-one/issues/1269)) ([8fbd113](https://github.com/jentic/jentic-one/commit/8fbd1136aa3114f5374c3827f275382ce5ca781a))
+* **deps-dev:** bump @types/node in /ui in the types group ([#1270](https://github.com/jentic/jentic-one/issues/1270)) ([7451e1c](https://github.com/jentic/jentic-one/commit/7451e1c053c08322c6fb1d57b68ff104eb33f4bd))
+* **deps-dev:** bump @vitejs/plugin-react in /ui in the vite group ([#1265](https://github.com/jentic/jentic-one/issues/1265)) ([403128e](https://github.com/jentic/jentic-one/commit/403128e583da5ff18cbb0e34d79a40f216575278))
+* **deps-dev:** bump globals from 17.11.0 to 17.12.0 in /ui ([#1272](https://github.com/jentic/jentic-one/issues/1272)) ([418dde7](https://github.com/jentic/jentic-one/commit/418dde7e7113e472740c310b5999c5f5e4ea16eb))
+* **deps:** bump @tanstack/react-query from 5.102.3 to 5.102.8 in /ui ([#1273](https://github.com/jentic/jentic-one/issues/1273)) ([04ffce1](https://github.com/jentic/jentic-one/commit/04ffce12e5dc2824a4aede0ea5ac5b2fa4f6099c))
+* **deps:** bump lucide-react from 1.32.0 to 1.39.0 in /ui ([#1271](https://github.com/jentic/jentic-one/issues/1271)) ([2333432](https://github.com/jentic/jentic-one/commit/2333432a2b9919775ea5726910fd62c8aac2a5e2))
+* **deps:** bump the python group with 5 updates ([#1275](https://github.com/jentic/jentic-one/issues/1275)) ([2e27ff7](https://github.com/jentic/jentic-one/commit/2e27ff77edcd55d4564df793446f69614ba377ba))
+
 ## [0.38.0](https://github.com/jentic/jentic-one/compare/v0.37.4...v0.38.0) (2026-09-03)
 
 
