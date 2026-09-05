@@ -14,12 +14,10 @@ from fastapi import Request
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.auth.web.flow import STATE_MAX_AGE_SECONDS, sign_payload, verify_payload
 from jentic_one.auth.web.routers.authorize import (
-    STATE_MAX_AGE_SECONDS,
     _callback_uri,
     _is_allowed_redirect_uri,
-    _sign_payload,
-    _verify_payload,
 )
 
 SECRET = "test-secret-key"
@@ -30,37 +28,37 @@ def test_sign_verify_roundtrip() -> None:
         "client_id": "c1",
         "redirect_uri": "https://app.example.com/cb",
     }
-    signed = _sign_payload(payload, SECRET, purpose="state")
-    result = _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+    signed = sign_payload(payload, SECRET, purpose="state")
+    result = verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
     assert result["client_id"] == "c1"
     assert result["redirect_uri"] == "https://app.example.com/cb"
 
 
 def test_signature_is_full_sha256() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_payload(payload, SECRET, purpose="state")
+    signed = sign_payload(payload, SECRET, purpose="state")
     sig = signed.rsplit(".", 1)[1]
     assert len(sig) == 64
 
 
 def test_invalid_signature_rejected() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_payload(payload, SECRET, purpose="state")
+    signed = sign_payload(payload, SECRET, purpose="state")
     tampered = signed[:-1] + ("a" if signed[-1] != "a" else "b")
     with pytest.raises(InvalidGrantError, match="signature invalid"):
-        _verify_payload(tampered, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+        verify_payload(tampered, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_wrong_secret_rejected() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_payload(payload, SECRET, purpose="state")
+    signed = sign_payload(payload, SECRET, purpose="state")
     with pytest.raises(InvalidGrantError, match="signature invalid"):
-        _verify_payload(signed, "wrong-secret", purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+        verify_payload(signed, "wrong-secret", purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_malformed_state_no_dot() -> None:
     with pytest.raises(InvalidGrantError, match="invalid state token"):
-        _verify_payload("no-dot-here", SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+        verify_payload("no-dot-here", SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_expired_state_rejected() -> None:
@@ -68,37 +66,37 @@ def test_expired_state_rejected() -> None:
         "key": "value",
         "iat": str(int(time.time()) - STATE_MAX_AGE_SECONDS - 1),
     }
-    signed = _sign_payload(payload, SECRET, purpose="state")
+    signed = sign_payload(payload, SECRET, purpose="state")
     with pytest.raises(InvalidGrantError, match="expired"):
-        _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+        verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_future_state_rejected() -> None:
     payload: dict[str, str | None] = {"key": "value", "iat": str(int(time.time()) + 100)}
-    signed = _sign_payload(payload, SECRET, purpose="state")
+    signed = sign_payload(payload, SECRET, purpose="state")
     with pytest.raises(InvalidGrantError, match="expired"):
-        _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+        verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_state_within_ttl_accepted() -> None:
     payload: dict[str, str | None] = {"key": "value", "iat": str(int(time.time()) - 60)}
-    signed = _sign_payload(payload, SECRET, purpose="state")
-    result = _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+    signed = sign_payload(payload, SECRET, purpose="state")
+    result = verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
     assert result["key"] == "value"
 
 
 def test_state_without_iat_accepted() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_payload(payload, SECRET, purpose="state")
-    result = _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+    signed = sign_payload(payload, SECRET, purpose="state")
+    result = verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
     assert result["key"] == "value"
 
 
 def test_purpose_mismatch_rejected() -> None:
     payload: dict[str, str | None] = {"key": "value"}
-    signed = _sign_payload(payload, SECRET, purpose="consent")
+    signed = sign_payload(payload, SECRET, purpose="consent")
     with pytest.raises(InvalidGrantError, match="purpose mismatch"):
-        _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
+        verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 class _FakeUrl:
@@ -187,7 +185,7 @@ async def test_authorize_validation_approval_gate(
     """Pending/denied clients fail /authorize validation on the existing error
     path even when active and the redirect_uri matches (fails closed)."""
     view = _client_view(active=active, approval_status=approval_status)
-    with patch("jentic_one.auth.web.routers.authorize.OAuthClientService") as mock_svc_cls:
+    with patch("jentic_one.auth.web.flow.OAuthClientService") as mock_svc_cls:
         mock_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=view)
         result = await _is_allowed_redirect_uri(
             cast("Request", _StateRequest()),
@@ -199,7 +197,7 @@ async def test_authorize_validation_approval_gate(
 
 
 async def test_authorize_validation_unknown_client_rejected() -> None:
-    with patch("jentic_one.auth.web.routers.authorize.OAuthClientService") as mock_svc_cls:
+    with patch("jentic_one.auth.web.flow.OAuthClientService") as mock_svc_cls:
         mock_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=None)
         result = await _is_allowed_redirect_uri(
             cast("Request", _StateRequest()),

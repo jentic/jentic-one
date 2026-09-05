@@ -27,9 +27,8 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from jentic_one.admin.services.errors import AccountLockedError, InvalidCredentialsError
+from jentic_one.auth.web.flow import sign_payload, state_signing_key, verify_payload
 from jentic_one.auth.web.routers import authorize, local_login
-from jentic_one.auth.web.routers.authorize import _sign_payload
-from jentic_one.auth.web.routers.local_login import _state_key
 from jentic_one.shared.config import AuthConfig, LocalLoginConfig, PlatformClientConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
 
@@ -78,7 +77,7 @@ def _signed_state(
         "original_state": "client-state-1",
         "iat": str(int(time.time()) + iat_offset),
     }
-    return _sign_payload(payload, key or _state_key(ctx), purpose="state")
+    return sign_payload(payload, key or state_signing_key(ctx), purpose="state")
 
 
 def _extract_form_fields(html: str) -> dict[str, str]:
@@ -170,7 +169,7 @@ def test_gate_on_authorize_redirects_to_login_form(ctx: MagicMock) -> None:
     assert location.startswith("/login?ls=")
     ls = parse_qs(urlsplit(location).query)["ls"][0]
     # The carry-through token is the normal internal state, verifiable as such.
-    params = authorize._verify_payload(ls, _state_key(ctx), purpose="state", max_age=600)
+    params = verify_payload(ls, state_signing_key(ctx), purpose="state", max_age=600)
     assert params["client_id"] == PLATFORM_CLIENT_ID
     assert params["original_state"] == "s1"
 
@@ -361,7 +360,7 @@ def test_submit_third_party_writes_consent_handle(ctx: MagicMock) -> None:
     lookup = AsyncMock(return_value=_third_party_view())
     with (
         patch.object(local_login, "AuthService", return_value=auth),
-        patch.object(authorize, "_get_cached_oauth_client", lookup),
+        patch.object(local_login, "get_cached_oauth_client", lookup),
     ):
         resp = client.post(
             "/login",
@@ -397,7 +396,7 @@ def test_submit_third_party_midflow_gate_recheck(ctx: MagicMock) -> None:
     lookup = AsyncMock(return_value=_third_party_view(approval_status="denied"))
     with (
         patch.object(local_login, "AuthService", return_value=auth),
-        patch.object(authorize, "_get_cached_oauth_client", lookup),
+        patch.object(local_login, "get_cached_oauth_client", lookup),
     ):
         resp = client.post(
             "/login",

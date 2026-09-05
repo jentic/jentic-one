@@ -33,9 +33,7 @@ indistinguishable from not-shipped.
 from __future__ import annotations
 
 import html as html_mod
-import json
 import secrets
-import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 from urllib.parse import urlencode
@@ -49,12 +47,21 @@ from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.errors import AccountLockedError, InvalidCredentialsError
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import InvalidGrantError
-from jentic_one.auth.web.routers import authorize as authorize_flow
-from jentic_one.auth.web.routers.authorize import (
+from jentic_one.auth.web.flow import (
+    CONSENT_SECURITY_HEADERS,
     CONSENT_STATE_MAX_AGE_SECONDS,
+    FONTS_URL,
     STATE_MAX_AGE_SECONDS,
-    get_authorize_service,
+    check_rate_limit,
+    client_gate_passes,
+    get_cached_oauth_client,
+    get_consent_backend,
+    is_platform_client,
+    state_signing_key,
+    verify_payload,
+    write_local_consent_handle,
 )
+from jentic_one.auth.web.routers.authorize import get_authorize_service
 from jentic_one.shared.auth.identity import LoginPayload
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
@@ -236,22 +243,17 @@ _LOGIN_PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def _state_key(ctx: Context) -> str:
-    """The purpose-derived HMAC key for the ``/authorize`` internal state."""
-    return authorize_flow._derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "state")
-
-
 def _verify_login_state(ls: str, ctx: Context) -> dict[str, str | None]:
     """Verify the carry-through token: signature, purpose, and TTL."""
-    return authorize_flow._verify_payload(
-        ls, _state_key(ctx), purpose="state", max_age=STATE_MAX_AGE_SECONDS
+    return verify_payload(
+        ls, state_signing_key(ctx), purpose="state", max_age=STATE_MAX_AGE_SECONDS
     )
 
 
 async def _mint_csrf_nonce(request: Request) -> str:
     """Mint a fresh single-use CSRF nonce, recorded server-side with a TTL."""
     nonce = secrets.token_urlsafe(32)
-    backend = authorize_flow._get_consent_backend(request)
+    backend = get_consent_backend(request)
     await backend.set(f"login-csrf:{nonce}", b"1", ttl_s=float(_CSRF_TTL_SECONDS))
     return nonce
 
@@ -263,7 +265,7 @@ async def _consume_csrf_nonce(csrf: str, request: Request) -> bool:
     server minted it inside the TTL window; ``set_if_absent`` on a used-marker
     makes the first consumer win and every replay lose.
     """
-    backend = authorize_flow._get_consent_backend(request)
+    backend = get_consent_backend(request)
     if await backend.get(f"login-csrf:{csrf}") is None:
         return False
     return await backend.set_if_absent(
@@ -277,13 +279,13 @@ def _render_login_page(
     """Render the login form with the consent page's security-header posture."""
     error_block = f'<div class="error">{html_mod.escape(error)}</div>' if error else ""
     html = _LOGIN_PAGE_TEMPLATE.format(
-        fonts_url=authorize_flow._FONTS_URL,
+        fonts_url=FONTS_URL,
         error_block=error_block,
         email=html_mod.escape(email),
         ls=html_mod.escape(ls),
         csrf=html_mod.escape(csrf),
     )
-    return HTMLResponse(content=html, headers=authorize_flow._CONSENT_SECURITY_HEADERS)
+    return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
 
 @router.get(
@@ -293,7 +295,7 @@ def _render_login_page(
     response_class=HTMLResponse,
     response_model=None,
     responses=_GATED_404_RESPONSE,
-    dependencies=[Depends(authorize_flow._check_rate_limit)],
+    dependencies=[Depends(check_rate_limit)],
 )
 async def login_page(
     request: Request,
@@ -322,7 +324,7 @@ async def login_page(
     summary="Local-account login submit (authorization flow)",
     response_model=None,
     responses=_GATED_404_RESPONSE,
-    dependencies=[Depends(authorize_flow._check_rate_limit)],
+    dependencies=[Depends(check_rate_limit)],
 )
 async def login_submit(
     request: Request,
@@ -369,12 +371,12 @@ async def login_submit(
     original_state = str(raw_state) if raw_state else None
 
     oauth_client = None
-    if not authorize_flow._is_platform_client(client_id, ctx):
+    if not is_platform_client(client_id, ctx):
         # Mid-flow D7 re-check (same as the IdP callback): a client denied or
         # deactivated while the user is at the login form must not reach
         # consent or mint a code.
-        oauth_client = await authorize_flow._get_cached_oauth_client(request, client_id, ctx)
-        if oauth_client is None or not authorize_flow._client_gate_passes(oauth_client):
+        oauth_client = await get_cached_oauth_client(request, client_id, ctx)
+        if oauth_client is None or not client_gate_passes(oauth_client):
             logger.warning(
                 "oauth_client_gate_failed_midflow", client_id=client_id, stage="local_login"
             )
@@ -414,32 +416,20 @@ async def login_submit(
             url=f"{redirect_uri}{separator}{urlencode(redirect_params)}", status_code=302
         )
 
-    # Registered third-party client: write the same consent handle the IdP
-    # callback writes, carrying the already-provisioned local user instead of
-    # IdP claims — the approve arm skips provision_from_claims (the user
-    # exists; Deny-leaves-no-row holds trivially) and the Deny arm stays
-    # byte-identical.
-    consent_handle = secrets.token_urlsafe(32)
-    payload_json = json.dumps(
-        {
-            "local_user_id": user_id,
-            "redirect_uri": redirect_uri,
-            "original_state": original_state,
-            "client_id": client_id,
-            "code_challenge": code_challenge,
-            "scope": scope,
-            "nonce": nonce,
-            "client_name": oauth_client.name,
-            "client_description": oauth_client.description,
-            "user_email": email,
-            "iat": int(time.time()),
-        }
-    ).encode()
-    backend = authorize_flow._get_consent_backend(request)
-    await backend.set(
-        f"consent-handle:{consent_handle}",
-        payload_json,
-        ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS),
+    # Registered third-party client: the same consent handle the IdP callback
+    # writes (one writer owns the shape — see flow.write_local_consent_handle),
+    # carrying the already-provisioned local user instead of IdP claims.
+    consent_handle = await write_local_consent_handle(
+        request,
+        local_user_id=user_id,
+        user_email=email,
+        redirect_uri=redirect_uri,
+        original_state=original_state,
+        client_id=client_id,
+        code_challenge=code_challenge,
+        scope=scope,
+        nonce=nonce,
+        oauth_client=oauth_client,
     )
     logger.info("local_login_succeeded", client_id=client_id, consent="required")
     return RedirectResponse(url=f"/oauth/consent?ch={consent_handle}", status_code=302)
