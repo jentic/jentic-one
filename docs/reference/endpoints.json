@@ -1739,6 +1739,21 @@
       "typical_caller": null
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getCapabilities",
+      "path": "/capabilities",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Deployment capabilities",
+      "surface": "capabilities",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -5179,5 +5194,5 @@
     ],
     "total": 33
   },
-  "total": 180
+  "total": 181
 }

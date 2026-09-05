@@ -19,6 +19,7 @@ definition — this page links them into one workflow.
 | `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events without editing the closed enum. |
 | `register_strategy` | `jentic_one.registry.repos.search.registry` | Register a `SearchStrategy` under a new `(dialect, search_mode)` pair. |
 | `register_pipeline_stage` | `jentic_one.registry.ingest.pipeline.stage_registry` | Append extra ingest stages that run after the built-in pipeline, inside the same transaction. |
+| `register_capability_contributor` | `jentic_one.shared.web.capabilities` | Contribute extra `features.*` keys to the public `GET /capabilities` document (additive; never overrides built-ins). |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
 

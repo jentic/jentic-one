@@ -36,6 +36,7 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
+from jentic_one.shared.web.capabilities import get_capabilities_router
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
@@ -491,6 +492,12 @@ def create_surface_app(
         # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
         # 400/422 (same posture as /health).
         app.include_router(get_instance_router())
+        # Public deployment self-description (auth methods, broker URL, surface
+        # composition, feature flags) so a client can onboard from one URL.
+        # Same opt-out as /instance: the broker data plane never mounts it.
+        # COMMON_ERROR_RESPONSES because it is Discovery-tagged (not System):
+        # business operations must document the standard error envelope.
+        app.include_router(get_capabilities_router(enabled_apps), responses=COMMON_ERROR_RESPONSES)
         # Running/latest version so the signed-in SPA can show the current
         # version and an update banner. Authenticated (any valid session; not
         # published unauthenticated). The latest release is resolved server-side
@@ -617,6 +624,11 @@ def create_combined_app(
     # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
     # 400/422 (same posture as /health).
     root.include_router(get_instance_router())
+
+    # Public deployment self-description (auth methods, broker URL, surface
+    # composition, feature flags) so a client can onboard from one URL.
+    # COMMON_ERROR_RESPONSES because it is Discovery-tagged (not System).
+    root.include_router(get_capabilities_router(set(apps)), responses=COMMON_ERROR_RESPONSES)
 
     # Running/latest version so the signed-in SPA can show the current version
     # and an update banner. Authenticated (any valid session). The latest release
