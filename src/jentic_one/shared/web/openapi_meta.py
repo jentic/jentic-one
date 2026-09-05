@@ -332,6 +332,20 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "Governed Hosts",
+        "description": (
+            "The caller's own governed host set — the upstream hosts reachable through its "
+            "toolkit bindings (admin bindings → active credential scopes → registered APIs), "
+            "grouped by host and sorted. **Always self-scoped**: the set is derived for the "
+            "authenticated identity; admins inspect other actors via the Toolkits surface.\n\n"
+            "The response carries a content-derived SHA-256 `digest` (also emitted as a "
+            "strong `ETag`), so integrators — e.g. a native gate scoping traffic "
+            "interception per agent — poll with `If-None-Match` and receive an empty `304` "
+            "until the host set actually changes. Deliberately unpaginated: the set is "
+            "bounded by the caller's own bindings and the digest covers it atomically."
+        ),
+    },
+    {
         "name": "API Operations",
         "description": (
             "Sub-resource of **APIs** (Registry bounded context). Enumerate the operations "
@@ -874,6 +888,8 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/apis/.+/operations$"), "API Operations"),
     (re.compile(r"^/apis/.+/openapi$"), "API Spec"),
     (re.compile(r"^/apis"), "APIs"),
+    # Identity-scoped host digest for integrators (#1278).
+    (re.compile(r"^/governed-hosts$"), "Governed Hosts"),
     # Catalog (Discover) — browse/preview/import + the :refresh verb. Broad
     # ^/catalog is safe: no other surface shares the prefix.
     (re.compile(r"^/catalog"), "Catalog"),

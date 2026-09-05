@@ -3908,6 +3908,50 @@
         "title": "ExecutionStatsResponse",
         "type": "object"
       },
+      "GovernedHostResponse": {
+        "description": "One governed host with the caller's APIs behind it.",
+        "properties": {
+          "apis": {
+            "items": {
+              "$ref": "#/components/schemas/ApiReferenceResponse"
+            },
+            "title": "Apis",
+            "type": "array"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "apis"
+        ],
+        "title": "GovernedHostResponse",
+        "type": "object"
+      },
+      "GovernedHostsResponse": {
+        "description": "The caller's governed host set, sorted by host, with its change digest.\n\nDeliberately **unpaginated**: the set is bounded by the caller's own toolkit\nbindings (tens of hosts, not thousands) and the digest must cover the whole\nset atomically — a paginated digest would be meaningless. This is a\ndocumented deviation from the list-endpoint pagination convention.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/GovernedHostResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "digest"
+        ],
+        "title": "GovernedHostsResponse",
+        "type": "object"
+      },
       "GroupBy": {
         "description": "Grouping dimension for usage statistics.",
         "enum": [
@@ -26022,6 +26066,141 @@
         ]
       }
     },
+    "/governed-hosts": {
+      "get": {
+        "description": "The caller's governed host set (toolkit-bound hosts) with an ETag digest.\n\n**Always self-scoped** — derived from the authenticated identity's own\ntoolkit bindings; there is no cross-actor variant. The ``digest`` is also\nemitted as a strong ``ETag``, so integrators poll with ``If-None-Match`` and\nget an empty ``304`` until their host set actually changes (the change-poll\nseam that replaces ``GET /apis`` enumeration for interception scoping).",
+        "operationId": "getGovernedHosts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GovernedHostsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get Governed Hosts",
+        "tags": [
+          "Governed Hosts"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "description": "Liveness probe for the combined control-plane app.\n\nUnauthenticated and dependency-free so orchestrators and load balancers\nhave a stable target. Returns ``{\"status\": \"ok\"}`` when the process is up.",
@@ -37187,6 +37366,10 @@
     {
       "description": "The `Api` aggregate root — what APIs are registered for this deployment, addressable by the loose `(vendor, name, version)` tuple. Every successful import lands a new immutable `ApiRevision`; the `Api` carries the live `current_revision_id` plus presentation metadata (`display_name`, `description`, `icon_url`).\n\nMutation surfaces:\n\n- `POST /apis` — async import (url / inline). Returns 202 + `Job (kind=import)`.\n- `PATCH /apis/{vendor}/{name}/{version}` — metadata-only updates (display name, description, icon). Cannot mutate revisions or spec content.\n- `POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` — make a draft revision live.\n- `POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` — retire a draft revision.\n- `DELETE /apis/{vendor}/{name}/{version}` — deregister the API and all its revisions.\n\nNewly imported revisions are **never auto-promoted** — callers must explicitly `:promote` to flip the live pointer. Hot-path Broker calls can pin to a specific revision via the `Jentic-Revision` request header for testing without flipping the pointer.\n\nSub-resources of an `Api` live under sibling tags: `API Operations` enumerates the operations exposed by a registered revision; `API Spec` returns the underlying OpenAPI document for tooling.",
       "name": "APIs"
+    },
+    {
+      "description": "The caller's own governed host set — the upstream hosts reachable through its toolkit bindings (admin bindings → active credential scopes → registered APIs), grouped by host and sorted. **Always self-scoped**: the set is derived for the authenticated identity; admins inspect other actors via the Toolkits surface.\n\nThe response carries a content-derived SHA-256 `digest` (also emitted as a strong `ETag`), so integrators — e.g. a native gate scoping traffic interception per agent — poll with `If-None-Match` and receive an empty `304` until the host set actually changes. Deliberately unpaginated: the set is bounded by the caller's own bindings and the digest covers it atomically.",
+      "name": "Governed Hosts"
     },
     {
       "description": "Sub-resource of **APIs** (Registry bounded context). Enumerate the operations exposed by a registered API — either the live (`current_revision_id`) view or a specific revision. Complements `Search` (ranked discovery) and `Inspect` (single-operation detail) by giving callers the deterministic list of every registered operation under one API without ranking, paging through `Search`, or parsing the spec.\n\nEach row is slim — the structural detail (parameters, response schema, security scheme) lives behind `_links.inspect` for callers that need it.",
