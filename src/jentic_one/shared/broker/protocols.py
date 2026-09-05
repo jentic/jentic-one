@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
-from fastapi import Request, Response
-
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.schemas import APIReference
@@ -365,35 +363,3 @@ class PluggableUpstreamRunner(Protocol):
     def validate_target(self, req: UpstreamRequest, policy: EgressPolicy) -> None: ...
 
     async def run(self, req: UpstreamRequest, credential: object | None) -> UpstreamResult: ...
-
-
-@runtime_checkable
-class OperationNotFoundHandler(Protocol):
-    """Invoked when broker discovery misses (unregistered METHOD+URL).
-
-    The seam for observing/serving traffic to hosts the registry does not
-    know — audit sinks, catalog-suggestion UIs, monitor modes. Injected via
-    ``AppContainer.on_operation_not_found``; ``None`` (the default) preserves
-    today's behaviour exactly.
-
-    Contract:
-
-    - ``upstream_url`` has **already passed** ``validate_upstream_url`` (the
-      SSRF/egress pre-check). An implementation that forwards must send the
-      request **only to that exact URL**, re-validating if it mutates it —
-      this hook must never become a door around the egress policy.
-    - Return a complete ``Response`` to short-circuit (the router returns it
-      verbatim, so a ``StreamingResponse`` streams unbuffered), or ``None``
-      to fall through to the standard ``OperationNotFoundError`` (404).
-    - The handler runs *instead of* the registered-operation pipeline: no
-      toolkit derivation, no policy evaluation, no credential injection —
-      those are meaningless for an unregistered URL and an implementation
-      must not reach for them.
-    - Only the sync web edge invokes it. The pinned-revision miss, the async
-      (``Prefer: respond-async``) path, and the worker all run post-discovery
-      and never see an unregistered URL.
-    """
-
-    async def __call__(
-        self, *, method: str, upstream_url: str, identity: Identity, request: Request
-    ) -> Response | None: ...

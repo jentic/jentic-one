@@ -14,7 +14,7 @@ definition — this page links them into one workflow.
 | Seam | Where | What it lets you do |
 | ---- | ----- | ------------------- |
 | `AppContainer` | `jentic_one.shared.web.container` | Inject a `Broker`; mount extra routers/installers after the built-in surfaces. |
-| `AppContainer.on_operation_not_found` | `jentic_one.shared.broker.protocols` | Intercept broker discovery misses (unregistered METHOD+URL) at the sync web edge: return a `Response` to short-circuit, or `None` for today's 404. |
+| `AppContainer.unregistered_url_handler` | `jentic_one.shared.web.container` (contract: `jentic_one.shared.web.protocols.UnregisteredUrlHandler`) | Intercept broker traffic to unregistered METHOD+URLs at the sync web edge: return a `Response` to short-circuit, or `None` for today's 404. |
 | `register_config` | `jentic_one.shared.config` | Add a top-level config section validated by your own pydantic model. |
 | `register_target` | `jentic_one.migrations.targets` | Add an isolated migration target to the ordered upgrade/rollback sequence. |
 | `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events without editing the closed enum. |
@@ -140,6 +140,18 @@ paths, not just one of them.
 > observe/enrich the standard path rather than replace transport, wrap a
 > `DefaultBroker` and delegate to it so the built-in stack is retained. See the
 > `Broker` protocol docstring in `jentic_one.shared.broker.broker`.
+
+> **Unregistered-URL tradeoff.** An `unregistered_url_handler` runs *instead
+> of* the registered-operation pipeline, so **none** of the built-in controls
+> apply: no PBAC evaluation, no credential injection, no body/response-size
+> caps, no transfer deadlines, no resilience stack, and no execution record —
+> core emits only the `broker.unregistered_url.handled` counter when it
+> short-circuits. The only controls that have run are authentication and the
+> egress pre-check, and the handler must forward **only** to the validated URL
+> it receives. A forwarding implementation is making a policy decision and
+> owns its own caps, timeouts, transport, and audit trail. See the
+> `UnregisteredUrlHandler` docstring in `jentic_one.shared.web.protocols` for
+> the full contract.
 
 ### 3. Prove your implementations comply with the seam contracts
 

@@ -475,10 +475,10 @@ def create_surface_app(
         # silently falls back to the default broker.
         app.state.broker = container.broker
         app.state.broker_factory = lambda _runner: container.broker
-    if container.on_operation_not_found is not None:
-        # Discovery-miss hook (sync web edge only) — the router reads it via
+    if container.unregistered_url_handler is not None:
+        # Unregistered-URL hook (sync web edge only) — the router reads it via
         # getattr, so leaving it unset preserves today's 404 exactly.
-        app.state.on_operation_not_found = container.on_operation_not_found
+        app.state.unregistered_url_handler = container.unregistered_url_handler
     # Public, schema-hidden agent-discovery documents (the skill set +
     # llms.txt). Mounted on every standalone surface so split deployments
     # (gateway proxying to per-surface backends) serve them too. Registered
@@ -563,10 +563,10 @@ def create_combined_app(
     if container.broker is not None:
         root.state.broker = container.broker
         root.state.broker_factory = lambda _runner: container.broker
-    if container.on_operation_not_found is not None:
-        # Discovery-miss hook (sync web edge only) — read via getattr in the
+    if container.unregistered_url_handler is not None:
+        # Unregistered-URL hook (sync web edge only) — read via getattr in the
         # broker router, so leaving it unset preserves today's 404 exactly.
-        root.state.on_operation_not_found = container.on_operation_not_found
+        root.state.unregistered_url_handler = container.unregistered_url_handler
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
 
     @root.get(

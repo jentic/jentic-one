@@ -16,7 +16,7 @@ import inspect
 
 from jentic_one.registry.repos.search.protocol import SearchStrategy
 from jentic_one.shared.broker.broker import Broker
-from jentic_one.shared.broker.protocols import OperationNotFoundHandler
+from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 #: Dialect names a backend can report from ``DatabaseBackend.dialect_name``.
 #: Keep in sync with the backends in ``jentic_one.shared.db.backends`` — a
@@ -112,22 +112,29 @@ class BaseBrokerComplianceTest:
         assert_signature_matches(type(self.broker_factory()), Broker, "execute_streaming")
 
 
-class BaseOperationNotFoundHandlerComplianceTest:
+class BaseUnregisteredUrlHandlerComplianceTest:
     """Subclass and override ``handler_factory`` to prove an
-    ``OperationNotFoundHandler`` conforms.
+    ``UnregisteredUrlHandler`` conforms.
 
     ``handler_factory`` returns a ready handler instance, e.g.::
 
-        class TestMyHandlerCompliance(BaseOperationNotFoundHandlerComplianceTest):
-            def handler_factory(self) -> OperationNotFoundHandler:
+        class TestMyHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):
+            def handler_factory(self) -> UnregisteredUrlHandler:
                 return MyHandler(...)
+
+    The handler must be **class-shaped** (an instance with ``__call__``), not a
+    bare ``async def`` — ``assert_signature_matches`` inspects
+    ``type(handler).__call__``, which a plain function cannot satisfy. The
+    ``isinstance`` check alone carries little weight here (``runtime_checkable``
+    on a ``__call__``-only protocol matches every callable); the signature
+    check is the real guard.
     """
 
-    def handler_factory(self) -> OperationNotFoundHandler:
+    def handler_factory(self) -> UnregisteredUrlHandler:
         raise NotImplementedError("Subclass must override handler_factory()")
 
-    def test_is_operation_not_found_handler(self) -> None:
-        assert isinstance(self.handler_factory(), OperationNotFoundHandler)
+    def test_is_unregistered_url_handler(self) -> None:
+        assert isinstance(self.handler_factory(), UnregisteredUrlHandler)
 
     def test_call_signature(self) -> None:
-        assert_signature_matches(type(self.handler_factory()), OperationNotFoundHandler, "__call__")
+        assert_signature_matches(type(self.handler_factory()), UnregisteredUrlHandler, "__call__")
