@@ -14,14 +14,21 @@ exact same harness code paths (``assert_signature_matches`` + ``isinstance``).
 from __future__ import annotations
 
 import pytest
+from fastapi import Request, Response
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.default_broker import DefaultBroker
 from jentic_one.broker.services.execution.pipeline import BrokerExecutionPipeline
 from jentic_one.registry.repos.search.postgres_lexical import PostgresLexicalStrategy
 from jentic_one.registry.repos.search.sqlite_lexical import SqliteLexicalStrategy
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
-from jentic_one.testing import BaseBrokerComplianceTest, BaseSearchStrategyComplianceTest
+from jentic_one.shared.broker.protocols import OperationNotFoundHandler
+from jentic_one.testing import (
+    BaseBrokerComplianceTest,
+    BaseOperationNotFoundHandlerComplianceTest,
+    BaseSearchStrategyComplianceTest,
+)
 
 
 class _NoopRunner(UpstreamRunner):
@@ -42,6 +49,20 @@ class _DefaultBrokerCompliance(BaseBrokerComplianceTest):
         return DefaultBroker(BrokerExecutionPipeline(_NoopRunner()))
 
 
+class _NoopOperationNotFoundHandler:
+    """Reference no-op handler: always declines, so the 404 falls through."""
+
+    async def __call__(
+        self, *, method: str, upstream_url: str, identity: Identity, request: Request
+    ) -> Response | None:
+        return None
+
+
+class _NoopHandlerCompliance(BaseOperationNotFoundHandlerComplianceTest):
+    def handler_factory(self) -> OperationNotFoundHandler:
+        return _NoopOperationNotFoundHandler()
+
+
 @pytest.mark.parametrize("compliance", [_SqliteCompliance(), _PostgresCompliance()])
 def test_oss_search_strategies_comply(compliance: BaseSearchStrategyComplianceTest) -> None:
     compliance.test_is_search_strategy()
@@ -55,3 +76,9 @@ def test_oss_default_broker_complies() -> None:
     compliance.test_is_broker()
     compliance.test_execute_signature()
     compliance.test_execute_streaming_signature()
+
+
+def test_noop_operation_not_found_handler_complies() -> None:
+    compliance = _NoopHandlerCompliance()
+    compliance.test_is_operation_not_found_handler()
+    compliance.test_call_signature()

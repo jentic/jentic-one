@@ -27,6 +27,7 @@ from jentic_one.integrations.aws_marketplace.installer import (
     install_entitlement_gate,
 )
 from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.broker.protocols import OperationNotFoundHandler
 from jentic_one.shared.context import Context
 
 #: A mounted router spec: ``(router, prefix, tags)`` — same shape the surface
@@ -64,6 +65,11 @@ class AppContainer:
 
     An injected ``broker`` owns its own transport + resilience (it opts out of the
     built-in resilience stack) — see the ``Broker`` protocol docstring.
+
+    ``on_operation_not_found`` intercepts broker discovery misses (unregistered
+    METHOD+URL) at the sync web edge — see the
+    :class:`~jentic_one.shared.broker.protocols.OperationNotFoundHandler`
+    docstring for the egress contract. ``None`` (default) → today's 404.
     """
 
     ctx: Context
@@ -71,6 +77,7 @@ class AppContainer:
     extra_routers: Sequence[RouterSpec] = field(default_factory=tuple)
     extra_installers: Sequence[Installer] = field(default_factory=tuple)
     extra_lifespans: Sequence[LifespanFactory] = field(default_factory=tuple)
+    on_operation_not_found: OperationNotFoundHandler | None = None
 
     @classmethod
     def default(cls, ctx: Context) -> AppContainer:

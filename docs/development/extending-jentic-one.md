@@ -14,6 +14,7 @@ definition — this page links them into one workflow.
 | Seam | Where | What it lets you do |
 | ---- | ----- | ------------------- |
 | `AppContainer` | `jentic_one.shared.web.container` | Inject a `Broker`; mount extra routers/installers after the built-in surfaces. |
+| `AppContainer.on_operation_not_found` | `jentic_one.shared.broker.protocols` | Intercept broker discovery misses (unregistered METHOD+URL) at the sync web edge: return a `Response` to short-circuit, or `None` for today's 404. |
 | `register_config` | `jentic_one.shared.config` | Add a top-level config section validated by your own pydantic model. |
 | `register_target` | `jentic_one.migrations.targets` | Add an isolated migration target to the ordered upgrade/rollback sequence. |
 | `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events without editing the closed enum. |

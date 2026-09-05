@@ -89,6 +89,7 @@ from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.protocols import (
+    OperationNotFoundHandler,
     RegistryResolverProtocol,
     ResolveResult,
     RuleEvaluatorProtocol,
@@ -583,6 +584,27 @@ def _resolve_broker(request: Request, runner: UpstreamRunner) -> Broker:
     return injected if injected is not None else broker_factory(runner)
 
 
+async def _handle_discovery_miss(
+    request: Request, *, method: str, upstream_url: str, identity: Identity
+) -> Response | None:
+    """Run the container-injected discovery-miss hook, if any (None → 404).
+
+    Only ``_handle``'s *unregistered-URL* miss calls this — it runs after
+    ``validate_upstream_url``, so the handler only ever sees an egress-approved
+    URL (see ``OperationNotFoundHandler``'s contract). The pinned-revision miss
+    never invokes it: the API is registered there, so that miss is a caller pin
+    error, not an unregistered flow.
+    """
+    handler: OperationNotFoundHandler | None = getattr(
+        request.app.state, "on_operation_not_found", None
+    )
+    if handler is None:
+        return None
+    return await handler(
+        method=method, upstream_url=upstream_url, identity=identity, request=request
+    )
+
+
 async def _handle(
     request: Request,
     method: str,
@@ -615,6 +637,11 @@ async def _handle(
 
     resolved = await discover(resolver, method=method, url=upstream_url)
     if resolved is None:
+        handled = await _handle_discovery_miss(
+            request, method=method, upstream_url=upstream_url, identity=identity
+        )
+        if handled is not None:
+            return handled
         raise OperationNotFoundError(
             detail="Operation not found — unregistered upstream URL.",
             type="operation_not_found",

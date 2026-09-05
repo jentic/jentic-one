@@ -16,6 +16,7 @@ import inspect
 
 from jentic_one.registry.repos.search.protocol import SearchStrategy
 from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.broker.protocols import OperationNotFoundHandler
 
 #: Dialect names a backend can report from ``DatabaseBackend.dialect_name``.
 #: Keep in sync with the backends in ``jentic_one.shared.db.backends`` — a
@@ -109,3 +110,24 @@ class BaseBrokerComplianceTest:
 
     def test_execute_streaming_signature(self) -> None:
         assert_signature_matches(type(self.broker_factory()), Broker, "execute_streaming")
+
+
+class BaseOperationNotFoundHandlerComplianceTest:
+    """Subclass and override ``handler_factory`` to prove an
+    ``OperationNotFoundHandler`` conforms.
+
+    ``handler_factory`` returns a ready handler instance, e.g.::
+
+        class TestMyHandlerCompliance(BaseOperationNotFoundHandlerComplianceTest):
+            def handler_factory(self) -> OperationNotFoundHandler:
+                return MyHandler(...)
+    """
+
+    def handler_factory(self) -> OperationNotFoundHandler:
+        raise NotImplementedError("Subclass must override handler_factory()")
+
+    def test_is_operation_not_found_handler(self) -> None:
+        assert isinstance(self.handler_factory(), OperationNotFoundHandler)
+
+    def test_call_signature(self) -> None:
+        assert_signature_matches(type(self.handler_factory()), OperationNotFoundHandler, "__call__")
