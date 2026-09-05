@@ -1806,6 +1806,23 @@ type ExecutionStatsResponse struct {
 	TotalExecutions    int                    `json:"total_executions"`
 }
 
+// GovernedHostResponse One governed host with the caller's APIs behind it.
+type GovernedHostResponse struct {
+	Apis []ApiReferenceResponse `json:"apis"`
+	Host string                 `json:"host"`
+}
+
+// GovernedHostsResponse The caller's governed host set, sorted by host, with its change digest.
+//
+// Deliberately **unpaginated**: the set is bounded by the caller's own toolkit
+// bindings (tens of hosts, not thousands) and the digest must cover the whole
+// set atomically — a paginated digest would be meaningless. This is a
+// documented deviation from the list-endpoint pagination convention.
+type GovernedHostsResponse struct {
+	Data   []GovernedHostResponse `json:"data"`
+	Digest string                 `json:"digest"`
+}
+
 // GroupBy Grouping dimension for usage statistics.
 type GroupBy string
 
@@ -5812,6 +5829,19 @@ type ClientInterface interface {
 	// Corresponds with GET /executions/{execution_id} (the `GetExecution` operationId).
 	GetExecution(ctx context.Context, executionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetGovernedHosts Get Governed Hosts
+	//
+	// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+	//
+	// **Always self-scoped** — derived from the authenticated identity's own
+	// toolkit bindings; there is no cross-actor variant. The ``digest`` is also
+	// emitted as a strong ``ETag``, so integrators poll with ``If-None-Match`` and
+	// get an empty ``304`` until their host set actually changes (the change-poll
+	// seam that replaces ``GET /apis`` enumeration for interception scoping).
+	//
+	// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
+	GetGovernedHosts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetHealth Health
 	//
 	// Liveness probe for the combined control-plane app.
@@ -9267,6 +9297,29 @@ func (c *Client) ListExecutions(ctx context.Context, params *ListExecutionsParam
 // Corresponds with GET /executions/{execution_id} (the `GetExecution` operationId).
 func (c *Client) GetExecution(ctx context.Context, executionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetExecutionRequest(c.Server, executionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetGovernedHosts Get Governed Hosts
+//
+// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+//
+// **Always self-scoped** — derived from the authenticated identity's own
+// toolkit bindings; there is no cross-actor variant. The “digest“ is also
+// emitted as a strong “ETag“, so integrators poll with “If-None-Match“ and
+// get an empty “304“ until their host set actually changes (the change-poll
+// seam that replaces “GET /apis“ enumeration for interception scoping).
+//
+// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
+func (c *Client) GetGovernedHosts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetGovernedHostsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -16654,6 +16707,33 @@ func NewGetExecutionRequest(server string, executionId string) (*http.Request, e
 	return req, nil
 }
 
+// NewGetGovernedHostsRequest constructs an http.Request for the GetGovernedHosts method
+func NewGetGovernedHostsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/governed-hosts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -21488,6 +21568,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /executions/{execution_id} (the `GetExecution` operationId).
 	GetExecutionWithResponse(ctx context.Context, executionId string, reqEditors ...RequestEditorFn) (*GetExecutionHTTPResp, error)
+
+	// GetGovernedHostsWithResponse Get Governed Hosts
+	//
+	// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+	//
+	// **Always self-scoped** — derived from the authenticated identity's own
+	// toolkit bindings; there is no cross-actor variant. The ``digest`` is also
+	// emitted as a strong ``ETag``, so integrators poll with ``If-None-Match`` and
+	// get an empty ``304`` until their host set actually changes (the change-poll
+	// seam that replaces ``GET /apis`` enumeration for interception scoping).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
+	GetGovernedHostsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetGovernedHostsHTTPResp, error)
 
 	// GetHealthWithResponse Health
 	//
@@ -30633,6 +30728,89 @@ func (r GetExecutionHTTPResp) ContentType() string {
 	return ""
 }
 
+type GetGovernedHostsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GovernedHostsResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetGovernedHostsHTTPResp) GetJSON200() *GovernedHostsResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetGovernedHostsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetGovernedHostsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetGovernedHostsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetGovernedHostsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -38568,6 +38746,27 @@ func (c *ClientWithResponses) GetExecutionWithResponse(ctx context.Context, exec
 		return nil, err
 	}
 	return ParseGetExecutionHTTPResp(rsp)
+}
+
+// GetGovernedHostsWithResponse Get Governed Hosts
+//
+// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+//
+// **Always self-scoped** — derived from the authenticated identity's own
+// toolkit bindings; there is no cross-actor variant. The “digest“ is also
+// emitted as a strong “ETag“, so integrators poll with “If-None-Match“ and
+// get an empty “304“ until their host set actually changes (the change-poll
+// seam that replaces “GET /apis“ enumeration for interception scoping).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
+func (c *ClientWithResponses) GetGovernedHostsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetGovernedHostsHTTPResp, error) {
+	rsp, err := c.GetGovernedHosts(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetGovernedHostsHTTPResp(rsp)
 }
 
 // GetHealthWithResponse Health
@@ -46863,6 +47062,74 @@ func ParseGetExecutionHTTPResp(rsp *http.Response) (*GetExecutionHTTPResp, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ExecutionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetGovernedHostsHTTPResp parses an HTTP response from a GetGovernedHostsWithResponse call
+func ParseGetGovernedHostsHTTPResp(rsp *http.Response) (*GetGovernedHostsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetGovernedHostsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GovernedHostsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
