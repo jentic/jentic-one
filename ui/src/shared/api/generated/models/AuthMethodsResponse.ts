@@ -15,7 +15,7 @@ export type AuthMethodsResponse = {
     agent_dcr: EnabledMethodResponse;
     idp: IdpMethodResponse;
     /**
-     * Local-account login form on the /authorize flow (no external IdP). Currently always false; wired to auth.local_login when #1276 ships.
+     * Local-account login form on the /authorize flow (auth.local_login). The *effective* offer: false whenever an external IdP is enabled, because the IdP always wins and the form is never reachable (no mixed mode).
      */
     local_login: EnabledMethodResponse;
     oauth_client_dcr: OauthClientDcrMethodResponse;
