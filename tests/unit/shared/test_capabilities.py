@@ -113,6 +113,29 @@ def test_capabilities_hides_provider_when_idp_disabled(
     assert doc.auth.methods.idp.provider is None
 
 
+def test_capabilities_reflects_local_login_enabled(sample_config_dict: dict[str, Any]) -> None:
+    """``auth.local_login.enabled`` with no IdP → the form is offered (#1276)."""
+    ctx = _ctx(sample_config_dict, auth={"local_login": {"enabled": True}})
+    doc = resolve_capabilities(ctx, _ALL_APPS)
+    assert doc.auth.methods.local_login.enabled is True
+
+
+def test_capabilities_local_login_yields_to_idp(sample_config_dict: dict[str, Any]) -> None:
+    """IdP always wins (no mixed mode): with an IdP enabled the login form is
+    never reachable on ``/authorize``, so the document must not advertise it —
+    this is the *effective* offer, not a raw config echo."""
+    ctx = _ctx(
+        sample_config_dict,
+        auth={
+            "local_login": {"enabled": True},
+            "idp": {"enabled": True, "provider": "google"},
+        },
+    )
+    doc = resolve_capabilities(ctx, _ALL_APPS)
+    assert doc.auth.methods.idp.enabled is True
+    assert doc.auth.methods.local_login.enabled is False
+
+
 def test_capabilities_reflects_mcp_flags(sample_config_dict: dict[str, Any]) -> None:
     ctx = _ctx(
         sample_config_dict,
@@ -148,9 +171,35 @@ def test_capabilities_broker_url_prefers_advertised_key(
 def test_capabilities_broker_url_falls_back_to_mcp_hop(
     sample_config_dict: dict[str, Any],
 ) -> None:
-    """Unset advertised key → the deployment's own broker-hop URL (local topology)."""
+    """Unset advertised key on a **local** backend → the deployment's own
+    broker-hop URL (single-box topology: the hop URL is client-reachable by
+    construction)."""
     doc = resolve_capabilities(_ctx(sample_config_dict), _ALL_APPS)
     assert doc.urls.broker == "http://127.0.0.1:8100"
+
+
+def test_capabilities_broker_url_never_falls_back_on_remote_backend(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """On a remote/split backend the internal broker-hop URL is topology-private
+    (compose service name, internal listener) — it is never published; the
+    document says null until the operator sets ``server.advertised_broker_url``."""
+    ctx = _ctx(sample_config_dict, server={"backend": "remote"})
+    assert ctx.config.server.mcp.broker_url  # the hop URL exists…
+    doc = resolve_capabilities(ctx, _ALL_APPS)
+    assert doc.urls.broker is None  # …but is not leaked
+
+
+def test_capabilities_broker_url_advertised_key_works_on_remote_backend(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """The explicit advertised key always wins, on any backend."""
+    ctx = _ctx(
+        sample_config_dict,
+        server={"backend": "remote", "advertised_broker_url": "https://broker.jentic.example"},
+    )
+    doc = resolve_capabilities(ctx, _ALL_APPS)
+    assert doc.urls.broker == "https://broker.jentic.example"
 
 
 def test_capabilities_broker_url_strips_userinfo(sample_config_dict: dict[str, Any]) -> None:
