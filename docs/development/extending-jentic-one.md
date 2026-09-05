@@ -14,6 +14,7 @@ definition — this page links them into one workflow.
 | Seam | Where | What it lets you do |
 | ---- | ----- | ------------------- |
 | `AppContainer` | `jentic_one.shared.web.container` | Inject a `Broker`; mount extra routers/installers after the built-in surfaces. |
+| `AppContainer.unregistered_url_handler` | `jentic_one.shared.web.container` (contract: `jentic_one.shared.web.protocols.UnregisteredUrlHandler`) | Intercept broker traffic to unregistered METHOD+URLs at the sync web edge: return a `Response` to short-circuit, or `None` for today's 404. |
 | `register_config` | `jentic_one.shared.config` | Add a top-level config section validated by your own pydantic model. |
 | `register_target` | `jentic_one.migrations.targets` | Add an isolated migration target to the ordered upgrade/rollback sequence. |
 | `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events without editing the closed enum. |
@@ -112,6 +113,7 @@ from jentic_one.shared.web.app_factory import create_combined_app
 from jentic_one.shared.web.container import AppContainer
 
 from my_ext.broker import MyBroker
+from my_ext.monitor import MyUnregisteredUrlHandler
 
 my_router = APIRouter()  # your extra routes
 
@@ -120,6 +122,9 @@ def build_app(ctx: Context):
     container = AppContainer(
         ctx=ctx,
         broker=MyBroker(...),  # injected data-plane broker
+        # Optional: intercept traffic to unregistered METHOD+URLs (see the
+        # "Unregistered-URL tradeoff" note below).
+        unregistered_url_handler=MyUnregisteredUrlHandler(...),
         extra_routers=[(my_router, "/my-ext", ["my-ext"])],
         extra_installers=[lambda app, ctx: ...],  # runs against the root app last
     )
@@ -140,6 +145,18 @@ paths, not just one of them.
 > `DefaultBroker` and delegate to it so the built-in stack is retained. See the
 > `Broker` protocol docstring in `jentic_one.shared.broker.broker`.
 
+> **Unregistered-URL tradeoff.** An `unregistered_url_handler` runs *instead
+> of* the registered-operation pipeline, so **none** of the built-in controls
+> apply: no PBAC evaluation, no credential injection, no body/response-size
+> caps, no transfer deadlines, no resilience stack, and no execution record —
+> core emits only the `broker.unregistered_url.handled` counter when it
+> short-circuits. The only controls that have run are authentication and the
+> egress pre-check, and the handler must forward **only** to the validated URL
+> it receives. A forwarding implementation is making a policy decision and
+> owns its own caps, timeouts, transport, and audit trail. See the
+> `UnregisteredUrlHandler` docstring in `jentic_one.shared.web.protocols` for
+> the full contract.
+
 ### 3. Prove your implementations comply with the seam contracts
 
 `runtime_checkable` Protocols only validate method *presence* — an
@@ -150,9 +167,15 @@ test suite to also assert the exact `inspect.signature` of every seam method:
 ```python
 # my_ext/tests/test_compliance.py
 from jentic_one.shared.broker.broker import Broker
-from jentic_one.testing import BaseBrokerComplianceTest, BaseSearchStrategyComplianceTest
+from jentic_one.shared.web.protocols import UnregisteredUrlHandler
+from jentic_one.testing import (
+    BaseBrokerComplianceTest,
+    BaseSearchStrategyComplianceTest,
+    BaseUnregisteredUrlHandlerComplianceTest,
+)
 
 from my_ext.broker import MyBroker
+from my_ext.monitor import MyUnregisteredUrlHandler
 from my_ext.search import MyStrategy
 
 
@@ -163,6 +186,11 @@ class TestMyBrokerCompliance(BaseBrokerComplianceTest):
 
 class TestMyStrategyCompliance(BaseSearchStrategyComplianceTest):
     strategy_cls = MyStrategy
+
+
+class TestMyHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):
+    def handler_factory(self) -> UnregisteredUrlHandler:
+        return MyUnregisteredUrlHandler(...)
 ```
 
 These `Test*` subclasses are collected by pytest and fail loudly if your

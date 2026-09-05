@@ -117,6 +117,7 @@ from jentic_one.shared.tracing import (
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 logger = structlog.get_logger(__name__)
 
@@ -124,6 +125,10 @@ _meter = get_meter("broker")
 _streaming_persist_failures = _meter.create_counter(
     "broker.streaming_execution.persist_failures",
     description="Failed attempts to persist a streaming execution record",
+)
+_unregistered_url_handled = _meter.create_counter(
+    "broker.unregistered_url.handled",
+    description="Unregistered-URL requests short-circuited by an injected UnregisteredUrlHandler",
 )
 
 router = APIRouter()
@@ -583,6 +588,34 @@ def _resolve_broker(request: Request, runner: UpstreamRunner) -> Broker:
     return injected if injected is not None else broker_factory(runner)
 
 
+async def _handle_unregistered_url(
+    request: Request, *, method: str, upstream_url: str, identity: Identity
+) -> Response | None:
+    """Run the container-injected unregistered-URL hook, if any (None → 404).
+
+    Only ``_handle``'s *unregistered-URL* miss calls this — it runs after
+    ``validate_upstream_url``, so the handler only ever sees an egress-approved
+    URL (see ``UnregisteredUrlHandler``'s contract). The pinned-revision miss
+    never invokes it: the API is registered there, so that miss is a caller pin
+    error, not an unregistered flow.
+
+    A short-circuit leaves no execution row and emits no event — the counter
+    metric is the core-side floor so operators see handled-traffic volume
+    without a downstream table.
+    """
+    handler: UnregisteredUrlHandler | None = getattr(
+        request.app.state, "unregistered_url_handler", None
+    )
+    if handler is None:
+        return None
+    response = await handler(
+        method=method, upstream_url=upstream_url, identity=identity, request=request
+    )
+    if response is not None:
+        _unregistered_url_handled.add(1)
+    return response
+
+
 async def _handle(
     request: Request,
     method: str,
@@ -615,6 +648,11 @@ async def _handle(
 
     resolved = await discover(resolver, method=method, url=upstream_url)
     if resolved is None:
+        handled = await _handle_unregistered_url(
+            request, method=method, upstream_url=upstream_url, identity=identity
+        )
+        if handled is not None:
+            return handled
         raise OperationNotFoundError(
             detail="Operation not found — unregistered upstream URL.",
             type="operation_not_found",
