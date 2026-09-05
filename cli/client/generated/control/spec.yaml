@@ -2483,6 +2483,34 @@ components:
       - top_operations
       title: ExecutionStatsResponse
       type: object
+    GovernedHostsResponse:
+      description: |-
+        The caller's governed host set (canonical order) with its change digest.
+
+        **Hosts only, deliberately**: the set exists for interception scoping
+        (divert lists, host filters), so it carries the minimum knowledge — API
+        detail stays behind the existing authenticated reads (``GET /apis``).
+
+        Deliberately **unpaginated**: the set is bounded by the caller's own toolkit
+        bindings (tens of hosts, not thousands) and the digest must cover the whole
+        set atomically — a paginated digest would be meaningless. This is a
+        documented deviation from the list-endpoint pagination convention.
+      properties:
+        data:
+          description: Governed host patterns, lowercased, deduplicated, and sorted — the URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry may contain a `{var}` placeholder label (a defaultless server variable), which the broker matches as a single-label wildcard.
+          items:
+            type: string
+          title: Data
+          type: array
+        digest:
+          description: SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag` for If-None-Match change-polling.
+          title: Digest
+          type: string
+      required:
+      - data
+      - digest
+      title: GovernedHostsResponse
+      type: object
     GroupBy:
       description: Grouping dimension for usage statistics.
       enum:
@@ -14275,6 +14303,74 @@ paths:
       summary: Get Execution
       tags:
       - Executions
+  /governed-hosts:
+    get:
+      description: |-
+        The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+
+        **Always self-scoped** — derived from the authenticated identity's own
+        toolkit bindings; there is no cross-actor variant. Toolkits bind to agents
+        and toolkit keys, so those are the callers this endpoint serves — a plain
+        user token yields an empty set. The ``digest`` covers exactly the ``data``
+        list and is also emitted as a strong ``ETag``, so integrators poll with
+        ``If-None-Match`` and get an empty ``304`` until their host set actually
+        changes (the change-poll seam that replaces ``GET /apis`` enumeration for
+        interception scoping).
+      operationId: getGovernedHosts
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GovernedHostsResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Get Governed Hosts
+      tags:
+      - Governed Hosts
   /health:
     get:
       description: |-
@@ -19514,6 +19610,11 @@ tags:
 
     Sub-resources of an `Api` live under sibling tags: `API Operations` enumerates the operations exposed by a registered revision; `API Spec` returns the underlying OpenAPI document for tooling.
   name: APIs
+- description: |-
+    The caller's own governed host set — the upstream hosts reachable through its toolkit bindings (admin bindings → active credential scopes → registered APIs), grouped by host and sorted. **Always self-scoped**: the set is derived for the authenticated identity; admins inspect other actors via the Toolkits surface.
+
+    The response carries a content-derived SHA-256 `digest` (also emitted as a strong `ETag`), so integrators — e.g. a native gate scoping traffic interception per agent — poll with `If-None-Match` and receive an empty `304` until the host set actually changes. Deliberately unpaginated: the set is bounded by the caller's own bindings and the digest covers it atomically.
+  name: Governed Hosts
 - description: |-
     Sub-resource of **APIs** (Registry bounded context). Enumerate the operations exposed by a registered API — either the live (`current_revision_id`) view or a specific revision. Complements `Search` (ranked discovery) and `Inspect` (single-operation detail) by giving callers the deterministic list of every registered operation under one API without ranking, paging through `Search`, or parsing the spec.
 
