@@ -24,6 +24,7 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `resolve_strategy_by_name` | `jentic_one.registry.repos.search` | Composition seam: a composite strategy (e.g. a hybrid fusing lexical + semantic) resolves its children by `(dialect, name)` instead of importing their modules, so it uses whatever is registered under that key. Raises `SearchUnsupportedError` naming the available modes when the key is unknown. |
 | `ACTIVE_REVISION_STATES` / `search_filter_clause` | `jentic_one.registry.repos.search` | The shared pin/active-state/api-filter contract every strategy applies, so composite strategies fuse filter-identical result sets. Use `search_filter_clause(api_filters=..., revision_pins=...)` on a statement that joins `ApiRevision`; hand-written SQL builds its state predicate from `ACTIVE_REVISION_STATES`. |
 | `register_pipeline_stage` | `jentic_one.registry.ingest.pipeline.stage_registry` | Append extra ingest stages that run after the built-in pipeline, inside the same transaction. |
+| `register_capability_contributor` | `jentic_one.shared.web.capabilities` | Contribute extra `features.*` keys to the public `GET /capabilities` document (additive; never overrides built-ins). |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
 
