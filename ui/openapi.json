@@ -2047,7 +2047,7 @@
           },
           "local_login": {
             "$ref": "#/components/schemas/EnabledMethodResponse",
-            "description": "Local-account login form on the /authorize flow (no external IdP). Currently always false; wired to auth.local_login when #1276 ships."
+            "description": "Local-account login form on the /authorize flow (auth.local_login). The *effective* offer: false whenever an external IdP is enabled, because the IdP always wins and the form is never reachable (no mixed mode)."
           },
           "oauth_client_dcr": {
             "$ref": "#/components/schemas/OauthClientDcrMethodResponse"
@@ -2410,6 +2410,36 @@
         "title": "Body_consentSubmit",
         "type": "object"
       },
+      "Body_loginSubmit": {
+        "properties": {
+          "csrf": {
+            "title": "Csrf",
+            "type": "string",
+            "x-sensitive": true
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "ls": {
+            "title": "Ls",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string",
+            "x-sensitive": true
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "ls",
+          "csrf"
+        ],
+        "title": "Body_loginSubmit",
+        "type": "object"
+      },
       "CapabilitiesAuthResponse": {
         "description": "Authentication capabilities.",
         "properties": {
@@ -2515,7 +2545,7 @@
                 "type": "null"
               }
             ],
-            "description": "Advertised broker base URL for data-plane traffic — the value a client needs to route agent traffic through this deployment's broker (server.advertised_broker_url, falling back to server.mcp.broker_url, the URL the deployment already uses for its own control-plane→broker hop). Userinfo is stripped; null when neither is configured. Split deployments whose internal broker URL is not client-reachable should set server.advertised_broker_url explicitly.",
+            "description": "Advertised broker base URL for data-plane traffic — the value a client needs to route agent traffic through this deployment's broker (server.advertised_broker_url). On a local-backend deployment it falls back to server.mcp.broker_url, the URL the deployment already uses for its own control-plane→broker hop; remote/split deployments never leak that internal hop and must set server.advertised_broker_url explicitly. Userinfo is stripped; null when unresolved.",
             "title": "Broker"
           }
         },
@@ -27246,6 +27276,233 @@
         "summary": "Cancel Job",
         "tags": [
           "Jobs"
+        ]
+      }
+    },
+    "/login": {
+      "get": {
+        "description": "Render the local-account login form for an in-flight ``/authorize`` request.\n\nVerifies the ``ls`` signature/TTL **before** rendering — an expired or\nforged token never gets a form — and embeds ``ls`` plus a fresh single-use\nCSRF nonce.",
+        "operationId": "loginPage",
+        "parameters": [
+          {
+            "description": "Signed authorization-flow state (carry-through token)",
+            "in": "query",
+            "name": "ls",
+            "required": true,
+            "schema": {
+              "description": "Signed authorization-flow state (carry-through token)",
+              "title": "Ls",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Local-account login is disabled (`auth.local_login.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Local-account login form (authorization flow)",
+        "tags": [
+          "OAuth"
+        ]
+      },
+      "post": {
+        "description": "Authenticate the local account and rejoin the authorization flow.\n\nSuccess never mints a JWT — it flows straight into code issuance (platform\nclient) or the consent handle (registered third-party client), exactly\nwhere the IdP callback rejoins. Credential failures re-render the form\nwith one generic message: lockout state, unknown email, and wrong password\nare indistinguishable (no user-enumeration oracle), while the shared\n``AuthService.authenticate`` core still increments the failed-login count\nand applies the lockout threshold.",
+        "operationId": "loginSubmit",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_loginSubmit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Local-account login is disabled (`auth.local_login.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Local-account login submit (authorization flow)",
+        "tags": [
+          "OAuth"
         ]
       }
     },

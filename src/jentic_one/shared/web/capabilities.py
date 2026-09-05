@@ -109,11 +109,11 @@ class CapabilitiesUrlsResponse(BaseModel):
         description=(
             "Advertised broker base URL for data-plane traffic — the value a client "
             "needs to route agent traffic through this deployment's broker "
-            "(server.advertised_broker_url, falling back to server.mcp.broker_url, "
-            "the URL the deployment already uses for its own control-plane→broker "
-            "hop). Userinfo is stripped; null when neither is configured. Split "
-            "deployments whose internal broker URL is not client-reachable should "
-            "set server.advertised_broker_url explicitly."
+            "(server.advertised_broker_url). On a local-backend deployment it falls "
+            "back to server.mcp.broker_url, the URL the deployment already uses for "
+            "its own control-plane→broker hop; remote/split deployments never leak "
+            "that internal hop and must set server.advertised_broker_url explicitly. "
+            "Userinfo is stripped; null when unresolved."
         )
     )
     authorization_server_metadata: str | None = Field(
@@ -158,8 +158,10 @@ class AuthMethodsResponse(BaseModel):
     idp: IdpMethodResponse
     local_login: EnabledMethodResponse = Field(
         description=(
-            "Local-account login form on the /authorize flow (no external IdP). "
-            "Currently always false; wired to auth.local_login when #1276 ships."
+            "Local-account login form on the /authorize flow (auth.local_login). "
+            "The *effective* offer: false whenever an external IdP is enabled, "
+            "because the IdP always wins and the form is never reachable (no "
+            "mixed mode)."
         )
     )
     oauth_client_dcr: OauthClientDcrMethodResponse
@@ -208,15 +210,22 @@ class CapabilitiesResponse(BaseModel):
 
 
 def _advertised_broker_url(ctx: Context) -> str | None:
-    """The broker URL to publish: the advertised key, else the MCP-hop value.
+    """The broker URL to publish: the advertised key, else a local-only fallback.
 
-    ``server.advertised_broker_url`` exists for split deployments whose
-    internal broker URL (e.g. a compose service name) is not client-reachable.
-    When unset, ``server.mcp.broker_url`` is the deployment's own working
-    broker URL and the best available answer (exact for the local install
-    topology). Userinfo is stripped before publishing, mirroring ``/instance``.
+    ``server.advertised_broker_url`` is the explicit answer and always wins.
+    The fallback to ``server.mcp.broker_url`` (the deployment's own
+    control-plane→broker hop) is taken **only when** ``server.backend`` is
+    ``"local"`` — the single-box topology where that internal URL is, by
+    construction, the same origin the client already reached. On a remote/split
+    deployment the hop URL is topology-private (a compose service name, an
+    internal listener) — publishing it would be wrong for routing *and* leak
+    internal topology on an unauthenticated endpoint — so the document says
+    ``null`` until the operator sets the advertised key. Userinfo is stripped
+    before publishing, mirroring ``/instance``.
     """
-    raw = ctx.config.server.advertised_broker_url or ctx.config.server.mcp.broker_url
+    raw = ctx.config.server.advertised_broker_url
+    if not raw and ctx.config.server.backend == "local":
+        raw = ctx.config.server.mcp.broker_url
     if not raw:
         return None
     sanitized, _host = sanitized_url_parts(raw)
@@ -267,9 +276,13 @@ def resolve_capabilities(ctx: Context, enabled_apps: Iterable[str]) -> Capabilit
                     enabled=idp.enabled,
                     provider=idp.provider if idp.enabled else None,
                 ),
-                # Always false until #1276 lands auth.local_login; publishing the
-                # key now pins the document shape so clients need no migration.
-                local_login=EnabledMethodResponse(enabled=False),
+                # Effective offer, not raw config: the /authorize flow only
+                # falls through to the login form when no IdP is configured
+                # ("IdP always wins" — see authorize.py), so a picker must see
+                # false while an IdP is enabled even if the flag is on.
+                local_login=EnabledMethodResponse(
+                    enabled=ctx.config.auth.local_login.enabled and not idp.enabled
+                ),
                 # Advertising the DCR gate does not weaken the deliberate
                 # 404-unobservability of the *route* gate: the door's presence
                 # is already observable by POSTing to /oauth-clients.

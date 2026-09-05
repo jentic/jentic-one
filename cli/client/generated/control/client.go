@@ -1352,7 +1352,7 @@ type AuthMethodsResponse struct {
 	// Idp External-IdP login (the ``GET /auth/idp`` hint, restated).
 	Idp IdpMethodResponse `json:"idp"`
 
-	// LocalLogin Local-account login form on the /authorize flow (no external IdP). Currently always false; wired to auth.local_login when #1276 ships.
+	// LocalLogin Local-account login form on the /authorize flow (auth.local_login). The *effective* offer: false whenever an external IdP is enabled, because the IdP always wins and the form is never reachable (no mixed mode).
 	LocalLogin EnabledMethodResponse `json:"local_login"`
 
 	// OauthClientDcr Anonymous OAuth-client dynamic registration (``POST /oauth-clients``).
@@ -1439,6 +1439,14 @@ type BodyConsentSubmit struct {
 	ConsentToken string  `json:"consent_token"`
 }
 
+// BodyLoginSubmit defines model for Body_loginSubmit.
+type BodyLoginSubmit struct {
+	Csrf     string `json:"csrf"`
+	Email    string `json:"email"`
+	Ls       string `json:"ls"`
+	Password string `json:"password"`
+}
+
 // CapabilitiesAuthResponse Authentication capabilities.
 type CapabilitiesAuthResponse struct {
 	// Methods The login-picker contract: exactly the sign-in options this deployment supports.
@@ -1487,7 +1495,7 @@ type CapabilitiesUrlsResponse struct {
 	// AuthorizationServerMetadata Path of the RFC 8414 authorization-server metadata document; null when the auth surface is not mounted on this deployment.
 	AuthorizationServerMetadata *string `json:"authorization_server_metadata"`
 
-	// Broker Advertised broker base URL for data-plane traffic — the value a client needs to route agent traffic through this deployment's broker (server.advertised_broker_url, falling back to server.mcp.broker_url, the URL the deployment already uses for its own control-plane→broker hop). Userinfo is stripped; null when neither is configured. Split deployments whose internal broker URL is not client-reachable should set server.advertised_broker_url explicitly.
+	// Broker Advertised broker base URL for data-plane traffic — the value a client needs to route agent traffic through this deployment's broker (server.advertised_broker_url). On a local-backend deployment it falls back to server.mcp.broker_url, the URL the deployment already uses for its own control-plane→broker hop; remote/split deployments never leak that internal hop and must set server.advertised_broker_url explicitly. Userinfo is stripped; null when unresolved.
 	Broker *string `json:"broker"`
 }
 
@@ -3705,6 +3713,12 @@ type ListJobsParams struct {
 	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// LoginPageParams defines parameters for LoginPage.
+type LoginPageParams struct {
+	// Ls Signed authorization-flow state (carry-through token)
+	Ls string `form:"ls" json:"ls"`
+}
+
 // GetMe200JSONResponseBody defines parameters for GetMe.
 type GetMe200JSONResponseBody struct {
 	union json.RawMessage
@@ -3900,6 +3914,9 @@ type ConnectCredentialJSONRequestBody = ConnectRequestBody
 
 // AcknowledgeEventJSONRequestBody defines body for AcknowledgeEvent for application/json ContentType.
 type AcknowledgeEventJSONRequestBody = EventAcknowledgeRequest
+
+// LoginSubmitFormdataRequestBody defines body for LoginSubmit for application/x-www-form-urlencoded ContentType.
+type LoginSubmitFormdataRequestBody = BodyLoginSubmit
 
 // ReportMcpConfigRegistrationJSONRequestBody defines body for ReportMcpConfigRegistration for application/json ContentType.
 type ReportMcpConfigRegistrationJSONRequestBody = McpConfigRegistrationRequest
@@ -6009,6 +6026,51 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginPage Local-account login form (authorization flow)
+	//
+	// Render the local-account login form for an in-flight ``/authorize`` request.
+	//
+	// Verifies the ``ls`` signature/TTL **before** rendering — an expired or
+	// forged token never gets a form — and embeds ``ls`` plus a fresh single-use
+	// CSRF nonce.
+	//
+	// Corresponds with GET /login (the `LoginPage` operationId).
+	LoginPage(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginSubmitWithBody Local-account login submit (authorization flow)
+	//
+	// Authenticate the local account and rejoin the authorization flow.
+	//
+	// Success never mints a JWT — it flows straight into code issuance (platform
+	// client) or the consent handle (registered third-party client), exactly
+	// where the IdP callback rejoins. Credential failures re-render the form
+	// with one generic message: lockout state, unknown email, and wrong password
+	// are indistinguishable (no user-enumeration oracle), while the shared
+	// ``AuthService.authenticate`` core still increments the failed-login count
+	// and applies the lockout threshold.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /login (the `LoginSubmit` operationId).
+	LoginSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginSubmitWithFormdataBody Local-account login submit (authorization flow)
+	//
+	// Authenticate the local account and rejoin the authorization flow.
+	//
+	// Success never mints a JWT — it flows straight into code issuance (platform
+	// client) or the consent handle (registered third-party client), exactly
+	// where the IdP callback rejoins. Credential failures re-render the form
+	// with one generic message: lockout state, unknown email, and wrong password
+	// are indistinguishable (no user-enumeration oracle), while the shared
+	// ``AuthService.authenticate`` core still increments the failed-login count
+	// and applies the lockout threshold.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /login (the `LoginSubmit` operationId).
+	LoginSubmitWithFormdataBody(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportMcpConfigRegistrationWithBody Report MCP config registration
 	//
@@ -9558,6 +9620,81 @@ func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...R
 // Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCancelJobRequest(c.Server, jobId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginPage Local-account login form (authorization flow)
+//
+// Render the local-account login form for an in-flight “/authorize“ request.
+//
+// Verifies the “ls“ signature/TTL **before** rendering — an expired or
+// forged token never gets a form — and embeds “ls“ plus a fresh single-use
+// CSRF nonce.
+//
+// Corresponds with GET /login (the `LoginPage` operationId).
+func (c *Client) LoginPage(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginPageRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginSubmitWithBody Local-account login submit (authorization flow)
+//
+// Authenticate the local account and rejoin the authorization flow.
+//
+// Success never mints a JWT — it flows straight into code issuance (platform
+// client) or the consent handle (registered third-party client), exactly
+// where the IdP callback rejoins. Credential failures re-render the form
+// with one generic message: lockout state, unknown email, and wrong password
+// are indistinguishable (no user-enumeration oracle), while the shared
+// “AuthService.authenticate“ core still increments the failed-login count
+// and applies the lockout threshold.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /login (the `LoginSubmit` operationId).
+func (c *Client) LoginSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginSubmitRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginSubmitWithFormdataBody Local-account login submit (authorization flow)
+//
+// Authenticate the local account and rejoin the authorization flow.
+//
+// Success never mints a JWT — it flows straight into code issuance (platform
+// client) or the consent handle (registered third-party client), exactly
+// where the IdP callback rejoins. Credential failures re-render the form
+// with one generic message: lockout state, unknown email, and wrong password
+// are indistinguishable (no user-enumeration oracle), while the shared
+// “AuthService.authenticate“ core still increments the failed-login count
+// and applies the lockout threshold.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /login (the `LoginSubmit` operationId).
+func (c *Client) LoginSubmitWithFormdataBody(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginSubmitRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -17206,6 +17343,96 @@ func NewCancelJobRequest(server string, jobId string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewLoginPageRequest constructs an http.Request for the LoginPage method
+func NewLoginPageRequest(server string, params *LoginPageParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ls", params.Ls, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLoginSubmitRequestWithFormdataBody calls the generic LoginSubmit builder with application/x-www-form-urlencoded body
+func NewLoginSubmitRequestWithFormdataBody(server string, body LoginSubmitFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewLoginSubmitRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewLoginSubmitRequestWithBody constructs an http.Request for the LoginSubmit method, with any body, and a specified content type
+func NewLoginSubmitRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewReportMcpConfigRegistrationRequest calls the generic ReportMcpConfigRegistration builder with application/json body
 func NewReportMcpConfigRegistrationRequest(server string, body ReportMcpConfigRegistrationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -21765,6 +21992,53 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJobWithResponse(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*CancelJobHTTPResp, error)
+
+	// LoginPageWithResponse Local-account login form (authorization flow)
+	//
+	// Render the local-account login form for an in-flight ``/authorize`` request.
+	//
+	// Verifies the ``ls`` signature/TTL **before** rendering — an expired or
+	// forged token never gets a form — and embeds ``ls`` plus a fresh single-use
+	// CSRF nonce.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /login (the `LoginPage` operationId).
+	LoginPageWithResponse(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*LoginPageHTTPResp, error)
+
+	// LoginSubmitWithBodyWithResponse Local-account login submit (authorization flow)
+	//
+	// Authenticate the local account and rejoin the authorization flow.
+	//
+	// Success never mints a JWT — it flows straight into code issuance (platform
+	// client) or the consent handle (registered third-party client), exactly
+	// where the IdP callback rejoins. Credential failures re-render the form
+	// with one generic message: lockout state, unknown email, and wrong password
+	// are indistinguishable (no user-enumeration oracle), while the shared
+	// ``AuthService.authenticate`` core still increments the failed-login count
+	// and applies the lockout threshold.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /login (the `LoginSubmit` operationId).
+	LoginSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error)
+
+	// LoginSubmitWithFormdataBodyWithResponse Local-account login submit (authorization flow)
+	//
+	// Authenticate the local account and rejoin the authorization flow.
+	//
+	// Success never mints a JWT — it flows straight into code issuance (platform
+	// client) or the consent handle (registered third-party client), exactly
+	// where the IdP callback rejoins. Credential failures re-render the form
+	// with one generic message: lockout state, unknown email, and wrong password
+	// are indistinguishable (no user-enumeration oracle), while the shared
+	// ``AuthService.authenticate`` core still increments the failed-login count
+	// and applies the lockout threshold.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /login (the `LoginSubmit` operationId).
+	LoginSubmitWithFormdataBodyWithResponse(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error)
 
 	// ReportMcpConfigRegistrationWithBodyWithResponse Report MCP config registration
 	//
@@ -31406,6 +31680,109 @@ func (r CancelJobHTTPResp) ContentType() string {
 	return ""
 }
 
+type LoginPageHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r LoginPageHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LoginPageHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LoginPageHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LoginPageHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LoginSubmitHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LoginSubmitHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r LoginSubmitHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LoginSubmitHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LoginSubmitHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LoginSubmitHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ReportMcpConfigRegistrationHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -38977,6 +39354,71 @@ func (c *ClientWithResponses) CancelJobWithResponse(ctx context.Context, jobId s
 		return nil, err
 	}
 	return ParseCancelJobHTTPResp(rsp)
+}
+
+// LoginPageWithResponse Local-account login form (authorization flow)
+//
+// Render the local-account login form for an in-flight “/authorize“ request.
+//
+// Verifies the “ls“ signature/TTL **before** rendering — an expired or
+// forged token never gets a form — and embeds “ls“ plus a fresh single-use
+// CSRF nonce.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /login (the `LoginPage` operationId).
+func (c *ClientWithResponses) LoginPageWithResponse(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*LoginPageHTTPResp, error) {
+	rsp, err := c.LoginPage(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginPageHTTPResp(rsp)
+}
+
+// LoginSubmitWithBodyWithResponse Local-account login submit (authorization flow)
+//
+// Authenticate the local account and rejoin the authorization flow.
+//
+// Success never mints a JWT — it flows straight into code issuance (platform
+// client) or the consent handle (registered third-party client), exactly
+// where the IdP callback rejoins. Credential failures re-render the form
+// with one generic message: lockout state, unknown email, and wrong password
+// are indistinguishable (no user-enumeration oracle), while the shared
+// “AuthService.authenticate“ core still increments the failed-login count
+// and applies the lockout threshold.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /login (the `LoginSubmit` operationId).
+func (c *ClientWithResponses) LoginSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error) {
+	rsp, err := c.LoginSubmitWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginSubmitHTTPResp(rsp)
+}
+
+// LoginSubmitWithFormdataBodyWithResponse Local-account login submit (authorization flow)
+//
+// Authenticate the local account and rejoin the authorization flow.
+//
+// Success never mints a JWT — it flows straight into code issuance (platform
+// client) or the consent handle (registered third-party client), exactly
+// where the IdP callback rejoins. Credential failures re-render the form
+// with one generic message: lockout state, unknown email, and wrong password
+// are indistinguishable (no user-enumeration oracle), while the shared
+// “AuthService.authenticate“ core still increments the failed-login count
+// and applies the lockout threshold.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /login (the `LoginSubmit` operationId).
+func (c *ClientWithResponses) LoginSubmitWithFormdataBodyWithResponse(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error) {
+	rsp, err := c.LoginSubmitWithFormdataBody(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginSubmitHTTPResp(rsp)
 }
 
 // ReportMcpConfigRegistrationWithBodyWithResponse Report MCP config registration
@@ -47631,6 +48073,79 @@ func ParseCancelJobHTTPResp(rsp *http.Response) (*CancelJobHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLoginPageHTTPResp parses an HTTP response from a LoginPageWithResponse call
+func ParseLoginPageHTTPResp(rsp *http.Response) (*LoginPageHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LoginPageHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseLoginSubmitHTTPResp parses an HTTP response from a LoginSubmitWithResponse call
+func ParseLoginSubmitHTTPResp(rsp *http.Response) (*LoginSubmitHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LoginSubmitHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case rsp.StatusCode == 404:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

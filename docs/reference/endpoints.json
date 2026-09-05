@@ -2480,6 +2480,36 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "loginPage",
+      "path": "/login",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Local-account login form (authorization flow)",
+      "surface": "login",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "loginSubmit",
+      "path": "/login",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Local-account login submit (authorization flow)",
+      "surface": "login",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -5164,5 +5194,5 @@
     ],
     "total": 33
   },
-  "total": 179
+  "total": 181
 }
