@@ -183,6 +183,39 @@ async def test_handler_receives_arguments_verbatim() -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_short_circuit_increments_handled_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A short-circuit bumps ``broker.unregistered_url.handled`` — the
+    core-side observability floor named in the seam contract."""
+    counter = MagicMock()
+    monkeypatch.setattr(execute_mod, "_unregistered_url_handled", counter)
+    spy = _SpyHandler(Response(content=b"handled"))
+    await _handle_unregistered_url(
+        _request_with_state(spy),
+        method="GET",
+        upstream_url=_RAW_URL,
+        identity=_identity(),
+    )
+    counter.add.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_decline_does_not_increment_handled_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A declining handler (→ 404) is not "handled" traffic — no count."""
+    counter = MagicMock()
+    monkeypatch.setattr(execute_mod, "_unregistered_url_handled", counter)
+    spy = _SpyHandler(None)
+    await _handle_unregistered_url(
+        _request_with_state(spy),
+        method="GET",
+        upstream_url=_RAW_URL,
+        identity=_identity(),
+    )
+    counter.add.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Route-branch tests: through the real ``_handle``.
 # ---------------------------------------------------------------------------
