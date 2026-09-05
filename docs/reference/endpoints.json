@@ -1739,6 +1739,21 @@
       "typical_caller": null
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getCapabilities",
+      "path": "/capabilities",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Deployment capabilities",
+      "surface": "capabilities",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -2463,36 +2478,6 @@
       "summary": "Cancel Job",
       "surface": "jobs",
       "typical_caller": "any"
-    },
-    {
-      "actor_types": [],
-      "auth_note": null,
-      "authenticated": false,
-      "group": "Public (unauthenticated)",
-      "implied_scopes": {},
-      "method": "GET",
-      "operation_id": "loginPage",
-      "path": "/login",
-      "public": true,
-      "required_scopes": [],
-      "summary": "Local-account login form (authorization flow)",
-      "surface": "login",
-      "typical_caller": null
-    },
-    {
-      "actor_types": [],
-      "auth_note": null,
-      "authenticated": false,
-      "group": "Public (unauthenticated)",
-      "implied_scopes": {},
-      "method": "POST",
-      "operation_id": "loginSubmit",
-      "path": "/login",
-      "public": true,
-      "required_scopes": [],
-      "summary": "Local-account login submit (authorization flow)",
-      "surface": "login",
-      "typical_caller": null
     },
     {
       "actor_types": [
@@ -5179,5 +5164,5 @@
     ],
     "total": 33
   },
-  "total": 180
+  "total": 179
 }

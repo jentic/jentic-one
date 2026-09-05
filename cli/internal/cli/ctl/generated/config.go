@@ -1996,6 +1996,10 @@ func (j *SecurityConfig) UnmarshalJSON(value []byte) error {
 
 // HTTP server settings.
 type ServerConfig struct {
+	// AdvertisedBrokerUrl corresponds to the JSON schema field
+	// "advertised_broker_url".
+	AdvertisedBrokerUrl string `json:"advertised_broker_url,omitempty,omitzero" yaml:"advertised_broker_url,omitempty" mapstructure:"advertised_broker_url,omitempty"`
+
 	// Backend corresponds to the JSON schema field "backend".
 	Backend ServerConfigBackend `json:"backend,omitempty,omitzero" yaml:"backend,omitempty" mapstructure:"backend,omitempty"`
 
@@ -2052,6 +2056,9 @@ func (j *ServerConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["advertised_broker_url"]; !ok || v == nil {
+		plain.AdvertisedBrokerUrl = ""
 	}
 	if v, ok := raw["backend"]; !ok || v == nil {
 		plain.Backend = "local"

@@ -13,6 +13,8 @@ exact same harness code paths (``assert_signature_matches`` + ``isinstance``).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
@@ -21,7 +23,13 @@ from jentic_one.broker.services.execution.pipeline import BrokerExecutionPipelin
 from jentic_one.registry.repos.search.postgres_lexical import PostgresLexicalStrategy
 from jentic_one.registry.repos.search.sqlite_lexical import SqliteLexicalStrategy
 from jentic_one.shared.broker.broker import Broker
-from jentic_one.testing import BaseBrokerComplianceTest, BaseSearchStrategyComplianceTest
+from jentic_one.shared.context import Context
+from jentic_one.shared.web.capabilities import CapabilityContributor
+from jentic_one.testing import (
+    BaseBrokerComplianceTest,
+    BaseCapabilityContributorComplianceTest,
+    BaseSearchStrategyComplianceTest,
+)
 
 
 class _NoopRunner(UpstreamRunner):
@@ -42,6 +50,18 @@ class _DefaultBrokerCompliance(BaseBrokerComplianceTest):
         return DefaultBroker(BrokerExecutionPipeline(_NoopRunner()))
 
 
+class _NoopCapabilityContributor:
+    """Class-shaped contributor matching the seam signature exactly."""
+
+    def __call__(self, ctx: Context) -> Mapping[str, object]:
+        return {}
+
+
+class _NoopContributorCompliance(BaseCapabilityContributorComplianceTest):
+    def contributor_factory(self) -> CapabilityContributor:
+        return _NoopCapabilityContributor()
+
+
 @pytest.mark.parametrize("compliance", [_SqliteCompliance(), _PostgresCompliance()])
 def test_oss_search_strategies_comply(compliance: BaseSearchStrategyComplianceTest) -> None:
     compliance.test_is_search_strategy()
@@ -55,3 +75,9 @@ def test_oss_default_broker_complies() -> None:
     compliance.test_is_broker()
     compliance.test_execute_signature()
     compliance.test_execute_streaming_signature()
+
+
+def test_capability_contributor_harness_accepts_conforming_impl() -> None:
+    compliance = _NoopContributorCompliance()
+    compliance.test_is_capability_contributor()
+    compliance.test_call_signature()

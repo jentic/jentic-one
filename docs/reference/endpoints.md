@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **180**._
+_Total endpoints: **179**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -382,7 +382,7 @@ _Total endpoints: **180**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (27)
+## Public (unauthenticated) (26)
 
 
 ### `.well-known`
@@ -415,6 +415,12 @@ _Total endpoints: **180**._
 |---|---|---|---|---|
 | GET | `/authorize` | _public — no auth_ | — | Authorize Endpoint |
 
+### `capabilities`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/capabilities` | _public — no auth_ | — | Deployment capabilities |
+
 ### `control`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -444,13 +450,6 @@ _Total endpoints: **180**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/instance` | _public — no auth_ | — | Backend identity |
-
-### `login`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/login` | _public — no auth_ | — | Local-account login form (authorization flow) |
-| POST | `/login` | _public — no auth_ | — | Local-account login submit (authorization flow) |
 
 ### `oauth`
 
