@@ -6,6 +6,7 @@ import ipaddress
 import os
 import re
 import secrets
+import stat
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
@@ -396,10 +397,27 @@ _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class EncryptionKey(BaseModel):
-    """A single named encryption key."""
+    """A single named encryption key.
+
+    Key material comes from exactly ONE source:
+
+    - ``material``      — inline in the config (local dev / vault-templated files),
+    - ``material_env``  — the name of an environment variable holding the key,
+    - ``material_file`` — a path to read the key from (docker/k8s secret mounts,
+      systemd credentials, or a pipe such as ``/dev/stdin`` fed by a supervisor
+      that holds the key in an OS keystore).
+
+    ``material_env``/``material_file`` are resolved once, at config load, into
+    ``material`` — consumers keep reading ``resolved_material`` and never learn
+    where the bytes came from. Resolution failures (unset variable, unreadable
+    file, empty value) fail validation loudly rather than booting a server that
+    cannot decrypt its own credentials.
+    """
 
     id: str
-    material: SecretStr
+    material: SecretStr | None = None
+    material_env: str | None = None
+    material_file: str | None = None
 
     @field_validator("id")
     @classmethod
@@ -407,6 +425,48 @@ class EncryptionKey(BaseModel):
         if not _KEY_ID_RE.match(v):
             raise ValueError("key id must match [a-zA-Z0-9_-]+")
         return v
+
+    @model_validator(mode="after")
+    def _resolve_material(self) -> EncryptionKey:
+        sources = [
+            name
+            for name, value in (
+                ("material", self.material),
+                ("material_env", self.material_env),
+                ("material_file", self.material_file),
+            )
+            if value is not None
+        ]
+        if len(sources) != 1:
+            raise ValueError(
+                "exactly one of material / material_env / material_file must be set"
+                + (f" (got: {', '.join(sources)})" if sources else "")
+            )
+        if self.material_env is not None:
+            value = os.environ.get(self.material_env)
+            if not value:
+                raise ValueError(
+                    f"material_env {self.material_env!r} is not set (or empty) in the environment"
+                )
+            self.material = SecretStr(value.strip())
+        elif self.material_file is not None:
+            try:
+                raw = Path(self.material_file).read_text()
+            except OSError as exc:
+                raise ValueError(
+                    f"cannot read material_file {self.material_file!r}: {exc}"
+                ) from exc
+            if not raw.strip():
+                raise ValueError(f"material_file {self.material_file!r} is empty")
+            self.material = SecretStr(raw.strip())
+        return self
+
+    @property
+    def resolved_material(self) -> SecretStr:
+        """The key material after source resolution (guaranteed by validation)."""
+        if self.material is None:  # pragma: no cover — _resolve_material guarantees it
+            raise ConfigError(f"encryption key {self.id!r} has no resolved material")
+        return self.material
 
 
 class EncryptionConfig(BaseModel):
@@ -1239,6 +1299,29 @@ def _env_overrides() -> dict[str, Any]:
     return cast("dict[str, Any]", _coerce_indexed_dicts_to_lists(result))
 
 
+# One-shot config sources (pipes / inherited fds) cached per process. A config
+# handed on a pipe — e.g. ``JENTIC_CONFIG_FILE=/dev/fd/3`` from a supervisor
+# that keeps secrets out of the filesystem, argv, and env — can only be read
+# once, but several consumers load config more than once per process (the
+# Alembic env loads it per database). The first read is cached so later loads
+# see the same document. Regular files keep re-reading from disk.
+_ONESHOT_CONFIG_CACHE: dict[str, str] = {}
+
+
+def _read_config_text(path: Path) -> str:
+    """Read the config document, caching one-shot sources (pipes, /dev/fd)."""
+    key = str(path)
+    if key in _ONESHOT_CONFIG_CACHE:
+        return _ONESHOT_CONFIG_CACHE[key]
+    text = path.read_text()
+    # /dev/fd/N re-opens share the underlying file offset on macOS (dup
+    # semantics), so treat any /dev/fd source like a pipe.
+    mode = os.stat(path).st_mode
+    if stat.S_ISFIFO(mode) or key.startswith("/dev/fd/"):
+        _ONESHOT_CONFIG_CACHE[key] = text
+    return text
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     """Load and validate application configuration.
 
@@ -1263,10 +1346,9 @@ def load_config(path: Path | None = None) -> AppConfig:
     if config_path is not None:
         if not config_path.exists():
             raise ConfigError(f"Config file not found: {config_path}")
-        with open(config_path) as f:
-            loaded = yaml.safe_load(f)
-            if isinstance(loaded, dict):
-                file_data = loaded
+        loaded = yaml.safe_load(_read_config_text(config_path))
+        if isinstance(loaded, dict):
+            file_data = loaded
 
     env_data = _env_overrides()
     merged = _deep_merge(file_data, env_data)

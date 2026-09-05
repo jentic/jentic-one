@@ -34,7 +34,7 @@ class EncryptionService:
         for entry in cfg.entries:
             if entry.id in self._ciphers:
                 raise ConfigError(f"Duplicate encryption key id: '{entry.id}'")
-            raw = base64.b64decode(entry.material.get_secret_value())
+            raw = base64.b64decode(entry.resolved_material.get_secret_value())
             if len(raw) != _KEY_BYTES:
                 raise ConfigError(
                     f"Encryption key '{entry.id}' must be {_KEY_BYTES} bytes, got {len(raw)}"

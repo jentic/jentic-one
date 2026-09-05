@@ -22,6 +22,7 @@ from jentic_one.shared.config import (
     CredentialsConfig,
     EgressConfig,
     EncryptionConfig,
+    EncryptionKey,
     EntitlementConfig,
     RuntimeConfig,
     SigningKeyConfig,
@@ -603,6 +604,105 @@ def test_encryption_active_id_env_override(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.credentials.encryption.active_id == "env-id"
+
+
+_KEY_B64 = "dGVzdC1rZXktbWF0ZXJpYWwtMzItYnl0ZXMtcGFk"
+
+
+def test_encryption_key_inline_material():
+    key = EncryptionKey(id="v1", material=SecretStr(_KEY_B64))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_env():
+    with patch.dict(os.environ, {"TEST_ENC_KEY": _KEY_B64}, clear=False):
+        key = EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+    # Resolved once at validation — later env mutation is irrelevant.
+    assert key.material is not None
+
+
+def test_encryption_key_material_env_strips_whitespace():
+    with patch.dict(os.environ, {"TEST_ENC_KEY": f"  {_KEY_B64}\n"}, clear=False):
+        key = EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_env_unset_fails():
+    env = dict(os.environ)
+    env.pop("TEST_ENC_KEY_MISSING", None)
+    with (
+        patch.dict(os.environ, env, clear=True),
+        pytest.raises(ValidationError, match="TEST_ENC_KEY_MISSING"),
+    ):
+        EncryptionKey(id="v1", material_env="TEST_ENC_KEY_MISSING")
+
+
+def test_encryption_key_material_file(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64 + "\n")
+    key = EncryptionKey(id="v1", material_file=str(key_file))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_file_missing_fails(tmp_path: Path):
+    with pytest.raises(ValidationError, match="cannot read material_file"):
+        EncryptionKey(id="v1", material_file=str(tmp_path / "nope.key"))
+
+
+def test_encryption_key_material_file_empty_fails(tmp_path: Path):
+    key_file = tmp_path / "empty.key"
+    key_file.write_text("  \n")
+    with pytest.raises(ValidationError, match="is empty"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_requires_exactly_one_source():
+    with pytest.raises(ValidationError, match="exactly one"):
+        EncryptionKey(id="v1")
+    with pytest.raises(ValidationError, match="exactly one"):
+        EncryptionKey(id="v1", material=SecretStr(_KEY_B64), material_env="TEST_ENC_KEY")
+
+
+def test_encryption_key_material_file_yaml_roundtrip(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    sample_config_dict["credentials"] = {
+        "encryption": {
+            "active_id": "v1",
+            "entries": [{"id": "v1", "material_file": str(key_file)}],
+        }
+    }
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    config = load_config(path)
+    entry = config.credentials.encryption.entries[0]
+    assert entry.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_load_config_from_pipe_is_cached(sample_config_dict: dict[str, Any]):
+    """A config handed on a one-shot fd (pipe / /dev/fd) survives repeat loads.
+
+    Supervisors that keep secrets off disk pass JENTIC_CONFIG_FILE=/dev/fd/N;
+    consumers like the Alembic env call load_config once per database, so the
+    first read must be cached rather than hitting EOF on the second load.
+    """
+    doc = yaml.dump(sample_config_dict).encode()
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, doc)
+        os.close(write_fd)
+        pipe_path = Path(f"/dev/fd/{read_fd}")
+        first = load_config(pipe_path)
+        second = load_config(pipe_path)  # would be EOF without the cache
+        assert first.databases.registry.name == second.databases.registry.name
+    finally:
+        os.close(read_fd)
+        from jentic_one.shared.config import _ONESHOT_CONFIG_CACHE
+
+        _ONESHOT_CONFIG_CACHE.clear()
 
 
 def test_broker_jobs_api_base_url_defaults_to_none(config_file: Path):
