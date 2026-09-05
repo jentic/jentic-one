@@ -3908,39 +3908,19 @@
         "title": "ExecutionStatsResponse",
         "type": "object"
       },
-      "GovernedHostResponse": {
-        "description": "One governed host with the caller's APIs behind it.",
-        "properties": {
-          "apis": {
-            "items": {
-              "$ref": "#/components/schemas/ApiReferenceResponse"
-            },
-            "title": "Apis",
-            "type": "array"
-          },
-          "host": {
-            "title": "Host",
-            "type": "string"
-          }
-        },
-        "required": [
-          "host",
-          "apis"
-        ],
-        "title": "GovernedHostResponse",
-        "type": "object"
-      },
       "GovernedHostsResponse": {
-        "description": "The caller's governed host set, sorted by host, with its change digest.\n\nDeliberately **unpaginated**: the set is bounded by the caller's own toolkit\nbindings (tens of hosts, not thousands) and the digest must cover the whole\nset atomically — a paginated digest would be meaningless. This is a\ndocumented deviation from the list-endpoint pagination convention.",
+        "description": "The caller's governed host set (canonical order) with its change digest.\n\n**Hosts only, deliberately**: the set exists for interception scoping\n(divert lists, host filters), so it carries the minimum knowledge — API\ndetail stays behind the existing authenticated reads (``GET /apis``).\n\nDeliberately **unpaginated**: the set is bounded by the caller's own toolkit\nbindings (tens of hosts, not thousands) and the digest must cover the whole\nset atomically — a paginated digest would be meaningless. This is a\ndocumented deviation from the list-endpoint pagination convention.",
         "properties": {
           "data": {
+            "description": "Governed host patterns, lowercased, deduplicated, and sorted — the URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry may contain a `{var}` placeholder label (a defaultless server variable), which the broker matches as a single-label wildcard.",
             "items": {
-              "$ref": "#/components/schemas/GovernedHostResponse"
+              "type": "string"
             },
             "title": "Data",
             "type": "array"
           },
           "digest": {
+            "description": "SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag` for If-None-Match change-polling.",
             "title": "Digest",
             "type": "string"
           }
@@ -26068,7 +26048,7 @@
     },
     "/governed-hosts": {
       "get": {
-        "description": "The caller's governed host set (toolkit-bound hosts) with an ETag digest.\n\n**Always self-scoped** — derived from the authenticated identity's own\ntoolkit bindings; there is no cross-actor variant. The ``digest`` is also\nemitted as a strong ``ETag``, so integrators poll with ``If-None-Match`` and\nget an empty ``304`` until their host set actually changes (the change-poll\nseam that replaces ``GET /apis`` enumeration for interception scoping).",
+        "description": "The caller's governed host set (toolkit-bound hosts) with an ETag digest.\n\n**Always self-scoped** — derived from the authenticated identity's own\ntoolkit bindings; there is no cross-actor variant. Toolkits bind to agents\nand toolkit keys, so those are the callers this endpoint serves — a plain\nuser token yields an empty set. The ``digest`` covers exactly the ``data``\nlist and is also emitted as a strong ``ETag``, so integrators poll with\n``If-None-Match`` and get an empty ``304`` until their host set actually\nchanges (the change-poll seam that replaces ``GET /apis`` enumeration for\ninterception scoping).",
         "operationId": "getGovernedHosts",
         "responses": {
           "200": {

@@ -1806,21 +1806,22 @@ type ExecutionStatsResponse struct {
 	TotalExecutions    int                    `json:"total_executions"`
 }
 
-// GovernedHostResponse One governed host with the caller's APIs behind it.
-type GovernedHostResponse struct {
-	Apis []ApiReferenceResponse `json:"apis"`
-	Host string                 `json:"host"`
-}
-
-// GovernedHostsResponse The caller's governed host set, sorted by host, with its change digest.
+// GovernedHostsResponse The caller's governed host set (canonical order) with its change digest.
+//
+// **Hosts only, deliberately**: the set exists for interception scoping
+// (divert lists, host filters), so it carries the minimum knowledge — API
+// detail stays behind the existing authenticated reads (“GET /apis“).
 //
 // Deliberately **unpaginated**: the set is bounded by the caller's own toolkit
 // bindings (tens of hosts, not thousands) and the digest must cover the whole
 // set atomically — a paginated digest would be meaningless. This is a
 // documented deviation from the list-endpoint pagination convention.
 type GovernedHostsResponse struct {
-	Data   []GovernedHostResponse `json:"data"`
-	Digest string                 `json:"digest"`
+	// Data Governed host patterns, lowercased, deduplicated, and sorted — the URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry may contain a `{var}` placeholder label (a defaultless server variable), which the broker matches as a single-label wildcard.
+	Data []string `json:"data"`
+
+	// Digest SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag` for If-None-Match change-polling.
+	Digest string `json:"digest"`
 }
 
 // GroupBy Grouping dimension for usage statistics.
@@ -5834,10 +5835,13 @@ type ClientInterface interface {
 	// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
 	//
 	// **Always self-scoped** — derived from the authenticated identity's own
-	// toolkit bindings; there is no cross-actor variant. The ``digest`` is also
-	// emitted as a strong ``ETag``, so integrators poll with ``If-None-Match`` and
-	// get an empty ``304`` until their host set actually changes (the change-poll
-	// seam that replaces ``GET /apis`` enumeration for interception scoping).
+	// toolkit bindings; there is no cross-actor variant. Toolkits bind to agents
+	// and toolkit keys, so those are the callers this endpoint serves — a plain
+	// user token yields an empty set. The ``digest`` covers exactly the ``data``
+	// list and is also emitted as a strong ``ETag``, so integrators poll with
+	// ``If-None-Match`` and get an empty ``304`` until their host set actually
+	// changes (the change-poll seam that replaces ``GET /apis`` enumeration for
+	// interception scoping).
 	//
 	// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
 	GetGovernedHosts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9312,10 +9316,13 @@ func (c *Client) GetExecution(ctx context.Context, executionId string, reqEditor
 // The caller's governed host set (toolkit-bound hosts) with an ETag digest.
 //
 // **Always self-scoped** — derived from the authenticated identity's own
-// toolkit bindings; there is no cross-actor variant. The “digest“ is also
-// emitted as a strong “ETag“, so integrators poll with “If-None-Match“ and
-// get an empty “304“ until their host set actually changes (the change-poll
-// seam that replaces “GET /apis“ enumeration for interception scoping).
+// toolkit bindings; there is no cross-actor variant. Toolkits bind to agents
+// and toolkit keys, so those are the callers this endpoint serves — a plain
+// user token yields an empty set. The “digest“ covers exactly the “data“
+// list and is also emitted as a strong “ETag“, so integrators poll with
+// “If-None-Match“ and get an empty “304“ until their host set actually
+// changes (the change-poll seam that replaces “GET /apis“ enumeration for
+// interception scoping).
 //
 // Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
 func (c *Client) GetGovernedHosts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -21574,10 +21581,13 @@ type ClientWithResponsesInterface interface {
 	// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
 	//
 	// **Always self-scoped** — derived from the authenticated identity's own
-	// toolkit bindings; there is no cross-actor variant. The ``digest`` is also
-	// emitted as a strong ``ETag``, so integrators poll with ``If-None-Match`` and
-	// get an empty ``304`` until their host set actually changes (the change-poll
-	// seam that replaces ``GET /apis`` enumeration for interception scoping).
+	// toolkit bindings; there is no cross-actor variant. Toolkits bind to agents
+	// and toolkit keys, so those are the callers this endpoint serves — a plain
+	// user token yields an empty set. The ``digest`` covers exactly the ``data``
+	// list and is also emitted as a strong ``ETag``, so integrators poll with
+	// ``If-None-Match`` and get an empty ``304`` until their host set actually
+	// changes (the change-poll seam that replaces ``GET /apis`` enumeration for
+	// interception scoping).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -38753,10 +38763,13 @@ func (c *ClientWithResponses) GetExecutionWithResponse(ctx context.Context, exec
 // The caller's governed host set (toolkit-bound hosts) with an ETag digest.
 //
 // **Always self-scoped** — derived from the authenticated identity's own
-// toolkit bindings; there is no cross-actor variant. The “digest“ is also
-// emitted as a strong “ETag“, so integrators poll with “If-None-Match“ and
-// get an empty “304“ until their host set actually changes (the change-poll
-// seam that replaces “GET /apis“ enumeration for interception scoping).
+// toolkit bindings; there is no cross-actor variant. Toolkits bind to agents
+// and toolkit keys, so those are the callers this endpoint serves — a plain
+// user token yields an empty set. The “digest“ covers exactly the “data“
+// list and is also emitted as a strong “ETag“, so integrators poll with
+// “If-None-Match“ and get an empty “304“ until their host set actually
+// changes (the change-poll seam that replaces “GET /apis“ enumeration for
+// interception scoping).
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -14,42 +14,40 @@ import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from jentic_one.registry.repos.governed_hosts_repo import GovernedApi, GovernedHostsRepository
+from jentic_one.registry.repos.governed_hosts_repo import GovernedHostsRepository
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 
 
+def canonical_hosts(hosts: Iterable[str]) -> list[str]:
+    """Canonicalise a host set: lowercased, stripped, deduplicated, sorted."""
+    return sorted({host.strip().lower() for host in hosts if host and host.strip()})
+
+
 def compute_hosts_digest(hosts: Iterable[str]) -> str:
     """SHA-256 hex digest over the canonical host list.
 
-    Canonical form: lowercased, stripped, deduplicated, sorted, newline-joined.
-    Content-derived — no version counter, no extra table — so it is correct
-    across the three source databases by construction, and two deployments with
-    the same host set produce the same digest. The empty set has a stable digest
-    (the hash of the empty string).
+    Canonical form: :func:`canonical_hosts`, newline-joined — exactly the
+    ``data`` list the endpoint returns, so the digest (and the ETag built from
+    it) always identifies the full response body. Content-derived — no version
+    counter, no extra table — so it is correct across the three source
+    databases by construction, and two deployments with the same host set
+    produce the same digest. The empty set has a stable digest (the hash of
+    the empty string).
     """
-    canonical = sorted({host.strip().lower() for host in hosts if host and host.strip()})
-    return hashlib.sha256("\n".join(canonical).encode()).hexdigest()
-
-
-@dataclass(frozen=True, slots=True)
-class GovernedHostView:
-    """One governed host and the identity's APIs behind it."""
-
-    host: str
-    apis: tuple[GovernedApi, ...]
+    return hashlib.sha256("\n".join(canonical_hosts(hosts)).encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
 class GovernedHostsView:
     """The identity's full governed host set with its change digest."""
 
-    data: tuple[GovernedHostView, ...]
+    hosts: tuple[str, ...]
     digest: str
 
 
-_EMPTY_VIEW = GovernedHostsView(data=(), digest=compute_hosts_digest(()))
+_EMPTY_VIEW = GovernedHostsView(hosts=(), digest=compute_hosts_digest(()))
 
 
 class GovernedHostsService:
@@ -64,13 +62,18 @@ class GovernedHostsService:
         self._ctx = ctx
 
     async def get_governed_hosts(self, identity: Identity) -> GovernedHostsView:
-        """Derive the host set for ``identity`` (sorted by host, with digest).
+        """Derive the host set for ``identity`` (canonical order, with digest).
 
         A toolkit key authenticates *as the toolkit itself* (its ``sub`` is the
         toolkit id — see ``broker/repos/toolkit_key_resolver.py``), so the
-        admin binding leg short-circuits. APIs whose current revision has no
-        resolvable server host are omitted: the response is keyed by host, so a
-        hostless API has no divert-list contribution.
+        admin binding leg short-circuits. Other actor types resolve through
+        ``agent_toolkit_bindings`` — a plain **user** token therefore yields an
+        empty set (toolkits bind to agents, not users; the OAuth agent-consent
+        flow is what leaves an integrator holding an agent-scoped token).
+
+        Hosts are the URL-index patterns the broker's discovery matches, so an
+        entry may contain ``{var}`` placeholder labels (defaultless server
+        variables) that discovery treats as single-label wildcards.
         """
         if identity.actor_type is ActorType.TOOLKIT:
             toolkit_ids = {identity.sub}
@@ -90,19 +93,7 @@ class GovernedHostsService:
             return _EMPTY_VIEW
 
         async with self._ctx.registry_db.session() as session:
-            apis = await GovernedHostsRepository.apis_for_scopes(session, scopes=scopes)
+            hosts = await GovernedHostsRepository.hosts_for_scopes(session, scopes=scopes)
 
-        by_host: dict[str, list[GovernedApi]] = {}
-        for api in apis:
-            if api.host is None:
-                continue
-            by_host.setdefault(api.host.strip().lower(), []).append(api)
-
-        data = tuple(
-            GovernedHostView(
-                host=host,
-                apis=tuple(sorted(by_host[host], key=lambda a: (a.vendor, a.name, a.version))),
-            )
-            for host in sorted(by_host)
-        )
-        return GovernedHostsView(data=data, digest=compute_hosts_digest(by_host))
+        canonical = canonical_hosts(hosts)
+        return GovernedHostsView(hosts=tuple(canonical), digest=compute_hosts_digest(canonical))

@@ -85,7 +85,6 @@ export type { ExecutionListResponse } from './models/ExecutionListResponse';
 export type { ExecutionRecordLinks } from './models/ExecutionRecordLinks';
 export type { ExecutionResponse } from './models/ExecutionResponse';
 export type { ExecutionStatsResponse } from './models/ExecutionStatsResponse';
-export type { GovernedHostResponse } from './models/GovernedHostResponse';
 export type { GovernedHostsResponse } from './models/GovernedHostsResponse';
 export { GroupBy } from './models/GroupBy';
 export type { HealthResponse } from './models/HealthResponse';

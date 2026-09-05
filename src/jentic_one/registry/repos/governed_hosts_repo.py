@@ -10,18 +10,23 @@ cross-schema referential integrity, and the registry module may import neither
 ``admin`` nor ``control`` ORM — so the admin/control legs run as raw SQL
 (the same boundary pattern as ``control_credential_boundary_repo.py``), against
 sessions handed in by the caller. Only the registry leg uses the registry ORM.
+
+The registry leg reads ``operation_url_indexes.host`` — the exact host patterns
+the broker's discovery matches requests against (``URLLookupService``) — so the
+returned set is precisely the hosts this deployment would govern for the
+identity: every server (API- and operation-level), default server variables
+pre-expanded by the index builder, defaultless variables preserved as
+``{var}`` placeholder labels that discovery matches as single-label wildcards.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 from sqlalchemy import and_, bindparam, select, text
 from sqlalchemy import or_ as sql_or
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.apis import Api
-from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 
 # admin DB — the toolkits the identity is bound to (same statement as the
@@ -42,18 +47,8 @@ _CREDENTIAL_SCOPES_FOR_TOOLKITS = text(
 ).bindparams(bindparam("toolkit_ids", expanding=True))
 
 
-@dataclass(frozen=True, slots=True)
-class GovernedApi:
-    """A registered API covered by one of the identity's credential scopes."""
-
-    vendor: str
-    name: str
-    version: str
-    host: str | None
-
-
 class GovernedHostsRepository:
-    """Derives the identity's toolkit → credential-scope → API/host chain.
+    """Derives the identity's toolkit → credential-scope → host chain.
 
     Each method runs against the session for **one** database; the caller
     (``GovernedHostsService``) sequences the three legs — the databases are
@@ -96,19 +91,23 @@ class GovernedHostsRepository:
         )
 
     @staticmethod
-    async def apis_for_scopes(
-        session: AsyncSession, *, scopes: list[CredentialScope]
-    ) -> list[GovernedApi]:
-        """Registered APIs covered by any of the scopes (**registry** DB session).
+    async def hosts_for_scopes(session: AsyncSession, *, scopes: list[CredentialScope]) -> set[str]:
+        """Distinct governed host patterns for the scopes (**registry** DB session).
 
         A ``None`` axis on a scope is the wildcard — the comparison for that axis
         is omitted, so a bare-vendor credential expands to every registered API
         of that vendor (the "wildcard-credential expansion" the issue calls for).
-        The host is the API's current revision's first API-level server hostname,
-        exactly as ``GET /apis`` derives it (``ApiRepository.load_server_hosts``).
+
+        Hosts come from the URL-match index (``operation_url_indexes.host``) of
+        each covered API's **current revision** — the same rows the broker's
+        discovery matches against — so the set covers every server the spec
+        declares (not just the first API-level one) with the index builder's
+        normalisation already applied. Entries may contain ``{var}`` placeholder
+        labels (defaultless server variables), which discovery matches as
+        single-label wildcards.
         """
         if not scopes:
-            return []
+            return set()
 
         conditions = []
         for scope in scopes:
@@ -119,23 +118,25 @@ class GovernedHostsRepository:
                 axes.append(Api.version == scope.version)
             conditions.append(and_(*axes))
 
-        rows = (
+        revision_rows = (
             await session.execute(
-                select(Api.vendor, Api.name, Api.version, Api.current_revision_id)
-                .where(sql_or(*conditions))
-                .order_by(Api.vendor, Api.name, Api.version)
+                select(Api.current_revision_id).where(
+                    sql_or(*conditions), Api.current_revision_id.is_not(None)
+                )
             )
         ).all()
+        revision_ids = [row.current_revision_id for row in revision_rows]
+        if not revision_ids:
+            return set()
 
-        revision_ids = [row.current_revision_id for row in rows if row.current_revision_id]
-        hosts = await ApiRepository.load_server_hosts(session, revision_ids)
-
-        return [
-            GovernedApi(
-                vendor=row.vendor,
-                name=row.name,
-                version=row.version,
-                host=hosts.get(row.current_revision_id) if row.current_revision_id else None,
+        host_rows = (
+            await session.execute(
+                select(OperationURLIndex.host)
+                .distinct()
+                .where(
+                    OperationURLIndex.revision_id.in_(revision_ids),
+                    OperationURLIndex.host.is_not(None),
+                )
             )
-            for row in rows
-        ]
+        ).all()
+        return {row.host for row in host_rows if row.host}

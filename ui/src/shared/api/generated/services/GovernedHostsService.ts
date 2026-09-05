@@ -12,10 +12,13 @@ export class GovernedHostsService {
      * The caller's governed host set (toolkit-bound hosts) with an ETag digest.
      *
      * **Always self-scoped** — derived from the authenticated identity's own
-     * toolkit bindings; there is no cross-actor variant. The ``digest`` is also
-     * emitted as a strong ``ETag``, so integrators poll with ``If-None-Match`` and
-     * get an empty ``304`` until their host set actually changes (the change-poll
-     * seam that replaces ``GET /apis`` enumeration for interception scoping).
+     * toolkit bindings; there is no cross-actor variant. Toolkits bind to agents
+     * and toolkit keys, so those are the callers this endpoint serves — a plain
+     * user token yields an empty set. The ``digest`` covers exactly the ``data``
+     * list and is also emitted as a strong ``ETag``, so integrators poll with
+     * ``If-None-Match`` and get an empty ``304`` until their host set actually
+     * changes (the change-poll seam that replaces ``GET /apis`` enumeration for
+     * interception scoping).
      * @returns GovernedHostsResponse Successful Response
      * @throws ApiError
      */
