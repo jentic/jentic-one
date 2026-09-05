@@ -337,6 +337,22 @@ class OAuthRateLimitConfig(BaseModel):
     trusted_proxies: list[str] = Field(default_factory=list)
 
 
+class LocalLoginConfig(BaseModel):
+    """Local-account login form on the ``/authorize`` flow (no external IdP).
+
+    Default **off**: ``/authorize`` behaviour is byte-identical (including the
+    ``server_error`` redirect when no IdP is configured) and ``GET|POST /login``
+    answer the framework's plain 404. Enabling it makes the standards-track
+    native-app sign-in flow (RFC 8252: DCR + system browser + loopback redirect
+    + PKCE) work against the first-party password account store, without any
+    client ever handling a password. An external IdP always wins: when
+    ``auth.idp.enabled`` is true the login form is never offered (no mixed
+    mode in v1).
+    """
+
+    enabled: bool = False
+
+
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
@@ -356,6 +372,7 @@ class AuthConfig(BaseModel):
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
+    local_login: LocalLoginConfig = Field(default_factory=LocalLoginConfig)
     platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
     oauth_rate_limit: OAuthRateLimitConfig = Field(default_factory=OAuthRateLimitConfig)
 

@@ -1464,6 +1464,29 @@ components:
       - action
       title: Body_consentSubmit
       type: object
+    Body_loginSubmit:
+      properties:
+        csrf:
+          title: Csrf
+          type: string
+          x-sensitive: true
+        email:
+          title: Email
+          type: string
+        ls:
+          title: Ls
+          type: string
+        password:
+          title: Password
+          type: string
+          x-sensitive: true
+      required:
+      - email
+      - password
+      - ls
+      - csrf
+      title: Body_loginSubmit
+      type: object
     CatalogEntryLinksResponse:
       description: Hypermedia links for a catalog entry.
       examples:
@@ -14717,6 +14740,127 @@ paths:
       summary: Cancel Job
       tags:
       - Jobs
+  /login:
+    get:
+      description: |-
+        Render the local-account login form for an in-flight ``/authorize`` request.
+
+        Verifies the ``ls`` signature/TTL **before** rendering — an expired or
+        forged token never gets a form — and embeds ``ls`` plus a fresh single-use
+        CSRF nonce.
+      operationId: loginPage
+      parameters:
+      - description: Signed authorization-flow state (carry-through token)
+        in: query
+        name: ls
+        required: true
+        schema:
+          description: Signed authorization-flow state (carry-through token)
+          title: Ls
+          type: string
+      responses:
+        '200':
+          content:
+            text/html:
+              schema:
+                type: string
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+            text/html:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '404':
+          description: 'Local-account login is disabled (`auth.local_login.enabled=false`): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+            text/html:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+            text/html:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+            text/html:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Local-account login form (authorization flow)
+      tags:
+      - OAuth
+    post:
+      description: |-
+        Authenticate the local account and rejoin the authorization flow.
+
+        Success never mints a JWT — it flows straight into code issuance (platform
+        client) or the consent handle (registered third-party client), exactly
+        where the IdP callback rejoins. Credential failures re-render the form
+        with one generic message: lockout state, unknown email, and wrong password
+        are indistinguishable (no user-enumeration oracle), while the shared
+        ``AuthService.authenticate`` core still increments the failed-login count
+        and applies the lockout threshold.
+      operationId: loginSubmit
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Body_loginSubmit'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '404':
+          description: 'Local-account login is disabled (`auth.local_login.enabled=false`): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Local-account login submit (authorization flow)
+      tags:
+      - OAuth
   /mcp/config-registrations:
     post:
       description: |-

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.errors import AuthServiceError
+from jentic_one.auth.web import flow
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import authorize
 from jentic_one.shared.config import AuthConfig
@@ -89,7 +90,7 @@ def test_unapproved_client_gets_human_page_not_redirect(
     client: TestClient, approval_status: str, active: bool
 ) -> None:
     view = _client_view(approval_status=approval_status, active=active)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     assert resp.status_code == 200
@@ -107,7 +108,7 @@ def test_page_does_not_leak_pending_vs_denied(client: TestClient) -> None:
     bodies: dict[str, str] = {}
     for status_value in ("pending", "denied"):
         view = _client_view(approval_status=status_value, active=False)
-        with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+        with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
             resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
         bodies[status_value] = resp.text
     assert bodies["pending"] == bodies["denied"]
@@ -117,7 +118,7 @@ def test_page_does_not_leak_pending_vs_denied(client: TestClient) -> None:
 
 def test_client_name_is_escaped_on_page(client: TestClient) -> None:
     view = _client_view(approval_status="pending", active=False, name="<script>alert(1)</script>")
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
     assert resp.status_code == 200
     assert "<script>alert(1)</script>" not in resp.text
@@ -128,7 +129,7 @@ def test_approved_active_client_proceeds_to_idp_redirect(client: TestClient) -> 
     """The gate only intercepts unapproved rows — approved clients keep the
     normal flow (redirect to the IdP)."""
     view = _client_view(approval_status="approved", active=True)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     assert resp.status_code == 302
@@ -137,7 +138,7 @@ def test_approved_active_client_proceeds_to_idp_redirect(client: TestClient) -> 
 
 def test_unknown_client_keeps_existing_error_path(client: TestClient) -> None:
     """No registry row → today's invalid_redirect_uri error redirect, no page."""
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(None)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(None)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     assert resp.status_code == 302
@@ -148,7 +149,7 @@ def test_approved_but_deactivated_client_keeps_error_path(client: TestClient) ->
     """active=false on an approved row is the kill switch (distinct from the
     approval gate) — it stays on the existing error path, not the human page."""
     view = _client_view(approval_status="approved", active=False)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     assert resp.status_code == 302

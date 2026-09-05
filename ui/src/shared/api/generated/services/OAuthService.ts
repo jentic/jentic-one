@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { Body_consentSubmit } from '../models/Body_consentSubmit';
+import type { Body_loginSubmit } from '../models/Body_loginSubmit';
 import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
@@ -142,6 +143,72 @@ export class OAuthService {
             },
             errors: {
                 400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Local-account login form (authorization flow)
+     * Render the local-account login form for an in-flight ``/authorize`` request.
+     *
+     * Verifies the ``ls`` signature/TTL **before** rendering — an expired or
+     * forged token never gets a form — and embeds ``ls`` plus a fresh single-use
+     * CSRF nonce.
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static loginPage({
+        ls,
+    }: {
+        /**
+         * Signed authorization-flow state (carry-through token)
+         */
+        ls: string,
+    }): CancelablePromise<string> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/login',
+            query: {
+                'ls': ls,
+            },
+            errors: {
+                400: `Bad Request`,
+                404: `Local-account login is disabled (\`auth.local_login.enabled=false\`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable.`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Local-account login submit (authorization flow)
+     * Authenticate the local account and rejoin the authorization flow.
+     *
+     * Success never mints a JWT — it flows straight into code issuance (platform
+     * client) or the consent handle (registered third-party client), exactly
+     * where the IdP callback rejoins. Credential failures re-render the form
+     * with one generic message: lockout state, unknown email, and wrong password
+     * are indistinguishable (no user-enumeration oracle), while the shared
+     * ``AuthService.authenticate`` core still increments the failed-login count
+     * and applies the lockout threshold.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static loginSubmit({
+        formData,
+    }: {
+        formData: Body_loginSubmit,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/login',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
+            errors: {
+                400: `Bad Request`,
+                404: `Local-account login is disabled (\`auth.local_login.enabled=false\`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

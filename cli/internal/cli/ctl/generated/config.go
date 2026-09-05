@@ -157,6 +157,9 @@ type AuthConfig struct {
 	// Idp corresponds to the JSON schema field "idp".
 	Idp *IdpConfig `json:"idp,omitempty,omitzero" yaml:"idp,omitempty" mapstructure:"idp,omitempty"`
 
+	// LocalLogin corresponds to the JSON schema field "local_login".
+	LocalLogin *LocalLoginConfig `json:"local_login,omitempty,omitzero" yaml:"local_login,omitempty" mapstructure:"local_login,omitempty"`
+
 	// OauthRateLimit corresponds to the JSON schema field "oauth_rate_limit".
 	OauthRateLimit *OAuthRateLimitConfig `json:"oauth_rate_limit,omitempty,omitzero" yaml:"oauth_rate_limit,omitempty" mapstructure:"oauth_rate_limit,omitempty"`
 
@@ -1274,6 +1277,39 @@ func (j *JwtVerificationConfig) UnmarshalJSON(value []byte) error {
 		plain.LeewayS = 60.0
 	}
 	*j = JwtVerificationConfig(plain)
+	return nil
+}
+
+// Local-account login form on the “/authorize“ flow (no external IdP).
+//
+// Default **off**: “/authorize“ behaviour is byte-identical (including the
+// “server_error“ redirect when no IdP is configured) and “GET|POST /login“
+// answer the framework's plain 404. Enabling it makes the standards-track
+// native-app sign-in flow (RFC 8252: DCR + system browser + loopback redirect
+// + PKCE) work against the first-party password account store, without any
+// client ever handling a password. An external IdP always wins: when
+// “auth.idp.enabled“ is true the login form is never offered (no mixed
+// mode in v1).
+type LocalLoginConfig struct {
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *LocalLoginConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain LocalLoginConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	*j = LocalLoginConfig(plain)
 	return nil
 }
 

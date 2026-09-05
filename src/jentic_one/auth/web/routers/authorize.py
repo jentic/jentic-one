@@ -9,13 +9,10 @@ Flow overview:
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import html as html_mod
 import json
 import secrets
 import time
-from base64 import urlsafe_b64decode, urlsafe_b64encode
 from urllib.parse import urlencode, urlsplit
 
 import httpx
@@ -23,18 +20,31 @@ import structlog
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.core.idp import IdpClaims
 from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import (
     ConsentAgentNotEligibleError,
     InvalidGrantError,
-    RateLimitExceededError,
     UserNotAdmittedError,
 )
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
-from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
+from jentic_one.auth.web.flow import (
+    CONSENT_SECURITY_HEADERS,
+    CONSENT_STATE_MAX_AGE_SECONDS,
+    FONTS_URL,
+    STATE_MAX_AGE_SECONDS,
+    check_rate_limit,
+    client_gate_passes,
+    get_cached_oauth_client,
+    get_consent_backend,
+    is_platform_client,
+    platform_client_allows_redirect,
+    sign_payload,
+    state_signing_key,
+    verify_payload,
+    write_idp_consent_handle,
+)
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
     AGENTS_WRITE,
@@ -47,82 +57,13 @@ from jentic_one.shared.auth.permission_catalog import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus, OAuthConsentModel
-from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
-from jentic_one.shared.state.backend import SharedStateBackend
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
-
-
-def _get_authorize_limiter(request: Request, ctx: Context) -> RateLimiter:
-    limiter: RateLimiter | None = getattr(request.app.state, "_authorize_limiter", None)
-    if limiter is not None:
-        return limiter
-    cfg = ctx.config.auth.oauth_rate_limit
-    backend = get_auth_backend(request)
-    limiter = RateLimiter(backend, default_rpm=cfg.authorize_rpm, burst=cfg.authorize_burst)
-    request.app.state._authorize_limiter = limiter
-    return limiter
-
-
-async def _check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
-    """Per-client+IP rate limiter for unauthenticated authorization endpoints."""
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
-    client_id = request.query_params.get("client_id")
-    ip = client_ip(request, trusted)
-    key = f"{client_id}:{ip}" if client_id else ip
-    limiter = _get_authorize_limiter(request, ctx)
-    outcome = await limiter.acquire(key)
-    if not outcome.allowed:
-        raise RateLimitExceededError(retry_after=outcome.retry_after_s)
-
-
-def _is_platform_client(client_id: str, ctx: Context) -> bool:
-    """Check if client_id is a known platform client from config."""
-    return any(pc.client_id == client_id for pc in ctx.config.auth.platform_clients)
-
-
-def _platform_client_allows_redirect(redirect_uri: str, client_id: str, ctx: Context) -> bool:
-    """Check if a platform client's config allows the given redirect_uri."""
-    for pc in ctx.config.auth.platform_clients:
-        if pc.client_id == client_id:
-            return redirect_uri in pc.redirect_uris
-    return False
-
-
-async def _get_cached_oauth_client(
-    request: Request, client_id: str, ctx: Context
-) -> OAuthClientView | None:
-    """Return the OAuth client view for ``client_id``, cached per request.
-
-    /authorize touches the same client row three times (redirect-URI validation,
-    scope-allowlist check, consent decision); this collapses them into one DB
-    read. ``None`` in the cache means "confirmed unknown" — a repeat lookup for
-    the same client_id in the same request skips the DB round-trip.
-    """
-    cache: dict[str, OAuthClientView | None] | None = getattr(
-        request.state, "_oauth_client_cache", None
-    )
-    if cache is None:
-        cache = {}
-        request.state._oauth_client_cache = cache
-    if client_id not in cache:
-        cache[client_id] = await OAuthClientService(ctx).get_by_client_id(client_id)
-    return cache[client_id]
-
-
-def _client_gate_passes(client: OAuthClientView) -> bool:
-    """The D7 client gate: only ``active`` AND ``approved`` rows may proceed.
-
-    Checked at /authorize entry and *re-checked* mid-flow (IdP callback,
-    consent submit) so a client denied or deactivated inside the signed-state
-    window cannot walk the rest of the flow to a minted code.
-    """
-    return client.active and client.approval_status == OAuthClientApprovalStatus.APPROVED.value
 
 
 async def _is_allowed_redirect_uri(
@@ -136,10 +77,10 @@ async def _is_allowed_redirect_uri(
     rows — the D7 approval gate fails closed on the existing error path.
     (The human "awaiting approval" page is future work.)
     """
-    if _is_platform_client(client_id, ctx):
-        return _platform_client_allows_redirect(redirect_uri, client_id, ctx)
-    client = await _get_cached_oauth_client(request, client_id, ctx)
-    if client is None or not _client_gate_passes(client):
+    if is_platform_client(client_id, ctx):
+        return platform_client_allows_redirect(redirect_uri, client_id, ctx)
+    client = await get_cached_oauth_client(request, client_id, ctx)
+    if client is None or not client_gate_passes(client):
         return False
     return redirect_uri in client.redirect_uris
 
@@ -148,9 +89,9 @@ async def _get_client_allowed_scopes(
     request: Request, client_id: str, ctx: Context
 ) -> frozenset[str] | None:
     """Return allowed scopes for a registered client, or None for platform clients."""
-    if _is_platform_client(client_id, ctx):
+    if is_platform_client(client_id, ctx):
         return None
-    client = await _get_cached_oauth_client(request, client_id, ctx)
+    client = await get_cached_oauth_client(request, client_id, ctx)
     if client is None or client.allowed_scopes is None:
         return None
     return frozenset(client.allowed_scopes)
@@ -181,23 +122,6 @@ def get_oauth_grant_service(ctx: Context = Depends(get_ctx)) -> OAuthGrantServic
     return OAuthGrantService(ctx)
 
 
-STATE_MAX_AGE_SECONDS = 600
-CONSENT_STATE_MAX_AGE_SECONDS = 300
-
-_CONSENT_SECURITY_HEADERS: dict[str, str] = {
-    "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "frame-ancestors 'none'",
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-    "Cache-Control": "no-store",
-    "Pragma": "no-cache",
-}
-
-_FONTS_URL = (
-    "https://fonts.googleapis.com/css2"
-    "?family=Nunito+Sans:wght@400;500;600;700"
-    "&family=Sora:wght@600;700&display=swap"
-)
 _CHECK_SVG = (
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'"
     " viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule="
@@ -786,48 +710,7 @@ _NO_AGENTS_PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def _derive_key(master_secret: str, purpose: str) -> str:
-    """Derive a purpose-specific signing key from the master secret via HMAC."""
-    return hmac.HMAC(
-        master_secret.encode(), f"oauth-{purpose}".encode(), hashlib.sha256
-    ).hexdigest()
-
-
-def _sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:
-    """Encode and HMAC-sign a payload with a purpose discriminator."""
-    payload["_purpose"] = purpose
-    data = urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    sig = hmac.HMAC(secret.encode(), data.encode(), hashlib.sha256).hexdigest()
-    return f"{data}.{sig}"
-
-
-def _verify_payload(
-    token_str: str, secret: str, *, purpose: str, max_age: int
-) -> dict[str, str | None]:
-    """Verify and decode a signed payload, checking purpose and TTL."""
-    parts = token_str.rsplit(".", 1)
-    if len(parts) != 2:
-        raise InvalidGrantError(f"invalid {purpose} token")
-    data, sig = parts
-    expected = hmac.HMAC(secret.encode(), data.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(sig, expected):
-        raise InvalidGrantError(f"{purpose} signature invalid")
-    payload: dict[str, str | None] = json.loads(urlsafe_b64decode(data))
-    if payload.get("_purpose") != purpose:
-        raise InvalidGrantError(f"token purpose mismatch: expected {purpose}")
-    iat = payload.get("iat")
-    if iat is not None:
-        age = time.time() - float(iat)
-        if age > max_age or age < 0:
-            raise InvalidGrantError(f"{purpose} token expired")
-    return payload
-
-
-def _get_consent_backend(request: Request) -> SharedStateBackend:
-    return get_auth_backend(request)
-
-
-@router.get("/authorize", dependencies=[Depends(_check_rate_limit)], response_model=None)
+@router.get("/authorize", dependencies=[Depends(check_rate_limit)], response_model=None)
 async def authorize_endpoint(
     request: Request,
     response_type: str = Query(...),
@@ -852,8 +735,8 @@ async def authorize_endpoint(
     # Code permanently). This branch runs BEFORE redirect-URI failure handling
     # and deliberately does not distinguish pending from denied (deny is
     # reversible and silent; the admin communicates out of band).
-    if not _is_platform_client(client_id, ctx):
-        unapproved = await _get_cached_oauth_client(request, client_id, ctx)
+    if not is_platform_client(client_id, ctx):
+        unapproved = await get_cached_oauth_client(request, client_id, ctx)
         if (
             unapproved is not None
             and unapproved.approval_status != OAuthClientApprovalStatus.APPROVED.value
@@ -865,9 +748,9 @@ async def authorize_endpoint(
             )
             html = _AWAITING_APPROVAL_PAGE_TEMPLATE.format(
                 app_name=html_mod.escape(unapproved.name),
-                fonts_url=_FONTS_URL,
+                fonts_url=FONTS_URL,
             )
-            return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
+            return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
     if not await _is_allowed_redirect_uri(request, redirect_uri, client_id, ctx):
         logger.warning(
@@ -900,7 +783,7 @@ async def authorize_endpoint(
 
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
 
-    internal_state = _sign_payload(
+    internal_state = sign_payload(
         {
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -910,7 +793,7 @@ async def authorize_endpoint(
             "original_state": state,
             "iat": str(int(time.time())),
         },
-        _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "state"),
+        state_signing_key(ctx),
         purpose="state",
     )
 
@@ -921,6 +804,17 @@ async def authorize_endpoint(
     )
 
     if idp_url is None:
+        if ctx.config.auth.local_login.enabled:
+            # Local-account path (#1276): no IdP, but the deployment opted in
+            # to the first-party password login form. The signed internal
+            # state minted above is reused verbatim as the form's
+            # carry-through token — the form route re-verifies it before
+            # rendering. IdP always wins: this branch is unreachable when an
+            # IdP is configured (idp_url is non-None), so there is no mixed
+            # mode.
+            return RedirectResponse(
+                url=f"/login?{urlencode({'ls': internal_state})}", status_code=302
+            )
         return _error_redirect(
             redirect_uri, "server_error", state, "no identity provider configured"
         )
@@ -932,7 +826,7 @@ async def authorize_endpoint(
     "/oauth/callback",
     operation_id="authorizeOauthCallback",
     name="authorize_oauth_callback",
-    dependencies=[Depends(_check_rate_limit)],
+    dependencies=[Depends(check_rate_limit)],
 )
 async def oauth_callback(
     request: Request,
@@ -943,9 +837,9 @@ async def oauth_callback(
 ) -> RedirectResponse:
     """External IdP callback — exchanges upstream code and issues platform auth code."""
     try:
-        params = _verify_payload(
+        params = verify_payload(
             state,
-            _derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "state"),
+            state_signing_key(ctx),
             purpose="state",
             max_age=STATE_MAX_AGE_SECONDS,
         )
@@ -962,8 +856,8 @@ async def oauth_callback(
 
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
 
-    oauth_client = await _get_cached_oauth_client(request, client_id or "", ctx)
-    if oauth_client is not None and not _client_gate_passes(oauth_client):
+    oauth_client = await get_cached_oauth_client(request, client_id or "", ctx)
+    if oauth_client is not None and not client_gate_passes(oauth_client):
         # Mid-flow D7 re-check: the gate at /authorize entry only covers the
         # start of the signed-state window — a client denied or deactivated
         # while the user is at the IdP must not reach consent or mint a code.
@@ -993,33 +887,16 @@ async def oauth_callback(
             logger.warning("oauth_idp_exchange_failed", client_id=client_id, exc_info=True)
             return RedirectResponse(url="/error?error=server_error", status_code=302)
 
-        consent_handle = secrets.token_urlsafe(32)
-        payload_json = json.dumps(
-            {
-                "claims": {
-                    "external_subject": claims.external_subject,
-                    "email": claims.email,
-                    "email_verified": claims.email_verified,
-                    "first_name": claims.first_name,
-                    "last_name": claims.last_name,
-                },
-                "redirect_uri": original_redirect_uri,
-                "original_state": original_state,
-                "client_id": client_id,
-                "code_challenge": code_challenge,
-                "scope": scope,
-                "nonce": nonce,
-                "client_name": oauth_client.name,
-                "client_description": oauth_client.description,
-                "user_email": claims.email,
-                "iat": int(time.time()),
-            }
-        ).encode()
-        backend = _get_consent_backend(request)
-        await backend.set(
-            f"consent-handle:{consent_handle}",
-            payload_json,
-            ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS),
+        consent_handle = await write_idp_consent_handle(
+            request,
+            claims=claims,
+            redirect_uri=original_redirect_uri,
+            original_state=original_state,
+            client_id=client_id,
+            code_challenge=code_challenge,
+            scope=scope,
+            nonce=nonce,
+            oauth_client=oauth_client,
         )
         return RedirectResponse(url=f"/oauth/consent?ch={consent_handle}", status_code=302)
 
@@ -1094,7 +971,7 @@ def _scope_to_permission_description(scope: str) -> str | None:
 
 async def _load_consent_handle(ch: str, request: Request) -> dict[str, object] | None:
     """Load consent params for a handle from the shared state backend."""
-    backend = _get_consent_backend(request)
+    backend = get_consent_backend(request)
     raw = await backend.get(f"consent-handle:{ch}")
     if raw is None:
         return None
@@ -1107,7 +984,7 @@ async def _load_consent_handle(ch: str, request: Request) -> dict[str, object] |
 
 async def _consume_consent_handle(ch: str, request: Request) -> bool:
     """Atomically mark a consent handle as used; returns False on replay."""
-    backend = _get_consent_backend(request)
+    backend = get_consent_backend(request)
     return await backend.set_if_absent(
         f"consent-handle-used:{ch}", b"1", ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS)
     )
@@ -1193,9 +1070,7 @@ def _render_agent_options(
     return "\n".join(blocks)
 
 
-@router.get(
-    "/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(_check_rate_limit)]
-)
+@router.get("/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(check_rate_limit)])
 async def consent_page(
     request: Request,
     ch: str = Query(..., description="Opaque consent-flow handle"),
@@ -1208,7 +1083,7 @@ async def consent_page(
         return HTMLResponse(
             content="<html><body><h1>Invalid or expired consent request</h1></body></html>",
             status_code=400,
-            headers=_CONSENT_SECURITY_HEADERS,
+            headers=CONSENT_SECURITY_HEADERS,
         )
 
     app_name = str(params.get("client_name") or "Unknown Application")
@@ -1218,8 +1093,8 @@ async def consent_page(
 
     client_id = str(params.get("client_id") or "")
     oauth_client: OAuthClientView | None = None
-    if client_id and not _is_platform_client(client_id, ctx):
-        oauth_client = await _get_cached_oauth_client(request, client_id, ctx)
+    if client_id and not is_platform_client(client_id, ctx):
+        oauth_client = await get_cached_oauth_client(request, client_id, ctx)
     if oauth_client is not None and oauth_client.consent_model == OAuthConsentModel.AGENT.value:
         return await _render_agent_consent_page(
             params,
@@ -1245,10 +1120,10 @@ async def consent_page(
         user_email=html_mod.escape(user_email),
         permission_items=permission_items,
         consent_token=html_mod.escape(ch),
-        fonts_url=_FONTS_URL,
+        fonts_url=FONTS_URL,
         check_svg=_CHECK_SVG,
     )
-    return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
+    return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
 
 async def _render_agent_consent_page(
@@ -1273,14 +1148,20 @@ async def _render_agent_consent_page(
     redirect_uri = str(params.get("redirect_uri") or "")
 
     claims = _claims_from_params(params)
-    user_id = await authorize_svc.resolve_existing_user_id(claims) if claims else None
+    raw_local_user_id = params.get("local_user_id")
+    if raw_local_user_id:
+        # Local-login rejoin (#1276): the user is already resolved — the
+        # handle carries the authenticated user id, no claims to re-resolve.
+        user_id: str | None = str(raw_local_user_id)
+    else:
+        user_id = await authorize_svc.resolve_existing_user_id(claims) if claims else None
     agents = await authorize_svc.list_consentable_agents(user_id) if user_id else []
     if not agents:
         html = _NO_AGENTS_PAGE_TEMPLATE.format(
             app_name=html_mod.escape(app_name),
-            fonts_url=_FONTS_URL,
+            fonts_url=FONTS_URL,
         )
-        return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
+        return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
     requested = [s.strip() for s in scope.split() if s.strip()]
     allowlist = (
@@ -1300,13 +1181,13 @@ async def _render_agent_consent_page(
         redirect_origin=html_mod.escape(_redirect_origin(redirect_uri)),
         agent_options=_render_agent_options(agents, candidates),
         consent_token=html_mod.escape(consent_token),
-        fonts_url=_FONTS_URL,
+        fonts_url=FONTS_URL,
         check_svg=_CHECK_SVG,
     )
-    return HTMLResponse(content=html, headers=_CONSENT_SECURITY_HEADERS)
+    return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
 
-@router.post("/oauth/consent", dependencies=[Depends(_check_rate_limit)])
+@router.post("/oauth/consent", dependencies=[Depends(check_rate_limit)])
 async def consent_submit(
     request: Request,
     consent_token: str = Form(..., json_schema_extra=SENSITIVE),
@@ -1344,13 +1225,13 @@ async def consent_submit(
     scope = str(params.get("scope") or "openid")
 
     oauth_client: OAuthClientView | None = None
-    if not _is_platform_client(client_id, ctx):
+    if not is_platform_client(client_id, ctx):
         # Mid-flow D7 re-check (see oauth_callback): a client denied between
         # the consent page render and this submit must not provision a user
         # row or mint a code — even on the Deny arm we return the human error
         # rather than an OAuth redirect the denied client could observe.
-        oauth_client = await _get_cached_oauth_client(request, client_id, ctx)
-        if oauth_client is None or not _client_gate_passes(oauth_client):
+        oauth_client = await get_cached_oauth_client(request, client_id, ctx)
+        if oauth_client is None or not client_gate_passes(oauth_client):
             logger.warning(
                 "oauth_client_gate_failed_midflow", client_id=client_id, stage="consent_submit"
             )
@@ -1364,25 +1245,32 @@ async def consent_submit(
         return _error_redirect(redirect_uri, "access_denied", original_state)
 
     claims_data = params.get("claims")
-    if not isinstance(claims_data, dict):
+    local_user_id = params.get("local_user_id")
+    if local_user_id:
+        # Local-login rejoin (#1276): the user authenticated against the
+        # first-party account store, so the row already exists — there is
+        # nothing to provision and the Deny-leaves-no-residue contract holds
+        # trivially (login never creates rows).
+        user_id = str(local_user_id)
+    elif not isinstance(claims_data, dict):
         logger.warning("oauth_consent_missing_claims", client_id=client_id)
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
-
-    idp_claims = IdpClaims(
-        external_subject=str(claims_data.get("external_subject") or ""),
-        email=str(claims_data.get("email") or ""),
-        email_verified=bool(claims_data.get("email_verified") or False),
-        first_name=str(claims_data.get("first_name") or ""),
-        last_name=str(claims_data.get("last_name") or ""),
-    )
-    try:
-        user_id = await authorize_svc.provision_from_claims(idp_claims)
-    except UserNotAdmittedError:
-        logger.warning("oauth_user_not_admitted", client_id=client_id)
-        return RedirectResponse(url="/error?error=access_denied", status_code=302)
-    except InvalidGrantError:
-        logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
-        return RedirectResponse(url="/error?error=server_error", status_code=302)
+    else:
+        idp_claims = IdpClaims(
+            external_subject=str(claims_data.get("external_subject") or ""),
+            email=str(claims_data.get("email") or ""),
+            email_verified=bool(claims_data.get("email_verified") or False),
+            first_name=str(claims_data.get("first_name") or ""),
+            last_name=str(claims_data.get("last_name") or ""),
+        )
+        try:
+            user_id = await authorize_svc.provision_from_claims(idp_claims)
+        except UserNotAdmittedError:
+            logger.warning("oauth_user_not_admitted", client_id=client_id)
+            return RedirectResponse(url="/error?error=access_denied", status_code=302)
+        except InvalidGrantError:
+            logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
+            return RedirectResponse(url="/error?error=server_error", status_code=302)
 
     code_challenge = str(params.get("code_challenge") or "")
     raw_nonce = params.get("nonce")
@@ -1418,7 +1306,7 @@ async def consent_submit(
             grant_id=grant_id_value,
         )
     else:
-        if not _is_platform_client(client_id, ctx):
+        if not is_platform_client(client_id, ctx):
             await authorize_svc.record_consent_decision(
                 user_id=user_id,
                 oauth_client_id=client_id,
