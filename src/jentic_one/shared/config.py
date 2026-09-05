@@ -6,6 +6,7 @@ import ipaddress
 import os
 import re
 import secrets
+import stat
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
@@ -1298,6 +1299,29 @@ def _env_overrides() -> dict[str, Any]:
     return cast("dict[str, Any]", _coerce_indexed_dicts_to_lists(result))
 
 
+# One-shot config sources (pipes / inherited fds) cached per process. A config
+# handed on a pipe — e.g. ``JENTIC_CONFIG_FILE=/dev/fd/3`` from a supervisor
+# that keeps secrets out of the filesystem, argv, and env — can only be read
+# once, but several consumers load config more than once per process (the
+# Alembic env loads it per database). The first read is cached so later loads
+# see the same document. Regular files keep re-reading from disk.
+_ONESHOT_CONFIG_CACHE: dict[str, str] = {}
+
+
+def _read_config_text(path: Path) -> str:
+    """Read the config document, caching one-shot sources (pipes, /dev/fd)."""
+    key = str(path)
+    if key in _ONESHOT_CONFIG_CACHE:
+        return _ONESHOT_CONFIG_CACHE[key]
+    text = path.read_text()
+    # /dev/fd/N re-opens share the underlying file offset on macOS (dup
+    # semantics), so treat any /dev/fd source like a pipe.
+    mode = os.stat(path).st_mode
+    if stat.S_ISFIFO(mode) or key.startswith("/dev/fd/"):
+        _ONESHOT_CONFIG_CACHE[key] = text
+    return text
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     """Load and validate application configuration.
 
@@ -1322,10 +1346,9 @@ def load_config(path: Path | None = None) -> AppConfig:
     if config_path is not None:
         if not config_path.exists():
             raise ConfigError(f"Config file not found: {config_path}")
-        with open(config_path) as f:
-            loaded = yaml.safe_load(f)
-            if isinstance(loaded, dict):
-                file_data = loaded
+        loaded = yaml.safe_load(_read_config_text(config_path))
+        if isinstance(loaded, dict):
+            file_data = loaded
 
     env_data = _env_overrides()
     merged = _deep_merge(file_data, env_data)

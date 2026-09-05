@@ -682,6 +682,29 @@ def test_encryption_key_material_file_yaml_roundtrip(
     assert entry.resolved_material.get_secret_value() == _KEY_B64
 
 
+def test_load_config_from_pipe_is_cached(sample_config_dict: dict[str, Any]):
+    """A config handed on a one-shot fd (pipe / /dev/fd) survives repeat loads.
+
+    Supervisors that keep secrets off disk pass JENTIC_CONFIG_FILE=/dev/fd/N;
+    consumers like the Alembic env call load_config once per database, so the
+    first read must be cached rather than hitting EOF on the second load.
+    """
+    doc = yaml.dump(sample_config_dict).encode()
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, doc)
+        os.close(write_fd)
+        pipe_path = Path(f"/dev/fd/{read_fd}")
+        first = load_config(pipe_path)
+        second = load_config(pipe_path)  # would be EOF without the cache
+        assert first.databases.registry.name == second.databases.registry.name
+    finally:
+        os.close(read_fd)
+        from jentic_one.shared.config import _ONESHOT_CONFIG_CACHE
+
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
 def test_broker_jobs_api_base_url_defaults_to_none(config_file: Path):
     config = load_config(config_file)
     assert config.broker.jobs_api_base_url is None
