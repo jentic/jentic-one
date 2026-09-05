@@ -921,6 +921,17 @@ async def authorize_endpoint(
     )
 
     if idp_url is None:
+        if ctx.config.auth.local_login.enabled:
+            # Local-account path (#1276): no IdP, but the deployment opted in
+            # to the first-party password login form. The signed internal
+            # state minted above is reused verbatim as the form's
+            # carry-through token — the form route re-verifies it before
+            # rendering. IdP always wins: this branch is unreachable when an
+            # IdP is configured (idp_url is non-None), so there is no mixed
+            # mode.
+            return RedirectResponse(
+                url=f"/login?{urlencode({'ls': internal_state})}", status_code=302
+            )
         return _error_redirect(
             redirect_uri, "server_error", state, "no identity provider configured"
         )
@@ -1273,7 +1284,13 @@ async def _render_agent_consent_page(
     redirect_uri = str(params.get("redirect_uri") or "")
 
     claims = _claims_from_params(params)
-    user_id = await authorize_svc.resolve_existing_user_id(claims) if claims else None
+    raw_local_user_id = params.get("local_user_id")
+    if raw_local_user_id:
+        # Local-login rejoin (#1276): the user is already resolved — the
+        # handle carries the authenticated user id, no claims to re-resolve.
+        user_id: str | None = str(raw_local_user_id)
+    else:
+        user_id = await authorize_svc.resolve_existing_user_id(claims) if claims else None
     agents = await authorize_svc.list_consentable_agents(user_id) if user_id else []
     if not agents:
         html = _NO_AGENTS_PAGE_TEMPLATE.format(
@@ -1364,25 +1381,32 @@ async def consent_submit(
         return _error_redirect(redirect_uri, "access_denied", original_state)
 
     claims_data = params.get("claims")
-    if not isinstance(claims_data, dict):
+    local_user_id = params.get("local_user_id")
+    if local_user_id:
+        # Local-login rejoin (#1276): the user authenticated against the
+        # first-party account store, so the row already exists — there is
+        # nothing to provision and the Deny-leaves-no-residue contract holds
+        # trivially (login never creates rows).
+        user_id = str(local_user_id)
+    elif not isinstance(claims_data, dict):
         logger.warning("oauth_consent_missing_claims", client_id=client_id)
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
-
-    idp_claims = IdpClaims(
-        external_subject=str(claims_data.get("external_subject") or ""),
-        email=str(claims_data.get("email") or ""),
-        email_verified=bool(claims_data.get("email_verified") or False),
-        first_name=str(claims_data.get("first_name") or ""),
-        last_name=str(claims_data.get("last_name") or ""),
-    )
-    try:
-        user_id = await authorize_svc.provision_from_claims(idp_claims)
-    except UserNotAdmittedError:
-        logger.warning("oauth_user_not_admitted", client_id=client_id)
-        return RedirectResponse(url="/error?error=access_denied", status_code=302)
-    except InvalidGrantError:
-        logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
-        return RedirectResponse(url="/error?error=server_error", status_code=302)
+    else:
+        idp_claims = IdpClaims(
+            external_subject=str(claims_data.get("external_subject") or ""),
+            email=str(claims_data.get("email") or ""),
+            email_verified=bool(claims_data.get("email_verified") or False),
+            first_name=str(claims_data.get("first_name") or ""),
+            last_name=str(claims_data.get("last_name") or ""),
+        )
+        try:
+            user_id = await authorize_svc.provision_from_claims(idp_claims)
+        except UserNotAdmittedError:
+            logger.warning("oauth_user_not_admitted", client_id=client_id)
+            return RedirectResponse(url="/error?error=access_denied", status_code=302)
+        except InvalidGrantError:
+            logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
+            return RedirectResponse(url="/error?error=server_error", status_code=302)
 
     code_challenge = str(params.get("code_challenge") or "")
     raw_nonce = params.get("nonce")

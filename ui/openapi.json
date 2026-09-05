@@ -2378,6 +2378,36 @@
         "title": "Body_consentSubmit",
         "type": "object"
       },
+      "Body_loginSubmit": {
+        "properties": {
+          "csrf": {
+            "title": "Csrf",
+            "type": "string",
+            "x-sensitive": true
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "ls": {
+            "title": "Ls",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string",
+            "x-sensitive": true
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "ls",
+          "csrf"
+        ],
+        "title": "Body_loginSubmit",
+        "type": "object"
+      },
       "CatalogEntryLinksResponse": {
         "description": "Hypermedia links for a catalog entry.",
         "examples": [
@@ -26936,6 +26966,233 @@
         "summary": "Cancel Job",
         "tags": [
           "Jobs"
+        ]
+      }
+    },
+    "/login": {
+      "get": {
+        "description": "Render the local-account login form for an in-flight ``/authorize`` request.\n\nVerifies the ``ls`` signature/TTL **before** rendering — an expired or\nforged token never gets a form — and embeds ``ls`` plus a fresh single-use\nCSRF nonce.",
+        "operationId": "loginPage",
+        "parameters": [
+          {
+            "description": "Signed authorization-flow state (carry-through token)",
+            "in": "query",
+            "name": "ls",
+            "required": true,
+            "schema": {
+              "description": "Signed authorization-flow state (carry-through token)",
+              "title": "Ls",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Local-account login is disabled (`auth.local_login.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Local-account login form (authorization flow)",
+        "tags": [
+          "OAuth"
+        ]
+      },
+      "post": {
+        "description": "Authenticate the local account and rejoin the authorization flow.\n\nSuccess never mints a JWT — it flows straight into code issuance (platform\nclient) or the consent handle (registered third-party client), exactly\nwhere the IdP callback rejoins. Credential failures re-render the form\nwith one generic message: lockout state, unknown email, and wrong password\nare indistinguishable (no user-enumeration oracle), while the shared\n``AuthService.authenticate`` core still increments the failed-login count\nand applies the lockout threshold.",
+        "operationId": "loginSubmit",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_loginSubmit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Local-account login is disabled (`auth.local_login.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Local-account login submit (authorization flow)",
+        "tags": [
+          "OAuth"
         ]
       }
     },

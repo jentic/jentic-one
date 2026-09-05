@@ -123,6 +123,9 @@
         "idp": {
           "$ref": "#/$defs/IdpConfig"
         },
+        "local_login": {
+          "$ref": "#/$defs/LocalLoginConfig"
+        },
         "oauth_rate_limit": {
           "$ref": "#/$defs/OAuthRateLimitConfig"
         },
@@ -876,6 +879,18 @@
         }
       },
       "title": "JwtVerificationConfig",
+      "type": "object"
+    },
+    "LocalLoginConfig": {
+      "description": "Local-account login form on the ``/authorize`` flow (no external IdP).\n\nDefault **off**: ``/authorize`` behaviour is byte-identical (including the\n``server_error`` redirect when no IdP is configured) and ``GET|POST /login``\nanswer the framework's plain 404. Enabling it makes the standards-track\nnative-app sign-in flow (RFC 8252: DCR + system browser + loopback redirect\n+ PKCE) work against the first-party password account store, without any\nclient ever handling a password. An external IdP always wins: when\n``auth.idp.enabled`` is true the login form is never offered (no mixed\nmode in v1).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "LocalLoginConfig",
       "type": "object"
     },
     "LoggingConfig": {
