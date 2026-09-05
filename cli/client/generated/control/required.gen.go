@@ -62,6 +62,9 @@ func (AuditListResponse) RequiredFields() []string { return []string{"data", "ha
 func (AuditResponse) RequiredFields() []string {
 	return []string{"action", "actor_type", "id", "occurred_at", "target_id", "target_type"}
 }
+func (AuthMethodsResponse) RequiredFields() []string {
+	return []string{"agent_dcr", "idp", "local_login", "oauth_client_dcr", "service_accounts"}
+}
 func (BasicAuthCreateRequest) RequiredFields() []string {
 	return []string{"api", "name", "password", "type", "username"}
 }
@@ -71,6 +74,16 @@ func (BearerTokenCreateRequest) RequiredFields() []string {
 }
 func (BearerTokenUpdateRequest) RequiredFields() []string { return []string{"type"} }
 func (BindingWarningSchema) RequiredFields() []string     { return []string{"code", "message"} }
+func (CapabilitiesAuthResponse) RequiredFields() []string { return []string{"methods"} }
+func (CapabilitiesInstanceResponse) RequiredFields() []string {
+	return []string{"backend", "canonical_base_url"}
+}
+func (CapabilitiesResponse) RequiredFields() []string {
+	return []string{"auth", "capabilities_version", "features", "instance", "surfaces", "urls"}
+}
+func (CapabilitiesUrlsResponse) RequiredFields() []string {
+	return []string{"authorization_server_metadata", "broker"}
+}
 func (CatalogEntryLinksResponse) RequiredFields() []string {
 	return []string{"import", "operations", "self"}
 }
@@ -104,6 +117,7 @@ func (DuplicatePendingProblem) RequiredFields() []string {
 	return []string{"approve_url", "detail", "existing_request_id"}
 }
 func (EffectivePermission) RequiredFields() []string     { return []string{"name"} }
+func (EnabledMethodResponse) RequiredFields() []string   { return []string{"enabled"} }
 func (ErrorItem) RequiredFields() []string               { return []string{"detail"} }
 func (EvaluationCheckResponse) RequiredFields() []string { return []string{"check", "passed"} }
 func (EvaluationResponse) RequiredFields() []string      { return []string{"can_fulfill", "checks"} }
@@ -124,6 +138,7 @@ func (ExecutionStatsResponse) RequiredFields() []string {
 func (HealthResponse) RequiredFields() []string {
 	return []string{"setup_required", "status", "surface"}
 }
+func (IdpMethodResponse) RequiredFields() []string { return []string{"enabled", "provider"} }
 func (InstanceIdentityResponse) RequiredFields() []string {
 	return []string{"backend", "canonical_base_url", "host"}
 }
@@ -183,6 +198,7 @@ func (OAuthGrantListResponse) RequiredFields() []string { return []string{"data"
 func (OAuthGrantResponse) RequiredFields() []string {
 	return []string{"agent_id", "can_revoke", "client_name", "client_origin", "created_at", "id", "last_used_at", "oauth_client_id", "revoked_at", "scopes", "status", "user_id"}
 }
+func (OauthClientDcrMethodResponse) RequiredFields() []string { return []string{"approval", "enabled"} }
 func (OperationPreviewListResponse) RequiredFields() []string {
 	return []string{"data", "info", "offset", "security_schemes", "total", "truncated"}
 }
