@@ -86,7 +86,18 @@ class AuthService:
             must_change_password=must_change_password,
         )
 
-    async def login(self, payload: LoginPayload) -> TokenBundle:
+    async def authenticate(self, payload: LoginPayload) -> str:
+        """Verify email/password credentials and return the user id.
+
+        The credential-check core of :meth:`login`, exposed on its own so
+        callers can verify a password without minting a JWT. Owns every
+        credential-verification side effect: failed attempts increment the
+        failed-login count (locking the account at the configured threshold),
+        lockouts and failures are audited and counted, and a success resets
+        the failed-login count and records the ``LOGIN`` audit. Raises
+        :class:`InvalidCredentialsError` or :class:`AccountLockedError` on
+        rejection.
+        """
         config = self._ctx.config.admin.auth
 
         account_locked_user_id: str | None = None
@@ -168,6 +179,21 @@ class AuthService:
 
         logger.info("login_success", user_id=user.id)
         login_counter.add(1, {"outcome": "success"})
+
+        return user.id
+
+    async def login(self, payload: LoginPayload) -> TokenBundle:
+        user_id = await self.authenticate(payload)
+
+        # Re-read the row for the claims (email, must_change_password):
+        # authenticate returns only the id so JWT-free callers stay decoupled
+        # from token minting.
+        async with self._ctx.admin_db.session() as session:
+            user = await UserRepository.get_by_id(session, user_id)
+        if user is None:
+            # The account vanished between credential verification and minting
+            # (concurrent deletion) — treat it like any other bad credential.
+            raise InvalidCredentialsError()
 
         return await self._mint_session_bundle(
             user_id=user.id,
