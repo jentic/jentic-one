@@ -113,6 +113,7 @@ from jentic_one.shared.web.app_factory import create_combined_app
 from jentic_one.shared.web.container import AppContainer
 
 from my_ext.broker import MyBroker
+from my_ext.monitor import MyUnregisteredUrlHandler
 
 my_router = APIRouter()  # your extra routes
 
@@ -121,6 +122,9 @@ def build_app(ctx: Context):
     container = AppContainer(
         ctx=ctx,
         broker=MyBroker(...),  # injected data-plane broker
+        # Optional: intercept traffic to unregistered METHOD+URLs (see the
+        # "Unregistered-URL tradeoff" note below).
+        unregistered_url_handler=MyUnregisteredUrlHandler(...),
         extra_routers=[(my_router, "/my-ext", ["my-ext"])],
         extra_installers=[lambda app, ctx: ...],  # runs against the root app last
     )
@@ -163,9 +167,15 @@ test suite to also assert the exact `inspect.signature` of every seam method:
 ```python
 # my_ext/tests/test_compliance.py
 from jentic_one.shared.broker.broker import Broker
-from jentic_one.testing import BaseBrokerComplianceTest, BaseSearchStrategyComplianceTest
+from jentic_one.shared.web.protocols import UnregisteredUrlHandler
+from jentic_one.testing import (
+    BaseBrokerComplianceTest,
+    BaseSearchStrategyComplianceTest,
+    BaseUnregisteredUrlHandlerComplianceTest,
+)
 
 from my_ext.broker import MyBroker
+from my_ext.monitor import MyUnregisteredUrlHandler
 from my_ext.search import MyStrategy
 
 
@@ -176,6 +186,11 @@ class TestMyBrokerCompliance(BaseBrokerComplianceTest):
 
 class TestMyStrategyCompliance(BaseSearchStrategyComplianceTest):
     strategy_cls = MyStrategy
+
+
+class TestMyHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):
+    def handler_factory(self) -> UnregisteredUrlHandler:
+        return MyUnregisteredUrlHandler(...)
 ```
 
 These `Test*` subclasses are collected by pytest and fail loudly if your
