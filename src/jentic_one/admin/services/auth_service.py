@@ -16,6 +16,7 @@ from jentic_one.admin.repos import (
 from jentic_one.admin.services._support.passwords import (
     MIN_PASSWORD_LENGTH,
     PASSWORD_TOO_SHORT_MESSAGE,
+    dummy_verify_password,
     hash_password,
     verify_password,
 )
@@ -105,16 +106,25 @@ class AuthService:
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_email(session, payload.email)
             if user is None:
+                # Timing equalizer: every early rejection pays one argon2
+                # verification, so an anonymous caller cannot separate
+                # "unknown email" from "wrong password" by response time.
+                dummy_verify_password()
                 raise InvalidCredentialsError()
 
             if not user.active:
+                dummy_verify_password()
                 raise InvalidCredentialsError()
 
             secret = await UserSecretRepository.get_by_user_id(session, user.id)
             if secret is None or secret.password_hash is None:
+                dummy_verify_password()
                 raise InvalidCredentialsError()
 
             if secret.locked_until is not None and secret.locked_until > datetime.now(UTC):
+                # Locked accounts also skip the real verify — burn the dummy
+                # here too so "locked" is not timing-distinguishable either.
+                dummy_verify_password()
                 # Defer the audit write until *after* this read session closes:
                 # holding this read connection open while opening a write
                 # transaction on the same database self-deadlocks under SQLite
