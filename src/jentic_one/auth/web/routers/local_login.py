@@ -784,12 +784,15 @@ async def session_continue_endpoint(
     header — no cookies, no ambient credentials, so a cross-site form cannot
     drive it (same CSRF posture as the consent POST and the inline approval
     decision). The platform token is validated by the standard auth
-    dependency (users only; the password-rotation fence applies exactly as it
-    does on rung 3), the D7 client gate is re-checked, and on success the
-    response carries a relative ``/authorize`` resume URL bearing a
-    short-TTL, ``session``-purpose continuation blob that pins THIS caller's
-    ``user_id`` — the identity is fixed at exchange time, before the consent
-    page renders it with its "Not you?" escape.
+    dependency (users only), and the ``active`` / ``must_change_password``
+    fences are re-checked with a LIVE user-row read — not the token's baked
+    claims — matching rung 3's ``password_rotation_required`` posture, so an
+    admin-forced reset fences the exchange immediately even while pre-reset
+    SPA tokens are still in flight. The D7 client gate is re-checked, and on
+    success the response carries a relative ``/authorize`` resume URL bearing
+    a short-TTL, ``session``-purpose continuation blob that pins THIS
+    caller's ``user_id`` — the identity is fixed at exchange time, before the
+    consent page renders it with its "Not you?" escape.
 
     Every failure after authentication is the same generic 400: an invalid
     blob must not let the caller learn anything about the client or the flow.
@@ -821,8 +824,13 @@ async def session_continue_endpoint(
     except UserNotFoundError:
         logger.warning("oauth_session_continue_rejected", reason="user_not_found")
         raise InvalidGrantError(_SESSION_CONTINUE_REJECTED) from None
-    if not user.active:
-        logger.warning("oauth_session_continue_rejected", reason="user_inactive")
+    if not user.active or user.must_change_password:
+        # LIVE row read, not the JWT claim: an admin-forced password reset
+        # must fence the account immediately, exactly as rung 3's
+        # ``password_rotation_required`` does — a SPA token minted before the
+        # reset still carries a stale ``must_change_password=false`` claim
+        # for the rest of its TTL and must not mint a continuation.
+        logger.warning("oauth_session_continue_rejected", reason="user_fenced")
         raise InvalidGrantError(_SESSION_CONTINUE_REJECTED)
 
     continuation_payload: dict[str, str | None] = {
@@ -833,9 +841,10 @@ async def session_continue_endpoint(
         "nonce": params.get("nonce"),
         "original_state": params.get("original_state"),
         # Pinned at exchange time: the resume leg trusts the blob, never the
-        # (by then anonymous) browser.
+        # (by then anonymous) browser. Only the opaque user_id — the blob
+        # rides a GET query param (access logs, browser history), so no PII;
+        # the redemption arm re-reads the row for the email anyway.
         "user_id": user.id,
-        "user_email": user.email,
         "iat": str(int(time.time())),
     }
     continuation = sign_payload(continuation_payload, session_signing_key(ctx), purpose="session")

@@ -37,8 +37,10 @@ import structlog
 from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
+from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.core.idp import IdpClaims
 from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import (
@@ -1411,9 +1413,14 @@ async def _redeem_session_continuation(
     Single-use first: ``set_if_absent`` on a used-marker makes the first
     redemption win and every replay inside the TTL fall through to the normal
     login — a captured resume URL must not keep minting consent handles (or,
-    on the platform arm, authorization codes). The rejoin arms are the local
-    login submit's, with the user pinned at exchange time instead of a
-    just-checked password.
+    on the platform arm, authorization codes). Then a LIVE user-row read
+    (both arms): the blob carries only the opaque ``user_id`` (no PII in the
+    GET query param — see F2 on the #1300 review), so the row read resolves
+    the consent page's display email anyway, and re-checking ``active`` /
+    ``must_change_password`` on it closes the ≤60 s window in which a user
+    deactivated or password-fenced after the exchange could still redeem.
+    The rejoin arms are the local login submit's, with the user pinned at
+    exchange time instead of a just-checked password.
     """
     backend = get_consent_backend(request)
     digest = hashlib.sha256(continuation.token.encode()).hexdigest()
@@ -1421,6 +1428,17 @@ async def _redeem_session_continuation(
         f"session-sc-used:{digest}", b"1", ttl_s=float(SESSION_CONTINUATION_MAX_AGE_SECONDS)
     ):
         logger.warning("oauth_session_continuation_replayed", client_id=client_id)
+        return None
+
+    try:
+        user = await UserService(ctx).get_by_id(continuation.user_id)
+    except UserNotFoundError:
+        logger.warning("oauth_session_continuation_failed", reason="user_not_found")
+        return None
+    if not user.active or user.must_change_password:
+        # Fail closed but fall through: the worst outcome of a fenced account
+        # is the unchanged rung-3 login, where the fence is enforced anyway.
+        logger.warning("oauth_session_continuation_failed", reason="user_fenced")
         return None
 
     if is_platform_client(client_id, ctx):
@@ -1462,7 +1480,7 @@ async def _redeem_session_continuation(
     consent_handle = await write_local_consent_handle(
         request,
         local_user_id=continuation.user_id,
-        user_email=continuation.user_email,
+        user_email=user.email,
         redirect_uri=redirect_uri,
         original_state=state,
         client_id=client_id,

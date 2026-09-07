@@ -200,15 +200,18 @@ def client_gate_passes(client: OAuthClientView) -> bool:
 class SessionContinuation:
     """Rung-1 outcome: a verified platform-session continuation (#1299).
 
-    Carries the identity pinned at exchange time by
+    Carries the ``user_id`` pinned at exchange time by
     ``POST /oauth/session/continue`` plus the raw blob so the caller can burn
-    it (single-use). The caller — ``GET /authorize`` — owns the async
-    redemption: burn, then the same consent-handle write / code issuance the
-    local-login rejoin uses.
+    it (single-use). Deliberately NOT the email: the blob rides a GET query
+    param, so it must hold no PII — the redemption arm re-reads the user row
+    (which also gives it a live ``active`` / ``must_change_password``
+    re-check) and resolves the display email there. The caller —
+    ``GET /authorize`` — owns the async redemption: burn, row re-check, then
+    the same consent-handle write / code issuance the local-login rejoin
+    uses.
     """
 
     user_id: str
-    user_email: str
     token: str
 
 
@@ -254,11 +257,7 @@ def _verify_session_continuation(
     if not user_id:
         logger.warning("oauth_session_continuation_rejected", reason="missing_user")
         return None
-    return SessionContinuation(
-        user_id=user_id,
-        user_email=str(payload.get("user_email") or ""),
-        token=session_state,
-    )
+    return SessionContinuation(user_id=user_id, token=session_state)
 
 
 def resolve_identity_gate(
