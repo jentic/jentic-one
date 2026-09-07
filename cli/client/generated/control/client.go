@@ -341,16 +341,16 @@ func (e CredentialType) Valid() bool {
 
 // Defines values for DecideItemSchemaDecision.
 const (
-	Approved DecideItemSchemaDecision = "approved"
-	Denied   DecideItemSchemaDecision = "denied"
+	DecideItemSchemaDecisionApproved DecideItemSchemaDecision = "approved"
+	DecideItemSchemaDecisionDenied   DecideItemSchemaDecision = "denied"
 )
 
 // Valid indicates whether the value is a known member of the DecideItemSchemaDecision enum.
 func (e DecideItemSchemaDecision) Valid() bool {
 	switch e {
-	case Approved:
+	case DecideItemSchemaDecisionApproved:
 		return true
-	case Denied:
+	case DecideItemSchemaDecisionDenied:
 		return true
 	default:
 		return false
@@ -422,22 +422,22 @@ func (e InstanceIdentityResponseBackend) Valid() bool {
 
 // Defines values for InviteState.
 const (
-	Accepted InviteState = "accepted"
-	Expired  InviteState = "expired"
-	Pending  InviteState = "pending"
-	Redeemed InviteState = "redeemed"
+	InviteStateAccepted InviteState = "accepted"
+	InviteStateExpired  InviteState = "expired"
+	InviteStatePending  InviteState = "pending"
+	InviteStateRedeemed InviteState = "redeemed"
 )
 
 // Valid indicates whether the value is a known member of the InviteState enum.
 func (e InviteState) Valid() bool {
 	switch e {
-	case Accepted:
+	case InviteStateAccepted:
 		return true
-	case Expired:
+	case InviteStateExpired:
 		return true
-	case Pending:
+	case InviteStatePending:
 		return true
-	case Redeemed:
+	case InviteStateRedeemed:
 		return true
 	default:
 		return false
@@ -621,6 +621,45 @@ const (
 func (e OAuth2UpdateRequestType) Valid() bool {
 	switch e {
 	case OAuth2UpdateRequestTypeOauth2:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthApprovalDecisionRequestAction.
+const (
+	OAuthApprovalDecisionRequestActionApprove OAuthApprovalDecisionRequestAction = "approve"
+	OAuthApprovalDecisionRequestActionDeny    OAuthApprovalDecisionRequestAction = "deny"
+)
+
+// Valid indicates whether the value is a known member of the OAuthApprovalDecisionRequestAction enum.
+func (e OAuthApprovalDecisionRequestAction) Valid() bool {
+	switch e {
+	case OAuthApprovalDecisionRequestActionApprove:
+		return true
+	case OAuthApprovalDecisionRequestActionDeny:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthApprovalStatusResponseStatus.
+const (
+	OAuthApprovalStatusResponseStatusApproved OAuthApprovalStatusResponseStatus = "approved"
+	OAuthApprovalStatusResponseStatusDenied   OAuthApprovalStatusResponseStatus = "denied"
+	OAuthApprovalStatusResponseStatusPending  OAuthApprovalStatusResponseStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the OAuthApprovalStatusResponseStatus enum.
+func (e OAuthApprovalStatusResponseStatus) Valid() bool {
+	switch e {
+	case OAuthApprovalStatusResponseStatusApproved:
+		return true
+	case OAuthApprovalStatusResponseStatusDenied:
+		return true
+	case OAuthApprovalStatusResponseStatusPending:
 		return true
 	default:
 		return false
@@ -2111,6 +2150,40 @@ type OAuth2UpdateRequest struct {
 // OAuth2UpdateRequestType defines model for OAuth2UpdateRequest.Type.
 type OAuth2UpdateRequestType string
 
+// OAuthApprovalDecisionRequest Inline admin approve/deny posted from the approval-pending page.
+//
+// “state“ is the signed approval-state blob minted by “/authorize“ for
+// this exact authorize request — the decision endpoint never accepts a bare
+// “client_id“.
+//
+// “state“ is deliberately NOT marked x-sensitive: the CLI's GEN-21
+// redaction backstop unions every sensitive field's BARE name globally, and
+// "state" is generic enough to redact unrelated CLI output (e.g. the MCP
+// session-diagnosis “state“ field). The blob is not a lasting bearer
+// credential — it is HMAC-signed, purpose-discriminated, TTL'd (600 s), and
+// the decision endpoint additionally requires an authenticated admin with
+// “oauth-clients:write“ — so global redaction buys nothing worth that
+// collision.
+type OAuthApprovalDecisionRequest struct {
+	Action OAuthApprovalDecisionRequestAction `json:"action"`
+	State  string                             `json:"state"`
+}
+
+// OAuthApprovalDecisionRequestAction defines model for OAuthApprovalDecisionRequest.Action.
+type OAuthApprovalDecisionRequestAction string
+
+// OAuthApprovalStatusResponse Minimal tri-state approval status for a pending-client authorize request.
+//
+// Deliberately carries nothing else — no client name, redirect URIs, or
+// metadata — so the anonymous poll endpoint cannot be used to read client
+// details out of the registry.
+type OAuthApprovalStatusResponse struct {
+	Status OAuthApprovalStatusResponseStatus `json:"status"`
+}
+
+// OAuthApprovalStatusResponseStatus defines model for OAuthApprovalStatusResponse.Status.
+type OAuthApprovalStatusResponseStatus string
+
 // OAuthClientCreateRequest Request body for creating an OAuth client.
 //
 // Examples: {"description":"My application production deployment","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
@@ -2993,7 +3066,10 @@ type TokenResponse struct {
 	ExpiresIn    int     `json:"expires_in"`
 	IdToken      *string `json:"id_token,omitempty"`
 	RefreshToken *string `json:"refresh_token,omitempty"`
-	TokenType    *string `json:"token_type,omitempty"`
+
+	// Scope Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent and service-account tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
+	Scope     *string `json:"scope,omitempty"`
+	TokenType *string `json:"token_type,omitempty"`
 }
 
 // ToolkitAgentListResponse Paginated list of agents bound to a toolkit.
@@ -3634,6 +3710,12 @@ type UpdateNoteParams struct {
 	IfMatch *string `json:"if-match,omitempty"`
 }
 
+// ApprovalStatusEndpointParams defines parameters for ApprovalStatusEndpoint.
+type ApprovalStatusEndpointParams struct {
+	// St Signed approval-state blob minted by /authorize
+	St string `form:"st" json:"st"`
+}
+
 // AuthorizeOauthCallbackParams defines parameters for AuthorizeOauthCallback.
 type AuthorizeOauthCallbackParams struct {
 	Code  string `form:"code" json:"code"`
@@ -3800,6 +3882,9 @@ type UpdateNoteJSONRequestBody = NoteUpdateRequest
 
 // RegisterOauthClientEndpointJSONRequestBody defines body for RegisterOauthClientEndpoint for application/json ContentType.
 type RegisterOauthClientEndpointJSONRequestBody = OAuthClientRegistrationRequest
+
+// ApprovalDecisionEndpointJSONRequestBody defines body for ApprovalDecisionEndpoint for application/json ContentType.
+type ApprovalDecisionEndpointJSONRequestBody = OAuthApprovalDecisionRequest
 
 // ConsentSubmitFormdataRequestBody defines body for ConsentSubmit for application/x-www-form-urlencoded ContentType.
 type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
@@ -6049,8 +6134,12 @@ type ClientInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. No client_secret is ever issued here and no
+	// registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -6066,8 +6155,12 @@ type ClientInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. No client_secret is ever issued here and no
+	// registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -6090,6 +6183,56 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
 	RevokeOauthGrant(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApprovalDecisionEndpointWithBody Approve or deny a pending client inline (approval-pending page)
+	//
+	// Thin wrapper over the admin approval path for the approval-pending page.
+	//
+	// Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+	// / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+	// decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+	// same audit records, same D7 active/approval_status coupling; this endpoint
+	// only translates the signed state blob into the client row. CSRF posture
+	// matches the consent POST: no ambient credential is honored — the browser
+	// must explicitly present the SPA bearer token, which a cross-site form
+	// cannot do.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+	ApprovalDecisionEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApprovalDecisionEndpoint Approve or deny a pending client inline (approval-pending page)
+	//
+	// Thin wrapper over the admin approval path for the approval-pending page.
+	//
+	// Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+	// / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+	// decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+	// same audit records, same D7 active/approval_status coupling; this endpoint
+	// only translates the signed state blob into the client row. CSRF posture
+	// matches the consent POST: no ambient credential is honored — the browser
+	// must explicitly present the SPA bearer token, which a cross-site form
+	// cannot do.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+	ApprovalDecisionEndpoint(ctx context.Context, body ApprovalDecisionEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApprovalStatusEndpoint Poll client approval status (approval-pending page)
+	//
+	// Minimal tri-state poll for the approval-pending page.
+	//
+	// Anonymous but keyed by the signed approval-state blob — never a bare
+	// client_id, so the endpoint cannot be used to enumerate registrations. Any
+	// verification failure (bad signature, wrong purpose, expired ``iat``,
+	// malformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by
+	// re-running /authorize, which mints a fresh blob. The response carries ONLY
+	// the tri-state — no names, redirect URIs, or metadata.
+	//
+	// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
+	ApprovalStatusEndpoint(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizeOauthCallback Authorize Oauth Callback
 	//
@@ -9779,8 +9922,12 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. No client_secret is ever issued here and no
+// registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -9806,8 +9953,12 @@ func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, conten
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. No client_secret is ever issued here and no
+// registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -9841,6 +9992,86 @@ func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterO
 // Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
 func (c *Client) RevokeOauthGrant(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeOauthGrantRequest(c.Server, grantId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApprovalDecisionEndpointWithBody Approve or deny a pending client inline (approval-pending page)
+//
+// Thin wrapper over the admin approval path for the approval-pending page.
+//
+// Authorization is byte-identical to “POST /admin/oauth-clients/{id}:approve“
+// / “:deny“ (“oauth-clients:write“, org:admin implies it) and the
+// decision itself is the SAME “OAuthClientService.approve“/“deny“ calls —
+// same audit records, same D7 active/approval_status coupling; this endpoint
+// only translates the signed state blob into the client row. CSRF posture
+// matches the consent POST: no ambient credential is honored — the browser
+// must explicitly present the SPA bearer token, which a cross-site form
+// cannot do.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+func (c *Client) ApprovalDecisionEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApprovalDecisionEndpointRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApprovalDecisionEndpoint Approve or deny a pending client inline (approval-pending page)
+//
+// Thin wrapper over the admin approval path for the approval-pending page.
+//
+// Authorization is byte-identical to “POST /admin/oauth-clients/{id}:approve“
+// / “:deny“ (“oauth-clients:write“, org:admin implies it) and the
+// decision itself is the SAME “OAuthClientService.approve“/“deny“ calls —
+// same audit records, same D7 active/approval_status coupling; this endpoint
+// only translates the signed state blob into the client row. CSRF posture
+// matches the consent POST: no ambient credential is honored — the browser
+// must explicitly present the SPA bearer token, which a cross-site form
+// cannot do.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+func (c *Client) ApprovalDecisionEndpoint(ctx context.Context, body ApprovalDecisionEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApprovalDecisionEndpointRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApprovalStatusEndpoint Poll client approval status (approval-pending page)
+//
+// Minimal tri-state poll for the approval-pending page.
+//
+// Anonymous but keyed by the signed approval-state blob — never a bare
+// client_id, so the endpoint cannot be used to enumerate registrations. Any
+// verification failure (bad signature, wrong purpose, expired “iat“,
+// malformed blob) is a 400 “invalid_grant“; the page reacts to a 400 by
+// re-running /authorize, which mints a fresh blob. The response carries ONLY
+// the tri-state — no names, redirect URIs, or metadata.
+//
+// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
+func (c *Client) ApprovalStatusEndpoint(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApprovalStatusEndpointRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -17897,6 +18128,96 @@ func NewRevokeOauthGrantRequest(server string, grantId string) (*http.Request, e
 	return req, nil
 }
 
+// NewApprovalDecisionEndpointRequest calls the generic ApprovalDecisionEndpoint builder with application/json body
+func NewApprovalDecisionEndpointRequest(server string, body ApprovalDecisionEndpointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApprovalDecisionEndpointRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewApprovalDecisionEndpointRequestWithBody constructs an http.Request for the ApprovalDecisionEndpoint method, with any body, and a specified content type
+func NewApprovalDecisionEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/approval/decision")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewApprovalStatusEndpointRequest constructs an http.Request for the ApprovalStatusEndpoint method
+func NewApprovalStatusEndpointRequest(server string, params *ApprovalStatusEndpointParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/approval/status")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "st", params.St, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAuthorizeOauthCallbackRequest constructs an http.Request for the AuthorizeOauthCallback method
 func NewAuthorizeOauthCallbackRequest(server string, params *AuthorizeOauthCallbackParams) (*http.Request, error) {
 	var err error
@@ -21964,8 +22285,12 @@ type ClientWithResponsesInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. No client_secret is ever issued here and no
+	// registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -21981,8 +22306,12 @@ type ClientWithResponsesInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. No client_secret is ever issued here and no
+	// registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -22007,6 +22336,58 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
 	RevokeOauthGrantWithResponse(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*RevokeOauthGrantHTTPResp, error)
+
+	// ApprovalDecisionEndpointWithBodyWithResponse Approve or deny a pending client inline (approval-pending page)
+	//
+	// Thin wrapper over the admin approval path for the approval-pending page.
+	//
+	// Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+	// / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+	// decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+	// same audit records, same D7 active/approval_status coupling; this endpoint
+	// only translates the signed state blob into the client row. CSRF posture
+	// matches the consent POST: no ambient credential is honored — the browser
+	// must explicitly present the SPA bearer token, which a cross-site form
+	// cannot do.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+	ApprovalDecisionEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApprovalDecisionEndpointHTTPResp, error)
+
+	// ApprovalDecisionEndpointWithResponse Approve or deny a pending client inline (approval-pending page)
+	//
+	// Thin wrapper over the admin approval path for the approval-pending page.
+	//
+	// Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+	// / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+	// decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+	// same audit records, same D7 active/approval_status coupling; this endpoint
+	// only translates the signed state blob into the client row. CSRF posture
+	// matches the consent POST: no ambient credential is honored — the browser
+	// must explicitly present the SPA bearer token, which a cross-site form
+	// cannot do.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+	ApprovalDecisionEndpointWithResponse(ctx context.Context, body ApprovalDecisionEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*ApprovalDecisionEndpointHTTPResp, error)
+
+	// ApprovalStatusEndpointWithResponse Poll client approval status (approval-pending page)
+	//
+	// Minimal tri-state poll for the approval-pending page.
+	//
+	// Anonymous but keyed by the signed approval-state blob — never a bare
+	// client_id, so the endpoint cannot be used to enumerate registrations. Any
+	// verification failure (bad signature, wrong purpose, expired ``iat``,
+	// malformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by
+	// re-running /authorize, which mints a fresh blob. The response carries ONLY
+	// the tri-state — no names, redirect URIs, or metadata.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
+	ApprovalStatusEndpointWithResponse(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*ApprovalStatusEndpointHTTPResp, error)
 
 	// AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
 	//
@@ -32385,6 +32766,144 @@ func (r RevokeOauthGrantHTTPResp) ContentType() string {
 	return ""
 }
 
+type ApprovalDecisionEndpointHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthApprovalStatusResponse
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetJSON200() *OAuthApprovalStatusResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ApprovalDecisionEndpointHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApprovalDecisionEndpointHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApprovalDecisionEndpointHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApprovalDecisionEndpointHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApprovalStatusEndpointHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthApprovalStatusResponse
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApprovalStatusEndpointHTTPResp) GetJSON200() *OAuthApprovalStatusResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ApprovalStatusEndpointHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApprovalStatusEndpointHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApprovalStatusEndpointHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApprovalStatusEndpointHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type AuthorizeOauthCallbackHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -39327,8 +39846,12 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. No client_secret is ever issued here and no
+// registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -39350,8 +39873,12 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ct
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. No client_secret is ever issued here and no
+// registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -39387,6 +39914,76 @@ func (c *ClientWithResponses) RevokeOauthGrantWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseRevokeOauthGrantHTTPResp(rsp)
+}
+
+// ApprovalDecisionEndpointWithBodyWithResponse Approve or deny a pending client inline (approval-pending page)
+//
+// Thin wrapper over the admin approval path for the approval-pending page.
+//
+// Authorization is byte-identical to “POST /admin/oauth-clients/{id}:approve“
+// / “:deny“ (“oauth-clients:write“, org:admin implies it) and the
+// decision itself is the SAME “OAuthClientService.approve“/“deny“ calls —
+// same audit records, same D7 active/approval_status coupling; this endpoint
+// only translates the signed state blob into the client row. CSRF posture
+// matches the consent POST: no ambient credential is honored — the browser
+// must explicitly present the SPA bearer token, which a cross-site form
+// cannot do.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+func (c *ClientWithResponses) ApprovalDecisionEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApprovalDecisionEndpointHTTPResp, error) {
+	rsp, err := c.ApprovalDecisionEndpointWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApprovalDecisionEndpointHTTPResp(rsp)
+}
+
+// ApprovalDecisionEndpointWithResponse Approve or deny a pending client inline (approval-pending page)
+//
+// Thin wrapper over the admin approval path for the approval-pending page.
+//
+// Authorization is byte-identical to “POST /admin/oauth-clients/{id}:approve“
+// / “:deny“ (“oauth-clients:write“, org:admin implies it) and the
+// decision itself is the SAME “OAuthClientService.approve“/“deny“ calls —
+// same audit records, same D7 active/approval_status coupling; this endpoint
+// only translates the signed state blob into the client row. CSRF posture
+// matches the consent POST: no ambient credential is honored — the browser
+// must explicitly present the SPA bearer token, which a cross-site form
+// cannot do.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+func (c *ClientWithResponses) ApprovalDecisionEndpointWithResponse(ctx context.Context, body ApprovalDecisionEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*ApprovalDecisionEndpointHTTPResp, error) {
+	rsp, err := c.ApprovalDecisionEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApprovalDecisionEndpointHTTPResp(rsp)
+}
+
+// ApprovalStatusEndpointWithResponse Poll client approval status (approval-pending page)
+//
+// Minimal tri-state poll for the approval-pending page.
+//
+// Anonymous but keyed by the signed approval-state blob — never a bare
+// client_id, so the endpoint cannot be used to enumerate registrations. Any
+// verification failure (bad signature, wrong purpose, expired “iat“,
+// malformed blob) is a 400 “invalid_grant“; the page reacts to a 400 by
+// re-running /authorize, which mints a fresh blob. The response carries ONLY
+// the tri-state — no names, redirect URIs, or metadata.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
+func (c *ClientWithResponses) ApprovalStatusEndpointWithResponse(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*ApprovalStatusEndpointHTTPResp, error) {
+	rsp, err := c.ApprovalStatusEndpoint(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApprovalStatusEndpointHTTPResp(rsp)
 }
 
 // AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
@@ -48517,6 +49114,120 @@ func ParseRevokeOauthGrantHTTPResp(rsp *http.Response) (*RevokeOauthGrantHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApprovalDecisionEndpointHTTPResp parses an HTTP response from a ApprovalDecisionEndpointWithResponse call
+func ParseApprovalDecisionEndpointHTTPResp(rsp *http.Response) (*ApprovalDecisionEndpointHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApprovalDecisionEndpointHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthApprovalStatusResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApprovalStatusEndpointHTTPResp parses an HTTP response from a ApprovalStatusEndpointWithResponse call
+func ParseApprovalStatusEndpointHTTPResp(rsp *http.Response) (*ApprovalStatusEndpointHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApprovalStatusEndpointHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthApprovalStatusResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

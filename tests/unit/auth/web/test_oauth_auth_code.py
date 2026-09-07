@@ -58,7 +58,7 @@ def test_platform_client_does_not_set_oauth_client_id(
     mock_authorize_svc = MagicMock()
     mock_authorize_svc.precheck_auth_code = AsyncMock(return_value=None)
     mock_authorize_svc.exchange_code = AsyncMock(
-        return_value=("at_platform", "rt_platform", "id_token_platform")
+        return_value=("at_platform", "rt_platform", "id_token_platform", ["openid"])
     )
     mock_authorize_cls.return_value = mock_authorize_svc
     mock_token_cls.return_value = MagicMock(access_ttl_seconds=3600)
@@ -100,7 +100,7 @@ def test_third_party_client_sets_oauth_client_id(
     mock_authorize_svc = MagicMock()
     mock_authorize_svc.precheck_auth_code = AsyncMock(return_value=None)
     mock_authorize_svc.exchange_code = AsyncMock(
-        return_value=("at_third_party", "rt_third_party", "id_token_third_party")
+        return_value=("at_third_party", "rt_third_party", "id_token_third_party", ["openid"])
     )
     mock_authorize_cls.return_value = mock_authorize_svc
     mock_token_cls.return_value = MagicMock(access_ttl_seconds=3600)
@@ -183,7 +183,7 @@ def test_public_client_exchanges_without_secret(
     mock_authorize_svc = MagicMock()
     mock_authorize_svc.precheck_auth_code = AsyncMock(return_value=None)
     mock_authorize_svc.exchange_code = AsyncMock(
-        return_value=("at_public", "rt_public", "id_token_public")
+        return_value=("at_public", "rt_public", "id_token_public", ["openid"])
     )
     mock_authorize_cls.return_value = mock_authorize_svc
     mock_token_cls.return_value = MagicMock(access_ttl_seconds=3600)
@@ -262,7 +262,7 @@ def test_refresh_public_client_passes_client_id_without_secret(
     mock_oauth_svc_cls.return_value = mock_oauth_svc
 
     mock_token_svc = MagicMock(access_ttl_seconds=3600)
-    mock_token_svc.refresh = AsyncMock(return_value=("at_new", "rt_new"))
+    mock_token_svc.refresh = AsyncMock(return_value=("at_new", "rt_new", ["apis:read"]))
     mock_token_cls.return_value = mock_token_svc
 
     resp = client.post(
@@ -293,7 +293,7 @@ def test_refresh_non_public_client_without_secret_stays_unverified(
     mock_oauth_svc_cls.return_value = mock_oauth_svc
 
     mock_token_svc = MagicMock(access_ttl_seconds=3600)
-    mock_token_svc.refresh = AsyncMock(return_value=("at_new", "rt_new"))
+    mock_token_svc.refresh = AsyncMock(return_value=("at_new", "rt_new", ["apis:read"]))
     mock_token_cls.return_value = mock_token_svc
 
     resp = client.post(

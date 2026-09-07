@@ -4,9 +4,11 @@ The pieces of the ``/authorize`` flow that more than one router needs —
 ``authorize.py`` (the flow itself: IdP redirect, callback, consent) and
 ``local_login.py`` (the local-account form that rejoins that flow, #1276):
 
-- the per-client+IP rate-limit dependency for unauthenticated flow endpoints,
+- the per-client+IP rate-limit dependency for unauthenticated flow endpoints
+  (plus the approval-status poll's own per-IP bucket),
 - the platform/registered client gate (D7) helpers,
-- the HMAC-signed, purpose-discriminated, TTL'd internal-state tokens,
+- the HMAC-signed, purpose-discriminated, TTL'd internal-state tokens
+  (purposes: ``state``, ``approval``),
 - the shared-state backend accessor and the **single** consent-handle writer
   (one place owns the handle's shape — the IdP callback and the local-login
   submit both write through it),
@@ -88,6 +90,43 @@ async def check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) ->
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
 
+def _get_approval_status_limiter(request: Request, ctx: Context) -> RateLimiter:
+    limiter: RateLimiter | None = getattr(request.app.state, "_approval_status_limiter", None)
+    if limiter is not None:
+        return limiter
+    cfg = ctx.config.auth.oauth_rate_limit
+    backend = get_auth_backend(request)
+    # Own bucket namespace (mirrors the DCR door): the approval-pending page
+    # polls this endpoint for minutes at a time, and a bare-IP key in the
+    # shared store would otherwise collide with /authorize's fallback bucket —
+    # steady polling must not drain the /authorize quota or vice versa.
+    limiter = RateLimiter(
+        backend,
+        default_rpm=cfg.approval_status_rpm,
+        burst=cfg.approval_status_burst,
+        namespace="oauth-approval-status",
+    )
+    request.app.state._approval_status_limiter = limiter
+    return limiter
+
+
+async def check_approval_status_rate_limit(
+    request: Request, ctx: Context = Depends(get_ctx)
+) -> None:
+    """Per-IP rate limiter for the anonymous approval-status poll.
+
+    Keyed by bare IP: the only other request input is the signed state blob,
+    and a self-chosen key component would let one host sidestep the bucket by
+    re-minting blobs (every /authorize render hands out a fresh one).
+    """
+    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    ip = client_ip(request, trusted)
+    limiter = _get_approval_status_limiter(request, ctx)
+    outcome = await limiter.acquire(ip)
+    if not outcome.allowed:
+        raise RateLimitExceededError(retry_after=outcome.retry_after_s)
+
+
 # --- client gate (D7) ----------------------------------------------------------
 
 
@@ -150,6 +189,16 @@ def state_signing_key(ctx: Context) -> str:
     return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "state")
 
 
+def approval_state_key(ctx: Context) -> str:
+    """Signing key for the approval-state blob.
+
+    Same signer/mechanism as the IdP-leg ``state`` but a distinct derived key
+    AND a distinct ``_purpose`` discriminator, so an approval blob can never be
+    replayed into /oauth/callback (or vice versa).
+    """
+    return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "approval")
+
+
 def sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:
     """Encode and HMAC-sign a payload with a purpose discriminator."""
     payload["_purpose"] = purpose
@@ -173,10 +222,14 @@ def verify_payload(
     if payload.get("_purpose") != purpose:
         raise InvalidGrantError(f"token purpose mismatch: expected {purpose}")
     iat = payload.get("iat")
-    if iat is not None:
-        age = time.time() - float(iat)
-        if age > max_age or age < 0:
-            raise InvalidGrantError(f"{purpose} token expired")
+    if iat is None:
+        # Every mint site stamps iat; a signed payload without one has no
+        # enforceable lifetime, so absence is fatal — the TTL check must not
+        # be skippable (matters most for the anonymous approval-status poll).
+        raise InvalidGrantError(f"{purpose} token missing iat")
+    age = time.time() - float(iat)
+    if age > max_age or age < 0:
+        raise InvalidGrantError(f"{purpose} token expired")
     return payload
 
 

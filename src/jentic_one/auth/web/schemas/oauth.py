@@ -28,6 +28,19 @@ class TokenResponse(BaseModel):
     id_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     token_type: str = "bearer"
     expires_in: int
+    scope: str | None = Field(
+        default=None,
+        description="Space-delimited effective scopes of the minted access token "
+        "(RFC 6749 §3.3), computed the way the platform's resolvers enforce them "
+        "(live scope grants ∩ client ceiling ∩ consent-grant scopes for agent and "
+        "service-account tokens), so the granted set may be narrower than requested "
+        "and clients must not assume they got what they asked for. Present on every "
+        "response whose token carries at least one scope; OMITTED (never the "
+        "ABNF-invalid empty string) only when the effective set is empty — reachable "
+        "solely on legs where the client requested no scopes at the token endpoint "
+        "(the token request carries no scope parameter, and consent fails closed on "
+        "an empty intersection).",
+    )
 
 
 class MintRequest(BaseModel):
