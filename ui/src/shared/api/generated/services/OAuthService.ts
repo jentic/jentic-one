@@ -7,6 +7,8 @@ import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
+import type { OAuthApprovalDecisionRequest } from '../models/OAuthApprovalDecisionRequest';
+import type { OAuthApprovalStatusResponse } from '../models/OAuthApprovalStatusResponse';
 import type { OAuthGrantAdminListResponse } from '../models/OAuthGrantAdminListResponse';
 import type { RevokeRequest } from '../models/RevokeRequest';
 import type { TokenResponse } from '../models/TokenResponse';
@@ -176,6 +178,76 @@ export class OAuthService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Approve or deny a pending client inline (approval-pending page)
+     * Thin wrapper over the admin approval path for the approval-pending page.
+     *
+     * Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+     * / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+     * decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+     * same audit records, same D7 active/approval_status coupling; this endpoint
+     * only translates the signed state blob into the client row. CSRF posture
+     * matches the consent POST: no ambient credential is honored — the browser
+     * must explicitly present the SPA bearer token, which a cross-site form
+     * cannot do.
+     * @returns OAuthApprovalStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static approvalDecisionEndpoint({
+        requestBody,
+    }: {
+        requestBody: OAuthApprovalDecisionRequest,
+    }): CancelablePromise<OAuthApprovalStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/approval/decision',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Malformed, tampered, or expired approval-state blob.`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Poll client approval status (approval-pending page)
+     * Minimal tri-state poll for the approval-pending page.
+     *
+     * Anonymous but keyed by the signed approval-state blob — never a bare
+     * client_id, so the endpoint cannot be used to enumerate registrations. Any
+     * verification failure (bad signature, wrong purpose, expired ``iat``,
+     * malformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by
+     * re-running /authorize, which mints a fresh blob. The response carries ONLY
+     * the tri-state — no names, redirect URIs, or metadata.
+     * @returns OAuthApprovalStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static approvalStatusEndpoint({
+        st,
+    }: {
+        /**
+         * Signed approval-state blob minted by /authorize
+         */
+        st: string,
+    }): CancelablePromise<OAuthApprovalStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/oauth/approval/status',
+            query: {
+                'st': st,
+            },
+            errors: {
+                400: `Malformed, tampered, or expired approval-state blob.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

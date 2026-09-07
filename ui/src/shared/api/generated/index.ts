@@ -120,6 +120,8 @@ export { NoteType } from './models/NoteType';
 export type { NoteUpdateRequest } from './models/NoteUpdateRequest';
 export type { OAuth2CreateRequest } from './models/OAuth2CreateRequest';
 export type { OAuth2UpdateRequest } from './models/OAuth2UpdateRequest';
+export { OAuthApprovalDecisionRequest } from './models/OAuthApprovalDecisionRequest';
+export { OAuthApprovalStatusResponse } from './models/OAuthApprovalStatusResponse';
 export { OAuthClientCreateRequest } from './models/OAuthClientCreateRequest';
 export type { OAuthClientCreateResponse } from './models/OAuthClientCreateResponse';
 export type { OAuthClientDenyRequest } from './models/OAuthClientDenyRequest';
