@@ -291,9 +291,7 @@ def test_page_deny_redirect_only_when_redirect_uri_registered(client: TestClient
     unregistered = _client_view(
         approval_status="pending", active=False, redirect_uris=["https://other.example.com/cb"]
     )
-    with patch.object(
-        flow, "OAuthClientService", return_value=_with_client_view(unregistered)
-    ):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(unregistered)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
     assert _page_config(resp.text)["deny_redirect"] is None
 
