@@ -52,6 +52,7 @@ export type { BearerTokenCreateRequest } from './models/BearerTokenCreateRequest
 export type { BearerTokenUpdateRequest } from './models/BearerTokenUpdateRequest';
 export type { BindingWarningSchema } from './models/BindingWarningSchema';
 export type { Body_consentSubmit } from './models/Body_consentSubmit';
+export type { Body_loginSubmit } from './models/Body_loginSubmit';
 export type { CatalogEntryLinksResponse } from './models/CatalogEntryLinksResponse';
 export type { CatalogEntryResponse } from './models/CatalogEntryResponse';
 export type { CatalogListResponse } from './models/CatalogListResponse';

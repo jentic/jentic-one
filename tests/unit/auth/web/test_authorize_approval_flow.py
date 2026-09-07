@@ -22,6 +22,7 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.errors import AuthServiceError
+from jentic_one.auth.web import flow
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import authorize
 from jentic_one.shared.auth.identity import Identity
@@ -127,8 +128,8 @@ def _mint_state(**overrides: str | None) -> str:
         "iat": str(int(time.time())),
     }
     payload.update(overrides)
-    key = authorize._derive_key(_SECRET, "approval")
-    return authorize._sign_payload(payload, key, purpose="approval")
+    key = flow.derive_key(_SECRET, "approval")
+    return flow.sign_payload(payload, key, purpose="approval")
 
 
 # ---------- the approval-pending page ----------
@@ -136,7 +137,7 @@ def _mint_state(**overrides: str | None) -> str:
 
 def test_pending_client_page_has_poll_and_resume_wiring(client: TestClient) -> None:
     view = _client_view(approval_status="pending", active=False)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     assert resp.status_code == 200
@@ -154,9 +155,9 @@ def test_pending_client_page_has_poll_and_resume_wiring(client: TestClient) -> N
     assert cfg["decision_url"] == "/oauth/approval/decision"
     assert cfg["token_key"] == "jentic-one.access_token"
     # The blob verifies under the approval purpose and binds the client.
-    params = authorize._verify_payload(
+    params = flow.verify_payload(
         state_blob,
-        authorize._derive_key(_SECRET, "approval"),
+        flow.derive_key(_SECRET, "approval"),
         purpose="approval",
         max_age=authorize.APPROVAL_STATE_MAX_AGE_SECONDS,
     )
@@ -166,7 +167,7 @@ def test_pending_client_page_has_poll_and_resume_wiring(client: TestClient) -> N
 
 def test_page_resume_url_reruns_original_authorize_request(client: TestClient) -> None:
     view = _client_view(approval_status="pending", active=False)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     cfg = _page_config(resp.text)
@@ -182,13 +183,13 @@ def test_resume_after_approval_proceeds_to_idp_redirect(client: TestClient) -> N
     """The resume leg IS a plain /authorize re-run: once approved, it 302s to
     the IdP like any approved client."""
     pending = _client_view(approval_status="pending", active=False)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(pending)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(pending)):
         page = client.get("/authorize", params=_AUTHORIZE_PARAMS)
     resume_url = _page_config(page.text)["resume_url"]
     assert isinstance(resume_url, str)
 
     approved = _client_view(approval_status="approved", active=True)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(approved)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(approved)):
         resp = client.get(resume_url)
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("https://idp.example.com/")
@@ -199,7 +200,7 @@ def test_page_admin_panel_hidden_and_anon_panel_present(client: TestClient) -> N
     reveal them after /me confirms oauth-clients:write. The anonymous panel
     (ask-your-admin + copyable deep link) is the visible default."""
     view = _client_view(approval_status="pending", active=False)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     assert '<div class="panel" id="admin-panel" hidden>' in resp.text
@@ -231,7 +232,7 @@ def test_admin_panel_shows_row_derived_client_details(client: TestClient) -> Non
         active=False,
         redirect_uris=["https://app.example.com/cb", "http://127.0.0.1:33333/cb"],
     )
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     details = _admin_details_block(resp.text)
@@ -245,7 +246,7 @@ def test_admin_panel_shows_row_derived_client_details(client: TestClient) -> Non
 
 def test_admin_panel_omits_software_id_row_when_absent(client: TestClient) -> None:
     view = _client_view(approval_status="pending", active=False, software_id=None)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
     assert "Software ID" not in _admin_details_block(resp.text)
 
@@ -258,7 +259,7 @@ def test_admin_panel_details_come_from_row_not_request(client: TestClient) -> No
         active=False,
         redirect_uris=["https://registered.example.com/cb"],
     )
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
 
     details = _admin_details_block(resp.text)
@@ -271,7 +272,7 @@ def test_admin_panel_row_details_are_escaped(client: TestClient) -> None:
     view = _client_view(
         approval_status="pending", active=False, software_id="<img src=x onerror=alert(1)>"
     )
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
     assert "<img src=x" not in resp.text
     assert "&lt;img src=x" in resp.text
@@ -279,7 +280,7 @@ def test_admin_panel_row_details_are_escaped(client: TestClient) -> None:
 
 def test_page_deny_redirect_only_when_redirect_uri_registered(client: TestClient) -> None:
     registered = _client_view(approval_status="pending", active=False)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(registered)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(registered)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
     deny_redirect = _page_config(resp.text)["deny_redirect"]
     assert isinstance(deny_redirect, str)
@@ -290,16 +291,14 @@ def test_page_deny_redirect_only_when_redirect_uri_registered(client: TestClient
     unregistered = _client_view(
         approval_status="pending", active=False, redirect_uris=["https://other.example.com/cb"]
     )
-    with patch.object(
-        authorize, "OAuthClientService", return_value=_with_client_view(unregistered)
-    ):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(unregistered)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
     assert _page_config(resp.text)["deny_redirect"] is None
 
 
 def test_page_client_name_escaped_and_config_script_safe(client: TestClient) -> None:
     view = _client_view(approval_status="pending", active=False, name="<script>alert(1)</script>")
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
     assert resp.status_code == 200
     assert "<script>alert(1)</script>" not in resp.text
@@ -326,7 +325,7 @@ def test_status_endpoint_returns_only_tri_state(client: TestClient) -> None:
         (None, "pending"),
     ]
     for view, expected in cases:
-        with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+        with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
             resp = client.get("/oauth/approval/status", params={"st": _mint_state()})
         assert resp.status_code == 200
         # The tri-state is the ENTIRE body — no names, URIs, or metadata.
@@ -351,9 +350,9 @@ def test_status_endpoint_rejects_expired_state(client: TestClient) -> None:
 def test_status_endpoint_rejects_wrong_purpose_blob(client: TestClient) -> None:
     """A callback-leg 'state' blob must not open the status endpoint (and vice
     versa): distinct derived key AND purpose discriminator."""
-    callback_state = authorize._sign_payload(
+    callback_state = flow.sign_payload(
         {"client_id": "oc_test", "iat": str(int(time.time()))},
-        authorize._derive_key(_SECRET, "state"),
+        flow.derive_key(_SECRET, "state"),
         purpose="state",
     )
     resp = client.get("/oauth/approval/status", params={"st": callback_state})
@@ -394,7 +393,7 @@ def test_status_endpoint_rate_limited_in_own_bucket(app: FastAPI) -> None:
     client = TestClient(app, follow_redirects=False)
 
     view = _client_view(approval_status="pending", active=False)
-    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+    with patch.object(flow, "OAuthClientService", return_value=_with_client_view(view)):
         st = _mint_state()
         statuses = [
             client.get("/oauth/approval/status", params={"st": st}).status_code for _ in range(3)
