@@ -30,6 +30,29 @@ break-glass tool, not a supported rollback path: restore the snapshot
 instead, or roll forward to a fixed release. The version
 number's exact promises while in beta: [VERSIONING.md](../../VERSIONING.md).
 
+## If a migration run fails mid-flight
+
+The run is **not atomic**. It walks the three databases sequentially (a
+failure on one leaves the earlier ones already at head) and applies each
+revision in its own transaction (a failure at revision N leaves 1…N−1
+committed). Two revisions additionally commit mid-revision to build indexes
+`CONCURRENTLY` — a run killed during one of those can leave an `INVALID`
+index and an unstamped revision. This is also why the run's *time budget*
+matters: systemd's default `TimeoutStartSec` (90 s) and Helm's default
+`--timeout` (5 m) both `SIGTERM` an overrunning run — both install guides
+now set explicit, generous values; keep them.
+
+Diagnose before touching anything:
+`python -m jentic_one.migrations.run --check` prints one
+`STATUS <db> <state> current=<rev> head=<rev>` line **per database** ahead
+of the `OVERALL` verdict — that per-database line is the post-failure entry
+point, telling you which database stopped where. Recovery is the
+[snapshot restore](backup-restore.md#postgresql-production-installs) into
+emptied schemas, then re-run the migration with the cause fixed. Do not
+re-run blind: a run that died inside a `CONCURRENTLY` revision can fail its
+retry with `column already exists`, which is the signature of exactly this
+state — restore, don't patch.
+
 ## Where the commands live, per install
 
 | Install | Upgrade steps |

@@ -50,8 +50,13 @@ from [`config/production.yaml.example`](../../config/production.yaml.example);
 this is the worked shape. Secrets come from the environment, never this file —
 with one exception: the encryption keyset is list-shaped, so it must live in
 the file **unless** you inject it via the indexed env vars below. A keyset in
-the file makes the whole file a secret — protect it accordingly (`chmod 600`,
-owned by the operating user):
+the file makes the whole file a secret — but do **not** `chmod 600` it: the
+file is bind-mounted into a container that runs as a non-root user, and bind
+mounts preserve host numeric ownership, so a root-owned `600` file is
+unreadable in-container and every start dies on a `PermissionError`. Protect
+it with the directory instead — `chmod 644` on the file, `chmod 711` on
+root-owned `/etc/jentic` — or keep the file secret-free by using the indexed
+env vars:
 
 ```yaml
 # /etc/jentic/production.yaml — non-secret shape; secrets via env (JENTIC__…).

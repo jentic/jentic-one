@@ -28,7 +28,7 @@ are not consistent):
 ```bash
 docker stop jentic-app jentic-broker
 docker run --rm -v jentic-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/jentic-data-$(date +%F).tgz -C /data .
+  tar czf /backup/jentic-data-$(date -u +%Y%m%dT%H%M%SZ).tgz -C /data .
 docker start jentic-app jentic-broker
 ```
 
@@ -38,7 +38,7 @@ the backup was taken with:
 ```bash
 docker volume create jentic-data
 docker run --rm -v jentic-data:/data -v "$PWD":/backup alpine \
-  tar xzf /backup/jentic-data-YYYY-MM-DD.tgz -C /data
+  tar xzf /backup/jentic-data-YYYYMMDDTHHMMSSZ.tgz -C /data
 ```
 
 CLI-managed installs (`jenticctl install`): the volume is
@@ -53,14 +53,39 @@ any Postgres database, live:
 
 ```bash
 pg_dump -h db.prod.internal -U postgres -d jentic \
-  -n registry -n control -n admin -Fc -f jentic-$(date +%F).dump
+  -n registry -n control -n admin -Fc -f jentic-$(date -u +%Y%m%dT%H%M%SZ).dump
 ```
 
-Restore with `pg_restore` into a prepared instance (roles/schemas created
-first — the SQL is in the [Docker guide, step 3](../installation/docker.md#3-prepare-the-database)),
-then run migrations before starting the services if the target release is
-newer than the dump. Managed Postgres (RDS, Cloud SQL) snapshot schedules
-count as the database half — you still need the keyset half.
+Restoring is where the recipe matters. `pg_restore`'s default behaviour on
+error is to **continue**: against schemas that already hold objects — the
+rollback case, where the instance was just migrated — every `CREATE` errors
+and the data `COPY`s in anyway, leaving duplicated rows and an
+`alembic_version` of unknown vintage. A restore must be onto empty schemas,
+with the services stopped:
+
+```bash
+# 1. Stop everything that writes (docker stop jentic-app jentic-broker,
+#    scale the deployments to 0, or systemctl stop jentic-app jentic-broker).
+
+# 2. Empty the three schemas, then recreate them with the same grants as
+#    the provisioning SQL (Docker guide, step 3):
+psql -h db.prod.internal -U postgres -d jentic \
+  -c 'DROP SCHEMA registry CASCADE' \
+  -c 'DROP SCHEMA control  CASCADE' \
+  -c 'DROP SCHEMA admin    CASCADE'
+# ...then re-run the CREATE SCHEMA / GRANT lines from step 3.
+
+# 3. Restore, failing loudly on the first error instead of continuing:
+pg_restore -h db.prod.internal -U postgres -d jentic \
+  --exit-on-error jentic-YYYYMMDDTHHMMSSZ.dump
+```
+
+Then run migrations before starting the services if the target release is
+newer than the dump, and restart. Note what this is and is not: restoring a
+pre-upgrade dump rewinds the *data* to the moment the dump was taken —
+writes since then are gone. It is the supported way back from a bad
+migration, not a time machine. Managed Postgres (RDS, Cloud SQL) snapshot
+schedules count as the database half — you still need the keyset half.
 
 ## When to take one
 
