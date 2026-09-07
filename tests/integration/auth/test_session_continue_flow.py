@@ -20,7 +20,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from jentic_one.admin.repos import OAuthClientRepository
+from jentic_one.admin.repos import OAuthClientRepository, UserRepository
 from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.app import make_superset_verifier
@@ -133,6 +133,50 @@ async def _exchange_session(client: AsyncClient, token: str, ls: str) -> str:
     redirect_url = str(resp.json()["redirect_url"])
     assert redirect_url.startswith("/authorize?"), redirect_url
     return redirect_url
+
+
+async def test_exchange_fenced_by_live_password_rotation_flag(
+    local_login_ctx: Context, clean_grants: None, clean_user_secrets: None
+) -> None:
+    """F1 (#1300 review): an admin-forced password reset fences the exchange
+    IMMEDIATELY via a live row read — a SPA token minted before the reset
+    (whose baked must_change_password claim is stale-false) cannot mint a
+    continuation; clearing the flag un-fences the same token."""
+    ctx = local_login_ctx
+    user_id, email = await seed_password_user(ctx, "usr_session_fence")
+
+    app = _make_app(ctx)
+    async with _web_client(app) as client:
+        # Token minted BEFORE the reset — carries must_change_password=false.
+        token = await _platform_login(ctx, email)
+        ls, _ = await _walk_to_login_form(
+            client,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        )
+
+        # Admin forces a rotation: only the ROW changes, the token does not.
+        async with ctx.admin_db.session() as session:
+            await UserRepository.update(session, user_id, must_change_password=True)
+            await session.commit()
+
+        fenced = await client.post(
+            "/oauth/session/continue",
+            json={"state": ls},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert fenced.status_code == 400, fenced.text
+        assert "session continuation rejected" in fenced.text
+
+        # Flag cleared → the SAME (unchanged) token exchanges fine: the fence
+        # is the row, not the claim.
+        async with ctx.admin_db.session() as session:
+            await UserRepository.update(session, user_id, must_change_password=False)
+            await session.commit()
+        resume_url = await _exchange_session(client, token, ls)
+        resumed = await client.get(resume_url)
+        assert resumed.status_code == 302
+        assert resumed.headers["location"].startswith(f"{LOCAL_LOGIN_PLATFORM_REDIRECT}?")
 
 
 async def test_zero_login_pass_third_party_to_token(

@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.flow import (
@@ -44,7 +45,7 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.state.backend import MemoryStateBackend
 from jentic_one.shared.web.deps import resolve_identity
 
-JWT_SECRET = "unit-test-jwt-secret"
+JWT_SECRET = "unit-test-jwt-secret"  # pragma: allowlist secret
 PLATFORM_CLIENT_ID = "platform-app"
 PLATFORM_REDIRECT = "https://app.example.com/cb"
 THIRD_PARTY_CLIENT_ID = "oc_third_party"
@@ -114,6 +115,7 @@ def _session_blob(
     redirect_uri: str = PLATFORM_REDIRECT,
     code_challenge: str = "challenge-abc",
     scope: str = "openid apis:read",
+    nonce: str | None = None,
     original_state: str | None = "client-state-1",
     user_id: str = USER_ID,
     iat_offset: int = 0,
@@ -125,21 +127,31 @@ def _session_blob(
         "redirect_uri": redirect_uri,
         "code_challenge": code_challenge,
         "scope": scope,
-        "nonce": None,
+        "nonce": nonce,
         "original_state": original_state,
         "user_id": user_id,
-        "user_email": USER_EMAIL,
         "iat": str(int(time.time()) + iat_offset),
     }
     return sign_payload(payload, key or session_signing_key(ctx), purpose=purpose)
 
 
-def _user_view(*, active: bool = True) -> MagicMock:
+def _user_view(*, active: bool = True, must_change_password: bool = False) -> MagicMock:
     user = MagicMock()
     user.id = USER_ID
     user.email = USER_EMAIL
     user.active = active
+    user.must_change_password = must_change_password
     return user
+
+
+def _patch_redeem_user(user: MagicMock | Exception | None = None) -> Any:
+    """Patch the redemption arm's live user-row read in ``authorize``."""
+    svc_cls = MagicMock()
+    if isinstance(user, Exception):
+        svc_cls.return_value.get_by_id = AsyncMock(side_effect=user)
+    else:
+        svc_cls.return_value.get_by_id = AsyncMock(return_value=user or _user_view())
+    return patch.object(authorize, "UserService", svc_cls)
 
 
 def _third_party_view(**overrides: Any) -> MagicMock:
@@ -189,7 +201,10 @@ def test_exchange_mints_session_continuation(ctx: MagicMock) -> None:
     sc = query["sc"][0]
     payload = verify_payload(sc, session_signing_key(ctx), purpose="session", max_age=60)
     assert payload["user_id"] == USER_ID
-    assert payload["user_email"] == USER_EMAIL
+    # Only the opaque user id is pinned — the blob rides a GET query param,
+    # so it must carry no PII (F2 on the #1300 review).
+    assert "user_email" not in payload
+    assert USER_EMAIL not in redirect_url
     # Pinned to the flow, not just the user.
     assert payload["code_challenge"] == "challenge-abc"
     assert resp.headers["Cache-Control"] == "no-store"
@@ -311,6 +326,36 @@ def test_exchange_rejects_inactive_user(ctx: MagicMock) -> None:
     assert "session continuation rejected" in resp.text
 
 
+def test_exchange_rejects_password_fenced_user(ctx: MagicMock) -> None:
+    """F1 (#1300 review): the rotation fence is a LIVE row read. A SPA token
+    minted before an admin-forced reset passes the (claims-based) auth
+    dependency, but the row's ``must_change_password`` must still 400 the
+    exchange — same generic body as every other rejection."""
+    app = _make_app(ctx, identity=_fake_identity())
+    client = TestClient(app)
+    with patch.object(local_login, "UserService") as svc_cls:
+        svc_cls.return_value.get_by_id = AsyncMock(
+            return_value=_user_view(must_change_password=True)
+        )
+        resp = _continue_call(client, _login_state(ctx))
+    assert resp.status_code == 400
+    assert "session continuation rejected" in resp.text
+
+
+def test_exchange_works_again_once_fence_cleared(ctx: MagicMock) -> None:
+    """Clearing the rotation flag un-fences the SAME token immediately (the
+    fence is the row, not the claim)."""
+    app = _make_app(ctx, identity=_fake_identity())
+    client = TestClient(app)
+    with patch.object(local_login, "UserService") as svc_cls:
+        svc_cls.return_value.get_by_id = AsyncMock(
+            return_value=_user_view(must_change_password=True)
+        )
+        assert _continue_call(client, _login_state(ctx)).status_code == 400
+        svc_cls.return_value.get_by_id = AsyncMock(return_value=_user_view())
+        assert _continue_call(client, _login_state(ctx)).status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # GET /authorize — the sc resume arm.
 
@@ -350,7 +395,8 @@ def test_resume_platform_client_issues_code_directly(ctx: MagicMock) -> None:
     PINNED user, 302 straight back to the client."""
     app, svc = _authorize_app(ctx)
     client = TestClient(app)
-    resp = _authorize_call(client, sc=_session_blob(ctx))
+    with _patch_redeem_user():
+        resp = _authorize_call(client, sc=_session_blob(ctx))
     assert resp.status_code == 302
     location = resp.headers["location"]
     assert location.startswith(f"{PLATFORM_REDIRECT}?")
@@ -362,12 +408,13 @@ def test_resume_platform_client_issues_code_directly(ctx: MagicMock) -> None:
 
 def test_resume_third_party_lands_on_consent_with_pinned_identity(ctx: MagicMock) -> None:
     """Valid sc + registered client → the SAME consent handle shape the local
-    login writes (local_user_id + user_email), then 302 to /oauth/consent."""
+    login writes (local_user_id + user_email resolved from the ROW at
+    redemption, never from the blob), then 302 to /oauth/consent."""
     app, _svc = _authorize_app(ctx)
     client = TestClient(app)
     sc = _session_blob(ctx, client_id=THIRD_PARTY_CLIENT_ID, redirect_uri=THIRD_PARTY_REDIRECT)
     lookup = AsyncMock(return_value=_third_party_view())
-    with patch.object(authorize, "get_cached_oauth_client", lookup):
+    with patch.object(authorize, "get_cached_oauth_client", lookup), _patch_redeem_user():
         resp = _authorize_call(
             client, sc=sc, client_id=THIRD_PARTY_CLIENT_ID, redirect_uri=THIRD_PARTY_REDIRECT
         )
@@ -389,10 +436,11 @@ def test_resume_sc_is_single_use(ctx: MagicMock) -> None:
     app, svc = _authorize_app(ctx)
     client = TestClient(app)
     sc = _session_blob(ctx)
-    first = _authorize_call(client, sc=sc)
-    assert first.status_code == 302
-    assert first.headers["location"].startswith(f"{PLATFORM_REDIRECT}?")
-    replay = _authorize_call(client, sc=sc)
+    with _patch_redeem_user():
+        first = _authorize_call(client, sc=sc)
+        assert first.status_code == 302
+        assert first.headers["location"].startswith(f"{PLATFORM_REDIRECT}?")
+        replay = _authorize_call(client, sc=sc)
     assert replay.status_code == 302
     assert replay.headers["location"].startswith("/login?ls=")
     svc.issue_authorization_code.assert_awaited_once()
@@ -405,9 +453,14 @@ def test_resume_sc_is_single_use(ctx: MagicMock) -> None:
         {"iat_offset": -61},  # expired (60 s TTL)
         {"iat_offset": 120},  # future iat
         {"user_id": ""},  # no pinned user
-        {"code_challenge": "other-challenge"},  # spliced into another flow
-        {"scope": "openid agents:write"},  # scope mismatch
-        {"original_state": "other-state"},  # client-state mismatch
+        # Per-field splice: each of the six bound fields individually breaks
+        # redemption when it differs from the current request (F4).
+        {"client_id": "other-client"},
+        {"redirect_uri": "https://evil.example.com/cb"},
+        {"code_challenge": "other-challenge"},
+        {"scope": "openid agents:write"},
+        {"nonce": "unexpected-nonce"},
+        {"original_state": "other-state"},
     ],
 )
 def test_resume_bad_sc_falls_through_to_login(ctx: MagicMock, blob_kwargs: dict[str, Any]) -> None:
@@ -416,6 +469,27 @@ def test_resume_bad_sc_falls_through_to_login(ctx: MagicMock, blob_kwargs: dict[
     app, svc = _authorize_app(ctx)
     client = TestClient(app)
     resp = _authorize_call(client, sc=_session_blob(ctx, **blob_kwargs))
+    assert resp.status_code == 302
+    assert resp.headers["location"].startswith("/login?ls=")
+    svc.issue_authorization_code.assert_not_awaited()
+
+
+@pytest.mark.parametrize("row_outcome", ["inactive", "must_change_password", "not_found"])
+def test_resume_recheck_user_row_at_redemption(ctx: MagicMock, row_outcome: str) -> None:
+    """F2 (#1300 review): redemption re-reads the user row LIVE — an account
+    deactivated, password-fenced, or deleted inside the blob's 60 s window
+    falls through to the login form instead of redeeming."""
+    app, svc = _authorize_app(ctx)
+    client = TestClient(app)
+    user: MagicMock | Exception
+    if row_outcome == "inactive":
+        user = _user_view(active=False)
+    elif row_outcome == "must_change_password":
+        user = _user_view(must_change_password=True)
+    else:
+        user = UserNotFoundError("gone")
+    with _patch_redeem_user(user):
+        resp = _authorize_call(client, sc=_session_blob(ctx))
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("/login?ls=")
     svc.issue_authorization_code.assert_not_awaited()
@@ -494,6 +568,26 @@ def test_session_purpose_rejected_at_every_other_endpoint(ctx: MagicMock) -> Non
     resp = _continue_call(client, session_blob)
     assert resp.status_code == 400
     assert "session continuation rejected" in resp.text
+
+
+def test_session_purpose_rejected_at_approval_decision(ctx: MagicMock) -> None:
+    """F4 (#1300 review): the remaining matrix cell — a session blob never
+    drives the inline approval decision, even for a caller holding the
+    oauth-clients:write permission."""
+    admin = Identity(
+        sub="usr_admin",
+        email="admin@test.local",
+        actor_type=ActorType.USER,
+        permissions=["oauth-clients:write"],
+    )
+    app = _make_app(ctx, identity=admin)
+    client = TestClient(app)
+    resp = client.post(
+        "/oauth/approval/decision",
+        json={"state": _session_blob(ctx), "action": "approve"},
+        headers={"Authorization": "Bearer spa-token"},
+    )
+    assert resp.status_code == 400
 
 
 def test_other_purposes_rejected_at_session_verifiers(ctx: MagicMock) -> None:
