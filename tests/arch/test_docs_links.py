@@ -11,10 +11,11 @@ Two failure modes rot a docs tree that nothing else catches:
   gate walks the relative-link graph from ``docs/README.md`` and fails on any
   ``docs/**/*.md`` the traversal never reaches.
 
-Both gates guard *referential* facts only — link targets, never prose. Anchors
-(``#fragment``) are stripped, not validated: anchor checking needs a heading
-parser and the cheap file-existence check catches the common breakage (moves
-and deletions).
+Both gates guard *referential* facts only — link targets, never prose. A
+third gate validates anchors: every ``#fragment`` on a relative markdown
+link (and every same-file ``(#…)`` link) must name a real heading in the
+target file, using GitHub's slug rules, so a heading rename fails CI instead
+of silently rotting every table-of-contents and cross-file section link.
 """
 
 from __future__ import annotations
@@ -53,6 +54,24 @@ _SKILL_MIRROR_DIRS = frozenset(
 #: (``#…``) and root-absolute (``/app`` — server routes, not files) targets
 #: are excluded, and a trailing ``#fragment`` is stripped, not validated.
 _MD_LINK_RE = re.compile(r"\]\((?!https?://|#|mailto:|/)([\w./-]+?)(?:#[^)]*)?\)")
+
+#: The same relative targets, but only when they carry a ``#fragment`` —
+#: captured separately so the fragment can be validated against the target
+#: file's headings.
+_MD_LINK_WITH_FRAGMENT_RE = re.compile(r"\]\((?!https?://|#|mailto:|/)([\w./-]+?)#([^)]+)\)")
+
+#: Same-file anchor links, e.g. ``[contract](#the-contract)``.
+_SAME_FILE_ANCHOR_RE = re.compile(r"\]\(#([^)]+)\)")
+
+_HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
+
+#: Inline links inside a heading slug from their rendered text, not the URL.
+_INLINE_LINK_TEXT_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+#: GitHub's slugger drops everything except word characters (letters, digits,
+#: underscore), whitespace, and hyphens, then maps each whitespace char to a
+#: hyphen.
+_NON_SLUG_CHARS_RE = re.compile(r"[^\w\s-]")
 
 
 def _tracked_markdown_files() -> list[Path]:
@@ -129,6 +148,56 @@ def _resolve(doc: Path, target: str) -> Path:
     return (doc.parent / target).resolve()
 
 
+def _heading_slugs(doc: Path) -> frozenset[str]:
+    """GitHub-style anchor slugs for every markdown heading in *doc*.
+
+    Mirrors github-slugger: lowercase the rendered heading text, drop
+    everything except word characters / whitespace / hyphens, map each
+    whitespace character to a hyphen, and suffix duplicates ``-1``, ``-2``, …
+    """
+    counts: dict[str, int] = {}
+    slugs: set[str] = set()
+    in_fence = False
+    for line in doc.read_text(encoding="utf-8").splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        match = _HEADING_RE.match(line)
+        if not match:
+            continue
+        text = _INLINE_LINK_TEXT_RE.sub(r"\1", match.group(1))
+        slug = _NON_SLUG_CHARS_RE.sub("", text.lower())
+        slug = re.sub(r"\s", "-", slug)
+        n = counts.get(slug, 0)
+        counts[slug] = n + 1
+        slugs.add(slug if n == 0 else f"{slug}-{n}")
+    return frozenset(slugs)
+
+
+def _fragment_targets(doc: Path) -> list[tuple[int, Path, str]]:
+    """``(lineno, target_file, fragment)`` for every anchored link in *doc*.
+
+    Covers cross-file anchors (``other.md#section``) and same-file anchors
+    (``#section``, resolved against *doc* itself). Fenced code blocks are
+    skipped, matching :func:`_relative_targets`.
+    """
+    anchored: list[tuple[int, Path, str]] = []
+    in_fence = False
+    for lineno, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        for target, fragment in _MD_LINK_WITH_FRAGMENT_RE.findall(line):
+            anchored.append((lineno, _resolve(doc, target), fragment))
+        for fragment in _SAME_FILE_ANCHOR_RE.findall(line):
+            anchored.append((lineno, doc, fragment))
+    return anchored
+
+
 @pytest.mark.arch
 def test_markdown_relative_links_resolve() -> None:
     """Every relative link or image in every tracked markdown file must resolve.
@@ -153,6 +222,36 @@ def test_markdown_relative_links_resolve() -> None:
                     "is not a tracked file or directory (fix the link or restore the file)"
                 )
     assert not violations, "Markdown files link to missing paths:\n" + "\n".join(violations)
+
+
+@pytest.mark.arch
+def test_markdown_anchor_links_resolve() -> None:
+    """Every ``#fragment`` on a markdown link must name a real heading.
+
+    Cross-file anchors are validated against the target file's headings and
+    same-file anchors against the linking file's own, so a heading rename
+    fails here with the file:line of every link still pointing at the old
+    slug. Fragments are only checked when the target is a tracked markdown
+    file (missing files are the link gate's job) and skipped when
+    URL-encoded (``%``) — none exist today and decoding them is not worth
+    the complexity.
+    """
+    slug_cache: dict[Path, frozenset[str]] = {}
+    violations: list[str] = []
+    for doc in _tracked_markdown_files():
+        for lineno, target_file, fragment in _fragment_targets(doc):
+            if target_file.suffix != ".md" or not target_file.is_file() or "%" in fragment:
+                continue
+            if target_file not in slug_cache:
+                slug_cache[target_file] = _heading_slugs(target_file)
+            if fragment not in slug_cache[target_file]:
+                violations.append(
+                    f"{doc.relative_to(REPO_ROOT)}:{lineno} — anchor "
+                    f"{'#' + fragment!r} does not match any heading in "
+                    f"{target_file.relative_to(REPO_ROOT)} (heading renamed? "
+                    "update the link)"
+                )
+    assert not violations, "Markdown anchors point at missing headings:\n" + "\n".join(violations)
 
 
 @pytest.mark.arch
