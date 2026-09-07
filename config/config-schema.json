@@ -607,22 +607,53 @@
       "type": "object"
     },
     "EncryptionKey": {
-      "description": "A single named encryption key.",
+      "description": "A single named encryption key.\n\nKey material comes from exactly ONE source:\n\n- ``material``      — inline in the config (local dev / vault-templated files),\n- ``material_env``  — the name of an environment variable holding the key,\n- ``material_file`` — a path to read the key from (docker/k8s secret mounts,\n  systemd credentials, or a pipe such as ``/dev/stdin`` fed by a supervisor\n  that holds the key in an OS keystore).\n\n``material_env``/``material_file`` are resolved once, at config load, into\n``material`` — consumers keep reading ``resolved_material`` and never learn\nwhere the bytes came from (the source field is cleared after resolution, so\na resolved key re-validates cleanly and never re-reads the environment or\nthe file). Resolution failures (unset variable, unreadable file, empty\nvalue) fail validation loudly rather than booting a server that cannot\ndecrypt its own credentials.",
       "properties": {
         "id": {
           "title": "Id",
           "type": "string"
         },
         "material": {
-          "format": "password",
-          "title": "Material",
-          "type": "string",
-          "writeOnly": true
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material"
+        },
+        "material_env": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material Env"
+        },
+        "material_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material File"
         }
       },
       "required": [
-        "id",
-        "material"
+        "id"
       ],
       "title": "EncryptionKey",
       "type": "object"
