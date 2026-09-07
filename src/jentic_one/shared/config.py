@@ -481,6 +481,22 @@ class OAuthRateLimitConfig(BaseModel):
             "behind one."
         ),
     )
+    approval_status_rpm: int = Field(
+        default=120,
+        description=(
+            "Sustained requests/minute allowed on the approval-pending status "
+            "poll (``GET /oauth/approval/status``). Its own namespace, so "
+            "polling can never drain the ``/authorize`` or registration "
+            "quota: one pending tab polls at 12 rpm, so the default keeps "
+            "~10 concurrent pending tabs behind one NAT inside the bucket, "
+            "and the page honors ``Retry-After`` with backoff, so saturation "
+            "degrades to a slower cadence rather than a thundering retry."
+        ),
+    )
+    approval_status_burst: int = Field(
+        default=60,
+        description="Burst allowance on top of ``approval_status_rpm``.",
+    )
 
 
 class AuthConfig(BaseModel):

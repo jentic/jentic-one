@@ -1486,6 +1486,17 @@ func (j *MetricsConfig) UnmarshalJSON(value []byte) error {
 
 // Pre-auth rate limit tunables for OAuth endpoints.
 type OAuthRateLimitConfig struct {
+	// Burst allowance on top of ``approval_status_rpm``.
+	ApprovalStatusBurst int `json:"approval_status_burst,omitempty,omitzero" yaml:"approval_status_burst,omitempty" mapstructure:"approval_status_burst,omitempty"`
+
+	// Sustained requests/minute allowed on the approval-pending status poll (``GET
+	// /oauth/approval/status``). Its own namespace, so polling can never drain the
+	// ``/authorize`` or registration quota: one pending tab polls at 12 rpm, so the
+	// default keeps ~10 concurrent pending tabs behind one NAT inside the bucket, and
+	// the page honors ``Retry-After`` with backoff, so saturation degrades to a
+	// slower cadence rather than a thundering retry.
+	ApprovalStatusRpm int `json:"approval_status_rpm,omitempty,omitzero" yaml:"approval_status_rpm,omitempty" mapstructure:"approval_status_rpm,omitempty"`
+
 	// Burst allowance on top of ``authorize_rpm``.
 	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
 
@@ -1525,6 +1536,12 @@ func (j *OAuthRateLimitConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["approval_status_burst"]; !ok || v == nil {
+		plain.ApprovalStatusBurst = 60
+	}
+	if v, ok := raw["approval_status_rpm"]; !ok || v == nil {
+		plain.ApprovalStatusRpm = 120
 	}
 	if v, ok := raw["authorize_burst"]; !ok || v == nil {
 		plain.AuthorizeBurst = 30

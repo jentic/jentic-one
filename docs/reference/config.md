@@ -192,6 +192,8 @@ Platform-actors OAuth surface configuration.
 | `auth.oauth_rate_limit.registration_rpm` | integer | `10` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM` | Sustained requests/minute allowed per IP on anonymous dynamic client registration (`POST /oauth-clients`). |
 | `auth.oauth_rate_limit.registration_burst` | integer | `5` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST` | Burst allowance on top of `registration_rpm`. |
 | `auth.oauth_rate_limit.trusted_proxies` | list of string | — | `JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` | Socket IPs of reverse proxies whose `X-Forwarded-For` header is honored when deriving the per-client rate-limit identity. Empty (default) means the socket address is used as-is — behind a reverse proxy every request then carries the proxy's IP and all clients share one bucket, so list the proxy IPs when deploying behind one. |
+| `auth.oauth_rate_limit.approval_status_rpm` | integer | `120` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_RPM` | Sustained requests/minute allowed on the approval-pending status poll (`GET /oauth/approval/status`). Its own namespace, so polling can never drain the `/authorize` or registration quota: one pending tab polls at 12 rpm, so the default keeps ~10 concurrent pending tabs behind one NAT inside the bucket, and the page honors `Retry-After` with backoff, so saturation degrades to a slower cadence rather than a thundering retry. |
+| `auth.oauth_rate_limit.approval_status_burst` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_BURST` | Burst allowance on top of `approval_status_rpm`. |
 
 ## `broker`
 
