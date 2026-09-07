@@ -83,6 +83,7 @@ run as a post-install/post-upgrade hook.
 ```bash
 helm install jentic ./deploy/helm/jentic-one \
   --namespace jentic-one --create-namespace \
+  --timeout 30m \
   --set global.appSecrets.generate=true \
   --set postgresql.enabled=true \
   --set global.postgresql.enabled=true \
@@ -96,7 +97,11 @@ helm install jentic ./deploy/helm/jentic-one \
 (`broker.enabled=true` is required — the umbrella chart ships the broker off.
 Both services run the one published image; `JENTIC__APPS=broker` makes the
 second one the broker. `global.image.tag` pins every subchart's tag in one
-place. Set `<svc>.image.repository` explicitly for **every enabled service**:
+place. `--timeout 30m` matters because the migrate hook runs *inside*
+Helm's timeout — the default is 5 minutes, and a `SIGTERM`ed migration run
+leaves a half-applied schema (see
+[upgrades.md](../operations/upgrades.md)). Set `<svc>.image.repository`
+explicitly for **every enabled service**:
 each subchart ships a non-empty local-build default (`jentic-one/<svc>`), and
 `global.image.registry` applies only to services whose `image.repository` is
 empty — so on its own it is a no-op and the pods go `ImagePullBackOff` on the
@@ -201,12 +206,14 @@ global:
   `python -m jentic_one create-admin --email …` one-shot from the
   [Docker guide, step 5](docker.md#5-create-the-first-admin). Re-running is
   safe (`setup already complete`).
-- **Secrets:** database passwords must match the roles you created — explicit
-  `global.databases.*.password` values always win over generated ones. Do not
-  put them in a values file: source them from a Kubernetes Secret via
-  `secretKeyRef`, or mount your own Secret with
-  `global.appSecrets.existingSecret` — see [Secrets](#secrets) below. The
-  mandatory set is the same as the
+- **Secrets:** database passwords must match the roles you created. The
+  chart supports exactly two password sources on this path: explicit
+  `global.databases.*.password` values (always win, but live in a values
+  file — dev-grade), or a Secret mounted via
+  `global.appSecrets.existingSecret` that carries the three
+  `db-password-{registry,control,admin}` keys — the pods consume those via
+  `secretKeyRef` whenever the explicit value is unset. See
+  [Secrets](#secrets) below. The mandatory set is the same as the
   [Docker guide, step 2](docker.md#2-write-the-config).
 
 ## Secrets
@@ -232,25 +239,26 @@ sources, in order of preference:
    `config.yaml` key shaped like the keyset block in the
    [worked config](docker.md#2-write-the-config), plus
    `admin.auth.jwt_secret`, `admin.invite.pepper`, and
-   `credentials.connect.state_secret` — and, if the bundled Postgres is
-   enabled, the four `db-password-*` keys.
+   `credentials.connect.state_secret`. It must **also** hold the three
+   `db-password-{registry,control,admin}` keys unless you set every
+   `global.databases.*.password` explicitly — the pods reference those keys
+   whenever app-secrets is active and the explicit value is unset,
+   *regardless* of whether the bundled Postgres is enabled, and a missing
+   key is `CreateContainerConfigError` on every app/broker pod. (A fourth
+   key, `db-password-postgres`, is consumed only by the bundled Postgres.)
 3. **Per-service `configFile.contents`** (dev overlays only) — inlines
    secrets into a plain ConfigMap; never for real data. Mutually exclusive
    with the two modes above (both claim `JENTIC_CONFIG_FILE`; the chart
    fails the render rather than silently preferring one).
 
-For external-database passwords, keep them out of values files entirely —
-reference a Secret you manage:
-
-```yaml
-- name: JENTIC__DATABASES__REGISTRY__PASSWORD
-  valueFrom:
-    secretKeyRef:
-      name: jentic-db-credentials
-      key: registry-password
-```
-
-Host/port/name/schema are not secrets — plain values are fine for those.
+For external-database passwords there is no per-variable `secretKeyRef`
+passthrough: `extraEnv` renders name/value scalars only (a nested
+`valueFrom` map renders as a stringified value), and on duplicate names the
+chart's own env wins. Keep passwords out of values files by carrying them as
+the `db-password-*` keys of the `existingSecret` above; anything fancier
+(ExternalSecrets per variable, CSI volumes) means patching the subchart
+templates. Host/port/name/schema are not secrets — plain values are fine
+for those.
 Encryption-key **rotation** is a config-level operation in every mode: add a
 new keyset entry and flip `active_id`. Stored secrets re-encrypt under the
 new key only when they are rewritten — there is no bulk re-encrypt and no
@@ -260,8 +268,14 @@ completion check — so keep retired keys in the keyset
 ## Scaling and HA
 
 Every subchart exposes `replicas` and `resources` in its values
-(`--set broker.replicas=3`). The default requests/limits (100m/128Mi,
-500m/256Mi) are eval-grade — size them for real load.
+(`--set broker.replicas=3`). The defaults are sized for evaluation, not
+load: broker/registry/control request 100m/128Mi with a 500m/256Mi limit,
+and app/admin request 256Mi with a 1Gi limit. The app's floor is real, not
+a hint: it boots at roughly 150Mi RSS, and every concurrent password or
+OAuth client-secret verification adds 64Mi (argon2id with
+`memory_cost=65536`) — so a handful of simultaneous logins on a 256Mi limit
+is an OOM-kill, not a slowdown. Do not set the app's memory limit below
+512Mi.
 
 - **Broker** — stateless; run several replicas behind the Service. First set
   the shared-state backend to Redis so rate limits, circuit breakers, and
@@ -301,10 +315,12 @@ annotations are covered in the
 0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
 1. Get (or build and push) the new release's images (step 1) and re-vendor
    the chart at the **new** release tag.
-2. `helm upgrade jentic ./deploy/helm/jentic-one …` with the new
-   `global.image.tag`. On the bundled-DB path the migrate hook re-runs
-   automatically; against an external database, re-run migrations first
-   (see above).
+2. `helm upgrade jentic ./deploy/helm/jentic-one --timeout 30m …` with the
+   new `global.image.tag`. On the bundled-DB path the migrate hook re-runs
+   automatically — inside `--timeout`, hence the explicit value; the Helm
+   default of 5 minutes can `SIGTERM` a long migration mid-run on a
+   populated database. Against an external database, re-run migrations
+   first (see above).
 
 Generated secrets are never rotated by an upgrade, and `helm uninstall`
 intentionally keeps the `jentic-app-secrets` Secret (and the Postgres PVC) so
