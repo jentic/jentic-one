@@ -180,7 +180,7 @@ def client_gate_passes(client: OAuthClientView) -> bool:
 
 
 def resolve_identity_gate(
-    ctx: Context, *, idp_url: str | None, internal_state: str
+    ctx: Context, *, idp_url: str | None, state_payload: dict[str, str | None]
 ) -> RedirectResponse | None:
     """The explicit identity-dispatch ladder for ``GET /authorize``.
 
@@ -194,14 +194,15 @@ def resolve_identity_gate(
     2. **External IdP** (today's flow): the service resolved an upstream
        authorize URL — redirect to it. IdP always wins, so there is no mixed
        mode with local login.
-    3. **Local-account login form** (#1276): no IdP and the deployment opted
-       in via ``auth.local_login.enabled``. The signed internal state is
-       reused verbatim as the form's carry-through token — the form route
-       re-verifies it before rendering.
+    3. **Local-account login form** (#1276): the deployment opted in via
+       ``auth.local_login.enabled``, no IdP resolved, AND ``auth.idp.enabled``
+       is false (belt and braces: a configured-but-unresolvable IdP must fail
+       closed, not fall through to passwords). This rung is the ONLY mint
+       site of the ``login``-purpose carry-through token — the IdP-leg
+       ``state`` uses a different purpose and derived key, so it can never
+       open the form.
     4. Nothing is enabled: return ``None`` — the caller renders its standard
        ``server_error`` redirect, byte-identical to the pre-ladder flow.
-
-    Pure structural seam: no rung adds or changes behavior.
     """
     # Rung 1 — platform-session reuse (epic #1280 follow-up): NOT implemented.
 
@@ -209,9 +210,10 @@ def resolve_identity_gate(
     if idp_url is not None:
         return RedirectResponse(url=idp_url, status_code=302)
 
-    # Rung 3 — local-account login form (gate on + no IdP).
-    if ctx.config.auth.local_login.enabled:
-        return RedirectResponse(url=f"/login?{urlencode({'ls': internal_state})}", status_code=302)
+    # Rung 3 — local-account login form (gate on + no IdP, resolved OR configured).
+    if ctx.config.auth.local_login.enabled and not ctx.config.auth.idp.enabled:
+        login_token = sign_payload(dict(state_payload), login_signing_key(ctx), purpose="login")
+        return RedirectResponse(url=f"/login?{urlencode({'ls': login_token})}", status_code=302)
 
     # No identity path is configured — the caller owns the error redirect.
     return None
@@ -240,6 +242,19 @@ def approval_state_key(ctx: Context) -> str:
     replayed into /oauth/callback (or vice versa).
     """
     return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "approval")
+
+
+def login_signing_key(ctx: Context) -> str:
+    """Signing key for the local-login carry-through token (``ls``).
+
+    Distinct derived key AND distinct ``_purpose`` discriminator — the same
+    mutual-rejection discipline ``state``/``approval`` already have, extended
+    to the third purpose. An IdP-leg ``state`` (which every IdP-bound
+    /authorize hands to the browser verbatim in the redirect URL) can never
+    open the login form, and a login token can never be replayed into
+    /oauth/callback or the approval endpoints.
+    """
+    return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "login")
 
 
 def sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:

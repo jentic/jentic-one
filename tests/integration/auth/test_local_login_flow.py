@@ -27,7 +27,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.user_secrets import UserSecret
-from jentic_one.admin.repos import OAuthClientRepository, UserSecretRepository
+from jentic_one.admin.repos import OAuthClientRepository, UserRepository, UserSecretRepository
 from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.errors import service_error_handler
@@ -309,6 +309,44 @@ async def test_lockout_is_shared_with_password_login(
         resp = await client.post("/login", data={"email": email, "password": _PASSWORD, **fields})
         assert resp.status_code == 200
         assert "Invalid email or password." in resp.text
+
+
+async def test_must_change_password_blocks_flow_until_rotated(
+    local_login_ctx: Context, clean_grants: None, clean_user_secrets: None
+) -> None:
+    """A forced-rotation account authenticates but cannot complete /authorize:
+    the submit re-renders with the explicit rotation message and mints no
+    code. Clearing the flag lets the SAME flow complete (the ls is not
+    burned by the rotation fence)."""
+    ctx = local_login_ctx
+    user_id, email = await _seed_password_user(ctx, "usr_local_login_rotate")
+    async with ctx.admin_db.transaction() as session:
+        await UserRepository.update(session, user_id, must_change_password=True)
+
+    app = _make_app(ctx)
+    async with _web_client(app) as client:
+        fields = await _walk_to_login_form(
+            client, client_id=_PLATFORM_CLIENT_ID, redirect_uri=_PLATFORM_REDIRECT
+        )
+
+        resp = await client.post("/login", data={"email": email, "password": _PASSWORD, **fields})
+        assert resp.status_code == 200, resp.text
+        assert "password must be changed" in resp.text
+        assert "code=" not in resp.headers.get("location", "")
+
+        # Rotation happens out-of-band (the UI change-password path); the
+        # re-rendered form still carries the same ls plus a fresh nonce.
+        async with ctx.admin_db.transaction() as session:
+            await UserRepository.update(session, user_id, must_change_password=False)
+
+        retry_fields = _form_fields(resp.text)
+        assert retry_fields["ls"] == fields["ls"]
+        done = await client.post(
+            "/login", data={"email": email, "password": _PASSWORD, **retry_fields}
+        )
+        assert done.status_code == 302, done.text
+        assert done.headers["location"].startswith(f"{_PLATFORM_REDIRECT}?")
+        assert parse_qs(urlsplit(done.headers["location"]).query)["code"]
 
 
 async def test_agent_model_client_gets_picker_and_grant(

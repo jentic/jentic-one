@@ -5974,9 +5974,11 @@ type ClientInterface interface {
 	//
 	// Render the local-account login form for an in-flight ``/authorize`` request.
 	//
-	// Verifies the ``ls`` signature/TTL **before** rendering — an expired or
-	// forged token never gets a form — and embeds ``ls`` plus a fresh single-use
-	// CSRF nonce.
+	// Verifies the ``ls`` signature/TTL/purpose **before** rendering — an
+	// expired, forged, or wrong-purpose token never gets a form — re-checks the
+	// D7 client gate (a client denied or deactivated while the user holds the
+	// ``ls`` must not be asked for a password), rejects an already-spent ``ls``,
+	// and embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.
 	//
 	// Corresponds with GET /login (the `LoginPage` operationId).
 	LoginPage(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5987,11 +5989,16 @@ type ClientInterface interface {
 	//
 	// Success never mints a JWT — it flows straight into code issuance (platform
 	// client) or the consent handle (registered third-party client), exactly
-	// where the IdP callback rejoins. Credential failures re-render the form
-	// with one generic message: lockout state, unknown email, and wrong password
-	// are indistinguishable (no user-enumeration oracle), while the shared
+	// where the IdP callback rejoins, and burns the single-use ``ls``.
+	// Credential failures re-render the form with one generic message: lockout
+	// state, unknown email, and wrong password are indistinguishable (no
+	// user-enumeration response oracle), while the shared
 	// ``AuthService.authenticate`` core still increments the failed-login count
-	// and applies the lockout threshold.
+	// and applies the lockout threshold. An account flagged
+	// ``must_change_password`` authenticates but is told to rotate via the UI
+	// first — the OAuth plane must not hand a fully-scoped token to a
+	// temporary-password principal the UI would have boxed into
+	// change-password-only.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6004,11 +6011,16 @@ type ClientInterface interface {
 	//
 	// Success never mints a JWT — it flows straight into code issuance (platform
 	// client) or the consent handle (registered third-party client), exactly
-	// where the IdP callback rejoins. Credential failures re-render the form
-	// with one generic message: lockout state, unknown email, and wrong password
-	// are indistinguishable (no user-enumeration oracle), while the shared
+	// where the IdP callback rejoins, and burns the single-use ``ls``.
+	// Credential failures re-render the form with one generic message: lockout
+	// state, unknown email, and wrong password are indistinguishable (no
+	// user-enumeration response oracle), while the shared
 	// ``AuthService.authenticate`` core still increments the failed-login count
-	// and applies the lockout threshold.
+	// and applies the lockout threshold. An account flagged
+	// ``must_change_password`` authenticates but is told to rotate via the UI
+	// first — the OAuth plane must not hand a fully-scoped token to a
+	// temporary-password principal the UI would have boxed into
+	// change-password-only.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
@@ -9612,9 +9624,11 @@ func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...Requ
 //
 // Render the local-account login form for an in-flight “/authorize“ request.
 //
-// Verifies the “ls“ signature/TTL **before** rendering — an expired or
-// forged token never gets a form — and embeds “ls“ plus a fresh single-use
-// CSRF nonce.
+// Verifies the “ls“ signature/TTL/purpose **before** rendering — an
+// expired, forged, or wrong-purpose token never gets a form — re-checks the
+// D7 client gate (a client denied or deactivated while the user holds the
+// “ls“ must not be asked for a password), rejects an already-spent “ls“,
+// and embeds “ls“ plus a fresh single-use CSRF nonce bound to it.
 //
 // Corresponds with GET /login (the `LoginPage` operationId).
 func (c *Client) LoginPage(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9635,11 +9649,16 @@ func (c *Client) LoginPage(ctx context.Context, params *LoginPageParams, reqEdit
 //
 // Success never mints a JWT — it flows straight into code issuance (platform
 // client) or the consent handle (registered third-party client), exactly
-// where the IdP callback rejoins. Credential failures re-render the form
-// with one generic message: lockout state, unknown email, and wrong password
-// are indistinguishable (no user-enumeration oracle), while the shared
+// where the IdP callback rejoins, and burns the single-use “ls“.
+// Credential failures re-render the form with one generic message: lockout
+// state, unknown email, and wrong password are indistinguishable (no
+// user-enumeration response oracle), while the shared
 // “AuthService.authenticate“ core still increments the failed-login count
-// and applies the lockout threshold.
+// and applies the lockout threshold. An account flagged
+// “must_change_password“ authenticates but is told to rotate via the UI
+// first — the OAuth plane must not hand a fully-scoped token to a
+// temporary-password principal the UI would have boxed into
+// change-password-only.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9662,11 +9681,16 @@ func (c *Client) LoginSubmitWithBody(ctx context.Context, contentType string, bo
 //
 // Success never mints a JWT — it flows straight into code issuance (platform
 // client) or the consent handle (registered third-party client), exactly
-// where the IdP callback rejoins. Credential failures re-render the form
-// with one generic message: lockout state, unknown email, and wrong password
-// are indistinguishable (no user-enumeration oracle), while the shared
+// where the IdP callback rejoins, and burns the single-use “ls“.
+// Credential failures re-render the form with one generic message: lockout
+// state, unknown email, and wrong password are indistinguishable (no
+// user-enumeration response oracle), while the shared
 // “AuthService.authenticate“ core still increments the failed-login count
-// and applies the lockout threshold.
+// and applies the lockout threshold. An account flagged
+// “must_change_password“ authenticates but is told to rotate via the UI
+// first — the OAuth plane must not hand a fully-scoped token to a
+// temporary-password principal the UI would have boxed into
+// change-password-only.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
@@ -22111,9 +22135,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Render the local-account login form for an in-flight ``/authorize`` request.
 	//
-	// Verifies the ``ls`` signature/TTL **before** rendering — an expired or
-	// forged token never gets a form — and embeds ``ls`` plus a fresh single-use
-	// CSRF nonce.
+	// Verifies the ``ls`` signature/TTL/purpose **before** rendering — an
+	// expired, forged, or wrong-purpose token never gets a form — re-checks the
+	// D7 client gate (a client denied or deactivated while the user holds the
+	// ``ls`` must not be asked for a password), rejects an already-spent ``ls``,
+	// and embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -22126,11 +22152,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Success never mints a JWT — it flows straight into code issuance (platform
 	// client) or the consent handle (registered third-party client), exactly
-	// where the IdP callback rejoins. Credential failures re-render the form
-	// with one generic message: lockout state, unknown email, and wrong password
-	// are indistinguishable (no user-enumeration oracle), while the shared
+	// where the IdP callback rejoins, and burns the single-use ``ls``.
+	// Credential failures re-render the form with one generic message: lockout
+	// state, unknown email, and wrong password are indistinguishable (no
+	// user-enumeration response oracle), while the shared
 	// ``AuthService.authenticate`` core still increments the failed-login count
-	// and applies the lockout threshold.
+	// and applies the lockout threshold. An account flagged
+	// ``must_change_password`` authenticates but is told to rotate via the UI
+	// first — the OAuth plane must not hand a fully-scoped token to a
+	// temporary-password principal the UI would have boxed into
+	// change-password-only.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -22143,11 +22174,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Success never mints a JWT — it flows straight into code issuance (platform
 	// client) or the consent handle (registered third-party client), exactly
-	// where the IdP callback rejoins. Credential failures re-render the form
-	// with one generic message: lockout state, unknown email, and wrong password
-	// are indistinguishable (no user-enumeration oracle), while the shared
+	// where the IdP callback rejoins, and burns the single-use ``ls``.
+	// Credential failures re-render the form with one generic message: lockout
+	// state, unknown email, and wrong password are indistinguishable (no
+	// user-enumeration response oracle), while the shared
 	// ``AuthService.authenticate`` core still increments the failed-login count
-	// and applies the lockout threshold.
+	// and applies the lockout threshold. An account flagged
+	// ``must_change_password`` authenticates but is told to rotate via the UI
+	// first — the OAuth plane must not hand a fully-scoped token to a
+	// temporary-password principal the UI would have boxed into
+	// change-password-only.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -39582,9 +39618,11 @@ func (c *ClientWithResponses) CancelJobWithResponse(ctx context.Context, jobId s
 //
 // Render the local-account login form for an in-flight “/authorize“ request.
 //
-// Verifies the “ls“ signature/TTL **before** rendering — an expired or
-// forged token never gets a form — and embeds “ls“ plus a fresh single-use
-// CSRF nonce.
+// Verifies the “ls“ signature/TTL/purpose **before** rendering — an
+// expired, forged, or wrong-purpose token never gets a form — re-checks the
+// D7 client gate (a client denied or deactivated while the user holds the
+// “ls“ must not be asked for a password), rejects an already-spent “ls“,
+// and embeds “ls“ plus a fresh single-use CSRF nonce bound to it.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -39603,11 +39641,16 @@ func (c *ClientWithResponses) LoginPageWithResponse(ctx context.Context, params 
 //
 // Success never mints a JWT — it flows straight into code issuance (platform
 // client) or the consent handle (registered third-party client), exactly
-// where the IdP callback rejoins. Credential failures re-render the form
-// with one generic message: lockout state, unknown email, and wrong password
-// are indistinguishable (no user-enumeration oracle), while the shared
+// where the IdP callback rejoins, and burns the single-use “ls“.
+// Credential failures re-render the form with one generic message: lockout
+// state, unknown email, and wrong password are indistinguishable (no
+// user-enumeration response oracle), while the shared
 // “AuthService.authenticate“ core still increments the failed-login count
-// and applies the lockout threshold.
+// and applies the lockout threshold. An account flagged
+// “must_change_password“ authenticates but is told to rotate via the UI
+// first — the OAuth plane must not hand a fully-scoped token to a
+// temporary-password principal the UI would have boxed into
+// change-password-only.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -39626,11 +39669,16 @@ func (c *ClientWithResponses) LoginSubmitWithBodyWithResponse(ctx context.Contex
 //
 // Success never mints a JWT — it flows straight into code issuance (platform
 // client) or the consent handle (registered third-party client), exactly
-// where the IdP callback rejoins. Credential failures re-render the form
-// with one generic message: lockout state, unknown email, and wrong password
-// are indistinguishable (no user-enumeration oracle), while the shared
+// where the IdP callback rejoins, and burns the single-use “ls“.
+// Credential failures re-render the form with one generic message: lockout
+// state, unknown email, and wrong password are indistinguishable (no
+// user-enumeration response oracle), while the shared
 // “AuthService.authenticate“ core still increments the failed-login count
-// and applies the lockout threshold.
+// and applies the lockout threshold. An account flagged
+// “must_change_password“ authenticates but is told to rotate via the UI
+// first — the OAuth plane must not hand a fully-scoped token to a
+// temporary-password principal the UI would have boxed into
+// change-password-only.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //

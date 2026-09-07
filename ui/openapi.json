@@ -27025,7 +27025,7 @@
     },
     "/login": {
       "get": {
-        "description": "Render the local-account login form for an in-flight ``/authorize`` request.\n\nVerifies the ``ls`` signature/TTL **before** rendering — an expired or\nforged token never gets a form — and embeds ``ls`` plus a fresh single-use\nCSRF nonce.",
+        "description": "Render the local-account login form for an in-flight ``/authorize`` request.\n\nVerifies the ``ls`` signature/TTL/purpose **before** rendering — an\nexpired, forged, or wrong-purpose token never gets a form — re-checks the\nD7 client gate (a client denied or deactivated while the user holds the\n``ls`` must not be asked for a password), rejects an already-spent ``ls``,\nand embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.",
         "operationId": "loginPage",
         "parameters": [
           {
@@ -27071,7 +27071,7 @@
             "description": "Bad Request"
           },
           "404": {
-            "description": "Local-account login is disabled (`auth.local_login.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+            "description": "Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
             "content": {
@@ -27144,7 +27144,7 @@
         ]
       },
       "post": {
-        "description": "Authenticate the local account and rejoin the authorization flow.\n\nSuccess never mints a JWT — it flows straight into code issuance (platform\nclient) or the consent handle (registered third-party client), exactly\nwhere the IdP callback rejoins. Credential failures re-render the form\nwith one generic message: lockout state, unknown email, and wrong password\nare indistinguishable (no user-enumeration oracle), while the shared\n``AuthService.authenticate`` core still increments the failed-login count\nand applies the lockout threshold.",
+        "description": "Authenticate the local account and rejoin the authorization flow.\n\nSuccess never mints a JWT — it flows straight into code issuance (platform\nclient) or the consent handle (registered third-party client), exactly\nwhere the IdP callback rejoins, and burns the single-use ``ls``.\nCredential failures re-render the form with one generic message: lockout\nstate, unknown email, and wrong password are indistinguishable (no\nuser-enumeration response oracle), while the shared\n``AuthService.authenticate`` core still increments the failed-login count\nand applies the lockout threshold. An account flagged\n``must_change_password`` authenticates but is told to rotate via the UI\nfirst — the OAuth plane must not hand a fully-scoped token to a\ntemporary-password principal the UI would have boxed into\nchange-password-only.",
         "operationId": "loginSubmit",
         "requestBody": {
           "content": {
@@ -27183,7 +27183,7 @@
             "description": "Bad Request"
           },
           "404": {
-            "description": "Local-account login is disabled (`auth.local_login.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+            "description": "Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
             "content": {

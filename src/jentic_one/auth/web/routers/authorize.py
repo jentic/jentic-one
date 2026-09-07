@@ -1295,19 +1295,16 @@ async def authorize_endpoint(
 
     callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
 
-    internal_state = sign_payload(
-        {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "code_challenge": code_challenge,
-            "scope": scope,
-            "nonce": nonce,
-            "original_state": state,
-            "iat": str(int(time.time())),
-        },
-        state_signing_key(ctx),
-        purpose="state",
-    )
+    state_payload: dict[str, str | None] = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_challenge": code_challenge,
+        "scope": scope,
+        "nonce": nonce,
+        "original_state": state,
+        "iat": str(int(time.time())),
+    }
+    internal_state = sign_payload(dict(state_payload), state_signing_key(ctx), purpose="state")
 
     idp_url = authorize_svc.get_authorize_redirect_url(
         state=internal_state,
@@ -1317,8 +1314,9 @@ async def authorize_endpoint(
 
     # Identity dispatch: the explicit rung ladder lives in flow.py
     # (resolve_identity_gate) — platform-session reuse (placeholder, epic
-    # #1280) > IdP redirect > local-login form (#1276, gate on + no IdP).
-    gate_redirect = resolve_identity_gate(ctx, idp_url=idp_url, internal_state=internal_state)
+    # #1280) > IdP redirect > local-login form (#1276, gate on + no IdP; the
+    # ladder mints the distinct login-purpose carry-through token).
+    gate_redirect = resolve_identity_gate(ctx, idp_url=idp_url, state_payload=state_payload)
     if gate_redirect is None:
         return _error_redirect(
             redirect_uri, "server_error", state, "no identity provider configured"

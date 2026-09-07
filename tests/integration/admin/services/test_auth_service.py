@@ -281,6 +281,28 @@ async def test_dummy_verify_password_runs_real_argon2() -> None:
     assert passwords_module._DUMMY_HASH.startswith("$argon2")
 
 
+async def test_password_rotation_required_reads_flag(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """The read-only companion to authenticate(): reflects the row's
+    must_change_password flag and fails closed for a vanished row."""
+    user_id, _ = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+
+    assert await service.password_rotation_required(user_id) is False
+
+    async with ctx.admin_db.transaction() as session:
+        await UserRepository.update(session, user_id, must_change_password=True)
+    assert await service.password_rotation_required(user_id) is True
+
+    async with ctx.admin_db.transaction() as session:
+        await UserRepository.update(session, user_id, must_change_password=False)
+    assert await service.password_rotation_required(user_id) is False
+
+    assert await service.password_rotation_required("usr_does_not_exist") is True
+
+
 async def test_change_password_success(
     integration_context: Context, auth_user: tuple[str, str]
 ) -> None:
