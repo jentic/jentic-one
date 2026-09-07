@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { page, cdp } from '@vitest/browser/context';
+import { page, cdp } from 'vitest/browser';
 import { act, type ReactElement } from 'react';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router';

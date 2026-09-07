@@ -339,6 +339,7 @@ async def test_pre_3a_row_reads_migration_defaults(
     assert row.registration_source == "admin"
     assert row.software_id is None
     # Pre-3a rows carry no fingerprint until their redirect_uris are next
-    # written; they have no software_id either, so they never dedupe.
+    # written; a NULL fingerprint never equals a computed one (and their
+    # registration_source is 'admin'), so they never dedupe.
     assert row.redirect_uris_fingerprint is None
     assert row.active is True

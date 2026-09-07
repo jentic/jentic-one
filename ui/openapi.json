@@ -8661,6 +8661,18 @@
             "title": "Refresh Token",
             "x-sensitive": true
           },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent and service-account tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).",
+            "title": "Scope"
+          },
           "token_type": {
             "default": "bearer",
             "title": "Token Type",
@@ -28557,7 +28569,7 @@
     },
     "/oauth-clients": {
       "post": {
-        "description": "Register a public OAuth client anonymously (RFC 7591 subset).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match\n(D8). No client_secret is ever issued here and no registration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
+        "description": "Register a public OAuth client anonymously (RFC 7591 subset).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact dedupe match (D8, extended per G13/#1251):\n(``software_id`` + redirect-URI set), falling back to (``client_name`` +\nredirect-URI set) for registrations without a ``software_id`` — so a\npending client's awaiting-approval retry loop re-attaches instead of\nminting duplicate rows. No client_secret is ever issued here and no\nregistration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
         "operationId": "registerOauthClientEndpoint",
         "requestBody": {
           "content": {

@@ -32,7 +32,16 @@ that owns everything the platform — not the SDK — must decide:
   FastAPI dependency: a Starlette mount is a separate ASGI app, so parent
   route dependencies never run here. A missing/invalid credential answers the
   same 401 challenge contract as the placeholder (the ``resource_metadata`` pointer riding
-  only when the OAuth discovery surface is on to serve it).
+  only when the OAuth discovery surface is on to serve it) — EXCEPT a
+  credential-less GET/HEAD, which answers the stream refusal (405) instead:
+  this endpoint never offers a GET stream (stateless), so an unauthenticated
+  GET could never receive one even after authenticating, and challenging it
+  makes SDK-based proxy clients (``mcp-remote`` ≤ 0.8.3) launch concurrent
+  OAuth flows off their fallback-test/main GET-stream arms that clobber each
+  other's PKCE verifier — guaranteed ``invalid_grant``
+  (https://github.com/jentic/jentic-one/issues/1256). A request that DOES
+  present a credential (any ``Authorization`` header or API-key header, even
+  a garbage one) keeps the challenge contract on every method.
 - **The pre-auth whitelist**: ``tools/list``, the SDK's legacy ``initialize``
   fallback (+ ``notifications/initialized``), ``ping``, and the public
   resource listings are served without a credential — a client can always
@@ -136,6 +145,24 @@ def _unauthorized(ctx: Context, request: Request, method: str) -> Response:
     if method == "HEAD":
         return Response(status_code=401, headers=headers)
     return JSONResponse(status_code=401, content={"detail": "Unauthorized"}, headers=headers)
+
+
+def _stream_refusal(method: str) -> Response:
+    """The GET-stream refusal: 405 + ``Allow: POST`` (HEAD: headers, no body).
+
+    ``Allow`` advertises what the mount actually serves — POST only. The gate
+    itself refuses GET (stateless: no server-initiated stream to offer), and
+    the SDK transport refuses DELETE in stateless mode (no session to
+    terminate), so neither belongs in the list. HEAD mirrors GET's status and
+    headers without a body (RFC 9110 §9.3.2).
+    """
+    if method == "HEAD":
+        return Response(status_code=405, headers={"Allow": "POST"})
+    return JSONResponse(
+        status_code=405,
+        content={"detail": "Method Not Allowed"},
+        headers={"Allow": "POST"},
+    )
 
 
 def _is_loopback_origin_host(hostname: str) -> bool:
@@ -424,6 +451,27 @@ class McpMount:
                 return JSONResponse(status_code=413, content={"detail": "Request body too large"})
 
         if credential is None:
+            if method in ("GET", "HEAD") and not self._credential_offered(request):
+                # A request that offers NO credential at all (no Authorization
+                # header, no API-key header) gets the stream refusal, not the
+                # challenge: this stateless endpoint never serves a GET stream
+                # (the post-auth arm below answers the same 405), so there is
+                # nothing a token would unlock and no reason to invite one.
+                # Challenging here is what made SDK-based proxy clients
+                # (mcp-remote ≤ 0.8.3) launch OAuth flows off their
+                # fallback-test and main GET-stream arms concurrently with the
+                # tools/call arm — one per-process `state`, a verifier file
+                # keyed by state → flows clobber each other's PKCE verifier →
+                # guaranteed invalid_grant. The 405 is the MCP Streamable HTTP
+                # spec's own "server does not offer an SSE stream at this
+                # endpoint" answer, which the SDK handles WITHOUT entering its
+                # auth path — leaving only the POST-armed flow, the one that
+                # actually awaits and consumes the auth code.
+                # https://github.com/jentic/jentic-one/issues/1256
+                # A GET that DOES present a credential — valid, expired, or
+                # garbage — keeps today's contract exactly (challenge on
+                # failure, 405 after successful auth).
+                return _stream_refusal(method)
             methods = _body_methods(body) if body is not None else None
             pre_auth = (
                 method == "POST"
@@ -461,11 +509,7 @@ class McpMount:
             # ever ride and that never ends — each such request would pin a
             # connection + task for the life of the process. json_response
             # mode governs POST responses only, so the gate owns this refusal.
-            return JSONResponse(
-                status_code=405,
-                content={"detail": "Method Not Allowed"},
-                headers={"Allow": "POST"},
-            )
+            return _stream_refusal(method)
 
         if body is None:
             return receive
@@ -480,6 +524,17 @@ class McpMount:
         if authorization and authorization.startswith("Bearer "):
             return authorization.removeprefix("Bearer ")
         return None
+
+    def _credential_offered(self, request: Request) -> bool:
+        """Whether the request presents ANY credential-bearing header.
+
+        Deliberately broader than :meth:`_extract_credential`: a non-Bearer
+        ``Authorization`` header (e.g. ``Basic``) yields no extractable
+        credential, but the caller still ATTEMPTED to authenticate — such a
+        request keeps the 401 challenge contract rather than the
+        credential-less GET/HEAD stream refusal.
+        """
+        return bool(request.headers.get("authorization") or request.headers.get("x-jentic-api-key"))
 
     async def _resolve_identity(self, credential: str, request: Request) -> Identity | None:
         """The REST resolvers' verification logic, mount-side.

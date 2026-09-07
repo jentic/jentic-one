@@ -117,6 +117,24 @@ _CLIENT_CREDENTIALS_GRANT = "client_credentials"
 _AUTHORIZATION_CODE_GRANT = "authorization_code"
 
 
+def _scope_member(scopes: list[str]) -> str | None:
+    """Serialize an effective scope set for the RFC 6749 §5.1 ``scope`` member.
+
+    Space-delimited per §3.3 — whose ABNF (``scope-token *( SP scope-token )``)
+    forbids an empty value, so an empty effective set is OMITTED (None +
+    ``response_model_exclude_none``), never emitted as ``""``. Omission is
+    honest here: no grant leg of this endpoint accepts a scope parameter in
+    the token request, and the consent flow fails closed on an empty
+    intersection (``no_grantable_scopes``), so an empty set can only mean the
+    caller never asked for scopes at this endpoint (zero-grant agents/SAs on
+    the jwt-bearer/client-credentials legs) or every grant was revoked
+    post-mint (refresh leg) — a live, reversible administrative state the
+    platform deliberately distinguishes from revocation, which fails the
+    exchange closed instead.
+    """
+    return " ".join(scopes) if scopes else None
+
+
 def get_token_service(ctx: Context = Depends(get_ctx)) -> TokenService:
     return TokenService(ctx)
 
@@ -226,6 +244,13 @@ _TOKEN_REQUEST_BODY: dict[str, object] = {
     "/oauth/token",
     dependencies=[Depends(_check_token_rate_limit)],
     openapi_extra=_TOKEN_REQUEST_BODY,
+    # RFC 6749 §5.1 + OIDC Core §3.1.3.3: optional members the grant did not
+    # mint (id_token on grant-bearing agent-channel codes per D11, refresh_token
+    # on grants that don't rotate one) are omitted from the response, never
+    # emitted as JSON null — strict clients (mcp-remote's zod schema, Cursor's
+    # MCP SDK) reject nulls and drop the whole token response. Same posture as
+    # the DCR door's RFC 7591 omission (oauth_client_registration.py).
+    response_model_exclude_none=True,
 )
 async def token_endpoint(
     request: Request,
@@ -272,7 +297,7 @@ async def token_endpoint(
             ):
                 raise InvalidGrantError("invalid_client")
             third_party_client_id = body.client_id
-        access_token, refresh_token, id_token = await authorize_svc.exchange_code(
+        access_token, refresh_token, id_token, scopes = await authorize_svc.exchange_code(
             code=body.code,
             code_verifier=body.code_verifier,
             redirect_uri=body.redirect_uri,
@@ -285,23 +310,27 @@ async def token_endpoint(
             id_token=id_token,
             token_type="bearer",
             expires_in=token_svc.access_ttl_seconds,
+            scope=_scope_member(scopes),
         )
 
     if body.grant_type == _JWT_BEARER_GRANT:
         if not body.assertion:
             raise InvalidGrantError("assertion is required for grant_type=jwt-bearer")
-        access_token, refresh_token = await assertion_svc.verify_and_exchange(body.assertion)
+        access_token, refresh_token, scopes = await assertion_svc.verify_and_exchange(
+            body.assertion
+        )
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=token_svc.access_ttl_seconds,
+            scope=_scope_member(scopes),
         )
 
     if body.grant_type == _CLIENT_CREDENTIALS_GRANT:
         if not body.client_id or not body.client_secret:
             raise InvalidGrantError("client_id and client_secret are required")
-        access_token, refresh_token = await sa_auth_svc.authenticate_client_credentials(
+        access_token, refresh_token, scopes = await sa_auth_svc.authenticate_client_credentials(
             body.client_id, body.client_secret
         )
         return TokenResponse(
@@ -309,6 +338,7 @@ async def token_endpoint(
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=sa_auth_svc.access_ttl_seconds,
+            scope=_scope_member(scopes),
         )
 
     if body.grant_type != "refresh_token":
@@ -329,7 +359,7 @@ async def token_endpoint(
         # verify_client_secret above: NULL-hash rows short-circuit to False).
         verified_client_id = body.client_id
 
-    access_token, refresh_token = await token_svc.refresh(
+    access_token, refresh_token, scopes = await token_svc.refresh(
         body.refresh_token, client_id=verified_client_id
     )
     return TokenResponse(
@@ -337,6 +367,7 @@ async def token_endpoint(
         refresh_token=refresh_token,
         token_type="bearer",
         expires_in=token_svc.access_ttl_seconds,
+        scope=_scope_member(scopes),
     )
 
 
@@ -566,7 +597,13 @@ async def revoke_endpoint(
 router.include_router(revocation_router)
 
 
-@router.post("/oauth/introspect")
+@router.post(
+    "/oauth/introspect",
+    # RFC 7662 §2.2: members the server has no value for are omitted from the
+    # introspection response, never emitted as JSON null (the inactive-token
+    # body is exactly `{"active": false}`).
+    response_model_exclude_none=True,
+)
 async def introspect_endpoint(
     body: IntrospectRequest,
     identity: Identity = get_current_identity(allow_expired_password=True),
