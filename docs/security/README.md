@@ -126,7 +126,9 @@ warrants:
 8. **Keep the audit log.** Every credential access and authorization decision is
    recorded — ship it somewhere durable.
 9. **Rotate the encryption keyset** on a schedule (the keyset supports multiple
-   versioned entries with an `active_id` for do-and-revoke rotation).
+   versioned entries with an `active_id`; rotation is **additive** — add a new
+   entry, flip `active_id`, and keep the retired keys, per the
+   [key-rotation contract](../operations/upgrades.md#what-an-upgrade-never-does)).
 
 ## Sandboxing the agent (Axis A)
 
@@ -202,7 +204,9 @@ Before pointing Jentic One at production credentials:
 - [ ] The **encryption keyset is injected via env/secret manager**, not committed;
       generate a real 32-byte key:
       `python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`.
-- [ ] `admin.auth.jwt_secret` and other placeholder secrets are set to real values.
+- [ ] `admin.auth.jwt_secret` and other placeholder secrets are set to real values
+      (with `JENTIC_ENV=production` the app refuses to boot on empty or
+      change-me values, so a missed one fails loudly).
 - [ ] TLS is terminated in front of Jentic One.
 - [ ] The audit log is shipped to durable storage.
 - [ ] Telemetry is set as you intend (it is **off by default**; see
