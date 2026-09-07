@@ -57,6 +57,7 @@ from jentic_one.auth.web.flow import (
     get_consent_backend,
     is_platform_client,
     platform_client_allows_redirect,
+    resolve_identity_gate,
     sign_payload,
     state_signing_key,
     verify_payload,
@@ -1314,23 +1315,15 @@ async def authorize_endpoint(
         redirect_uri=callback_uri,
     )
 
-    if idp_url is None:
-        if ctx.config.auth.local_login.enabled:
-            # Local-account path (#1276): no IdP, but the deployment opted in
-            # to the first-party password login form. The signed internal
-            # state minted above is reused verbatim as the form's
-            # carry-through token — the form route re-verifies it before
-            # rendering. IdP always wins: this branch is unreachable when an
-            # IdP is configured (idp_url is non-None), so there is no mixed
-            # mode.
-            return RedirectResponse(
-                url=f"/login?{urlencode({'ls': internal_state})}", status_code=302
-            )
+    # Identity dispatch: the explicit rung ladder lives in flow.py
+    # (resolve_identity_gate) — platform-session reuse (placeholder, epic
+    # #1280) > IdP redirect > local-login form (#1276, gate on + no IdP).
+    gate_redirect = resolve_identity_gate(ctx, idp_url=idp_url, internal_state=internal_state)
+    if gate_redirect is None:
         return _error_redirect(
             redirect_uri, "server_error", state, "no identity provider configured"
         )
-
-    return RedirectResponse(url=idp_url, status_code=302)
+    return gate_redirect
 
 
 @router.get(

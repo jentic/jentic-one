@@ -26,8 +26,10 @@ import json
 import secrets
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from urllib.parse import urlencode
 
 from fastapi import Depends, Request
+from fastapi.responses import RedirectResponse
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
@@ -172,6 +174,47 @@ def client_gate_passes(client: OAuthClientView) -> bool:
     signed-state window cannot walk the rest of the flow to a minted code.
     """
     return client.active and client.approval_status == OAuthClientApprovalStatus.APPROVED.value
+
+
+# --- identity dispatch -----------------------------------------------------------
+
+
+def resolve_identity_gate(
+    ctx: Context, *, idp_url: str | None, internal_state: str
+) -> RedirectResponse | None:
+    """The explicit identity-dispatch ladder for ``GET /authorize``.
+
+    Once the request is validated and the signed internal state is minted,
+    exactly one rung answers "who authenticates this human?":
+
+    1. **Platform-session reuse** — NOT implemented; documented placeholder
+       for the epic #1280 follow-up (an already-authenticated platform
+       browser session skipping straight to consent). When it lands it slots
+       in here, ahead of the IdP.
+    2. **External IdP** (today's flow): the service resolved an upstream
+       authorize URL — redirect to it. IdP always wins, so there is no mixed
+       mode with local login.
+    3. **Local-account login form** (#1276): no IdP and the deployment opted
+       in via ``auth.local_login.enabled``. The signed internal state is
+       reused verbatim as the form's carry-through token — the form route
+       re-verifies it before rendering.
+    4. Nothing is enabled: return ``None`` — the caller renders its standard
+       ``server_error`` redirect, byte-identical to the pre-ladder flow.
+
+    Pure structural seam: no rung adds or changes behavior.
+    """
+    # Rung 1 — platform-session reuse (epic #1280 follow-up): NOT implemented.
+
+    # Rung 2 — external IdP redirect.
+    if idp_url is not None:
+        return RedirectResponse(url=idp_url, status_code=302)
+
+    # Rung 3 — local-account login form (gate on + no IdP).
+    if ctx.config.auth.local_login.enabled:
+        return RedirectResponse(url=f"/login?{urlencode({'ls': internal_state})}", status_code=302)
+
+    # No identity path is configured — the caller owns the error redirect.
+    return None
 
 
 # --- signed internal state ------------------------------------------------------
