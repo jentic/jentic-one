@@ -338,7 +338,7 @@ Platform security event thresholds.
 
 ## `telemetry`
 
-Anonymous product-telemetry settings (issue #446). Defaults to **OFF**: an instance whose config omits this block (non-onboarded or hand-rolled) sends nothing. The onboarding CLI writes `enabled` explicitly (a yes-default `[Y]/n` prompt) so the on-by-default UX lives in the prompt, not the code default. `instance_id` seeds the durable admin-DB identity row on first startup for opted-in instances. `host_os` is the operator's OS family, stamped by the CLI at install time so a Docker-run instance reports the host's OS rather than the container's; sent once per boot, on the `instance_booted` event.
+Anonymous product-telemetry settings. Defaults to **OFF**: an instance whose config omits this block (non-onboarded or hand-rolled) sends nothing. The onboarding CLI writes `enabled` explicitly (a yes-default `[Y]/n` prompt), which is where the on-by-default install experience comes from. `instance_id` seeds the durable admin-DB identity row on first startup for opted-in instances. `host_os` is the operator's OS family, stamped by the CLI at install time so a Docker-run instance reports the host's OS rather than the container's; sent once per boot, on the `instance_booted` event.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
