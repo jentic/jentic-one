@@ -48,6 +48,7 @@ def _client_view(
     active: bool,
     name: str = "Cursor",
     redirect_uris: list[str] | None = None,
+    software_id: str | None = "com.cursor.ide",
 ) -> OAuthClientView:
     return OAuthClientView(
         id="oac_1",
@@ -63,7 +64,7 @@ def _client_view(
         token_endpoint_auth_method="none",
         consent_model="agent",
         registration_source="dcr",
-        software_id="com.cursor.ide",
+        software_id=software_id,
         approval_status=approval_status,
         created_at=datetime.now(UTC),
         updated_at=None,
@@ -208,6 +209,72 @@ def test_page_admin_panel_hidden_and_anon_panel_present(client: TestClient) -> N
     # Admin-session detection + decision wiring live in the page script.
     assert "oauth-clients:write" in resp.text
     assert "/me" in resp.text
+    # L3/I2 wiring: 429 backoff honors Retry-After; the 400→re-mint arm is
+    # clamped per tab (no clock-skew reload loop).
+    assert "Retry-After" in resp.text
+    assert "jentic-one.approval-remints" in resp.text
+
+
+def _admin_details_block(html: str) -> str:
+    """The row-derived registration details <dl> inside the admin panel."""
+    start = html.index('<dl class="client-details">')
+    end = html.index("</dl>", start)
+    return html[start:end]
+
+
+def test_admin_panel_shows_row_derived_client_details(client: TestClient) -> None:
+    """M1: the decision panel renders verifiable registration facts — the
+    registered redirect-URI origins, client_id, and software_id — because the
+    display name is attacker-chosen at anonymous registration."""
+    view = _client_view(
+        approval_status="pending",
+        active=False,
+        redirect_uris=["https://app.example.com/cb", "http://127.0.0.1:33333/cb"],
+    )
+    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+        resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
+
+    details = _admin_details_block(resp.text)
+    assert "https://app.example.com" in details
+    assert "http://127.0.0.1:33333" in details
+    assert "oc_test" in details
+    assert "com.cursor.ide" in details
+    # The queue deep link is offered inside the admin panel too.
+    assert resp.text.count("https://auth.example.com/app/settings?tab=queue") >= 2
+
+
+def test_admin_panel_omits_software_id_row_when_absent(client: TestClient) -> None:
+    view = _client_view(approval_status="pending", active=False, software_id=None)
+    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+        resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
+    assert "Software ID" not in _admin_details_block(resp.text)
+
+
+def test_admin_panel_details_come_from_row_not_request(client: TestClient) -> None:
+    """The details are ROW-derived: a request redirect_uri outside the
+    registered set never reaches the decision panel."""
+    view = _client_view(
+        approval_status="pending",
+        active=False,
+        redirect_uris=["https://registered.example.com/cb"],
+    )
+    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+        resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
+
+    details = _admin_details_block(resp.text)
+    assert "https://registered.example.com" in details
+    # The request's own redirect_uri origin is absent from the panel.
+    assert "app.example.com" not in details
+
+
+def test_admin_panel_row_details_are_escaped(client: TestClient) -> None:
+    view = _client_view(
+        approval_status="pending", active=False, software_id="<img src=x onerror=alert(1)>"
+    )
+    with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+        resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
+    assert "<img src=x" not in resp.text
+    assert "&lt;img src=x" in resp.text
 
 
 def test_page_deny_redirect_only_when_redirect_uri_registered(client: TestClient) -> None:
@@ -291,6 +358,27 @@ def test_status_endpoint_rejects_wrong_purpose_blob(client: TestClient) -> None:
     )
     resp = client.get("/oauth/approval/status", params={"st": callback_state})
     assert resp.status_code == 400
+
+
+def test_approval_blob_rejected_at_oauth_callback(client: TestClient) -> None:
+    """L1 — the reverse direction of purpose separation: an APPROVAL blob
+    presented as the /oauth/callback state must be rejected (distinct derived
+    key AND purpose discriminator), landing on the invalid_state error."""
+    resp = client.get(
+        "/oauth/callback",
+        params={"code": "upstream-code", "state": _mint_state()},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/error?error=invalid_state"
+
+
+def test_status_endpoint_rejects_blob_without_iat(client: TestClient) -> None:
+    """L2 — a signed blob lacking iat has no enforceable lifetime; _verify_payload
+    now treats absence as fatal rather than skipping the TTL check."""
+    resp = client.get("/oauth/approval/status", params={"st": _mint_state(iat=None)})
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "invalid_grant"
 
 
 def test_status_endpoint_rejects_malformed_blob(client: TestClient) -> None:

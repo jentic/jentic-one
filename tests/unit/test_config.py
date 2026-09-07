@@ -566,11 +566,12 @@ def test_oauth_registration_rate_limit_knobs(config_file: Path):
 
 
 def test_oauth_approval_status_rate_limit_defaults(config_file: Path):
-    """The approval-status poll bucket: generous defaults (a browser polls
-    every few seconds), independently tunable from /authorize."""
+    """The approval-status poll bucket: generous defaults (one tab polls at
+    12 rpm; 120/60 holds ~10 NAT'd tabs), independently tunable from
+    /authorize."""
     config = load_config(config_file)
-    assert config.auth.oauth_rate_limit.approval_status_rpm == 60
-    assert config.auth.oauth_rate_limit.approval_status_burst == 30
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 120
+    assert config.auth.oauth_rate_limit.approval_status_burst == 60
 
 
 def test_oauth_approval_status_rate_limit_env_overrides(config_file: Path):

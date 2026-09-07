@@ -1504,10 +1504,10 @@ func (j *OAuthRateLimitConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["approval_status_burst"]; !ok || v == nil {
-		plain.ApprovalStatusBurst = 30
+		plain.ApprovalStatusBurst = 60
 	}
 	if v, ok := raw["approval_status_rpm"]; !ok || v == nil {
-		plain.ApprovalStatusRpm = 60
+		plain.ApprovalStatusRpm = 120
 	}
 	if v, ok := raw["authorize_burst"]; !ok || v == nil {
 		plain.AuthorizeBurst = 30

@@ -559,6 +559,34 @@ _AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
             line-height: 1.5;
             margin-bottom: 10px;
         }}
+        .panel .hint {{
+            color: #689296;
+            font-size: 12px;
+        }}
+        .client-details {{
+            background: white;
+            border: 1px solid #E4EAEB;
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }}
+        .client-details dt {{
+            color: #689296;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 10px;
+            margin-top: 8px;
+        }}
+        .client-details dt:first-child {{ margin-top: 0; }}
+        .client-details dd {{
+            color: #0E1A1D;
+            font-weight: 600;
+            word-break: break-all;
+        }}
+        .panel a {{
+            color: #305256;
+        }}
         .copy-row {{
             display: flex;
             gap: 8px;
@@ -633,7 +661,18 @@ _AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
             </div>
         </div>
         <div class="panel" id="admin-panel" hidden>
-            <p>You are signed in as an administrator &mdash; you can decide now:</p>
+            <p>You are signed in as an administrator &mdash; review before
+                deciding. The name above is self-chosen by the client; these
+                details come from its registration:</p>
+            <dl class="client-details">
+                <dt>Redirect origins</dt>
+                <dd>{client_origins}</dd>
+                <dt>Client ID</dt>
+                <dd>{client_id_text}</dd>
+                {software_id_row}
+            </dl>
+            <p class="hint"><a href="{queue_url}">Open the approval queue</a>
+                for the full registration record.</p>
             <div class="buttons">
                 <button type="button" class="deny" id="btn-deny">Deny</button>
                 <button type="button" class="approve" id="btn-approve">Approve</button>
@@ -691,24 +730,67 @@ _APPROVAL_PENDING_SCRIPT = """<script>
         }
     }
 
+    // I2 clamp: a 400 (expired/invalid blob) re-runs /authorize to mint a
+    // fresh blob. A clock-skewed verifier could 400 fresh blobs too, so
+    // re-mints are capped per tab; any healthy poll answer resets the count.
+    var REMINT_KEY = "jentic-one.approval-remints";
+    var MAX_REMINTS = 3;
+    function remintOrStop() {
+        var count = 0;
+        try {
+            count = parseInt(window.sessionStorage.getItem(REMINT_KEY), 10) || 0;
+        } catch (e) { /* storage blocked */ }
+        if (count >= MAX_REMINTS) {
+            settled = true;
+            statusEl.textContent =
+                "This page could not verify its state. " +
+                "Retry the connection from your application.";
+            return;
+        }
+        try {
+            window.sessionStorage.setItem(REMINT_KEY, String(count + 1));
+        } catch (e) { /* storage blocked */ }
+        navigate(cfg.resume_url);
+    }
+    function clearRemints() {
+        try { window.sessionStorage.removeItem(REMINT_KEY); } catch (e) { /* blocked */ }
+    }
+
+    // Poll cadence: cfg.poll_ms steady-state. A 429 backs off to the
+    // server's Retry-After hint (or doubles the cadence when absent),
+    // clamped to [cfg.poll_ms, 60 s]; any non-429 answer resets it.
+    var pollDelay = cfg.poll_ms;
+    function schedule() {
+        if (!settled) { window.setTimeout(poll, pollDelay); }
+    }
     function poll() {
         if (settled) { return; }
         fetch(cfg.status_url, { headers: { Accept: "application/json" } })
             .then(function (resp) {
                 if (resp.status === 400) {
-                    // Signed state expired — re-run /authorize to mint a
-                    // fresh one (re-renders this page while still pending).
-                    navigate(cfg.resume_url);
+                    remintOrStop();
                     return null;
                 }
-                return resp.ok ? resp.json() : null;
+                if (resp.status === 429) {
+                    var retryAfter = parseInt(resp.headers.get("Retry-After"), 10);
+                    var hinted = isNaN(retryAfter) ? 0 : retryAfter * 1000;
+                    pollDelay = Math.min(
+                        Math.max(hinted, pollDelay * 2, cfg.poll_ms), 60000);
+                    return null;
+                }
+                pollDelay = cfg.poll_ms;
+                if (resp.ok) {
+                    clearRemints();
+                    return resp.json();
+                }
+                return null;
             })
             .then(function (body) {
                 if (body && body.status) { onStatus(body.status); }
+                schedule();
             })
-            .catch(function () { /* transient — retry next tick */ });
+            .catch(function () { schedule(); });
     }
-    window.setInterval(poll, cfg.poll_ms);
     poll();
 
     // Admin detection: the operator SPA keeps its session as a bearer token
@@ -1105,10 +1187,14 @@ def _verify_payload(
     if payload.get("_purpose") != purpose:
         raise InvalidGrantError(f"token purpose mismatch: expected {purpose}")
     iat = payload.get("iat")
-    if iat is not None:
-        age = time.time() - float(iat)
-        if age > max_age or age < 0:
-            raise InvalidGrantError(f"{purpose} token expired")
+    if iat is None:
+        # Every mint site stamps iat; a signed payload without one has no
+        # enforceable lifetime, so absence is fatal — the TTL check must not
+        # be skippable (matters most for the anonymous approval-status poll).
+        raise InvalidGrantError(f"{purpose} token missing iat")
+    age = time.time() - float(iat)
+    if age > max_age or age < 0:
+        raise InvalidGrantError(f"{purpose} token expired")
     return payload
 
 
@@ -1262,8 +1348,24 @@ def _render_approval_pending_page(
     # deny_redirect/resume_url) can never close the JSON <script> block.
     config_json = json.dumps(page_config).replace("<", "\\u003c")
 
+    # M1 phishing counter (mirrors the consent page's origin block): the
+    # client's NAME is self-chosen at anonymous registration, so the admin
+    # panel renders verifiable registration facts next to the decision
+    # buttons — registered redirect-URI origins, client_id, and software_id
+    # when present. All ROW-derived (never request input) and HTML-escaped.
+    origins = sorted({_redirect_origin(uri) for uri in client.redirect_uris})
+    client_origins = "<br>".join(html_mod.escape(origin) for origin in origins) or "&mdash;"
+    software_id_row = ""
+    if client.software_id:
+        software_id_row = (
+            f"<dt>Software ID</dt>\n                <dd>{html_mod.escape(client.software_id)}</dd>"
+        )
+
     html = _AWAITING_APPROVAL_PAGE_TEMPLATE.format(
         app_name=html_mod.escape(client.name),
+        client_origins=client_origins,
+        client_id_text=html_mod.escape(client.client_id),
+        software_id_row=software_id_row,
         queue_url=html_mod.escape(queue_url, quote=True),
         config_json=config_json,
         page_script=_APPROVAL_PENDING_SCRIPT,
