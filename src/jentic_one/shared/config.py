@@ -409,9 +409,11 @@ class EncryptionKey(BaseModel):
 
     ``material_env``/``material_file`` are resolved once, at config load, into
     ``material`` — consumers keep reading ``resolved_material`` and never learn
-    where the bytes came from. Resolution failures (unset variable, unreadable
-    file, empty value) fail validation loudly rather than booting a server that
-    cannot decrypt its own credentials.
+    where the bytes came from (the source field is cleared after resolution, so
+    a resolved key re-validates cleanly and never re-reads the environment or
+    the file). Resolution failures (unset variable, unreadable file, empty
+    value) fail validation loudly rather than booting a server that cannot
+    decrypt its own credentials.
     """
 
     id: str
@@ -449,6 +451,7 @@ class EncryptionKey(BaseModel):
                     f"material_env {self.material_env!r} is not set (or empty) in the environment"
                 )
             self.material = SecretStr(value.strip())
+            self.material_env = None
         elif self.material_file is not None:
             try:
                 raw = Path(self.material_file).read_text()
@@ -459,6 +462,7 @@ class EncryptionKey(BaseModel):
             if not raw.strip():
                 raise ValueError(f"material_file {self.material_file!r} is empty")
             self.material = SecretStr(raw.strip())
+            self.material_file = None
         return self
 
     @property

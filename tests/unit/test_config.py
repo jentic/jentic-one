@@ -12,6 +12,7 @@ import yaml
 from pydantic import SecretStr, ValidationError
 
 from jentic_one.shared.config import (
+    _ONESHOT_CONFIG_CACHE,
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
@@ -664,6 +665,18 @@ def test_encryption_key_requires_exactly_one_source():
         EncryptionKey(id="v1", material=SecretStr(_KEY_B64), material_env="TEST_ENC_KEY")
 
 
+def test_encryption_key_resolved_key_revalidates(tmp_path: Path):
+    """A resolved key survives dump -> validate: the source field is cleared,
+    so re-validation neither trips the exactly-one check nor re-reads the file."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key = EncryptionKey(id="v1", material_file=str(key_file))
+    key_file.unlink()  # re-validation must not go back to the source
+    again = EncryptionKey.model_validate(key.model_dump())
+    assert again.resolved_material.get_secret_value() == _KEY_B64
+    assert again.material_file is None
+
+
 def test_encryption_key_material_file_yaml_roundtrip(
     tmp_path: Path, sample_config_dict: dict[str, Any]
 ):
@@ -700,8 +713,6 @@ def test_load_config_from_pipe_is_cached(sample_config_dict: dict[str, Any]):
         assert first.databases.registry.name == second.databases.registry.name
     finally:
         os.close(read_fd)
-        from jentic_one.shared.config import _ONESHOT_CONFIG_CACHE
-
         _ONESHOT_CONFIG_CACHE.clear()
 
 
