@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import html as html_mod
 
+from jentic_one.auth.web.flow import FONTS_URL
 from jentic_one.auth.web.routers.authorize import (
     _CHECK_SVG,
     _CONSENT_PAGE_TEMPLATE,
-    _FONTS_URL,
 )
 
 
@@ -22,7 +22,7 @@ def _render_consent(
         user_email=html_mod.escape(user_email),
         permission_items="<li>View your agents</li>",
         consent_token=html_mod.escape("token123"),
-        fonts_url=_FONTS_URL,
+        fonts_url=FONTS_URL,
         check_svg=_CHECK_SVG,
     )
 

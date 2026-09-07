@@ -16,6 +16,7 @@ from jentic_one.admin.repos import (
 from jentic_one.admin.services._support.passwords import (
     MIN_PASSWORD_LENGTH,
     PASSWORD_TOO_SHORT_MESSAGE,
+    dummy_verify_password,
     hash_password,
     verify_password,
 )
@@ -105,16 +106,25 @@ class AuthService:
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_email(session, payload.email)
             if user is None:
+                # Timing equalizer: every early rejection pays one argon2
+                # verification, so an anonymous caller cannot separate
+                # "unknown email" from "wrong password" by response time.
+                dummy_verify_password()
                 raise InvalidCredentialsError()
 
             if not user.active:
+                dummy_verify_password()
                 raise InvalidCredentialsError()
 
             secret = await UserSecretRepository.get_by_user_id(session, user.id)
             if secret is None or secret.password_hash is None:
+                dummy_verify_password()
                 raise InvalidCredentialsError()
 
             if secret.locked_until is not None and secret.locked_until > datetime.now(UTC):
+                # Locked accounts also skip the real verify — burn the dummy
+                # here too so "locked" is not timing-distinguishable either.
+                dummy_verify_password()
                 # Defer the audit write until *after* this read session closes:
                 # holding this read connection open while opening a write
                 # transaction on the same database self-deadlocks under SQLite
@@ -181,6 +191,20 @@ class AuthService:
         login_counter.add(1, {"outcome": "success"})
 
         return user.id
+
+    async def password_rotation_required(self, user_id: str) -> bool:
+        """Whether the account must rotate its password before platform use.
+
+        Read-only companion to :meth:`authenticate` for callers that verify a
+        credential without minting a session (the local-login form on the
+        /authorize flow): the ``must_change_password`` flag boxes a
+        temporary-password principal into change-password-only on the UI
+        path, and the OAuth path must honor the same fence before issuing a
+        code. A vanished row reads as ``True`` — fail closed.
+        """
+        async with self._ctx.admin_db.session() as session:
+            user = await UserRepository.get_by_id(session, user_id)
+            return user is None or bool(user.must_change_password)
 
     async def login(self, payload: LoginPayload) -> TokenBundle:
         user_id = await self.authenticate(payload)

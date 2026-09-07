@@ -22,6 +22,8 @@ from jentic_one.admin.repos import (
     UserRepository,
     UserSecretRepository,
 )
+from jentic_one.admin.services import auth_service as auth_service_module
+from jentic_one.admin.services._support import passwords as passwords_module
 from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.admin.services.auth_service import AuthService
@@ -226,6 +228,79 @@ async def test_authenticate_lockout_at_threshold(
     async with ctx.admin_db.session() as session:
         await UserSecretRepository.unlock(session, user_id)
         await session.commit()
+
+
+async def test_authenticate_burns_dummy_hash_on_early_rejections(
+    integration_context: Context,
+    auth_user: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structural pin for the timing equalizer: every rejection arm that
+    skips the real argon2 verify (unknown email, locked account) burns the
+    dummy verification instead, so response timing cannot separate account
+    existence. The wrong-password arm runs the real verify and must NOT also
+    pay the dummy. (Deliberately not a wall-clock timing test.)"""
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+
+    dummy_calls: list[int] = []
+    monkeypatch.setattr(auth_service_module, "dummy_verify_password", lambda: dummy_calls.append(1))
+
+    # Unknown email: no secret row to verify → the dummy is burned.
+    with pytest.raises(InvalidCredentialsError):
+        await service.authenticate(LoginPayload(email="nobody@nowhere.com", password="any"))
+    assert len(dummy_calls) == 1
+
+    # Wrong password on a real account: the REAL verify runs; no dummy.
+    with pytest.raises(InvalidCredentialsError):
+        await service.authenticate(LoginPayload(email=email, password="wrong-password"))
+    assert len(dummy_calls) == 1
+
+    # Locked account short-circuits before the real verify → dummy again.
+    async with ctx.admin_db.session() as session:
+        await UserSecretRepository.lock_until(
+            session, user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+        )
+        await session.commit()
+    with pytest.raises(AccountLockedError):
+        await service.authenticate(LoginPayload(email=email, password="correct-password"))
+    assert len(dummy_calls) == 2
+
+    # Cleanup: unlock and reset the failure counter.
+    async with ctx.admin_db.session() as session:
+        await UserSecretRepository.unlock(session, user_id)
+        await session.commit()
+
+
+async def test_dummy_verify_password_runs_real_argon2() -> None:
+    """The equalizer itself performs a genuine argon2 verification (against
+    a static hash minted with the current hasher parameters)."""
+    passwords_module.dummy_verify_password()
+    assert passwords_module._DUMMY_HASH is not None
+    assert passwords_module._DUMMY_HASH.startswith("$argon2")
+
+
+async def test_password_rotation_required_reads_flag(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """The read-only companion to authenticate(): reflects the row's
+    must_change_password flag and fails closed for a vanished row."""
+    user_id, _ = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+
+    assert await service.password_rotation_required(user_id) is False
+
+    async with ctx.admin_db.transaction() as session:
+        await UserRepository.update(session, user_id, must_change_password=True)
+    assert await service.password_rotation_required(user_id) is True
+
+    async with ctx.admin_db.transaction() as session:
+        await UserRepository.update(session, user_id, must_change_password=False)
+    assert await service.password_rotation_required(user_id) is False
+
+    assert await service.password_rotation_required("usr_does_not_exist") is True
 
 
 async def test_change_password_success(
