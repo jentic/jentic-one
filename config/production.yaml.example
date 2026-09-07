@@ -11,7 +11,7 @@ databases:
     host: db.internal
     port: 5432
     name: jentic
-    user: app_registry
+    user: registry_user
     password: CHANGE_ME
     pool_max: 20
     schema_name: registry
@@ -19,7 +19,7 @@ databases:
     host: db.internal
     port: 5432
     name: jentic
-    user: app_control
+    user: control_user
     password: CHANGE_ME
     pool_max: 15
     schema_name: control
@@ -27,7 +27,7 @@ databases:
     host: db.internal
     port: 5432
     name: jentic
-    user: app_admin
+    user: admin_user
     password: CHANGE_ME
     pool_max: 10
     schema_name: admin

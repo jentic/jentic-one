@@ -111,9 +111,10 @@ observability:
 
 **Connection-pool sizing:** each process caps at `pool_max` + 10 overflow per
 DB, and **both** the app and broker containers open all three pools — the
-example above can reach (30+25+20) × 2 ≈ **190 server connections**
-worst-case. Size against your instance's `max_connections` (managed-PG entry
-tiers are often ~100) or front Postgres with a pooler like pgbouncer.
+example above holds (30+25+20) × 2 = **150 server connections** at steady
+state, and up to **210** if every pool bursts into its overflow. Size against
+your instance's `max_connections` (managed-PG entry tiers are often ~100) or
+front Postgres with a pooler like pgbouncer.
 
 Secrets go in an env file, `/etc/jentic/prod.env` (`chmod 600`, values
 unquoted — `docker --env-file` takes them literally):
@@ -122,17 +123,20 @@ unquoted — `docker --env-file` takes them literally):
 JENTIC_ENV=production
 JENTIC_CONFIG_FILE=/etc/jentic/production.yaml
 
-JENTIC__DATABASES__REGISTRY__PASSWORD=…
-JENTIC__DATABASES__CONTROL__PASSWORD=…
-JENTIC__DATABASES__ADMIN__PASSWORD=…
+JENTIC__DATABASES__REGISTRY__PASSWORD=changeme
+JENTIC__DATABASES__CONTROL__PASSWORD=changeme
+JENTIC__DATABASES__ADMIN__PASSWORD=changeme
 
-JENTIC__ADMIN__AUTH__JWT_SECRET=…
-JENTIC__ADMIN__INVITE__PEPPER=…
-JENTIC__CREDENTIALS__CONNECT__STATE_SECRET=…
+JENTIC__ADMIN__AUTH__JWT_SECRET=changeme
+JENTIC__ADMIN__INVITE__PEPPER=changeme
+JENTIC__CREDENTIALS__CONNECT__STATE_SECRET=changeme
 ```
 
-In production the app refuses to boot with placeholder values for the last
-three. Generate fresh material (also for the encryption keyset) with:
+The `changeme` placeholders are deliberate: with `JENTIC_ENV=production` the
+app refuses to boot while any of the last three still matches a
+change-me/empty value, so a skeleton pasted as-is fails loudly instead of
+running with known secrets. Generate fresh material (also for the encryption
+keyset) with:
 
 ```bash
 python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"

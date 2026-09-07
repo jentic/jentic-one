@@ -85,7 +85,7 @@ flowchart LR
    container image is the only supported backend distribution.
 2. **Service images** — each `<svc>.Dockerfile` extends `python-base` and
    sets `JENTIC__APPS`. Same wheel everywhere; only the env differs.
-3. **Tarballs** — `make save-<svc>` writes `build/<svc>-<ver>.tar` for
+3. **Tarballs** — `make save-<svc>` writes `build/jentic-<svc>-<ver>.tar` for
    offline transfer or air-gapped loading.
 4. **Helm chart** — an umbrella chart with one subchart per service;
    `values.yaml` toggles `<svc>.enabled`, image tags default to

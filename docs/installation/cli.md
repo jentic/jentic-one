@@ -38,8 +38,9 @@ platform and resolve the latest version:
 
 ```bash
 VER=$(curl -fsSL https://api.github.com/repos/jentic/jentic-one/releases/latest \
-  | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')          # or pin: VER=0.33.0
-[ -n "$VER" ] || { echo "could not resolve latest version (GitHub API rate limit?) — set VER manually" >&2; exit 1; }
+  | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')          # or pin: VER=0.38.2
+[ -n "$VER" ] || echo "could not resolve latest version (GitHub API rate limit?) — set VER manually" >&2
+: "${VER:?}"    # stops here when empty (aborts the command, not your shell)
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')                  # darwin | linux
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')    # amd64 | arm64
 BASE="https://github.com/jentic/jentic-one/releases/download/v${VER}"

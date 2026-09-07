@@ -54,9 +54,10 @@ submission for a release — "No package found matching input criteria" means
 use the Scoop bucket above instead.
 
 Manual `.zip` download and cosign verification are in [cli.md](cli.md).
-Agents on native Windows can `register`, `search`,
-`inspect`, and `execute` against the broker at `http://127.0.0.1:8100`
-thanks to the loopback forwarding above — no WSL needed on the agent side.
+Agents on native Windows can `register`, `search`, and
+`inspect` against the app at `http://127.0.0.1:8000`, and `execute`
+through the broker at `http://127.0.0.1:8100`, thanks to the loopback
+forwarding above — no WSL needed on the agent side.
 
 ## Caveats
 

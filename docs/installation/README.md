@@ -2,7 +2,7 @@
 
 Production installs run from released artifacts only: the published container image and the two Go CLI binaries. Nothing is built from source on the target hosts. Outbound internet access is needed to fetch and verify the artifacts; at runtime the defaults make two low-volume outbound calls, each with a disable knob (see the table below) — with those off, an install inside your network needs no outbound access.
 
-> Evaluating first? The five-minute SQLite trial — no Postgres, three
+> Evaluating first? The five-minute SQLite trial — no Postgres, four
 > `docker run`s — is the [README quickstart](../../README.md#quickstart).
 > This section is the production path.
 
@@ -49,8 +49,13 @@ the verify commands linked above need nothing but the downloaded files and
 
 - **Image:** on a connected machine, `docker pull` by digest, verify, then
   `docker save -o jentic-one-app.tar <image>`; transfer the tarball and
-  `docker load -i` it inside the network (or push it to your internal
-  registry).
+  `docker load -i` it inside the network. `docker load` restores the image
+  under its ID only — it does **not** restore the `@sha256:` reference, so
+  after loading, retag it (`docker tag <image-id> <internal-registry>/jentic-one-app:<version>`)
+  and push it to your internal registry (or reference the local tag), and
+  point the compose file / systemd `image.env` at that reference instead of
+  the GHCR digest. The digest pin did its job on the connected side, where
+  the signature was verified.
 - **Binaries:** transfer the release archives together with `checksums.txt`,
   `checksums.txt.sig`, and `checksums.txt.pem`, so the verification can be
   repeated inside the network.

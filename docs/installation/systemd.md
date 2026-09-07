@@ -22,11 +22,17 @@ a one-line edit:
 IMAGE=ghcr.io/jentic/jentic-one-app@sha256:<digest-from-the-release>
 ```
 
+Air-gapped hosts: a `docker load`ed image is not addressable by its
+`@sha256:` reference — point `IMAGE` at the retagged internal reference
+instead (see [air-gapped transfer](README.md#air-gapped-transfer)).
+
 ## 3. Install the units
 
 `/etc/systemd/system/jentic-migrate.service` — a oneshot that (re)applies
 migrations. The app and broker require it, so migrations always run before
-either starts, including after an image bump:
+either starts from a cold boot. After an image bump, restart **all three**
+units (as the upgrade section below does) — the oneshot stays `active` once
+run, so restarting only the app or broker would not re-apply migrations:
 
 ```ini
 [Unit]

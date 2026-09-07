@@ -73,7 +73,9 @@ cd cli && make build
 
 One image (`ghcr.io/jentic/jentic-one-app`) runs both the control plane and the
 broker. The trial shape below keeps everything in SQLite files on one volume
-and runs with development-mode secrets — don't point it at a real credential:
+and runs with development-mode secrets — don't point it at a real credential
+(the trial config also ships no encryption keyset, so storing one fails until
+you configure `credentials.encryption`):
 
 ```bash
 docker pull ghcr.io/jentic/jentic-one-app:latest
