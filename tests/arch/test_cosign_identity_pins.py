@@ -96,3 +96,32 @@ def test_cosign_identity_workflow_paths_exist() -> None:
         "gate's file set) or the extraction regexes rotted"
     )
     assert not violations, "Cosign identities pin missing workflow paths:\n" + "\n".join(violations)
+
+
+@pytest.mark.arch
+def test_code_identity_pins_include_version_tag_prefix() -> None:
+    """The two code pins must require a version-tag ref, like the docs do.
+
+    ``release.yml`` signs only on ``v*.*.*`` tags, and every documented verify
+    snippet pins ``@refs/tags/v``. If the installer or the Go self-updater
+    accepts a bare ``@refs/tags/`` it accepts any tag ref of the workflow —
+    strictly weaker than the documented contract.
+    """
+    pinned_sources = [INSTALL_SCRIPT, *sorted(CLI_UPDATE_DIR.glob("*.go"))]
+    violations = []
+    pins_found = 0
+    for path in pinned_sources:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "COSIGN_CERT_IDENTITY_REGEXP=" in line or "cosignCertIdentityRegexp =" in line:
+                pins_found += 1
+                if "@refs/tags/v" not in line:
+                    violations.append(
+                        f"{path.relative_to(REPO_ROOT)}:{lineno} — identity pin accepts any "
+                        "tag ref; append 'v' so only version-tag runs of release.yml verify "
+                        "(matches every documented verify snippet)"
+                    )
+    assert pins_found >= 2, (
+        "Expected the identity pin in both tools/install.sh and "
+        "cli/internal/update/ — the assignment patterns this gate greps for rotted"
+    )
+    assert not violations, "\n".join(violations)
