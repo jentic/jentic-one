@@ -8,7 +8,7 @@ The pieces of the ``/authorize`` flow that more than one router needs —
   (plus the approval-status poll's own per-IP bucket),
 - the platform/registered client gate (D7) helpers,
 - the HMAC-signed, purpose-discriminated, TTL'd internal-state tokens
-  (purposes: ``state``, ``approval``),
+  (purposes: ``state``, ``approval``, ``login``, ``session``),
 - the shared-state backend accessor and the **single** consent-handle writer
   (one place owns the handle's shape — the IdP callback and the local-login
   submit both write through it),
@@ -26,8 +26,10 @@ import json
 import secrets
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from dataclasses import dataclass
 from urllib.parse import urlencode
 
+import structlog
 from fastapi import Depends, Request
 from fastapi.responses import RedirectResponse
 
@@ -42,8 +44,23 @@ from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state.backend import SharedStateBackend
 from jentic_one.shared.web.deps import get_ctx
 
+logger = structlog.get_logger(__name__)
+
 STATE_MAX_AGE_SECONDS = 600
 CONSENT_STATE_MAX_AGE_SECONDS = 300
+
+#: TTL for the session-continuation blob minted by ``POST /oauth/session/continue``
+#: (identity-ladder rung 1, #1299). Deliberately much shorter than the other
+#: purposes: the blob is redeemed by an immediate same-page navigation, so a
+#: minute covers slow browsers while keeping a captured blob nearly useless.
+SESSION_CONTINUATION_MAX_AGE_SECONDS = 60
+
+#: localStorage key the operator SPA keeps its bearer session under. The
+#: approval-pending page and the login form are served from the same origin as
+#: the SPA in the default (combined) deployment, so page script can present
+#: that token to /me and the session-continue exchange. Kept in lockstep with
+#: ``ui/src/shared/auth``.
+SPA_TOKEN_STORAGE_KEY = "jentic-one.access_token"
 
 CONSENT_SECURITY_HEADERS: dict[str, str] = {
     "X-Frame-Options": "DENY",
@@ -179,21 +196,96 @@ def client_gate_passes(client: OAuthClientView) -> bool:
 # --- identity dispatch -----------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class SessionContinuation:
+    """Rung-1 outcome: a verified platform-session continuation (#1299).
+
+    Carries the identity pinned at exchange time by
+    ``POST /oauth/session/continue`` plus the raw blob so the caller can burn
+    it (single-use). The caller — ``GET /authorize`` — owns the async
+    redemption: burn, then the same consent-handle write / code issuance the
+    local-login rejoin uses.
+    """
+
+    user_id: str
+    user_email: str
+    token: str
+
+
+#: The flow parameters a session continuation is pinned to. The blob is only
+#: honored when every one of these matches the CURRENT authorize request, so a
+#: continuation minted for one flow can never be spliced into another
+#: (different client, redirect target, PKCE challenge, scope set, or client
+#: state/nonce).
+_SESSION_BOUND_FIELDS: tuple[str, ...] = (
+    "client_id",
+    "redirect_uri",
+    "code_challenge",
+    "scope",
+    "nonce",
+    "original_state",
+)
+
+
+def _verify_session_continuation(
+    session_state: str, ctx: Context, state_payload: dict[str, str | None]
+) -> SessionContinuation | None:
+    """Verify + bind the ``sc`` blob; ``None`` (fall through) on any failure.
+
+    Failure falls through to rungs 2/3 rather than erroring: the continuation
+    is a convenience rung, and the worst outcome of a bad blob must be the
+    unchanged login the user would have seen anyway (no oracle, no dead end).
+    """
+    try:
+        payload = verify_payload(
+            session_state,
+            session_signing_key(ctx),
+            purpose="session",
+            max_age=SESSION_CONTINUATION_MAX_AGE_SECONDS,
+        )
+    except InvalidGrantError:
+        logger.warning("oauth_session_continuation_rejected", reason="verify_failed")
+        return None
+    for field in _SESSION_BOUND_FIELDS:
+        if payload.get(field) != state_payload.get(field):
+            logger.warning("oauth_session_continuation_rejected", reason="flow_mismatch")
+            return None
+    user_id = str(payload.get("user_id") or "")
+    if not user_id:
+        logger.warning("oauth_session_continuation_rejected", reason="missing_user")
+        return None
+    return SessionContinuation(
+        user_id=user_id,
+        user_email=str(payload.get("user_email") or ""),
+        token=session_state,
+    )
+
+
 def resolve_identity_gate(
-    ctx: Context, *, idp_url: str | None, state_payload: dict[str, str | None]
-) -> RedirectResponse | None:
+    ctx: Context,
+    *,
+    idp_url: str | None,
+    state_payload: dict[str, str | None],
+    session_state: str | None = None,
+) -> RedirectResponse | SessionContinuation | None:
     """The explicit identity-dispatch ladder for ``GET /authorize``.
 
     Once the request is validated and the signed internal state is minted,
     exactly one rung answers "who authenticates this human?":
 
-    1. **Platform-session reuse** — NOT implemented; documented placeholder
-       for the epic #1280 follow-up (an already-authenticated platform
-       browser session skipping straight to consent). When it lands it slots
-       in here, ahead of the IdP.
-    2. **External IdP** (today's flow): the service resolved an upstream
-       authorize URL — redirect to it. IdP always wins, so there is no mixed
-       mode with local login.
+    1. **Platform-session reuse** (#1299): the request carries a session
+       continuation (``sc``) minted by ``POST /oauth/session/continue`` from a
+       live platform bearer token. Verified here (purpose, iat/TTL, tamper,
+       and flow binding) and returned as a :class:`SessionContinuation` — the
+       caller owns the async redemption (single-use burn, consent-handle
+       write / code issuance). Two-sided gate like rung 3: the continuation
+       can only be *minted* on a local-login deployment, and mid-window
+       config flips must not let one be *redeemed* on any other shape. Any
+       failure falls through — without a valid continuation rungs 2/3 are
+       byte-identical to before.
+    2. **External IdP**: the service resolved an upstream authorize URL —
+       redirect to it. IdP always wins over local login, so there is no mixed
+       mode with the password form.
     3. **Local-account login form** (#1276): the deployment opted in via
        ``auth.local_login.enabled``, no IdP resolved, AND ``auth.idp.enabled``
        is false (belt and braces: a configured-but-unresolvable IdP must fail
@@ -204,7 +296,18 @@ def resolve_identity_gate(
     4. Nothing is enabled: return ``None`` — the caller renders its standard
        ``server_error`` redirect, byte-identical to the pre-ladder flow.
     """
-    # Rung 1 — platform-session reuse (epic #1280 follow-up): NOT implemented.
+    # Rung 1 — platform-session reuse (#1299): same two-sided config gate as
+    # rung 3, because the continuation both originates from and resumes into
+    # the local-login deployment shape (on IdP deployments the IdP's own SSO
+    # session is the session-reuse story).
+    if (
+        session_state is not None
+        and ctx.config.auth.local_login.enabled
+        and not ctx.config.auth.idp.enabled
+    ):
+        continuation = _verify_session_continuation(session_state, ctx, state_payload)
+        if continuation is not None:
+            return continuation
 
     # Rung 2 — external IdP redirect.
     if idp_url is not None:
@@ -255,6 +358,19 @@ def login_signing_key(ctx: Context) -> str:
     /oauth/callback or the approval endpoints.
     """
     return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "login")
+
+
+def session_signing_key(ctx: Context) -> str:
+    """Signing key for the platform-session continuation blob (``sc``, #1299).
+
+    Fourth purpose in the matrix, same mutual-rejection discipline: only
+    ``POST /oauth/session/continue`` mints it (after verifying a live platform
+    bearer token) and only rung 1 of :func:`resolve_identity_gate` redeems it.
+    A ``state``/``approval``/``login`` blob can never resume the flow as a
+    session, and a session continuation can never open the login form, the
+    IdP callback, or the approval endpoints.
+    """
+    return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "session")
 
 
 def sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:
