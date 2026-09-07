@@ -27,13 +27,16 @@ app:
   service:
     type: ClusterIP
     port: 8000
+  # The app boots at ~150Mi RSS and each concurrent password / client-secret
+  # verification adds 64Mi (argon2id memory_cost=65536), so its floor is
+  # higher than the other surfaces'.
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 500m
-      memory: 256Mi
+      memory: 1Gi
 
 registry:
   enabled: false
@@ -61,13 +64,15 @@ admin:
   service:
     type: ClusterIP
     port: 8000
+  # Admin serves the password/login endpoints in parts mode; same argon2
+  # arithmetic as the app (64Mi per concurrent verification).
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 500m
-      memory: 256Mi
+      memory: 1Gi
 
 control:
   enabled: false
