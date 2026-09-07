@@ -512,7 +512,14 @@ class LocalLoginConfig(BaseModel):
     mode in v1).
     """
 
-    enabled: bool = False
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Offer a first-party password login form on the /authorize flow. "
+            "Off by default; when auth.idp.enabled is true the external IdP "
+            "always wins and the form is never offered."
+        ),
+    )
 
 
 class AuthConfig(BaseModel):

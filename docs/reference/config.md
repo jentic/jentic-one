@@ -182,6 +182,7 @@ Platform-actors OAuth surface configuration.
 | `auth.idp.exchange_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__EXCHANGE_ENDPOINT` | Explicit IdP token (code-exchange) endpoint URL; overrides the issuer-derived or provider well-known default. |
 | `auth.idp.userinfo_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__USERINFO_ENDPOINT` | Explicit IdP userinfo endpoint URL; overrides the issuer-derived or provider well-known default. |
 | `auth.idp.hosted_domain` | string \| null | `null` | `JENTIC__AUTH__IDP__HOSTED_DOMAIN` | Google `hd` (hosted-domain) restriction. When set, only accounts whose userinfo carries a matching `hd` claim should be admitted. OSS surfaces the claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's admission policy. |
+| `auth.local_login.enabled` | boolean | `false` | `JENTIC__AUTH__LOCAL_LOGIN__ENABLED` | Offer a first-party password login form on the /authorize flow. Off by default; when auth.idp.enabled is true the external IdP always wins and the form is never offered. |
 | `auth.platform_clients` | list of PlatformClientConfig | — | `JENTIC__AUTH__PLATFORM_CLIENTS` |  |
 | `auth.platform_clients.<n>.client_id` | string | *required* | `JENTIC__AUTH__PLATFORM_CLIENTS__<N>__CLIENT_ID` |  |
 | `auth.platform_clients.<n>.redirect_uris` | list of string | *required* | `JENTIC__AUTH__PLATFORM_CLIENTS__<N>__REDIRECT_URIS` |  |

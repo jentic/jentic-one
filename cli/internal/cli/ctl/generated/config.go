@@ -1314,7 +1314,9 @@ func (j *JwtVerificationConfig) UnmarshalJSON(value []byte) error {
 // “auth.idp.enabled“ is true the login form is never offered (no mixed
 // mode in v1).
 type LocalLoginConfig struct {
-	// Enabled corresponds to the JSON schema field "enabled".
+	// Offer a first-party password login form on the /authorize flow. Off by default;
+	// when auth.idp.enabled is true the external IdP always wins and the form is
+	// never offered.
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
 }
 
