@@ -11,6 +11,8 @@ import type { MintResponse } from '../models/MintResponse';
 import type { OAuthApprovalDecisionRequest } from '../models/OAuthApprovalDecisionRequest';
 import type { OAuthApprovalStatusResponse } from '../models/OAuthApprovalStatusResponse';
 import type { OAuthGrantAdminListResponse } from '../models/OAuthGrantAdminListResponse';
+import type { OAuthSessionContinueRequest } from '../models/OAuthSessionContinueRequest';
+import type { OAuthSessionContinueResponse } from '../models/OAuthSessionContinueResponse';
 import type { RevokeRequest } from '../models/RevokeRequest';
 import type { TokenResponse } from '../models/TokenResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -95,6 +97,7 @@ export class OAuthService {
         scope = 'openid',
         state,
         nonce,
+        sc,
     }: {
         responseType: string,
         clientId: string,
@@ -104,6 +107,10 @@ export class OAuthService {
         scope?: string,
         state?: (string | null),
         nonce?: (string | null),
+        /**
+         * Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
+         */
+        sc?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -117,6 +124,7 @@ export class OAuthService {
                 'scope': scope,
                 'state': state,
                 'nonce': nonce,
+                'sc': sc,
             },
             errors: {
                 400: `Bad Request`,
@@ -523,6 +531,48 @@ export class OAuthService {
                 413: `Form-encoded (RFC 7009) requests only: declared Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect).`,
                 422: `Unprocessable Entity`,
                 429: `Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Exchange a live platform session for an authorize continuation
+     * Rung 1 of the /authorize identity ladder: reuse the platform session.
+     *
+     * The login page's script posts the pending authorize state (the ``ls``
+     * carry-through token) with the SPA's bearer token in the Authorization
+     * header — no cookies, no ambient credentials, so a cross-site form cannot
+     * drive it (same CSRF posture as the consent POST and the inline approval
+     * decision). The platform token is validated by the standard auth
+     * dependency (users only; the password-rotation fence applies exactly as it
+     * does on rung 3), the D7 client gate is re-checked, and on success the
+     * response carries a relative ``/authorize`` resume URL bearing a
+     * short-TTL, ``session``-purpose continuation blob that pins THIS caller's
+     * ``user_id`` — the identity is fixed at exchange time, before the consent
+     * page renders it with its "Not you?" escape.
+     *
+     * Every failure after authentication is the same generic 400: an invalid
+     * blob must not let the caller learn anything about the client or the flow.
+     * @returns OAuthSessionContinueResponse Successful Response
+     * @throws ApiError
+     */
+    public static sessionContinueEndpoint({
+        requestBody,
+    }: {
+        requestBody: OAuthSessionContinueRequest,
+    }): CancelablePromise<OAuthSessionContinueResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/session/continue',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Malformed, tampered, expired, or otherwise unusable authorize state — one generic rejection, never a reason.`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Local-account login is unavailable (\`auth.local_login.enabled=false\`, or an external IdP is configured — \`auth.idp.enabled=true\` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable.`,
+                422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
