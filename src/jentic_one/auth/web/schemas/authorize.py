@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
-
-from jentic_one.shared.web.sensitive import SENSITIVE
+from pydantic import BaseModel
 
 
 class OAuthApprovalStatusResponse(BaseModel):
@@ -26,7 +24,16 @@ class OAuthApprovalDecisionRequest(BaseModel):
     ``state`` is the signed approval-state blob minted by ``/authorize`` for
     this exact authorize request — the decision endpoint never accepts a bare
     ``client_id``.
+
+    ``state`` is deliberately NOT marked x-sensitive: the CLI's GEN-21
+    redaction backstop unions every sensitive field's BARE name globally, and
+    "state" is generic enough to redact unrelated CLI output (e.g. the MCP
+    session-diagnosis ``state`` field). The blob is not a lasting bearer
+    credential — it is HMAC-signed, purpose-discriminated, TTL'd (600 s), and
+    the decision endpoint additionally requires an authenticated admin with
+    ``oauth-clients:write`` — so global redaction buys nothing worth that
+    collision.
     """
 
-    state: str = Field(json_schema_extra=SENSITIVE)
+    state: str
     action: Literal["approve", "deny"]

@@ -5122,7 +5122,7 @@
         "type": "object"
       },
       "OAuthApprovalDecisionRequest": {
-        "description": "Inline admin approve/deny posted from the approval-pending page.\n\n``state`` is the signed approval-state blob minted by ``/authorize`` for\nthis exact authorize request — the decision endpoint never accepts a bare\n``client_id``.",
+        "description": "Inline admin approve/deny posted from the approval-pending page.\n\n``state`` is the signed approval-state blob minted by ``/authorize`` for\nthis exact authorize request — the decision endpoint never accepts a bare\n``client_id``.\n\n``state`` is deliberately NOT marked x-sensitive: the CLI's GEN-21\nredaction backstop unions every sensitive field's BARE name globally, and\n\"state\" is generic enough to redact unrelated CLI output (e.g. the MCP\nsession-diagnosis ``state`` field). The blob is not a lasting bearer\ncredential — it is HMAC-signed, purpose-discriminated, TTL'd (600 s), and\nthe decision endpoint additionally requires an authenticated admin with\n``oauth-clients:write`` — so global redaction buys nothing worth that\ncollision.",
         "properties": {
           "action": {
             "enum": [
@@ -5134,8 +5134,7 @@
           },
           "state": {
             "title": "State",
-            "type": "string",
-            "x-sensitive": true
+            "type": "string"
           }
         },
         "required": [
