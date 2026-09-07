@@ -81,8 +81,10 @@ Five things the diagram compresses:
   [`src/jentic_one/auth/`](../../src/jentic_one/auth/), not inside admin
   ([identity and authorization](identity-and-authorization.md)).
 - **The broker holds all three database connections but a narrow job**: resolve
-  the operation (registry), select the toolkit and credential (control), and
-  record the execution (admin). It exposes essentially one route — a
+  the operation (registry), select the toolkit and credential (the agent's
+  toolkit bindings live in admin, the toolkit's credential bindings in
+  control — a single cross-DB lookup), and record the execution (admin). It
+  exposes essentially one route — a
   catch-all forward proxy ([broker execution](broker-execution.md)).
 - **The databases share no foreign keys.** Registry, control, and admin are
   separate schemas linked by identity tuples and plain id strings, so they

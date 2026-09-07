@@ -76,8 +76,9 @@ Scopes shared across surfaces are canonical constants in
 - **`capabilities:execute`** is the one scope the broker's data plane
   requires. Every accepted credential kind must carry it.
 - **`DEFAULT_AGENT_SCOPES`** is the safe agent baseline: execute, reads
-  (`apis:read`, `executions:read`, `jobs:read`, `events:read`),
-  `catalog:import`, and the `owner:*:read` delegation set.
+  (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
+  `capabilities:read`), `catalog:import`, and the `owner:*:read` delegation
+  set.
 - **Self-service elevation is bounded.** An agent may file a `scope:grant`
   access request only for `GRANTABLE_SCOPES` (the baseline plus
   `apis:write`). The privileged scopes — `org:admin`, `agents:write`,

@@ -23,7 +23,8 @@ sequenceDiagram
     B->>B: authenticate (token/API key/toolkit key), require capabilities:execute
     B->>B: reconstruct + validate URL (SSRF gate)
     B->>R: resolve operation (api_vendor, api_name, api_version)
-    B->>C: select toolkit binding (0 → 403, >1 → 409)
+    B->>D: derive toolkits (agent→toolkit bindings)
+    B->>C: intersect with toolkit→credential bindings (0 → 403, >1 → 409)
     B->>B: evaluate permission rules (default-deny)
     B->>C: resolve credential (most specific wins, tie → 409)
     B->>B: inject secret (header/query/cookie), re-validate URL
@@ -137,8 +138,10 @@ one place a secret meets a request:
 
 Before any of that, the toolkit deriver
 ([`broker/repos/caching_toolkit_deriver.py`](../../src/jentic_one/broker/repos/caching_toolkit_deriver.py)) works out which toolkit serves
-the call from the agent's bindings (none → `403`, several → `409` asking for
-`Jentic-Toolkit-Id`), and the toolkit's permission rules are evaluated
+the call — a single cross-DB lookup intersecting the agent's toolkit
+bindings (admin DB) with the toolkit→credential bindings (control DB); none
+→ `403`, several → `409` asking for
+`Jentic-Toolkit-Id` — and the toolkit's permission rules are evaluated
 **default-deny**: no matching rule, no call
 ([`broker/repos/rule_evaluator.py`](../../src/jentic_one/broker/repos/rule_evaluator.py)).
 
