@@ -88,10 +88,12 @@ class OAuthClient(AuditableMixin, AdminBase):
     )
     software_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # SHA-256 hex of the sorted, exact redirect-URI set — with
-    # software_id it forms the D8 dedupe key. Maintained by the repository on
+    # software_id (or the client name, for software_id-less DCR rows) it
+    # forms the D8/G13 dedupe key. Maintained by the repository on
     # every create and redirect_uris update; NULL only on pre-3a rows whose
-    # redirect_uris have not been written since the upgrade (they carry no
-    # software_id either, so they never participate in dedupe).
+    # redirect_uris have not been written since the upgrade — a NULL
+    # fingerprint never equals a computed one, so they never participate
+    # in dedupe.
     redirect_uris_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # server_default 'approved' is deliberate back-compat: every pre-3a row was
     # admin-created and live, so upgraded rows keep working.

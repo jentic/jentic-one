@@ -95,3 +95,17 @@ updates:
       types:
         patterns:
           - "@types/*"
+    # eslint 10 shipped ahead of its plugin ecosystem: eslint-plugin-jsx-a11y
+    # (latest 6.10.2) and eslint-plugin-react (latest 7.37.5) still declare
+    # peer eslint <=9, and typescript-eslint (latest 8.69.0) caps
+    # typescript <6.1.0 — so a grouped eslint-10 + typescript-7 PR can never
+    # `npm ci` (ERESOLVE; see PR #1266). Hold those majors back until the
+    # plugins publish eslint-10/TS-7 support, then delete these entries and
+    # let the eslint group take the coupled majors in one installable PR.
+    ignore:
+      - dependency-name: "eslint"
+        versions: [">=10"]
+      - dependency-name: "@eslint/js"
+        versions: [">=10"]
+      - dependency-name: "typescript"
+        versions: [">=7"]

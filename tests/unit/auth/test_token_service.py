@@ -168,11 +168,49 @@ async def test_refresh_rotation_returns_new_pair(
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     svc = TokenService(ctx)
-    access, refresh = await svc.refresh("rt_oldtoken")
+    access, refresh, _scopes = await svc.refresh("rt_oldtoken")
 
     assert access.startswith(ACCESS_TOKEN_PREFIX)
     assert refresh.startswith(REFRESH_TOKEN_PREFIX)
     mock_rt_repo.consume.assert_called_once()
+
+
+@patch("jentic_one.auth.services.token_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_refresh_reports_live_agent_scopes_not_snapshot(
+    mock_at_repo: MagicMock,
+    mock_rt_repo: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_scope_repo: MagicMock,
+) -> None:
+    """The reported set mirrors what the resolvers enforce for agent tokens:
+    live actor_scope_grants at rotation time — NOT the family's mint-time
+    snapshot, which enforcement ignores for non-ephemeral AGENT/SA actors.
+    The minted rows still carry the snapshot (USER-token semantics depend on
+    the carry-over; enforcement for agents ignores it either way)."""
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row(
+        actor_id="agnt_live", actor_type="agent", scopes=["apis:read", "apis:write"]
+    )
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_rt_repo.create = AsyncMock(return_value=MagicMock(id="rt_next"))
+    mock_rt_repo.consume = AsyncMock()
+    mock_at_repo.create = AsyncMock()
+    mock_agent_repo.get_by_id = AsyncMock(return_value=_make_agent_row(status="active"))
+    # Live grants have narrowed since mint: apis:write was revoked.
+    live_grant = MagicMock()
+    live_grant.scope = "apis:read"
+    mock_scope_repo.list_for_actor = AsyncMock(return_value=[live_grant])
+
+    svc = TokenService(ctx)
+    _access, _refresh, scopes = await svc.refresh("rt_oldtoken")
+
+    assert scopes == ["apis:read"]
+    # The new token rows keep the family snapshot, unchanged.
+    assert mock_at_repo.create.call_args.kwargs["scopes"] == ["apis:read", "apis:write"]
+    assert mock_rt_repo.create.call_args.kwargs["scopes"] == ["apis:read", "apis:write"]
 
 
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
@@ -663,10 +701,11 @@ async def test_refresh_approved_client_still_rotates(
     client_row = MagicMock()
     client_row.active = True
     client_row.approval_status = "approved"
+    client_row.allowed_scopes = None
     mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
 
     svc = TokenService(ctx)
-    access, refresh = await svc.refresh("rt_ok", client_id="oc_approved")
+    access, refresh, _scopes = await svc.refresh("rt_ok", client_id="oc_approved")
 
     assert access.startswith(ACCESS_TOKEN_PREFIX)
     assert refresh.startswith(REFRESH_TOKEN_PREFIX)
