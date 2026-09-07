@@ -13,6 +13,12 @@ and the compose-shaped runbook an agent can execute is
 | Survive a disk failure or a bad migration | [Backup & restore](backup-restore.md) |
 | Fix something that's broken | [Troubleshooting](troubleshooting.md) — the common symptoms, each linking to its fix |
 
+One recurring human task lives in the UI rather than these pages: agents ask
+for access by filing a request, and an operator approves or fulfils it (and
+enters any credential secret) in the console at `/app/access-requests` —
+find the request by the id the agent reports. The flow end to end:
+[first brokered call](../guides/first-call.md).
+
 Quick health check:
 
 ```bash

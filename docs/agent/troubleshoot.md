@@ -152,11 +152,14 @@ Fix, by what you find:
 ## No human available at the first-admin gate (CI, fleet installs)
 
 An operator can create the first admin non-interactively, password piped on
-stdin (never argv). Replace `__ADMIN_PASSWORD__` with a value sourced from
-your secret store or CI secret — never a literal in a script or transcript:
+stdin (never argv). Replace `__REPLACE__` with a value sourced from
+your secret store or CI secret — never a literal in a script or transcript.
+(The placeholder is deliberately 11 characters — one short of the 12-char
+minimum — so pasting the block verbatim fails validation instead of
+creating an admin account on a published, greppable password.)
 
 ```bash
-printf '%s' "__ADMIN_PASSWORD__" | docker compose -p jentic -f ~/.jentic/docker-compose.yaml \
+printf '%s' "__REPLACE__" | docker compose -p jentic -f ~/.jentic/docker-compose.yaml \
   run --rm -T app python -m jentic_one create-admin --email <email>
 ```
 

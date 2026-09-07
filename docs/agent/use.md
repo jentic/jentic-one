@@ -110,7 +110,7 @@ recovery — follow its `suggested_command` instead of retrying the same call.
 | Action | Where the human does it |
 | ------ | ----------------------- |
 | Approve a new agent | `/app/agents` in the console |
-| Approve/fulfil access requests, enter credential secrets | `/app` dashboard (the `approve_url` / `provisioning_url` you hand them) |
+| Approve/fulfil access requests, enter credential secrets | `/app/access-requests` in the console — hand them the request **id**, not the `approve_url` value (that URL is an API route, and its base is unset on most installs) |
 | Create/manage users | `/app` admin UI |
 | Re-import an updated API spec (`jentic catalog outdated`) | Their call — suggest it, never run it silently |
 

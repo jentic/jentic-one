@@ -254,7 +254,7 @@ Adjustments from Step 0:
   > ```bash
   > PGPASS=$(openssl rand -hex 24)
   > echo "PGPASS=${PGPASS}" >> ~/.jentic/.env
-  > perl -i -pe "s/__PGPASS__/${PGPASS}/g" ~/.jentic/jentic-one.yaml
+  > PGPASS="$PGPASS" perl -i -pe 's/__PGPASS__/$ENV{PGPASS}/g' ~/.jentic/jentic-one.yaml
   > ```
 
   Confirm with `if grep -q __PGPASS__ ~/.jentic/jentic-one.yaml; then echo

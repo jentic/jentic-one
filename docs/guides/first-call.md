@@ -82,9 +82,16 @@ bound to and credentials attach to), so ask for the whole path to first
 execution as one provisioning plan:
 
 ```bash
-jentic access request --provision httpbin.org/httpbin --auth none   # prints an approve_url for the operator
+jentic access request --provision httpbin.org/httpbin --auth none   # returns a request id (and an approve_url)
 jentic access status <request-id>                                   # has it been granted?
 ```
+
+A note on the hand-off: the operator approves in the dashboard at
+**`<app URL>/app/access-requests`** — send them there with the request id.
+Don't hand them the `approve_url` value itself: it is built from
+`control.access_requests.canonical_base_url`, which defaults to empty (no
+install guide sets it), and the path it forms is the authenticated JSON API
+route, not a browser page.
 
 `--auth none` declares that httpbin takes no credential. For an authenticated
 API, declare its type instead (`bearer`, `api_key`, `basic`, `oauth2`) — the

@@ -71,17 +71,36 @@ install -m 0755 /tmp/jentic ~/.local/bin/jentic && rm -f /tmp/jentic /tmp/jentic
 Then pull the new image, **stop the stack, snapshot the data volume while it
 is stopped** (SQLite files mid-write are not consistent — the full backup
 contract, including the Postgres variant, is
-[backup-restore.md](../operations/backup-restore.md)), migrate, and restart:
+[backup-restore.md](../operations/backup-restore.md)), migrate, and restart.
+The block fails closed: the migration is forward-only, so it must never run
+unless the snapshot verifiably exists and is non-empty. On the Postgres
+variant the `jentic_jentic-data` volume does not exist — `docker run -v`
+would silently *create* an empty one and `tar` would write an empty archive
+— so the volume probe stops the block and the snapshot is `pg_dump` per
+backup-restore.md instead:
 
 ```bash
 docker compose -p jentic -f ~/.jentic/docker-compose.yaml pull
 docker compose -p jentic -f ~/.jentic/docker-compose.yaml down
-docker run --rm -v jentic_jentic-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/jentic-data-$(date +%F).tgz -C /data .
+
+docker volume inspect jentic_jentic-data >/dev/null 2>&1 \
+  || { echo "ERROR: volume jentic_jentic-data not found — Postgres install? Snapshot with pg_dump (backup-restore.md), then run the migrate+restart lines separately" >&2; exit 1; }
+mkdir -p ~/jentic-backups
+SNAP=~/jentic-backups/jentic-data-$(date -u +%Y%m%dT%H%M%SZ).tgz
+docker run --rm -v jentic_jentic-data:/data -v ~/jentic-backups:/backup alpine \
+  tar czf "/backup/$(basename "$SNAP")" -C /data . \
+  && [ -s "$SNAP" ] \
+  || { echo "ERROR: snapshot missing or empty — do NOT migrate" >&2; exit 1; }
+
 docker compose -p jentic -f ~/.jentic/docker-compose.yaml \
   run --rm -T app python -m jentic_one.migrations.run
 docker compose -p jentic -f ~/.jentic/docker-compose.yaml up -d
 ```
+
+The snapshot lands in `~/jentic-backups/` (an absolute path — this block,
+like every block in this file, must not depend on the shell's working
+directory) with a UTC timestamp to the second, so a same-day retry can never
+overwrite the snapshot you would roll back to.
 
 Check the schema state without modifying anything by appending `--check` to
 the migration command (it prints an `OVERALL current|uninitialized|pending`
@@ -109,12 +128,14 @@ To change configuration, edit `~/.jentic/jentic-one.yaml` and
 ## Reset an admin password
 
 The temporary password is read from stdin — pipe it explicitly (never put it
-in argv). Replace `__TEMP_PASSWORD__` with a value the human supplied out of
+in argv). Replace `__REPLACE__` with a value the human supplied out of
 band (or generate one with `openssl rand -base64 18` and hand it to them —
-never echo it into chat or logs):
+never echo it into chat or logs). The placeholder is deliberately shorter
+than the 12-character minimum, so a verbatim paste fails validation rather
+than setting a published password:
 
 ```bash
-printf '%s' "__TEMP_PASSWORD__" | docker compose -p jentic -f ~/.jentic/docker-compose.yaml \
+printf '%s' "__REPLACE__" | docker compose -p jentic -f ~/.jentic/docker-compose.yaml \
   run --rm -T app python -m jentic_one reset-password --email <email>
 ```
 
@@ -123,15 +144,25 @@ in the UI when possible.
 
 ## Uninstall
 
-Destructive — confirm with the human, and offer a volume backup first. The
-snapshot must be taken with the containers **stopped** (mid-write SQLite
-files are inconsistent); the canonical backup contract — including the
-Postgres variant — is [backup-restore.md](../operations/backup-restore.md):
+Destructive — confirm with the human, and offer a backup first. A restorable
+backup is **data + config, together**: `rm -rf ~/.jentic` below destroys the
+only copy of `credentials.encryption`, and a data snapshot without that
+keyset restores everything *except* every stored credential
+([backup-restore.md](../operations/backup-restore.md)). The snapshot must be
+taken with the containers **stopped** (mid-write SQLite files are
+inconsistent), and it goes to `~/jentic-backups/` — outside `~/.jentic`, so
+the removal step cannot delete it:
 
 ```bash
 docker compose -p jentic -f ~/.jentic/docker-compose.yaml down
-docker run --rm -v jentic_jentic-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/jentic-data-$(date +%F).tgz -C /data .
+mkdir -p ~/jentic-backups
+docker volume inspect jentic_jentic-data >/dev/null 2>&1 \
+  && docker run --rm -v jentic_jentic-data:/data -v ~/jentic-backups:/backup alpine \
+       tar czf /backup/jentic-data-$(date -u +%Y%m%dT%H%M%SZ).tgz -C /data . \
+  || echo "no jentic_jentic-data volume — Postgres install: snapshot with pg_dump (backup-restore.md)" >&2
+cp ~/.jentic/jentic-one.yaml ~/jentic-backups/   # the keyset half of the pair
+cp ~/.jentic/.env ~/jentic-backups/              # Postgres: holds the DB password the volume was initialised with
+ls -l ~/jentic-backups                           # verify both halves exist and are non-empty before proceeding
 ```
 
 Then remove everything:
