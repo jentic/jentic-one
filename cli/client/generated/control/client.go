@@ -5987,8 +5987,12 @@ type ClientInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. No client_secret is ever issued here and no
+	// registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -6004,8 +6008,12 @@ type ClientInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. No client_secret is ever issued here and no
+	// registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -9642,8 +9650,12 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. No client_secret is ever issued here and no
+// registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -9669,8 +9681,12 @@ func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, conten
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. No client_secret is ever issued here and no
+// registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -21690,8 +21706,12 @@ type ClientWithResponsesInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. No client_secret is ever issued here and no
+	// registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -21707,8 +21727,12 @@ type ClientWithResponsesInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. No client_secret is ever issued here and no
+	// registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -38885,8 +38909,12 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. No client_secret is ever issued here and no
+// registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -38908,8 +38936,12 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ct
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. No client_secret is ever issued here and no
+// registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,

@@ -60,11 +60,12 @@ _DCR_ACTOR = "dcr"
 class DcrRegisterResult:
     """Result of an anonymous OAuth-client registration.
 
-    ``created`` is False when the D8 dedupe key (``software_id`` + exact
-    redirect-URI set) matched an existing row — the router answers 200 rather
-    than 201. Metadata fields echo the *request's* validated values, never
-    the stored row's live (possibly admin-edited) state; only ``client_id``
-    and ``client_id_issued_at`` come from the row.
+    ``created`` is False when a dedupe key matched an existing DCR row —
+    (``software_id`` + exact redirect-URI set), or for software_id-less
+    registrations (``client_name`` + exact redirect-URI set) — and the router
+    answers 200 rather than 201. Metadata fields echo the *request's*
+    validated values, never the stored row's live (possibly admin-edited)
+    state; only ``client_id`` and ``client_id_issued_at`` come from the row.
     """
 
     client_id: str
@@ -219,10 +220,26 @@ class OAuthDcrService:
     ) -> DcrRegisterResult:
         """Register (or dedupe to) a public OAuth client row.
 
-        Dedupe (D8): an exact (``software_id`` + redirect-URI set) match
-        returns the existing row's ``client_id`` — idempotent re-register, so a
-        cached registration or a double-register race never bricks a client.
-        No ``software_id`` → no dedupe. Never dedupes on ``software_id`` alone.
+        Dedupe (D8, extended per G13/#1251): an exact (``software_id`` +
+        redirect-URI set) match returns the existing row's ``client_id`` —
+        idempotent re-register, so a cached registration or a double-register
+        race never bricks a client. Registrations *without* a ``software_id``
+        fall back to the (``client_name`` + redirect-URI set) key against
+        rows that also carry no ``software_id`` — otherwise clients that send
+        no software identity (Cursor, mcp-remote) mint a fresh pending row on
+        every awaiting-approval retry. Never dedupes on ``software_id`` or
+        ``client_name`` alone, never across the two key spaces, and a dedupe
+        hit never mutates the stored row (status, name, and redirect set are
+        preserved verbatim) — it only writes an audit entry so anonymous
+        re-attaches stay visible to admins.
+
+        A falsy or whitespace-only ``software_id`` is normalized to ``None``
+        *before* the key-space branch and the insert: ``""`` passes schema
+        validation (empty-default serializers are common) but would otherwise
+        take the fallback lookup (``IS NULL``) while storing ``""`` (NOT
+        NULL) — a row in *neither* key space that re-opens the #1251 loop.
+        Normalizing (rather than rejecting) follows RFC 7591's
+        ignore-don't-reject posture for metadata the server curtails.
         """
         _validate_metadata(
             redirect_uris=redirect_uris,
@@ -232,41 +249,71 @@ class OAuthDcrService:
         )
         if not client_name.strip():
             raise InvalidClientMetadataError("client_name is required")
+        software_id = (software_id or "").strip() or None
 
         allowed_scopes = _cap_scopes(scope)
         auto_approve = self._ctx.config.server.mcp.oauth.auto_approve_clients
         requested_set = set(redirect_uris)
         fingerprint = redirect_uris_fingerprint(redirect_uris)
+        name = client_name.strip()
 
         async def _write(session: AsyncSession) -> tuple[OAuthClient, bool]:
+            # D8 dedupe via the (software_id, redirect_uris_fingerprint)
+            # index; software_id-less registrations use the G13 fallback key
+            # (name, fingerprint) against software_id-less rows only — the
+            # two key spaces never cross-match. The fetched rows' exact URI
+            # sets are re-checked because the fingerprint is a hash
+            # (collision guard). Among multiple exact matches
+            # (double-register race) prefer approved > pending > denied,
+            # then oldest — `min` is stable and the repo returns rows
+            # oldest-first.
             if software_id:
-                # D8 dedupe via the (software_id, redirect_uris_fingerprint)
-                # index; the fetched rows' exact URI sets are re-checked
-                # because the fingerprint is a hash (collision guard). Among
-                # multiple exact matches (double-register race) prefer
-                # approved > pending > denied, then oldest — `min` is stable
-                # and the repo returns rows oldest-first.
-                matches = [
-                    candidate
-                    for candidate in await OAuthClientRepository.list_dcr_by_dedupe_key(
-                        session, software_id, fingerprint
-                    )
-                    if set(candidate.redirect_uris) == requested_set
-                ]
-                if matches:
-                    winner = min(
-                        matches,
-                        key=lambda c: _APPROVAL_PREFERENCE.get(
-                            c.approval_status, len(_APPROVAL_PREFERENCE)
-                        ),
-                    )
-                    return winner, False
+                candidates = await OAuthClientRepository.list_dcr_by_dedupe_key(
+                    session, software_id, fingerprint
+                )
+            else:
+                candidates = await OAuthClientRepository.list_dcr_by_name_dedupe_key(
+                    session, name, fingerprint
+                )
+            matches = [
+                candidate
+                for candidate in candidates
+                if set(candidate.redirect_uris) == requested_set
+            ]
+            if matches:
+                winner = min(
+                    matches,
+                    key=lambda c: _APPROVAL_PREFERENCE.get(
+                        c.approval_status, len(_APPROVAL_PREFERENCE)
+                    ),
+                )
+                # F2: a re-attach must leave a forensic trace — the 200-dedupe
+                # arm discloses an existing (possibly approved) client_id to
+                # an anonymous caller, and a client bouncing off a denied row
+                # retries with no other admin-visible signal. Audit row only,
+                # deliberately no event: the whole point of the dedupe is
+                # that retries stop spamming the approval queue.
+                await record_audit(
+                    session,
+                    action=AuditAction.REGISTER,
+                    target_type=AuditTargetType.OAUTH_CLIENT,
+                    target_id=winner.id,
+                    actor_type=_DCR_ACTOR,
+                    actor_id=None,
+                    after={
+                        "client_id": winner.client_id,
+                        "approval_status": winner.approval_status,
+                    },
+                    reason="anonymous DCR re-attach (dedupe hit)",
+                    origin=Origin.MCP.value,
+                )
+                return winner, False
 
             approved = auto_approve
             client = await OAuthClientRepository.create(
                 session,
                 client_id=generate_client_id(),
-                name=client_name.strip(),
+                name=name,
                 redirect_uris=redirect_uris,
                 client_secret_hash=None,
                 description=None,
@@ -338,7 +385,7 @@ class OAuthDcrService:
         return _to_result(
             client,
             created=created,
-            client_name=client_name.strip(),
+            client_name=name,
             redirect_uris=redirect_uris,
             grant_types=grant_types,
             allowed_scopes=allowed_scopes,
