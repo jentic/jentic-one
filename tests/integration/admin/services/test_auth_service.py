@@ -167,6 +167,67 @@ async def test_login_locked_account(
         await session.commit()
 
 
+# ── authenticate (credential check without minting a token) ────────────────
+
+
+async def test_authenticate_success_returns_user_id(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    user_id, email = auth_user
+    service = AuthService(integration_context)
+    result = await service.authenticate(LoginPayload(email=email, password="correct-password"))
+    assert result == user_id
+
+
+async def test_authenticate_wrong_password_increments_failed_count(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    user_id, email = auth_user
+    service = AuthService(integration_context)
+    with pytest.raises(InvalidCredentialsError):
+        await service.authenticate(LoginPayload(email=email, password="wrong-password"))
+
+    async with integration_context.admin_db.session() as session:
+        secret = await UserSecretRepository.get_by_user_id(session, user_id)
+        assert secret is not None
+        assert secret.failed_login_count == 1
+
+    # A subsequent success resets the counter.
+    await service.authenticate(LoginPayload(email=email, password="correct-password"))
+    async with integration_context.admin_db.session() as session:
+        secret = await UserSecretRepository.get_by_user_id(session, user_id)
+        assert secret is not None
+        assert secret.failed_login_count == 0
+
+
+async def test_authenticate_lockout_at_threshold(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Enough consecutive failures lock the account; the lock then rejects."""
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+
+    threshold = ctx.config.admin.auth.failed_login_lockout_threshold
+    for _ in range(threshold):
+        with pytest.raises(InvalidCredentialsError):
+            await service.authenticate(LoginPayload(email=email, password="wrong-password"))
+
+    async with ctx.admin_db.session() as session:
+        secret = await UserSecretRepository.get_by_user_id(session, user_id)
+        assert secret is not None
+        assert secret.locked_until is not None
+
+    # Even the correct password is now refused while the lock holds.
+    with pytest.raises(AccountLockedError):
+        await service.authenticate(LoginPayload(email=email, password="correct-password"))
+
+    # Unlock for cleanup
+    async with ctx.admin_db.session() as session:
+        await UserSecretRepository.unlock(session, user_id)
+        await session.commit()
+
+
 async def test_change_password_success(
     integration_context: Context, auth_user: tuple[str, str]
 ) -> None:
