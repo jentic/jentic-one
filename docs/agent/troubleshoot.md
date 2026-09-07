@@ -111,6 +111,19 @@ control-plane URL. Re-register with both URLs.
 The database must live on a named volume, not a host bind mount — Docker
 Desktop's file sharing lacks the locking semantics SQLite needs.
 
+## `credential_undecryptable` (424) on execute
+
+The stored data is intact; the key is wrong. A credential row is decrypted
+with the keyset entry named inside its ciphertext, so this fires when
+`credentials.encryption` in `~/.jentic/jentic-one.yaml` changed since the
+credential was written — a regenerated config, a keyset entry removed after
+rotation, or a restore that brought back data without the matching keys.
+Restore the original `credentials.encryption` block (from the config backup
+that [backup-restore.md](../operations/backup-restore.md) pairs with every
+data snapshot) and restart. Never "fix" this by re-generating keys — that
+makes every stored credential permanently unreadable. If the keys are truly
+lost, the humans must re-enter the affected credentials.
+
 ## Database connection lost/refused at runtime (Postgres shape)
 
 The app or broker starts returning errors and the logs show connection

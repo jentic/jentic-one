@@ -234,10 +234,11 @@ Adjustments from Step 0:
   > perl -i -pe 's/__GENERATE__/chomp($s=`openssl rand -base64 32`);$s/ge' ~/.jentic/jentic-one.yaml
   > ```
 
-  Confirm completion **without reading the file's values**:
+  Confirm completion **without reading the file's values** (exits non-zero
+  while placeholders remain):
 
   ```bash
-  grep -q __GENERATE__ ~/.jentic/jentic-one.yaml && echo "NOT DONE — placeholders remain"
+  if grep -q __GENERATE__ ~/.jentic/jentic-one.yaml; then echo "NOT DONE — placeholders remain" >&2; exit 1; fi
   ```
 
   From here on, never read `~/.jentic/jentic-one.yaml` or `~/.jentic/.env`
@@ -256,8 +257,9 @@ Adjustments from Step 0:
   > perl -i -pe "s/__PGPASS__/${PGPASS}/g" ~/.jentic/jentic-one.yaml
   > ```
 
-  Confirm with `grep -q __PGPASS__ ~/.jentic/jentic-one.yaml && echo "NOT
-  DONE"`. Steps 4–10 need no secret values, so nothing else changes.
+  Confirm with `if grep -q __PGPASS__ ~/.jentic/jentic-one.yaml; then echo
+  "NOT DONE" >&2; exit 1; fi`. Steps 4–10 need no secret values, so nothing
+  else changes.
 
 Every other key and its default: [configuration reference](../reference/config.md).
 

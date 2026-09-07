@@ -58,8 +58,10 @@ sudo install /tmp/jentic /usr/local/bin/ && rm -f /tmp/jentic /tmp/jentic.tar.gz
 sed -i.bak "s/^VER=.*/VER=${VER}/" ~/.jentic/.env && rm -f ~/.jentic/.env.bak
 ```
 
-No sudo available (or the human is not around to enter a password)? Install
-to a user-owned directory instead — make sure `~/.local/bin` is on `PATH`:
+No sudo available (or the human is not around to enter a password)? Re-run
+the block above with the `sudo install` line replaced by a user-local
+install — the `VER` repin at the end must still run. Make sure
+`~/.local/bin` is on `PATH`:
 
 ```bash
 mkdir -p ~/.local/bin
