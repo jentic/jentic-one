@@ -132,7 +132,7 @@ async def mint_grant_channel_tokens(
         scopes=" ".join(grant_scopes),
         grant_id=grant_id,
     )
-    access, refresh, id_token = await authorize_svc.exchange_code(
+    access, refresh, id_token, _scopes = await authorize_svc.exchange_code(
         code=code,
         code_verifier=CODE_VERIFIER,
         redirect_uri=REDIRECT_URI,
