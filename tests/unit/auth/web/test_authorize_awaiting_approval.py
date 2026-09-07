@@ -6,6 +6,7 @@ OAuth error redirect — and the page must not reveal pending vs denied.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -103,16 +104,24 @@ def test_unapproved_client_gets_human_page_not_redirect(
 
 
 def test_page_does_not_leak_pending_vs_denied(client: TestClient) -> None:
-    """Deny is reversible and silent — the page body is identical either way."""
+    """Deny is reversible and silent at render time — the page body is
+    identical either way (the tri-state only ever surfaces through the poll).
+
+    The clock is frozen so the two renders mint byte-identical signed state
+    blobs; the page's static script legitimately names all three states, so
+    byte-equality of the full body is the meaningful invariant.
+    """
     bodies: dict[str, str] = {}
+    frozen = time.time()
     for status_value in ("pending", "denied"):
         view = _client_view(approval_status=status_value, active=False)
-        with patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)):
+        with (
+            patch.object(authorize, "OAuthClientService", return_value=_with_client_view(view)),
+            patch("time.time", return_value=frozen),
+        ):
             resp = client.get("/authorize", params=_AUTHORIZE_PARAMS)
         bodies[status_value] = resp.text
     assert bodies["pending"] == bodies["denied"]
-    assert "pending" not in bodies["pending"].lower()
-    assert "denied" not in bodies["denied"].lower()
 
 
 def test_client_name_is_escaped_on_page(client: TestClient) -> None:

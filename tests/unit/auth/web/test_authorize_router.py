@@ -29,6 +29,7 @@ def test_sign_verify_roundtrip() -> None:
     payload: dict[str, str | None] = {
         "client_id": "c1",
         "redirect_uri": "https://app.example.com/cb",
+        "iat": str(int(time.time())),
     }
     signed = _sign_payload(payload, SECRET, purpose="state")
     result = _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
@@ -87,11 +88,14 @@ def test_state_within_ttl_accepted() -> None:
     assert result["key"] == "value"
 
 
-def test_state_without_iat_accepted() -> None:
+def test_state_without_iat_rejected() -> None:
+    """iat is mandatory: a signed payload without one has no enforceable
+    lifetime, so the TTL check must not be skippable (L2 — matters most for
+    the anonymous approval-status poll). Every mint site stamps iat."""
     payload: dict[str, str | None] = {"key": "value"}
     signed = _sign_payload(payload, SECRET, purpose="state")
-    result = _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
-    assert result["key"] == "value"
+    with pytest.raises(InvalidGrantError, match="missing iat"):
+        _verify_payload(signed, SECRET, purpose="state", max_age=STATE_MAX_AGE_SECONDS)
 
 
 def test_purpose_mismatch_rejected() -> None:
