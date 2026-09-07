@@ -545,12 +545,15 @@ export class OAuthService {
      * header — no cookies, no ambient credentials, so a cross-site form cannot
      * drive it (same CSRF posture as the consent POST and the inline approval
      * decision). The platform token is validated by the standard auth
-     * dependency (users only; the password-rotation fence applies exactly as it
-     * does on rung 3), the D7 client gate is re-checked, and on success the
-     * response carries a relative ``/authorize`` resume URL bearing a
-     * short-TTL, ``session``-purpose continuation blob that pins THIS caller's
-     * ``user_id`` — the identity is fixed at exchange time, before the consent
-     * page renders it with its "Not you?" escape.
+     * dependency (users only), and the ``active`` / ``must_change_password``
+     * fences are re-checked with a LIVE user-row read — not the token's baked
+     * claims — matching rung 3's ``password_rotation_required`` posture, so an
+     * admin-forced reset fences the exchange immediately even while pre-reset
+     * SPA tokens are still in flight. The D7 client gate is re-checked, and on
+     * success the response carries a relative ``/authorize`` resume URL bearing
+     * a short-TTL, ``session``-purpose continuation blob that pins THIS
+     * caller's ``user_id`` — the identity is fixed at exchange time, before the
+     * consent page renders it with its "Not you?" escape.
      *
      * Every failure after authentication is the same generic 400: an invalid
      * blob must not let the caller learn anything about the client or the flow.
