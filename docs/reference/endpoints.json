@@ -2915,6 +2915,23 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [
+        "user"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "sessionContinueEndpoint",
+      "path": "/oauth/session/continue",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Exchange a live platform session for an authorize continuation",
+      "surface": "oauth",
+      "typical_caller": "operator"
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,
@@ -5220,5 +5237,5 @@
     ],
     "total": 33
   },
-  "total": 182
+  "total": 183
 }

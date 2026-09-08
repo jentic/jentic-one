@@ -3,7 +3,9 @@
 Flow overview:
   GET /authorize        — validate client + redirect_uri, redirect to IdP
                           (a pending-approval client renders the
-                          approval-pending page instead — see below)
+                          approval-pending page instead — see below); with a
+                          valid session continuation (``sc``, #1299) skip the
+                          identity rungs and rejoin at consent directly
   GET /oauth/callback   — verify IdP response, show consent screen (or skip)
   POST /oauth/consent   — verify consent token, issue authorization code, redirect to client
   POST /oauth/token     — exchange code + PKCE verifier + client_secret for tokens
@@ -22,6 +24,7 @@ redirect_uri is registered for the client.
 
 from __future__ import annotations
 
+import hashlib
 import html as html_mod
 import json
 import secrets
@@ -34,8 +37,10 @@ import structlog
 from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
+from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.core.idp import IdpClaims
 from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import (
@@ -48,7 +53,10 @@ from jentic_one.auth.web.flow import (
     CONSENT_SECURITY_HEADERS,
     CONSENT_STATE_MAX_AGE_SECONDS,
     FONTS_URL,
+    SESSION_CONTINUATION_MAX_AGE_SECONDS,
+    SPA_TOKEN_STORAGE_KEY,
     STATE_MAX_AGE_SECONDS,
+    SessionContinuation,
     approval_state_key,
     check_approval_status_rate_limit,
     check_rate_limit,
@@ -62,6 +70,7 @@ from jentic_one.auth.web.flow import (
     state_signing_key,
     verify_payload,
     write_idp_consent_handle,
+    write_local_consent_handle,
 )
 from jentic_one.auth.web.schemas.authorize import (
     OAuthApprovalDecisionRequest,
@@ -157,11 +166,10 @@ APPROVAL_STATE_MAX_AGE_SECONDS = STATE_MAX_AGE_SECONDS
 #: a single tab at 12 rpm, well inside the endpoint's own rate bucket.
 _APPROVAL_POLL_INTERVAL_MS = 5000
 
-#: localStorage key the operator SPA keeps its bearer session under. The
-#: approval-pending page is served from the same origin as the SPA in the
-#: default (combined) deployment, so page script can present that token to /me
-#: and the decision endpoint. Kept in lockstep with ``ui/src/shared/auth``.
-_SPA_TOKEN_STORAGE_KEY = "jentic-one.access_token"
+#: localStorage key the operator SPA keeps its bearer session under (shared
+#: with the login page's session-continuation offer — the single source of
+#: truth lives in flow.py, kept in lockstep with ``ui/src/shared/auth``).
+_SPA_TOKEN_STORAGE_KEY = SPA_TOKEN_STORAGE_KEY
 
 #: SPA route of the OAuth-client approval queue (Settings → queue tab), used
 #: for the "ask your admin" deep link. Kept in lockstep with the UI's
@@ -212,12 +220,38 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
             </form>
         </div>
         <div class="footer">
-            Authorizing grants the application the permissions listed above.
+            Authorizing grants the application the permissions listed above.<br>
+            <a href="{restart_url}">Not you? Use a different account</a>
         </div>
     </div>
 </body>
 </html>
 """
+
+
+def _restart_authorize_url(params: dict[str, object]) -> str:
+    """Rebuild the original /authorize URL from a consent handle (no ``sc``).
+
+    The consent page's "Not you?" escape: re-runs the SAME authorize request
+    without any session continuation, so the ladder lands on rung 2/3 (IdP or
+    the login form) and the user authenticates as someone else. All values
+    are handle-derived (server-side state), never request input.
+    """
+    query: dict[str, str] = {
+        "response_type": "code",
+        "client_id": str(params.get("client_id") or ""),
+        "redirect_uri": str(params.get("redirect_uri") or ""),
+        "code_challenge": str(params.get("code_challenge") or ""),
+        "code_challenge_method": "S256",
+        "scope": str(params.get("scope") or "openid"),
+    }
+    original_state = params.get("original_state")
+    if original_state:
+        query["state"] = str(original_state)
+    nonce = params.get("nonce")
+    if nonce:
+        query["nonce"] = str(nonce)
+    return f"/authorize?{urlencode(query)}"
 
 
 _AWAITING_APPROVAL_PAGE_TEMPLATE = """<!DOCTYPE html>
@@ -635,7 +669,8 @@ _AGENT_CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
         </form>
         <div class="footer">
             The application will act only through the selected agent,
-            limited to the permissions shown.
+            limited to the permissions shown.<br>
+            <a href="{restart_url}">Not you? Use a different account</a>
         </div>
     </div>
 </body>
@@ -854,6 +889,12 @@ async def authorize_endpoint(
     scope: str = Query(default="openid"),
     state: str | None = Query(default=None),
     nonce: str | None = Query(default=None),
+    sc: str | None = Query(
+        default=None,
+        description="Signed session-continuation blob minted by "
+        "POST /oauth/session/continue (identity-ladder rung 1). Optional; an "
+        "invalid or absent value leaves the flow byte-identical to before.",
+    ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> RedirectResponse | HTMLResponse:
@@ -945,15 +986,138 @@ async def authorize_endpoint(
     )
 
     # Identity dispatch: the explicit rung ladder lives in flow.py
-    # (resolve_identity_gate) — platform-session reuse (placeholder, epic
-    # #1280) > IdP redirect > local-login form (#1276, gate on + no IdP; the
-    # ladder mints the distinct login-purpose carry-through token).
-    gate_redirect = resolve_identity_gate(ctx, idp_url=idp_url, state_payload=state_payload)
-    if gate_redirect is None:
+    # (resolve_identity_gate) — platform-session continuation (#1299, the
+    # ``sc`` blob minted by POST /oauth/session/continue) > IdP redirect >
+    # local-login form (#1276). Rung 1 returns a verified SessionContinuation
+    # and this endpoint owns the async redemption: single-use burn, then the
+    # SAME rejoin arms as the local login submit (platform → direct code,
+    # registered third-party → the shared consent handle). A failed
+    # redemption (replay race) falls through to rungs 2/3 as if no
+    # continuation had arrived.
+    gate_result = resolve_identity_gate(
+        ctx, idp_url=idp_url, state_payload=state_payload, session_state=sc
+    )
+    if isinstance(gate_result, SessionContinuation):
+        redemption = await _redeem_session_continuation(
+            request,
+            ctx,
+            gate_result,
+            authorize_svc,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            scope=scope,
+            state=state,
+            nonce=nonce,
+        )
+        if redemption is not None:
+            return redemption
+        gate_result = resolve_identity_gate(ctx, idp_url=idp_url, state_payload=state_payload)
+    if gate_result is None or isinstance(gate_result, SessionContinuation):
+        # The isinstance arm is unreachable (no session_state → no rung 1);
+        # it only narrows the type for the checker.
         return _error_redirect(
             redirect_uri, "server_error", state, "no identity provider configured"
         )
-    return gate_redirect
+    return gate_result
+
+
+async def _redeem_session_continuation(
+    request: Request,
+    ctx: Context,
+    continuation: SessionContinuation,
+    authorize_svc: AuthorizeService,
+    *,
+    client_id: str,
+    redirect_uri: str,
+    code_challenge: str,
+    scope: str,
+    state: str | None,
+    nonce: str | None,
+) -> RedirectResponse | None:
+    """Redeem a verified session continuation; ``None`` falls through to rungs 2/3.
+
+    Single-use first: ``set_if_absent`` on a used-marker makes the first
+    redemption win and every replay inside the TTL fall through to the normal
+    login — a captured resume URL must not keep minting consent handles (or,
+    on the platform arm, authorization codes). Then a LIVE user-row read
+    (both arms): the blob carries only the opaque ``user_id`` (no PII in the
+    GET query param — see F2 on the #1300 review), so the row read resolves
+    the consent page's display email anyway, and re-checking ``active`` /
+    ``must_change_password`` on it closes the ≤60 s window in which a user
+    deactivated or password-fenced after the exchange could still redeem.
+    The rejoin arms are the local login submit's, with the user pinned at
+    exchange time instead of a just-checked password.
+    """
+    backend = get_consent_backend(request)
+    digest = hashlib.sha256(continuation.token.encode()).hexdigest()
+    if not await backend.set_if_absent(
+        f"session-sc-used:{digest}", b"1", ttl_s=float(SESSION_CONTINUATION_MAX_AGE_SECONDS)
+    ):
+        logger.warning("oauth_session_continuation_replayed", client_id=client_id)
+        return None
+
+    try:
+        user = await UserService(ctx).get_by_id(continuation.user_id)
+    except UserNotFoundError:
+        logger.warning("oauth_session_continuation_failed", reason="user_not_found")
+        return None
+    if not user.active or user.must_change_password:
+        # Fail closed but fall through: the worst outcome of a fenced account
+        # is the unchanged rung-3 login, where the fence is enforced anyway.
+        logger.warning("oauth_session_continuation_failed", reason="user_fenced")
+        return None
+
+    if is_platform_client(client_id, ctx):
+        # Platform client: consent-skip is a first-party trust decision, the
+        # same terminal step as the local login submit's platform arm.
+        platform_code = await authorize_svc.issue_authorization_code(
+            user_id=continuation.user_id,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            scopes=scope,
+            nonce=nonce,
+        )
+        logger.info(
+            "oauth_session_continuation_redeemed", client_id=client_id, consent="platform-skip"
+        )
+        redirect_params: dict[str, str] = {"code": platform_code}
+        if state:
+            redirect_params["state"] = state
+        separator = "&" if "?" in redirect_uri else "?"
+        return RedirectResponse(
+            url=f"{redirect_uri}{separator}{urlencode(redirect_params)}", status_code=302
+        )
+
+    # Registered third-party client: the entry gate above already re-checked
+    # D7 for THIS request; belt and braces here because the redemption must
+    # fail closed if the cached row somehow read differently.
+    oauth_client = await get_cached_oauth_client(request, client_id, ctx)
+    if oauth_client is None or not client_gate_passes(oauth_client):
+        logger.warning(
+            "oauth_client_gate_failed_midflow", client_id=client_id, stage="session_redeem"
+        )
+        return None
+
+    # The SAME consent handle the IdP callback and the local login submit
+    # write (one writer owns the shape): subject = the platform user pinned
+    # at exchange time. The consent page renders that identity with its
+    # "Not you?" escape, so an account mismatch is recoverable.
+    consent_handle = await write_local_consent_handle(
+        request,
+        local_user_id=continuation.user_id,
+        user_email=user.email,
+        redirect_uri=redirect_uri,
+        original_state=state,
+        client_id=client_id,
+        code_challenge=code_challenge,
+        scope=scope,
+        nonce=nonce,
+        oauth_client=oauth_client,
+    )
+    logger.info("oauth_session_continuation_redeemed", client_id=client_id, consent="required")
+    return RedirectResponse(url=f"/oauth/consent?ch={consent_handle}", status_code=302)
 
 
 @router.get(
@@ -1339,6 +1503,7 @@ async def consent_page(
         user_email=html_mod.escape(user_email),
         permission_items=permission_items,
         consent_token=html_mod.escape(ch),
+        restart_url=html_mod.escape(_restart_authorize_url(params), quote=True),
         fonts_url=FONTS_URL,
         page_css=AUTH_PAGE_CSS,
         logo_block=LOGO_BLOCK_HTML,
@@ -1403,6 +1568,7 @@ async def _render_agent_consent_page(
         redirect_origin=html_mod.escape(_redirect_origin(redirect_uri)),
         agent_options=_render_agent_options(agents, candidates),
         consent_token=html_mod.escape(consent_token),
+        restart_url=html_mod.escape(_restart_authorize_url(params), quote=True),
         fonts_url=FONTS_URL,
         page_css=AUTH_PAGE_CSS,
         logo_block=LOGO_BLOCK_HTML,

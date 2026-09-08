@@ -22,6 +22,13 @@ from the OAuth authorization flow, behind a default-off gate:
   writes, carrying ``local_user_id`` instead of IdP claims. A successful
   submit burns the ``ls`` (single-use); failures leave it valid so the user
   can retry a typo'd password.
+- ``POST /oauth/session/continue`` — identity-ladder rung 1 (#1299): the
+  login page's script exchanges a live same-origin SPA bearer session plus
+  the pending ``ls`` for a short-TTL ``session``-purpose continuation blob
+  pinning the caller's user id; ``GET /authorize`` redeems it (single-use)
+  and rejoins at consent with zero logins. Detection is silent, continuation
+  is an explicit "Continue as <email>" button — never automatic — with a
+  "Use a different account" link falling back to the form (rung 3).
 
 Security posture (see #1276): both routes take the existing per-client_id+IP
 authorize limiter (IP-keyed here — the client_id rides inside ``ls``); CSRF is
@@ -43,7 +50,9 @@ from __future__ import annotations
 
 import hashlib
 import html as html_mod
+import json
 import secrets
+import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 from urllib.parse import urlencode
@@ -54,13 +63,19 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
 
 from jentic_one.admin.services.auth_service import AuthService
-from jentic_one.admin.services.errors import AccountLockedError, InvalidCredentialsError
+from jentic_one.admin.services.errors import (
+    AccountLockedError,
+    InvalidCredentialsError,
+    UserNotFoundError,
+)
+from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.authorize_service import AuthorizeService
-from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.auth.services.errors import InvalidGrantError, RateLimitExceededError
 from jentic_one.auth.web.flow import (
     CONSENT_SECURITY_HEADERS,
     CONSENT_STATE_MAX_AGE_SECONDS,
     FONTS_URL,
+    SPA_TOKEN_STORAGE_KEY,
     STATE_MAX_AGE_SECONDS,
     check_rate_limit,
     client_gate_passes,
@@ -68,13 +83,23 @@ from jentic_one.auth.web.flow import (
     get_consent_backend,
     is_platform_client,
     login_signing_key,
+    session_signing_key,
+    sign_payload,
     verify_payload,
     write_local_consent_handle,
 )
+from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
 from jentic_one.auth.web.routers.authorize import get_authorize_service
+from jentic_one.auth.web.schemas.local_login import (
+    OAuthSessionContinueRequest,
+    OAuthSessionContinueResponse,
+)
 from jentic_one.auth.web.theme import AUTH_PAGE_CSS, LOGO_BLOCK_HTML
-from jentic_one.shared.auth.identity import LoginPayload
+from jentic_one.shared.auth.identity import Identity, LoginPayload
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorType
+from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.sensitive import SENSITIVE
 
@@ -156,6 +181,12 @@ _LOGIN_PAGE_TEMPLATE = """<!DOCTYPE html>
         <h1>Sign in to continue</h1>
         <p class="description">Use your Jentic One account to authorize the application.</p>
         {error_block}
+        <div class="session-panel" id="session-panel" hidden>
+            <div class="label">Already signed in as</div>
+            <div class="email" id="session-email"></div>
+            <button type="button" id="btn-session-continue">Continue</button>
+            <a href="#" class="alt" id="session-use-different">Use a different account</a>
+        </div>
         <form method="post" action="/login">
             <label class="field-label" for="email">Email</label>
             <input type="email" id="email" name="email" value="{email}"
@@ -171,9 +202,90 @@ _LOGIN_PAGE_TEMPLATE = """<!DOCTYPE html>
             You will review what the application can access before it connects.
         </div>
     </div>
+    <script id="session-config" type="application/json">{session_config}</script>
+    {session_script}
 </body>
 </html>
 """
+
+# Inline behaviour for the session-continuation offer (identity-ladder rung 1,
+# #1299). Kept as a plain string (not a .format template) so its braces need
+# no doubling; every dynamic value comes from the JSON
+# <script id="session-config"> block — the single escaped seam between server
+# data and page script (same pattern as the approval-pending page).
+#
+# Deliberately button-not-silent: a detected SPA session only REVEALS the
+# explicit "Continue as <email>" button. Nothing navigates without a click,
+# so an account mismatch is visible before the flow is resumed, and the
+# "Use a different account" link keeps rung 3 (the password form below)
+# one gesture away.
+_SESSION_CONTINUE_SCRIPT = """<script>
+(function () {
+    "use strict";
+    var cfg = JSON.parse(document.getElementById("session-config").textContent);
+    var panel = document.getElementById("session-panel");
+    var emailEl = document.getElementById("session-email");
+    var continueBtn = document.getElementById("btn-session-continue");
+
+    var token = null;
+    try { token = window.localStorage.getItem(cfg.token_key); } catch (e) { /* blocked */ }
+    if (!token) { return; }
+
+    // Silent detection only: /me confirms the same-origin SPA token belongs
+    // to a live platform USER session before the panel is revealed.
+    fetch(cfg.me_url, { headers: { Authorization: "Bearer " + token } })
+        .then(function (resp) { return resp.ok ? resp.json() : null; })
+        .then(function (me) {
+            if (me && me.email && typeof me.id === "string" &&
+                    me.id.indexOf("usr_") === 0) {
+                emailEl.textContent = me.email;
+                continueBtn.textContent = "Continue as " + me.email;
+                panel.hidden = false;
+            }
+        })
+        .catch(function () { /* stay anonymous — the form below is unchanged */ });
+
+    function isSameOriginAuthorize(url) {
+        // Only ever navigate to the relative /authorize resume URL the
+        // exchange minted — never to a caller-influenced absolute URL.
+        return typeof url === "string" && url.indexOf("/authorize?") === 0;
+    }
+
+    continueBtn.addEventListener("click", function () {
+        continueBtn.disabled = true;
+        fetch(cfg.continue_url, {
+            method: "POST",
+            headers: {
+                Authorization: "Bearer " + token,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ state: cfg.state }),
+        })
+            .then(function (resp) {
+                if (!resp.ok) { throw new Error("session continue failed"); }
+                return resp.json();
+            })
+            .then(function (body) {
+                if (!isSameOriginAuthorize(body.redirect_url)) {
+                    throw new Error("unexpected redirect");
+                }
+                window.location.replace(body.redirect_url);
+            })
+            .catch(function () {
+                // Expired token, gated client, or config change: hide the
+                // panel and fall back to the password form (rung 3).
+                panel.hidden = true;
+            });
+    });
+
+    document.getElementById("session-use-different").addEventListener("click", function (ev) {
+        ev.preventDefault();
+        panel.hidden = true;
+        var emailField = document.getElementById("email");
+        if (emailField) { emailField.focus(); }
+    });
+})();
+</script>"""
 
 
 def _verify_login_state(ls: str, ctx: Context) -> dict[str, str | None]:
@@ -252,6 +364,15 @@ def _render_login_page(
 ) -> HTMLResponse:
     """Render the login form with the consent page's security-header posture."""
     error_block = f'<div class="error" role="alert">{html_mod.escape(error)}</div>' if error else ""
+    session_config = {
+        "me_url": "/me",
+        "continue_url": "/oauth/session/continue",
+        "token_key": SPA_TOKEN_STORAGE_KEY,
+        "state": ls,
+    }
+    # \u003c-escape so no embedded value can ever close the JSON <script>
+    # block (same seam discipline as the approval-pending page).
+    session_config_json = json.dumps(session_config).replace("<", "\\u003c")
     html = _LOGIN_PAGE_TEMPLATE.format(
         fonts_url=FONTS_URL,
         page_css=AUTH_PAGE_CSS,
@@ -260,6 +381,8 @@ def _render_login_page(
         email=html_mod.escape(email),
         ls=html_mod.escape(ls),
         csrf=html_mod.escape(csrf),
+        session_config=session_config_json,
+        session_script=_SESSION_CONTINUE_SCRIPT,
     )
     return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
@@ -450,3 +573,168 @@ async def login_submit(
     )
     logger.info("local_login_succeeded", client_id=client_id, consent="required")
     return RedirectResponse(url=f"/oauth/consent?ch={consent_handle}", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Platform-session continuation exchange (identity-ladder rung 1, #1299).
+
+#: One generic rejection for every post-verification failure (spent ls, gated
+#: client, unknown/inactive user): a caller must not be able to distinguish
+#: WHY a session cannot be continued, only that it cannot — the same 400 the
+#: signature/TTL/purpose checks produce.
+_SESSION_CONTINUE_REJECTED = "session continuation rejected"
+
+
+def _get_session_continue_limiter(request: Request, ctx: Context) -> RateLimiter:
+    limiter: RateLimiter | None = getattr(request.app.state, "_session_continue_limiter", None)
+    if limiter is not None:
+        return limiter
+    cfg = ctx.config.auth.oauth_rate_limit
+    backend = get_auth_backend(request)
+    # Own bucket namespace (the RFC 7009 revocation pattern): keyed on bare
+    # IP, so it must not share a bucket with another bare-IP limiter carrying
+    # different rate/burst params. Reuses the exchange rpm/burst knobs
+    # (config schema unchanged): the endpoint is authenticated, one click
+    # sends one request, and its traffic is bounded by the same browser
+    # population as /oauth/token.
+    limiter = RateLimiter(
+        backend,
+        default_rpm=cfg.exchange_rpm,
+        burst=cfg.exchange_burst,
+        namespace="oauth-session-continue",
+    )
+    request.app.state._session_continue_limiter = limiter
+    return limiter
+
+
+async def check_session_continue_rate_limit(
+    request: Request, ctx: Context = Depends(get_ctx)
+) -> None:
+    """Per-IP rate limiter for the session-continue exchange.
+
+    Keyed by bare IP: the request's only other inputs are the bearer token
+    and the signed blob, and both are caller-supplied — a self-chosen key
+    component would let one host sidestep the bucket.
+    """
+    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    ip = client_ip(request, trusted)
+    limiter = _get_session_continue_limiter(request, ctx)
+    outcome = await limiter.acquire(ip)
+    if not outcome.allowed:
+        raise RateLimitExceededError(retry_after=outcome.retry_after_s)
+
+
+@router.post(
+    "/oauth/session/continue",
+    operation_id="sessionContinueEndpoint",
+    summary="Exchange a live platform session for an authorize continuation",
+    responses={
+        **_GATED_404_RESPONSE,
+        400: {
+            "description": "Malformed, tampered, expired, or otherwise unusable "
+            "authorize state — one generic rejection, never a reason."
+        },
+    },
+    dependencies=[Depends(check_session_continue_rate_limit)],
+)
+async def session_continue_endpoint(
+    request: Request,
+    response: Response,
+    body: OAuthSessionContinueRequest,
+    identity: Identity = get_current_identity(require_actor_type=ActorType.USER),
+    ctx: Context = Depends(get_ctx),
+) -> OAuthSessionContinueResponse:
+    """Rung 1 of the /authorize identity ladder: reuse the platform session.
+
+    The login page's script posts the pending authorize state (the ``ls``
+    carry-through token) with the SPA's bearer token in the Authorization
+    header — no cookies, no ambient credentials, so a cross-site form cannot
+    drive it (same CSRF posture as the consent POST and the inline approval
+    decision). The platform token is validated by the standard auth
+    dependency (users only), and the ``active`` / ``must_change_password``
+    fences are re-checked with a LIVE user-row read — not the token's baked
+    claims — matching rung 3's ``password_rotation_required`` posture, so an
+    admin-forced reset fences the exchange immediately even while pre-reset
+    SPA tokens are still in flight. The D7 client gate is re-checked, and on
+    success the response carries a relative ``/authorize`` resume URL bearing
+    a short-TTL, ``session``-purpose continuation blob that pins THIS
+    caller's ``user_id`` — the identity is fixed at exchange time, before the
+    consent page renders it with its "Not you?" escape.
+
+    Every failure after authentication is the same generic 400: an invalid
+    blob must not let the caller learn anything about the client or the flow.
+    """
+    try:
+        params = _verify_login_state(body.state, ctx)
+    except InvalidGrantError:
+        logger.warning("oauth_session_continue_rejected", reason="state_verify_failed")
+        raise InvalidGrantError(_SESSION_CONTINUE_REJECTED) from None
+
+    if await _ls_already_used(body.state, request):
+        # The flow this state belongs to already completed via the form.
+        logger.warning("oauth_session_continue_rejected", reason="state_spent")
+        raise InvalidGrantError(_SESSION_CONTINUE_REJECTED)
+
+    client_id = str(params.get("client_id") or "")
+    if not is_platform_client(client_id, ctx):
+        # Mid-flow D7 re-check, same as GET/POST /login: a client denied or
+        # deactivated while the user holds the ls must not be resumable.
+        oauth_client = await get_cached_oauth_client(request, client_id, ctx)
+        if oauth_client is None or not client_gate_passes(oauth_client):
+            logger.warning(
+                "oauth_client_gate_failed_midflow", client_id=client_id, stage="session_continue"
+            )
+            raise InvalidGrantError(_SESSION_CONTINUE_REJECTED)
+
+    try:
+        user = await UserService(ctx).get_by_id(identity.sub)
+    except UserNotFoundError:
+        logger.warning("oauth_session_continue_rejected", reason="user_not_found")
+        raise InvalidGrantError(_SESSION_CONTINUE_REJECTED) from None
+    if not user.active or user.must_change_password:
+        # LIVE row read, not the JWT claim: an admin-forced password reset
+        # must fence the account immediately, exactly as rung 3's
+        # ``password_rotation_required`` does — a SPA token minted before the
+        # reset still carries a stale ``must_change_password=false`` claim
+        # for the rest of its TTL and must not mint a continuation.
+        logger.warning("oauth_session_continue_rejected", reason="user_fenced")
+        raise InvalidGrantError(_SESSION_CONTINUE_REJECTED)
+
+    continuation_payload: dict[str, str | None] = {
+        "client_id": client_id,
+        "redirect_uri": str(params.get("redirect_uri") or ""),
+        "code_challenge": str(params.get("code_challenge") or ""),
+        "scope": str(params.get("scope") or "openid"),
+        "nonce": params.get("nonce"),
+        "original_state": params.get("original_state"),
+        # Pinned at exchange time: the resume leg trusts the blob, never the
+        # (by then anonymous) browser. Only the opaque user_id — the blob
+        # rides a GET query param (access logs, browser history), so no PII;
+        # the redemption arm re-reads the row for the email anyway.
+        "user_id": user.id,
+        "iat": str(int(time.time())),
+    }
+    continuation = sign_payload(continuation_payload, session_signing_key(ctx), purpose="session")
+
+    # Re-run the ORIGINAL authorize request plus the continuation — the same
+    # resume shape as the approval-pending page, so rung 1 slots into the
+    # ladder without new /authorize semantics for the anonymous case.
+    resume_params: dict[str, str] = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": str(params.get("redirect_uri") or ""),
+        "code_challenge": str(params.get("code_challenge") or ""),
+        "code_challenge_method": "S256",
+        "scope": str(params.get("scope") or "openid"),
+    }
+    original_state = params.get("original_state")
+    if original_state:
+        resume_params["state"] = original_state
+    nonce = params.get("nonce")
+    if nonce:
+        resume_params["nonce"] = nonce
+    resume_params["sc"] = continuation
+
+    logger.info("oauth_session_continue_minted", client_id=client_id, user_id=user.id)
+    response.headers["Cache-Control"] = "no-store"
+    return OAuthSessionContinueResponse(redirect_url=f"/authorize?{urlencode(resume_params)}")
