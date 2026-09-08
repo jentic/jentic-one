@@ -29,14 +29,17 @@ entitlement:
   license_sku: "<product ID from the portal>"   # NOT the product code — the
                                                 # portal issues both; this is
                                                 # CheckoutLicense ProductSKU
-  license_dimensions: ["users", "executions"]   # the listing's dimensions;
-                                                # env form takes CSV
+  license_dimensions: ["users"]   # must match the live listing's dimensions —
+                                  # the shipped overlay
+                                  # (deploy/helm/values/aws-marketplace.yaml)
+                                  # pins "users" only; env form takes CSV
 ```
 
 Env form: `JENTIC__ENTITLEMENT__ENABLED=true`,
 `JENTIC__ENTITLEMENT__PRODUCT_CODE=…`,
 `JENTIC__ENTITLEMENT__LICENSE_SKU=…`,
-`JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS=users,executions`, etc.
+`JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS=users` (CSV when the listing has
+more than one dimension), etc.
 
 **IAM**: the task role (ECS/Fargate) or IRSA role (EKS) needs, depending on
 `pricing_model`:

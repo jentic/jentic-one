@@ -36,7 +36,8 @@ Step-by-step path: [windows.md](windows.md). The shape:
 
 | Leg | Coverage |
 | --- | -------- |
-| `ubuntu-24.04` | Full test suite, headless Docker install, live-stack smoke |
+| `ubuntu-latest` | Full test suite (unit, arch, integration) |
+| `ubuntu-24.04` | Headless Docker install + live-stack smoke (the e2e matrix leg) |
 | `macos-latest` | Build via [`tools/install.sh`](../../tools/install.sh), OS-sensitive Go tests, offline smoke |
 | `windows-latest` (amd64) | Binary build, OS-sensitive Go tests, offline smoke (PowerShell) |
 

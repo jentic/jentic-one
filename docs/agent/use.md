@@ -113,8 +113,10 @@ recovery — follow its `suggested_command` instead of retrying the same call.
   `MIGRATION_REQUIRED`, `NOT_AUTHENTICATED`, `PENDING_APPROVAL`) also exit 1
   — read the envelope's `error.code` and `actionable_step` before treating 1
   as retryable.
-- Export `JENTIC_SESSION_ID=<id>` so operators can correlate your calls in the
-  audit log; pass `--idempotency-key <uuid>` when retrying mutating calls.
+- Export `JENTIC_SESSION_ID=<id>` so operators can correlate your
+  **control-plane** calls in the audit log (brokered `execute` calls land in
+  Executions, which carries no session column); pass `--idempotency-key
+  <uuid>` when retrying mutating calls.
 - `jentic api <METHOD> <path>` is an authenticated passthrough to any
   control-plane endpoint (`jentic api ops` lists them); full route/scope
   reference: [endpoints.md](../reference/endpoints.md).

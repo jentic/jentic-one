@@ -11,14 +11,22 @@ page gets you to the right fix. Two rules before touching anything:
 
 The fixes live in the [agent troubleshooting runbook](../agent/troubleshoot.md)
 — written for an AI agent to execute, but the failures and the fixes are the
-same for you. Jump straight to your symptom:
+same for you. One translation note: the runbook's commands assume the **Docker
+Compose** shape. On other shapes the diagnosis holds but the verbs change —
+Helm installs have their own [troubleshooting
+table](../installation/helm.md#troubleshooting) (start there for
+`CreateContainerConfigError`, pull failures, and hook timeouts) and use
+`kubectl logs` / `kubectl rollout restart` where the runbook says `docker
+compose`; systemd installs use `journalctl -u jentic-app` and `systemctl
+restart`; bare `docker run` installs restart the individual containers from
+[docker.md](../installation/docker.md). Jump straight to your symptom:
 
 | Symptom | Fix |
 | ------- | --- |
 | App or broker container never reports healthy | [App or broker never becomes healthy](../agent/troubleshoot.md#app-or-broker-never-becomes-healthy) |
 | `address already in use` on port 8000 or 8100 | [`address already in use` at start](../agent/troubleshoot.md#address-already-in-use-on-port-8000-or-8100-at-start) |
 | Database connection lost or refused at runtime | [Database connection lost/refused (Postgres shape)](../agent/troubleshoot.md#database-connection-lostrefused-at-runtime-postgres-shape) |
-| Migrations fail during install or upgrade | [Migrations fail](../agent/troubleshoot.md#migrations-fail) |
+| Migrations fail during install or upgrade | [Migrations fail](../agent/troubleshoot.md#migrations-fail); if the run died **mid-flight** (timeout, `SIGTERM`), see [the recovery steps in upgrades.md](upgrades.md#if-a-migration-run-fails-mid-flight) |
 | `setup_required` flips between true and false | [`setup_required` flaps](../agent/troubleshoot.md#setup_required-flaps) |
 | SQLite "disk I/O error" in the logs | [SQLite "disk I/O error"](../agent/troubleshoot.md#sqlite-disk-io-error) |
 | `docker pull` denied | [Image pull denied](../agent/troubleshoot.md#image-pull-denied) |

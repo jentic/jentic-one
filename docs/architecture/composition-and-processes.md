@@ -125,13 +125,14 @@ load-bearing:
 
 ## Background work
 
-Three loops start inside the lifespan:
+Four loops start inside the lifespan:
 
 | Loop | Runs when | Job |
 | ---- | --------- | --- |
 | `WorkerLoop` ([`shared/jobs/worker.py`](../../src/jentic_one/shared/jobs/worker.py)) | the admin DB is reachable and a handler registered | Claims queued jobs from the admin DB's jobs table. The `IMPORT` handler registers only on registry shapes; the `EXECUTION` handler only where the broker's upstream executor exists. A broker process therefore never claims import jobs, and an app process never claims executions. |
 | `CredentialExpiryScanner` | control shapes | Emits expiry warnings for credentials nearing their end date. |
 | `CatalogUpdateScanner` | registry shapes | Watches imported APIs' sources for upstream changes and raises update-available notifications. |
+| `TelemetryFlushLoop` ([`shared/telemetry/loop.py`](../../src/jentic_one/shared/telemetry/loop.py)) | `telemetry.enabled` (opt-in, off by default) and the admin DB is reachable | Drains the telemetry queue and POSTs event batches — the only loop with egress; drains once more on shutdown. |
 
 The gate is the surface set (`enabled_apps`), not which DBs happen to be
 reachable: the broker is granted the registry DB for its synchronous resolve

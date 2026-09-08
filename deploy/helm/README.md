@@ -229,6 +229,11 @@ exporter is chosen at deploy time
 | `prometheus` | Exposes `/metrics` endpoint on the service port       | Environments with Prometheus scraping    |
 | `none`       | No-op — SDK inactive                                  | Tests, CI, local dev without obs stack   |
 
+Mind the default pairing: `exporter: otlp` with `otel.enabled: false` (also
+the default) leaves the SDK pushing at a collector that isn't there — an
+export-failure log line every interval. Either enable the otel sidecar or set
+the exporter to `none`.
+
 For Prometheus scraping, layer the annotation overlay — the observability
 chart's Prometheus auto-discovers annotated pods:
 

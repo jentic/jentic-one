@@ -113,6 +113,9 @@ global:
       format: json
       level: info
     metrics:
+      # NOTE: `otlp` needs a reachable collector — with `otel.enabled: false`
+      # (the default above) the SDK logs an export failure every interval.
+      # Set `none` if you don't run a collector, or enable the otel sidecar.
       exporter: otlp
   postgresql:
     enabled: false
