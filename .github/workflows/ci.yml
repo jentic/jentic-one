@@ -72,6 +72,13 @@ jobs:
               # exported backend config schema against the Pydantic models, so
               # a hand-edit to the artifact must run the suite (GEN-10).
               - 'config/config-schema.json'
+              # The auth-theme drift guards (tests/unit/auth/web/
+              # test_theme_tokens.py) pin the packaged auth.css palette and the
+              # inline logo SVG to these SPA sources. A ui-only edit to either
+              # must run the unit suite, or the drift lands silently on the PR
+              # and only fails the post-merge main run.
+              - 'ui/src/index.css'
+              - 'ui/src/shared/ui/Logo.tsx'
             integration-tests:
               - 'src/**'
               - 'tests/integration/**'

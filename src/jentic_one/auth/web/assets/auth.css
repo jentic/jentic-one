@@ -1,0 +1,400 @@
+/*
+ * auth.css — shared visual theme for the server-rendered auth pages
+ * (/login, /oauth/consent, the no-agents empty state; the approval-pending
+ * page joins in a follow-up PR).
+ *
+ * TOKEN SOURCE OF TRUTH: ui/src/index.css. The HSL triplets below are
+ * hand-derived from the SPA palette; tests/unit/auth/web/test_theme_tokens.py
+ * fails if they drift. Format matches the SPA: `H S% L%` triplets consumed
+ * via hsl(var(--token)) so opacity modifiers work. Like the SPA, the theme
+ * is DARK-ONLY (the platform ships no light theme — Manuel, 2026-09-08):
+ * one unconditional palette, no prefers-color-scheme split.
+ *
+ * SECURITY: this file is a static constant inlined into every auth page's
+ * style block. It must never carry request- or row-derived data, external
+ * fetches (import rules or remote url() sources), or a left-angle-bracket
+ * byte (which could close the style element). The drift-guard test pins all
+ * three properties, keeping the block hashable for a future strict CSP
+ * (style-src 'sha256-…').
+ */
+
+:root {
+	/* Primary scale — ui/src/index.css `:root` (higher = darker). Only the
+	   steps the dark-only mappings below consume are mirrored here; add a
+	   step (and its drift-guard entry) when a new page needs it. */
+	--primary-100: 189 15% 91%; /* #E4EAEB */
+	--primary-300: 183 29% 72%; /* #A3CACC */
+	--primary-700: 186 28% 26%; /* #305256 */
+	--primary-850: 192 38% 16%; /* #193238 */
+	--primary-900: 192 36% 13%; /* #162629 */
+	--primary-950: 192 35% 8%; /* #0E1A1D */
+
+	/* Accents — same source. */
+	--accent-green: 162 66% 62%; /* #5EDEB9 */
+
+	--radius: 0.75rem;
+
+	/* Semantic mappings — dark-only, exactly the SPA's assignments
+	   (ui/src/index.css `:root`; the SPA has no light theme and no
+	   prefers-color-scheme/data-theme switch — decision: dark-only,
+	   Manuel 2026-09-08): bg primary-950, card primary-900, borders
+	   primary-700, primary action primary-300 on primary-950 text. */
+	--page-bg: var(--primary-950);
+	--card-bg: var(--primary-900);
+	--card-border: var(--primary-700);
+	--fg: 0 0% 100%;
+	--fg-muted: var(--primary-300);
+	--fg-label: var(--primary-100);
+	--inset-bg: var(--primary-850);
+	--inset-border: var(--primary-700);
+	--input-bg: var(--primary-950);
+	--input-border: var(--primary-700);
+	--input-border-focus: var(--primary-300);
+	--ring: var(--primary-300);
+	--btn-primary-bg: var(--primary-300);
+	--btn-primary-bg-hover: var(--primary-100);
+	--btn-primary-fg: var(--primary-950);
+	--btn-secondary-bg: var(--primary-900);
+	--btn-secondary-bg-hover: var(--primary-850);
+	--btn-secondary-fg: 0 0% 100%;
+	--btn-secondary-border: var(--primary-700);
+	--brand-fg: 0 0% 100%;
+	--badge-fg: var(--primary-300);
+	--app-name-fg: var(--primary-300);
+	--error-bg: 13 60% 18%;
+	--error-fg: 358 64% 80%;
+	--check-bg: var(--accent-green);
+	--elevation-card: 0 1px 2px 0 hsl(var(--primary-950) / 0.4);
+	color-scheme: dark;
+}
+
+/* ---- shell ---- */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+	font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+	background: hsl(var(--page-bg));
+	color: hsl(var(--fg));
+	min-height: 100vh;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+	-webkit-font-smoothing: antialiased;
+}
+.card {
+	background: hsl(var(--card-bg));
+	border: 1px solid hsl(var(--card-border));
+	border-radius: var(--radius);
+	box-shadow: var(--elevation-card);
+	max-width: 400px;
+	width: 100%;
+	padding: 32px;
+}
+.card--wide { max-width: 440px; }
+
+/* ---- brand header (inline SVG logo + "One" badge, mirrors JenticLogo) ---- */
+
+.logo {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	margin-bottom: 24px;
+	color: hsl(var(--brand-fg));
+}
+.logo svg { display: block; }
+.brand-badge {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	border-radius: 6px;
+	padding: 3px 6px;
+	font-family: 'Geist Mono', ui-monospace, monospace;
+	font-size: 10px;
+	line-height: 1;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: hsl(var(--badge-fg));
+	background: hsl(var(--badge-fg) / 0.1);
+	box-shadow: inset 0 0 0 1px hsl(var(--badge-fg) / 0.2);
+}
+
+/* ---- typography ---- */
+
+h1 {
+	font-family: 'Sora', sans-serif;
+	font-size: 17px;
+	font-weight: 600;
+	margin-bottom: 8px;
+	color: hsl(var(--fg));
+	text-align: center;
+	line-height: 1.4;
+}
+.app-name { color: hsl(var(--app-name-fg)); font-weight: 700; }
+.description {
+	color: hsl(var(--fg-muted));
+	font-size: 14px;
+	margin-bottom: 24px;
+	line-height: 1.5;
+	text-align: center;
+}
+.footer {
+	text-align: center;
+	margin-top: 20px;
+	font-size: 12px;
+	color: hsl(var(--fg-muted));
+}
+.footer a { color: hsl(var(--app-name-fg)); text-decoration: none; }
+.footer a:hover { text-decoration: underline; }
+
+/* ---- insets: signed-in chip, permissions panel, origin pill, errors ---- */
+
+.user-info {
+	text-align: center;
+	margin-bottom: 20px;
+	padding: 12px;
+	background: hsl(var(--inset-bg));
+	border-radius: 8px;
+}
+.user-info .label {
+	font-size: 11px;
+	color: hsl(var(--fg-muted));
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 4px;
+}
+.user-info .email { font-size: 14px; color: hsl(var(--fg)); font-weight: 600; }
+.origin {
+	text-align: center;
+	font-size: 13px;
+	font-weight: 700;
+	color: hsl(var(--fg));
+	background: hsl(var(--inset-bg));
+	border: 1px solid hsl(var(--inset-border));
+	border-radius: 6px;
+	padding: 6px 10px;
+	margin: 8px auto 12px;
+	display: table;
+	max-width: 100%;
+	word-break: break-all;
+}
+.error {
+	background: hsl(var(--error-bg));
+	color: hsl(var(--error-fg));
+	border-radius: 8px;
+	font-size: 14px;
+	padding: 10px 14px;
+	margin-bottom: 16px;
+	text-align: center;
+}
+.panel {
+	background: hsl(var(--inset-bg));
+	border-radius: 8px;
+	padding: 16px;
+	margin-bottom: 16px;
+}
+.session-panel {
+	background: hsl(var(--inset-bg));
+	border-radius: 8px;
+	padding: 16px;
+	margin-bottom: 16px;
+	text-align: center;
+}
+/* Session-panel internals — pre-shipped for PR #1300's continue-as offer
+   (label / bold email / primary Continue button / "use a different
+   account" alt link) so its rebase onto this theme stays mechanical. */
+.session-panel .label {
+	font-size: 11px;
+	color: hsl(var(--fg-muted));
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 4px;
+}
+.session-panel .email {
+	font-size: 14px;
+	color: hsl(var(--fg));
+	font-weight: 600;
+	margin-bottom: 12px;
+	word-break: break-all;
+}
+.session-panel button {
+	width: 100%;
+	background: hsl(var(--btn-primary-bg));
+	color: hsl(var(--btn-primary-fg));
+}
+.session-panel button:hover { background: hsl(var(--btn-primary-bg-hover)); }
+.session-panel .alt {
+	display: block;
+	margin-top: 10px;
+	font-size: 12px;
+	color: hsl(var(--app-name-fg));
+	text-decoration: none;
+}
+.session-panel .alt:hover { text-decoration: underline; }
+.status-line { text-align: center; font-size: 13px; color: hsl(var(--fg-muted)); }
+
+/* ---- permissions list (user consent) ---- */
+
+.permissions {
+	background: hsl(var(--inset-bg));
+	border-radius: 8px;
+	padding: 16px;
+	margin-bottom: 24px;
+}
+.permissions h2 {
+	font-family: 'Sora', sans-serif;
+	font-size: 12px;
+	font-weight: 600;
+	color: hsl(var(--fg-label));
+	margin-bottom: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+.permissions ul { list-style: none; font-size: 14px; color: hsl(var(--fg-label)); }
+.permissions li {
+	padding: 8px 0;
+	display: flex;
+	align-items: center;
+	border-bottom: 1px solid hsl(var(--inset-border));
+}
+.permissions li:last-child { border-bottom: none; }
+.permissions li::before {
+	content: "";
+	width: 18px;
+	height: 18px;
+	background: hsl(var(--check-bg));
+	border-radius: 50%;
+	margin-right: 12px;
+	flex-shrink: 0;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E");
+	background-size: 12px;
+	background-repeat: no-repeat;
+	background-position: center;
+}
+
+/* ---- agent picker (agent consent) ---- */
+
+.agents { margin-bottom: 20px; }
+.agents h2 {
+	font-family: 'Sora', sans-serif;
+	font-size: 12px;
+	font-weight: 600;
+	color: hsl(var(--fg-label));
+	margin-bottom: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+.agent {
+	display: block;
+	border: 1px solid hsl(var(--input-border));
+	border-radius: 8px;
+	padding: 12px 14px;
+	margin-bottom: 10px;
+	cursor: pointer;
+	transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.agent:hover { border-color: hsl(var(--input-border-focus)); }
+.agent:has(input:checked) {
+	border-color: hsl(var(--ring));
+	background: hsl(var(--inset-bg));
+}
+.agent input[type="radio"] { accent-color: hsl(var(--ring)); }
+.agent-header { display: flex; align-items: center; gap: 10px; }
+.agent-name { font-size: 14px; font-weight: 700; color: hsl(var(--fg)); }
+.agent-scopes {
+	list-style: none;
+	margin-top: 8px;
+	font-size: 13px;
+	color: hsl(var(--fg-label));
+}
+.agent-scopes li { padding: 3px 0; }
+.agent-scopes li.granted::before {
+	content: "";
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	background: hsl(var(--check-bg));
+	border-radius: 50%;
+	margin-right: 8px;
+	vertical-align: -2px;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E");
+	background-size: 10px;
+	background-repeat: no-repeat;
+	background-position: center;
+}
+.agent-scopes li.lacking { color: hsl(var(--fg-muted) / 0.7); }
+.agent-scopes li.lacking::before {
+	content: "";
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	background: hsl(var(--inset-border));
+	border-radius: 50%;
+	margin-right: 8px;
+	vertical-align: -2px;
+}
+
+/* ---- forms ---- */
+
+.field-label {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	color: hsl(var(--fg-label));
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 6px;
+}
+input[type="email"], input[type="password"] {
+	width: 100%;
+	padding: 12px 14px;
+	background: hsl(var(--input-bg));
+	border: 1px solid hsl(var(--input-border));
+	border-radius: 8px;
+	font-family: 'Nunito Sans', sans-serif;
+	font-size: 14px;
+	color: hsl(var(--fg));
+	margin-bottom: 16px;
+}
+input:focus {
+	outline: none;
+	border-color: hsl(var(--input-border-focus));
+	box-shadow: 0 0 0 3px hsl(var(--ring) / 0.25);
+}
+
+/* ---- buttons ---- */
+
+button {
+	padding: 12px 20px;
+	border-radius: 8px;
+	font-family: 'Nunito Sans', sans-serif;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	border: none;
+	transition: all 0.2s;
+}
+button:disabled { opacity: 0.6; cursor: default; }
+button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.buttons { display: flex; gap: 12px; }
+.buttons button, .buttons .form-slot { flex: 1; }
+.form-slot { display: flex; }
+.form-slot button { width: 100%; }
+button.primary, .approve {
+	background: hsl(var(--btn-primary-bg));
+	color: hsl(var(--btn-primary-fg));
+}
+button.primary:hover, .approve:hover { background: hsl(var(--btn-primary-bg-hover)); }
+.deny {
+	background: hsl(var(--btn-secondary-bg));
+	color: hsl(var(--btn-secondary-fg));
+	border: 1px solid hsl(var(--btn-secondary-border));
+}
+.deny:hover { background: hsl(var(--btn-secondary-bg-hover)); }
+button.block { width: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+	*, *::before, *::after { transition-duration: 0.01ms !important; }
+}

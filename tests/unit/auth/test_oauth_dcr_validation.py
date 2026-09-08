@@ -1,6 +1,7 @@
 """Unit tests for the anonymous OAuth-client DCR service validation.
 
-Pure-validation matrix — the DB-backed register flow is covered by
+Pure-function matrix (metadata validation, scope capping, dedupe-winner
+preference) — the DB-backed register flow is covered by
 ``tests/integration/auth/test_oauth_dcr_registration.py``.
 """
 
@@ -8,8 +9,13 @@ from __future__ import annotations
 
 import pytest
 
+from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.auth.services.errors import InvalidClientMetadataError
-from jentic_one.auth.services.oauth_dcr_service import _cap_scopes, _validate_metadata
+from jentic_one.auth.services.oauth_dcr_service import (
+    _cap_scopes,
+    _dedupe_rank,
+    _validate_metadata,
+)
 from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
 _VALID_URIS = ["https://client.example.com/callback"]
@@ -178,3 +184,40 @@ def test_all_scopes_outside_cap_rejected() -> None:
         _cap_scopes("org:admin")
     with pytest.raises(InvalidClientMetadataError, match="no overlap"):
         _cap_scopes("made:up user")
+
+
+# ---------- dedupe-winner preference (D7-gate-aware, #1312) ----------
+
+
+def _candidate(approval_status: str, active: bool) -> OAuthClient:
+    return OAuthClient(approval_status=approval_status, active=active)
+
+
+def test_dedupe_rank_orders_usable_pending_denied_then_killswitched() -> None:
+    """#1312: the winner preference tracks the D7 gate, not approval_status
+    alone — a kill-switched (approved + inactive) row ranks *last* so it can
+    only win as the sole match, and a deny is never sidestepped by adopting
+    a deactivated sibling."""
+    usable = _candidate("approved", active=True)
+    pending = _candidate("pending", active=False)
+    denied = _candidate("denied", active=False)
+    killswitched = _candidate("approved", active=False)
+
+    ranks = [_dedupe_rank(c) for c in (usable, pending, denied, killswitched)]
+    assert ranks == sorted(ranks)
+    assert len(set(ranks)) == 4
+    assert min([killswitched, denied, pending, usable], key=_dedupe_rank) is usable
+
+
+def test_dedupe_rank_unknown_status_never_preferred() -> None:
+    """A row with an unrecognized approval_status ranks below every known
+    lifecycle state (defensive: the winner must be a state the doors and
+    the UI understand)."""
+    unknown = _candidate("mystery", active=True)
+    for status, active in (
+        ("approved", True),
+        ("pending", False),
+        ("denied", False),
+        ("approved", False),
+    ):
+        assert _dedupe_rank(unknown) > _dedupe_rank(_candidate(status, active))
