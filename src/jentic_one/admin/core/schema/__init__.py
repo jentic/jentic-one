@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
@@ -33,6 +34,7 @@ __all__ = [
     "AdminBase",
     "Agent",
     "AgentCredential",
+    "AgentCredentialBinding",
     "AgentToolkitBinding",
     "AuditEntry",
     "AuthorizationCode",
