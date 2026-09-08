@@ -15,11 +15,26 @@ _SCOPE_TOKEN_RE = re.compile(r"^[a-zA-Z0-9_:./-]+$")
 class RegisterRequest(BaseModel):
     """POST /register request body."""
 
-    # Bounded to the agents.name column (String(255)): /register is
-    # unauthenticated per RFC 7591, and the name flows verbatim into event
-    # summaries surfaced on operator attention surfaces.
     client_name: str = Field(min_length=1, max_length=255)
-    jwks: dict[str, Any]
+    jwks: dict[str, Any] = Field(
+        description="A JSON Web Key Set containing at least one Ed25519 public key"
+        " (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.",
+        json_schema_extra={
+            "example": {
+                "keys": [
+                    {
+                        "kty": "OKP",
+                        "crv": "Ed25519",
+                        # RFC 8037 appendix A.2 public-key test vector (not a
+                        # secret).
+                        # pragma: allowlist nextline secret
+                        "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+                        "kid": "agent-key-1",
+                    }
+                ]
+            }
+        },
+    )
     grant_types: list[str] | None = None
     token_endpoint_auth_method: str | None = None
     scope: str | None = Field(default=None, max_length=6500)

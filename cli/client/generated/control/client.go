@@ -2849,8 +2849,10 @@ type RedeemInviteRequest struct {
 
 // RegisterRequest POST /register request body.
 type RegisterRequest struct {
-	ClientName              string                 `json:"client_name"`
-	GrantTypes              *[]string              `json:"grant_types,omitempty"`
+	ClientName string    `json:"client_name"`
+	GrantTypes *[]string `json:"grant_types,omitempty"`
+
+	// Jwks A JSON Web Key Set containing at least one Ed25519 public key (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.
 	Jwks                    map[string]interface{} `json:"jwks"`
 	Scope                   *string                `json:"scope,omitempty"`
 	TokenEndpointAuthMethod *string                `json:"token_endpoint_auth_method,omitempty"`

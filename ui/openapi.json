@@ -7667,6 +7667,17 @@
           },
           "jwks": {
             "additionalProperties": true,
+            "description": "A JSON Web Key Set containing at least one Ed25519 public key (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.",
+            "example": {
+              "keys": [
+                {
+                  "crv": "Ed25519",
+                  "kid": "agent-key-1",
+                  "kty": "OKP",
+                  "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+                }
+              ]
+            },
             "title": "Jwks",
             "type": "object"
           },
