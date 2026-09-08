@@ -181,12 +181,12 @@ Platform-actors OAuth surface configuration.
 | `auth.idp.authorization_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__AUTHORIZATION_ENDPOINT` | Explicit IdP authorization endpoint URL; overrides the issuer-derived or provider well-known default. |
 | `auth.idp.exchange_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__EXCHANGE_ENDPOINT` | Explicit IdP token (code-exchange) endpoint URL; overrides the issuer-derived or provider well-known default. |
 | `auth.idp.userinfo_endpoint` | string \| null | `null` | `JENTIC__AUTH__IDP__USERINFO_ENDPOINT` | Explicit IdP userinfo endpoint URL; overrides the issuer-derived or provider well-known default. |
-| `auth.idp.hosted_domain` | string \| null | `null` | `JENTIC__AUTH__IDP__HOSTED_DOMAIN` | Google `hd` (hosted-domain) restriction. When set, only accounts whose userinfo carries a matching `hd` claim should be admitted. OSS surfaces the claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's admission policy. |
+| `auth.idp.hosted_domain` | string \| null | `null` | `JENTIC__AUTH__IDP__HOSTED_DOMAIN` | Google `hd` (hosted-domain) hint. **Not an access control in the OSS build**: the claim is surfaced (see IdpClaims.hosted_domain) but never compared — the default admission policy admits every brand-new email (with zero permissions until an operator grants some). Restricting sign-in to a domain requires configuring it at the IdP or installing a custom admission policy. |
 | `auth.local_login.enabled` | boolean | `false` | `JENTIC__AUTH__LOCAL_LOGIN__ENABLED` | Offer a first-party password login form on the /authorize flow. Off by default; when auth.idp.enabled is true the external IdP always wins and the form is never offered. |
 | `auth.platform_clients` | list of PlatformClientConfig | — | `JENTIC__AUTH__PLATFORM_CLIENTS` |  |
 | `auth.platform_clients.<n>.client_id` | string | *required* | `JENTIC__AUTH__PLATFORM_CLIENTS__<N>__CLIENT_ID` |  |
 | `auth.platform_clients.<n>.redirect_uris` | list of string | *required* | `JENTIC__AUTH__PLATFORM_CLIENTS__<N>__REDIRECT_URIS` |  |
-| `auth.oauth_rate_limit.authorize_rpm` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_RPM` | Sustained requests/minute allowed per `client_id`+IP on the unauthenticated `/authorize` endpoints. |
+| `auth.oauth_rate_limit.authorize_rpm` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_RPM` | Sustained requests/minute allowed on the unauthenticated `/authorize` endpoints, keyed per `client_id`+IP — except the local-login routes, which carry no query `client_id` and fall back to a bare-IP key. Behind a proxy, set `auth.oauth_rate_limit.trusted_proxies` or every client shares the proxy's IP bucket. |
 | `auth.oauth_rate_limit.authorize_burst` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_BURST` | Burst allowance on top of `authorize_rpm`. |
 | `auth.oauth_rate_limit.exchange_rpm` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_RPM` | Sustained requests/minute allowed per `client_id`+IP on the token endpoint (also reused per-IP for token revocation). |
 | `auth.oauth_rate_limit.exchange_burst` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_BURST` | Burst allowance on top of `exchange_rpm`. |
@@ -215,10 +215,10 @@ Broker surface configuration.
 | `broker.jwt_verification.trusted_issuers.<n>.jwks_url` | string | *required* | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__JWKS_URL` |  |
 | `broker.jwt_verification.trusted_issuers.<n>.algorithms` | list of string | — | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__ALGORITHMS` |  |
 | `broker.account_linking_base_url` | string \| null | `null` | `JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL` |  |
-| `broker.resilience.max_in_flight` | integer | `200` | `JENTIC__BROKER__RESILIENCE__MAX_IN_FLIGHT` |  |
-| `broker.resilience.shed_retry_after_s` | integer | `5` | `JENTIC__BROKER__RESILIENCE__SHED_RETRY_AFTER_S` |  |
-| `broker.resilience.request_deadline_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__REQUEST_DEADLINE_S` |  |
-| `broker.resilience.readiness_saturation_threshold` | number (> 0.0, <= 1.0) | `0.9` | `JENTIC__BROKER__RESILIENCE__READINESS_SATURATION_THRESHOLD` |  |
+| `broker.resilience.max_in_flight` | integer | `200` | `JENTIC__BROKER__RESILIENCE__MAX_IN_FLIGHT` | Hard admission cap on concurrently executing brokered calls, **per broker process** — replicas multiply it. At the cap, new requests are shed with 429 + `Retry-After: shed_retry_after_s`. |
+| `broker.resilience.shed_retry_after_s` | integer | `5` | `JENTIC__BROKER__RESILIENCE__SHED_RETRY_AFTER_S` | `Retry-After` (seconds) returned with the 429 when admission sheds at `max_in_flight`. |
+| `broker.resilience.request_deadline_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__REQUEST_DEADLINE_S` | Overall wall-clock budget (seconds) for one upstream call, enforced by the always-on DeadlineRunner outside the circuit breaker — distinct from the per-attempt connect/read timeout on the transport client. Exceeding it returns 504 with a `wait` agent directive; 0 disables the budget. Size ABOVE upstream read timeouts so a single healthy slow attempt isn't pre-empted by the envelope deadline. |
+| `broker.resilience.readiness_saturation_threshold` | number (> 0.0, <= 1.0) | `0.9` | `JENTIC__BROKER__RESILIENCE__READINESS_SATURATION_THRESHOLD` | Fraction of `max_in_flight` at/above which `/ready` reports unready, so the LB drains this instance before it hits the hard admission shed wall. Kept < 1.0 for that headroom. |
 | `broker.resilience.upstream.connect_timeout_s` | number | `5.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__CONNECT_TIMEOUT_S` |  |
 | `broker.resilience.upstream.read_timeout_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__READ_TIMEOUT_S` |  |
 | `broker.resilience.upstream.write_timeout_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__WRITE_TIMEOUT_S` |  |

@@ -391,10 +391,13 @@ class IdpConfig(BaseModel):
     hosted_domain: str | None = Field(
         default=None,
         description=(
-            "Google ``hd`` (hosted-domain) restriction. When set, only accounts "
-            "whose userinfo carries a matching ``hd`` claim should be admitted. "
-            "OSS surfaces the claim (see IdpClaims.hosted_domain); enforcement "
-            "is left to the deployment's admission policy."
+            "Google ``hd`` (hosted-domain) hint. **Not an access control in "
+            "the OSS build**: the claim is surfaced (see "
+            "IdpClaims.hosted_domain) but never compared — the default "
+            "admission policy admits every brand-new email (with zero "
+            "permissions until an operator grants some). Restricting sign-in "
+            "to a domain requires configuring it at the IdP or installing a "
+            "custom admission policy."
         ),
     )
 
@@ -440,8 +443,12 @@ class OAuthRateLimitConfig(BaseModel):
     authorize_rpm: int = Field(
         default=30,
         description=(
-            "Sustained requests/minute allowed per ``client_id``+IP on the "
-            "unauthenticated ``/authorize`` endpoints."
+            "Sustained requests/minute allowed on the unauthenticated "
+            "``/authorize`` endpoints, keyed per ``client_id``+IP — except "
+            "the local-login routes, which carry no query ``client_id`` and "
+            "fall back to a bare-IP key. Behind a proxy, set "
+            "``auth.oauth_rate_limit.trusted_proxies`` or every client "
+            "shares the proxy's IP bucket."
         ),
     )
     authorize_burst: int = Field(
@@ -868,19 +875,43 @@ class BrokerResilienceConfig(BaseModel):
     backpressure / async-credential / retention knobs are future work.
     """
 
-    max_in_flight: int = 200
-    shed_retry_after_s: int = 5
-    # Overall wall-clock budget (seconds) for one upstream call, enforced by the
-    # always-on DeadlineRunner *outside* the circuit breaker (and, once it lands,
-    # the retry loop) — distinct from the per-attempt connect/read timeout on the
-    # transport client. Exceeding it returns 504 with a `wait` agent directive.
-    # 0 disables the budget (unbounded call). Size ABOVE upstream read timeouts so
-    # a single healthy slow attempt isn't pre-empted by the envelope deadline.
-    request_deadline_s: float = 30.0
-    # Fraction of ``max_in_flight`` at/above which ``/ready`` reports unready so
-    # the LB drains this instance *before* it hits the hard admission shed wall.
-    # Kept < 1.0 for that headroom.
-    readiness_saturation_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
+    max_in_flight: int = Field(
+        default=200,
+        description=(
+            "Hard admission cap on concurrently executing brokered calls, "
+            "**per broker process** — replicas multiply it. At the cap, new "
+            "requests are shed with 429 + ``Retry-After: shed_retry_after_s``."
+        ),
+    )
+    shed_retry_after_s: int = Field(
+        default=5,
+        description=(
+            "``Retry-After`` (seconds) returned with the 429 when admission "
+            "sheds at ``max_in_flight``."
+        ),
+    )
+    request_deadline_s: float = Field(
+        default=30.0,
+        description=(
+            "Overall wall-clock budget (seconds) for one upstream call, "
+            "enforced by the always-on DeadlineRunner outside the circuit "
+            "breaker — distinct from the per-attempt connect/read timeout on "
+            "the transport client. Exceeding it returns 504 with a ``wait`` "
+            "agent directive; 0 disables the budget. Size ABOVE upstream "
+            "read timeouts so a single healthy slow attempt isn't pre-empted "
+            "by the envelope deadline."
+        ),
+    )
+    readiness_saturation_threshold: float = Field(
+        default=0.9,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Fraction of ``max_in_flight`` at/above which ``/ready`` reports "
+            "unready, so the LB drains this instance before it hits the hard "
+            "admission shed wall. Kept < 1.0 for that headroom."
+        ),
+    )
     upstream: UpstreamClientConfig = Field(default_factory=UpstreamClientConfig)
     backend: StateBackendConfig = Field(default_factory=StateBackendConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)

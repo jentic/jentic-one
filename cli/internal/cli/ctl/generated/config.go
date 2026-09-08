@@ -327,23 +327,32 @@ type BrokerResilienceConfig struct {
 	// CircuitBreaker corresponds to the JSON schema field "circuit_breaker".
 	CircuitBreaker *CircuitBreakerConfig `json:"circuit_breaker,omitempty,omitzero" yaml:"circuit_breaker,omitempty" mapstructure:"circuit_breaker,omitempty"`
 
-	// MaxInFlight corresponds to the JSON schema field "max_in_flight".
+	// Hard admission cap on concurrently executing brokered calls, **per broker
+	// process** — replicas multiply it. At the cap, new requests are shed with 429 +
+	// ``Retry-After: shed_retry_after_s``.
 	MaxInFlight int `json:"max_in_flight,omitempty,omitzero" yaml:"max_in_flight,omitempty" mapstructure:"max_in_flight,omitempty"`
 
 	// RateLimit corresponds to the JSON schema field "rate_limit".
 	RateLimit *RateLimitConfig `json:"rate_limit,omitempty,omitzero" yaml:"rate_limit,omitempty" mapstructure:"rate_limit,omitempty"`
 
-	// ReadinessSaturationThreshold corresponds to the JSON schema field
-	// "readiness_saturation_threshold".
+	// Fraction of ``max_in_flight`` at/above which ``/ready`` reports unready, so the
+	// LB drains this instance before it hits the hard admission shed wall. Kept < 1.0
+	// for that headroom.
 	ReadinessSaturationThreshold float64 `json:"readiness_saturation_threshold,omitempty,omitzero" yaml:"readiness_saturation_threshold,omitempty" mapstructure:"readiness_saturation_threshold,omitempty"`
 
-	// RequestDeadlineS corresponds to the JSON schema field "request_deadline_s".
+	// Overall wall-clock budget (seconds) for one upstream call, enforced by the
+	// always-on DeadlineRunner outside the circuit breaker — distinct from the
+	// per-attempt connect/read timeout on the transport client. Exceeding it returns
+	// 504 with a ``wait`` agent directive; 0 disables the budget. Size ABOVE upstream
+	// read timeouts so a single healthy slow attempt isn't pre-empted by the envelope
+	// deadline.
 	RequestDeadlineS float64 `json:"request_deadline_s,omitempty,omitzero" yaml:"request_deadline_s,omitempty" mapstructure:"request_deadline_s,omitempty"`
 
 	// Retry corresponds to the JSON schema field "retry".
 	Retry *RetryConfig `json:"retry,omitempty,omitzero" yaml:"retry,omitempty" mapstructure:"retry,omitempty"`
 
-	// ShedRetryAfterS corresponds to the JSON schema field "shed_retry_after_s".
+	// ``Retry-After`` (seconds) returned with the 429 when admission sheds at
+	// ``max_in_flight``.
 	ShedRetryAfterS int `json:"shed_retry_after_s,omitempty,omitzero" yaml:"shed_retry_after_s,omitempty" mapstructure:"shed_retry_after_s,omitempty"`
 
 	// Upstream corresponds to the JSON schema field "upstream".
@@ -1165,10 +1174,11 @@ type IdpConfig struct {
 	// or provider well-known default.
 	ExchangeEndpoint interface{} `json:"exchange_endpoint,omitempty,omitzero" yaml:"exchange_endpoint,omitempty" mapstructure:"exchange_endpoint,omitempty"`
 
-	// Google ``hd`` (hosted-domain) restriction. When set, only accounts whose
-	// userinfo carries a matching ``hd`` claim should be admitted. OSS surfaces the
-	// claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's
-	// admission policy.
+	// Google ``hd`` (hosted-domain) hint. **Not an access control in the OSS build**:
+	// the claim is surfaced (see IdpClaims.hosted_domain) but never compared — the
+	// default admission policy admits every brand-new email (with zero permissions
+	// until an operator grants some). Restricting sign-in to a domain requires
+	// configuring it at the IdP or installing a custom admission policy.
 	HostedDomain interface{} `json:"hosted_domain,omitempty,omitzero" yaml:"hosted_domain,omitempty" mapstructure:"hosted_domain,omitempty"`
 
 	// OIDC issuer base URL. Default authorization/token/userinfo endpoints are
@@ -1538,8 +1548,11 @@ type OAuthRateLimitConfig struct {
 	// Burst allowance on top of ``authorize_rpm``.
 	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
 
-	// Sustained requests/minute allowed per ``client_id``+IP on the unauthenticated
-	// ``/authorize`` endpoints.
+	// Sustained requests/minute allowed on the unauthenticated ``/authorize``
+	// endpoints, keyed per ``client_id``+IP — except the local-login routes, which
+	// carry no query ``client_id`` and fall back to a bare-IP key. Behind a proxy,
+	// set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the
+	// proxy's IP bucket.
 	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
 
 	// Burst allowance on top of ``exchange_rpm``.

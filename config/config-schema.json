@@ -257,6 +257,7 @@
         },
         "max_in_flight": {
           "default": 200,
+          "description": "Hard admission cap on concurrently executing brokered calls, **per broker process** — replicas multiply it. At the cap, new requests are shed with 429 + ``Retry-After: shed_retry_after_s``.",
           "title": "Max In Flight",
           "type": "integer"
         },
@@ -265,6 +266,7 @@
         },
         "readiness_saturation_threshold": {
           "default": 0.9,
+          "description": "Fraction of ``max_in_flight`` at/above which ``/ready`` reports unready, so the LB drains this instance before it hits the hard admission shed wall. Kept < 1.0 for that headroom.",
           "exclusiveMinimum": 0.0,
           "maximum": 1.0,
           "title": "Readiness Saturation Threshold",
@@ -272,6 +274,7 @@
         },
         "request_deadline_s": {
           "default": 30.0,
+          "description": "Overall wall-clock budget (seconds) for one upstream call, enforced by the always-on DeadlineRunner outside the circuit breaker — distinct from the per-attempt connect/read timeout on the transport client. Exceeding it returns 504 with a ``wait`` agent directive; 0 disables the budget. Size ABOVE upstream read timeouts so a single healthy slow attempt isn't pre-empted by the envelope deadline.",
           "title": "Request Deadline S",
           "type": "number"
         },
@@ -280,6 +283,7 @@
         },
         "shed_retry_after_s": {
           "default": 5,
+          "description": "``Retry-After`` (seconds) returned with the 429 when admission sheds at ``max_in_flight``.",
           "title": "Shed Retry After S",
           "type": "integer"
         },
@@ -814,7 +818,7 @@
             }
           ],
           "default": null,
-          "description": "Google ``hd`` (hosted-domain) restriction. When set, only accounts whose userinfo carries a matching ``hd`` claim should be admitted. OSS surfaces the claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's admission policy.",
+          "description": "Google ``hd`` (hosted-domain) hint. **Not an access control in the OSS build**: the claim is surfaced (see IdpClaims.hosted_domain) but never compared — the default admission policy admits every brand-new email (with zero permissions until an operator grants some). Restricting sign-in to a domain requires configuring it at the IdP or installing a custom admission policy.",
           "title": "Hosted Domain"
         },
         "issuer": {
@@ -1042,7 +1046,7 @@
         },
         "authorize_rpm": {
           "default": 30,
-          "description": "Sustained requests/minute allowed per ``client_id``+IP on the unauthenticated ``/authorize`` endpoints.",
+          "description": "Sustained requests/minute allowed on the unauthenticated ``/authorize`` endpoints, keyed per ``client_id``+IP — except the local-login routes, which carry no query ``client_id`` and fall back to a bare-IP key. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's IP bucket.",
           "title": "Authorize Rpm",
           "type": "integer"
         },
