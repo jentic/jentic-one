@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { AlertTriangle, CircleDot, Trash2 } from 'lucide-react';
+import { AlertTriangle, Archive, CircleDot, Trash2, type LucideIcon } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Dialog } from '@/shared/ui/Dialog';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
@@ -43,12 +43,39 @@ interface CascadeDeleteDialogProps {
 	dependents?: CascadeDependentGroup[];
 	loading?: boolean;
 	error?: Error | string | null;
+	/**
+	 * The word the user must type to arm the destructive action. Defaults per
+	 * entity type — "archive" for the archive-style kinds (agent,
+	 * service-account) and "delete" for everything else — so the typed word
+	 * matches the button verb. Kept short and fixed (not the entity name) so
+	 * confirming a slash/hyphen-heavy name (e.g. an API vendor/name tuple) isn't
+	 * error-prone. Matched case-insensitively.
+	 */
+	confirmWord?: string;
 }
 
-/** Per-type copy: title, the destructive verb, and what a delete typically takes down. */
+/**
+ * The default confirm word per entity type. Archive-style kinds arm on
+ * "archive" so the typed word lines up with their "Archive …" button verb;
+ * everything else arms on "delete".
+ */
+const DEFAULT_CONFIRM_WORD: Record<CascadeEntityType, string> = {
+	credential: 'delete',
+	api: 'delete',
+	toolkit: 'delete',
+	agent: 'archive',
+	'service-account': 'archive',
+};
+
+/**
+ * Per-type copy + confirm icon: title, the destructive verb, what a delete
+ * typically takes down, and the glyph on the confirm button. Archive-style
+ * kinds use an `Archive` glyph so the icon matches the "Archive …" verb rather
+ * than contradicting it with a trash can.
+ */
 const TYPE_COPY: Record<
 	CascadeEntityType,
-	{ title: string; confirmLabel: string; noun: string; warning: string }
+	{ title: string; confirmLabel: string; noun: string; warning: string; icon: LucideIcon }
 > = {
 	credential: {
 		title: 'Delete credential',
@@ -56,6 +83,7 @@ const TYPE_COPY: Record<
 		noun: 'credential',
 		warning:
 			'Agents and toolkits that authenticate with this credential will stop working until you bind a replacement.',
+		icon: Trash2,
 	},
 	api: {
 		title: 'Remove API',
@@ -63,6 +91,7 @@ const TYPE_COPY: Record<
 		noun: 'API',
 		warning:
 			'This API and all of its operations leave your workspace. Toolkits and credentials that reference it will no longer resolve until you re-import it.',
+		icon: Trash2,
 	},
 	toolkit: {
 		title: 'Delete toolkit',
@@ -70,6 +99,7 @@ const TYPE_COPY: Record<
 		noun: 'toolkit',
 		warning:
 			'Agents granted this toolkit will fail their next call, and any API keys minted for it stop working immediately.',
+		icon: Trash2,
 	},
 	agent: {
 		title: 'Archive agent',
@@ -77,6 +107,7 @@ const TYPE_COPY: Record<
 		noun: 'agent',
 		warning:
 			'Archiving is permanent — the agent can no longer authenticate or be restored, and its grants and access requests are released.',
+		icon: Archive,
 	},
 	'service-account': {
 		title: 'Archive service account',
@@ -84,6 +115,7 @@ const TYPE_COPY: Record<
 		noun: 'service account',
 		warning:
 			'Archiving is permanent — the service account can no longer authenticate or be restored, and its grants are released.',
+		icon: Archive,
 	},
 };
 
@@ -112,8 +144,10 @@ function describeGroup(group: CascadeDependentGroup): string {
  *    what the cascade removes, with counts and (optionally) names.
  *
  * Both modes gate the destructive action behind a type-to-confirm field: the
- * user must type the entity name before the delete button enables. This is a
- * deliberate friction step for irreversible actions.
+ * user must type a short fixed word (the per-type `confirmWord` default —
+ * "delete", or "archive" for archive-style entities — matched
+ * case-insensitively) before the confirm button enables. This is a deliberate
+ * friction step for irreversible actions.
  */
 export function CascadeDeleteDialog({
 	open,
@@ -124,8 +158,13 @@ export function CascadeDeleteDialog({
 	dependents,
 	loading = false,
 	error,
+	confirmWord,
 }: CascadeDeleteDialogProps) {
 	const copy = TYPE_COPY[entityType];
+	// `??` alone would let an explicit `confirmWord=""` through and arm the
+	// danger button with no typing (`"" === ""`). Treat empty-after-trim as
+	// "use the per-type default" so the public prop can't disable the gate.
+	const requiredWord = confirmWord?.trim() ? confirmWord : DEFAULT_CONFIRM_WORD[entityType];
 	const [typed, setTyped] = useState('');
 	// Whether the user has attempted a confirm in *this* dialog session. The
 	// mutation `error` lives on the caller's hook and survives close/reopen, so
@@ -149,7 +188,7 @@ export function CascadeDeleteDialog({
 		}
 	}, [open]);
 
-	const confirmed = typed.trim() === entityName.trim();
+	const confirmed = typed.trim().toLowerCase() === requiredWord.trim().toLowerCase();
 	const hasDependents = Array.isArray(dependents) && dependents.length > 0;
 	// Only surface the error once the user has actually tried this session;
 	// hold the narrowed value (not just a boolean) so the JSX renders cleanly.
@@ -183,7 +222,7 @@ export function CascadeDeleteDialog({
 							loading={loading}
 							disabled={!confirmed}
 						>
-							<Trash2 className="h-4 w-4" />
+							<copy.icon className="h-4 w-4" />
 							{copy.confirmLabel}
 						</Button>
 					</>
@@ -208,8 +247,9 @@ export function CascadeDeleteDialog({
 
 					<div className="space-y-1.5">
 						<Label htmlFor={confirmInputId}>
-							Type <span className="text-foreground font-semibold">{entityName}</span>{' '}
-							to confirm
+							Type{' '}
+							<span className="text-foreground font-semibold">{requiredWord}</span> to
+							confirm
 						</Label>
 						<Input
 							id={confirmInputId}
@@ -217,7 +257,7 @@ export function CascadeDeleteDialog({
 							onChange={(e): void => setTyped(e.target.value)}
 							disabled={loading}
 							autoComplete="off"
-							placeholder={entityName}
+							placeholder={requiredWord}
 						/>
 					</div>
 

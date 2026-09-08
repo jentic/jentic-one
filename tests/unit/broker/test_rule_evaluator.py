@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,12 +9,14 @@ import pytest
 from jentic_one.broker.repos.rule_evaluator import (
     PermissionRule,
     RuleEvaluator,
-    _compile_path,
+    _coerce_json_list,
+    _compile_path_for_rule,
     _normalize_methods,
     _rule_matches,
     evaluate_rules,
 )
 from jentic_one.shared.broker.protocols import RuleEvaluatorProtocol
+from jentic_one.shared.permissions.matching import compile_matcher
 
 # ---------------------------------------------------------------------------
 # Rule matching
@@ -39,12 +40,56 @@ def test_methods_match() -> None:
     assert not _rule_matches(rule, method="DELETE", path="/x", operation_id=None)
 
 
-def test_path_regex_match() -> None:
+def test_path_regex_match_full_match_semantics() -> None:
+    # #751: regex mode is full-match, so a bare ``/v1/users/.*`` matches
+    # ``/v1/users/123`` but not ``/prefix/v1/users/123`` (which the old
+    # start-anchored ``.match()`` behaviour would also have rejected — the
+    # deliberate change is the tail: fullmatch is strict about what follows
+    # the last capture, not about the prefix).
     rule = PermissionRule(
-        effect="allow", methods=None, path=re.compile(r"^/v1/users/.*"), operations=None
+        effect="allow",
+        methods=None,
+        path=compile_matcher(r"/v1/users/.*", "regex"),
+        operations=None,
     )
     assert _rule_matches(rule, method="GET", path="/v1/users/123", operation_id=None)
     assert not _rule_matches(rule, method="GET", path="/v2/users/123", operation_id=None)
+
+
+def test_path_full_match_rejects_trailing_content() -> None:
+    # Regression for #578-adjacent behaviour: full-match means the pattern
+    # must describe the whole path — ``/v1/users/\d+`` does not match
+    # ``/v1/users/42/roles``.
+    rule = PermissionRule(
+        effect="allow",
+        methods=None,
+        path=compile_matcher(r"/v1/users/\d+", "regex"),
+        operations=None,
+    )
+    assert _rule_matches(rule, method="GET", path="/v1/users/42", operation_id=None)
+    assert not _rule_matches(rule, method="GET", path="/v1/users/42/roles", operation_id=None)
+
+
+def test_path_prefix_mode_is_literal() -> None:
+    rule = PermissionRule(
+        effect="allow",
+        methods=None,
+        path=compile_matcher("/v1/users", "prefix"),
+        operations=None,
+    )
+    assert _rule_matches(rule, method="GET", path="/v1/users/42", operation_id=None)
+    assert not _rule_matches(rule, method="GET", path="/v2/users", operation_id=None)
+
+
+def test_path_exact_mode_is_literal() -> None:
+    rule = PermissionRule(
+        effect="allow",
+        methods=None,
+        path=compile_matcher("/v1/users", "exact"),
+        operations=None,
+    )
+    assert _rule_matches(rule, method="GET", path="/v1/users", operation_id=None)
+    assert not _rule_matches(rule, method="GET", path="/v1/users/42", operation_id=None)
 
 
 def test_operations_match() -> None:
@@ -64,7 +109,7 @@ def test_all_criteria_must_match() -> None:
     rule = PermissionRule(
         effect="allow",
         methods=frozenset({"GET"}),
-        path=re.compile(r"^/api/.*"),
+        path=compile_matcher(r"/api/.*", "regex"),
         operations=("getUser",),
     )
     assert _rule_matches(rule, method="GET", path="/api/users", operation_id="getUser")
@@ -74,26 +119,35 @@ def test_all_criteria_must_match() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pattern compilation safety
+# Pattern compilation safety (delegates to shared seam; logs on fail-closed)
 # ---------------------------------------------------------------------------
 
 
-def test_compile_path_none() -> None:
-    assert _compile_path(None) is None
+def test_compile_none_returns_none() -> None:
+    assert _compile_path_for_rule(None, "regex", toolkit_id="tk_1") is None
 
 
-def test_compile_path_valid() -> None:
-    pat = _compile_path(r"^/v1/.*")
-    assert pat is not None
-    assert pat.match("/v1/foo")
+def test_compile_valid_returns_matcher() -> None:
+    m = _compile_path_for_rule(r"/v1/.*", "regex", toolkit_id="tk_1")
+    assert m is not None
+    assert m.never is False
+    assert m.matches("/v1/foo") is True
 
 
-def test_compile_path_invalid_regex() -> None:
-    assert _compile_path("[invalid") is None
+def test_compile_invalid_regex_is_fail_closed() -> None:
+    m = _compile_path_for_rule("[invalid", "regex", toolkit_id="tk_1")
+    assert m is not None
+    assert m.never is True
+    # Fail-closed replaces the pre-#751 silent wildcard: an unparseable
+    # legacy row now blocks every request rather than accidentally granting
+    # everything.
+    assert m.matches("/anything") is False
 
 
-def test_compile_path_oversized() -> None:
-    assert _compile_path("a" * 1001) is None
+def test_compile_oversized_is_fail_closed() -> None:
+    m = _compile_path_for_rule("a" * 1001, "regex", toolkit_id="tk_1")
+    assert m is not None
+    assert m.never is True
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +162,34 @@ def test_normalize_methods_none() -> None:
 def test_normalize_methods_uppercases() -> None:
     result = _normalize_methods(["get", "Post", "DELETE"])
     assert result == frozenset({"GET", "POST", "DELETE"})
+
+
+# ---------------------------------------------------------------------------
+# JSON-column coercion (raw-SQL read path — SQLite returns JSON as TEXT)
+# ---------------------------------------------------------------------------
+
+
+def test_coerce_json_list_none() -> None:
+    assert _coerce_json_list(None) is None
+
+
+def test_coerce_json_list_passes_through_decoded_list() -> None:
+    """Postgres JSONB is already decoded to a list — returned unchanged."""
+    assert _coerce_json_list(["GET", "POST"]) == ["GET", "POST"]
+
+
+def test_coerce_json_list_parses_sqlite_json_string() -> None:
+    """SQLite returns the column as a raw JSON string via ``text()`` SQL."""
+    assert _coerce_json_list('["GET", "POST", "PUT"]') == ["GET", "POST", "PUT"]
+
+
+def test_coerce_json_list_json_null_string_is_none() -> None:
+    """A SQLite ``operations='null'`` column must decode to None, not ['n','u','l','l']."""
+    assert _coerce_json_list("null") is None
+
+
+def test_coerce_json_list_invalid_json_is_none() -> None:
+    assert _coerce_json_list("not-json") is None
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +335,45 @@ async def test_evaluator_empty_rules_denies() -> None:
     result = await evaluator.evaluate(
         toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="acme"
     )
-    assert result is False
+    assert result.allowed is False
+    # #578: rules_loaded is 0 when nothing was loaded for the pool — the
+    # router keys its two-variant deny detail on this.
+    assert result.rules_loaded == 0
+
+
+@pytest.mark.asyncio
+async def test_evaluator_coerces_sqlite_json_string_methods() -> None:
+    """Regression: SQLite returns ``methods``/``operations`` as raw JSON strings.
+
+    The evaluator reads rules via raw ``text()`` SQL, bypassing the ORM's JSON
+    deserialization. On SQLite ``methods`` arrives as ``'["GET", ...]'`` and
+    ``operations`` as ``'null'``; without coercion these get iterated
+    character-by-character, so a legitimate ``allow`` rule silently fails to
+    match. Feed the SQLite wire form and assert the method still matches.
+    """
+    mock_db = MagicMock()
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.all.return_value = [
+        ("allow", '["GET", "POST", "PUT", "PATCH", "DELETE"]', ".*", "null", "regex")
+    ]
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
+
+    evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    allowed = await evaluator.evaluate(
+        toolkit_id="tk_1", method="POST", path="/v1/things", operation_id=None, api_vendor="acme"
+    )
+    assert allowed.allowed is True
+    assert allowed.rules_loaded == 1
+
+    # A method outside the (correctly parsed) set must NOT match.
+    denied = await evaluator.evaluate(
+        toolkit_id="tk_1", method="OPTIONS", path="/v1/things", operation_id=None, api_vendor="acme"
+    )
+    assert denied.allowed is False
+    # Non-zero rules_loaded distinguishes "loaded but no match" from "no rules".
+    assert denied.rules_loaded == 1
 
 
 @pytest.mark.asyncio
@@ -262,7 +382,7 @@ async def test_evaluator_cached_second_call() -> None:
     mock_db = MagicMock()
     mock_session = AsyncMock()
     mock_result = MagicMock()
-    mock_result.all.return_value = [("allow", None, ".*", None)]
+    mock_result.all.return_value = [("allow", None, ".*", None, "regex")]
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
 
@@ -273,8 +393,8 @@ async def test_evaluator_cached_second_call() -> None:
     r2 = await evaluator.evaluate(
         toolkit_id="tk_1", method="POST", path="/y", operation_id="op", api_vendor="acme"
     )
-    assert r1 is True
-    assert r2 is True
+    assert r1.allowed is True
+    assert r2.allowed is True
     mock_session.execute.assert_called_once()
 
 
@@ -284,7 +404,7 @@ async def test_evaluator_distinct_toolkits_separate_cache() -> None:
     mock_db = MagicMock()
     mock_session = AsyncMock()
     mock_result = MagicMock()
-    mock_result.all.return_value = [("allow", None, ".*", None)]
+    mock_result.all.return_value = [("allow", None, ".*", None, "regex")]
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
 
@@ -304,7 +424,7 @@ async def test_evaluator_distinct_vendors_separate_cache() -> None:
     mock_db = MagicMock()
     mock_session = AsyncMock()
     mock_result = MagicMock()
-    mock_result.all.return_value = [("allow", None, ".*", None)]
+    mock_result.all.return_value = [("allow", None, ".*", None, "regex")]
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
 
@@ -324,7 +444,7 @@ async def test_evaluator_clear_drops_cache() -> None:
     mock_db = MagicMock()
     mock_session = AsyncMock()
     mock_result = MagicMock()
-    mock_result.all.return_value = [("allow", None, ".*", None)]
+    mock_result.all.return_value = [("allow", None, ".*", None, "regex")]
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
 

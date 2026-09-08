@@ -1,4 +1,4 @@
-import type { RouteObject } from 'react-router-dom';
+import type { RouteObject } from 'react-router';
 import { ToolkitsPage } from '@/modules/toolkits/pages/ToolkitsPage';
 import { ToolkitDetailPage } from '@/modules/toolkits/pages/ToolkitDetailPage';
 

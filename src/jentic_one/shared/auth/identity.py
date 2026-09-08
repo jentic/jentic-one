@@ -50,6 +50,10 @@ class Identity(BaseModel):
     parent_permissions: list[str] = []
 
     must_change_password: bool = False
+    # Convenience default for trusted constructors (tests, resolvers that
+    # already know the type). The *untrusted* boundary must never rely on
+    # it: verify_token fails closed on a token without an explicit
+    # actor_type claim (#862) — never default when parsing credentials.
     actor_type: ActorType = ActorType.USER
     parent_actor_id: str | None = None
 
@@ -57,3 +61,8 @@ class Identity(BaseModel):
 
     expires_at: datetime | None = None
     active: bool = True
+    oauth_client_id: str | None = None
+    # Set on grant-channel tokens: the `oauth_client_grants`
+    # row this token was minted under. Lets audit/telemetry separate
+    # key-channel from grant-channel agent traffic.
+    oauth_grant_id: str | None = None

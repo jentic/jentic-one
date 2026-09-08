@@ -55,6 +55,37 @@ class EventRepository:
         return await session.get(Event, event_id)
 
     @staticmethod
+    async def exists_with_data_value(
+        session: AsyncSession,
+        *,
+        event_type: str,
+        key: str,
+        value: str,
+    ) -> bool:
+        """Return whether any event of ``event_type`` has ``data[key] == value``.
+
+        One narrow lookup used for table-backed dedupe (e.g. one
+        ``mcp.session_started`` per ``data.session_id`` across workers and
+        surfaces — a pair additionally *enforced* by the partial unique index
+        ``uq_events_mcp_session_started_session``; this lookup is the cheap
+        first check, the index is the guarantee). On Postgres that same index
+        covers the ``(type, data->>'session_id')`` read here. For other
+        type/key pairs the ``type`` predicate rides ``ix_events_type_created``
+        and the JSON comparison filters the (small) per-type slice. On SQLite
+        the JSON comparison compiles to a ``json_extract`` path form that does
+        not match the index expression, so the lookup stays a per-type scan —
+        acceptable for the embedded single-file target.
+        """
+        stmt = (
+            select(Event.id)
+            .where(Event.type == event_type)
+            .where(Event.data[key].as_string() == value)
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
     async def list_all(
         session: AsyncSession,
         *,
@@ -117,40 +148,6 @@ class EventRepository:
         event.acknowledgement_note = acknowledgement_note
         await session.flush()
         return event
-
-    @staticmethod
-    async def list_since(
-        session: AsyncSession,
-        since: datetime,
-        *,
-        limit: int = 100,
-        event_type: list[str] | None = None,
-        severity: list[str] | None = None,
-        requires_action: bool | None = None,
-        trace_id: str | None = None,
-        actor_id: str | None = None,
-        actor_type: str | None = None,
-    ) -> list[Event]:
-        stmt = (
-            select(Event)
-            .where(Event.created_at > since)
-            .order_by(Event.created_at.asc())
-            .limit(limit)
-        )
-        if event_type is not None:
-            stmt = stmt.where(Event.type.in_(event_type))
-        if severity is not None:
-            stmt = stmt.where(Event.severity.in_(severity))
-        if requires_action is not None:
-            stmt = stmt.where(Event.requires_action == requires_action)
-        if trace_id is not None:
-            stmt = stmt.where(Event.trace_id == trace_id)
-        if actor_id is not None:
-            stmt = stmt.where(Event.actor_id == actor_id)
-        if actor_type is not None:
-            stmt = stmt.where(Event.actor_type == actor_type)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
 
     @staticmethod
     async def list_after_cursor(

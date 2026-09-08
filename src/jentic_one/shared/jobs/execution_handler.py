@@ -1,7 +1,7 @@
 """Execution job handler — runs async upstream calls through the shared pipeline.
 
-The handler is the async half of "one pipeline, two callers" (§00 / §05 / §11
-RN-0.3): it does **not** issue its own ``httpx`` calls. It resolves credentials
+The handler is the async half of "one pipeline, two callers": it does **not**
+issue its own ``httpx`` calls. It resolves credentials
 (via the injected ``CredentialInjector``), applies them to the outbound
 URL/headers exactly like the sync router's ``_apply_injection`` (headers **and**
 query **and** cookies — an ``apiKey in: query``/``cookie`` credential is never
@@ -19,7 +19,6 @@ broker-side implementations injected at worker startup.
 from __future__ import annotations
 
 import base64
-import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -28,7 +27,7 @@ import structlog
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, valid_trace_id_or_minted, valid_trace_id_or_none
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.protocols import (
@@ -39,13 +38,13 @@ from jentic_one.shared.jobs.protocols import (
 )
 from jentic_one.shared.models import ActorType as ActorTypeEnum
 from jentic_one.shared.models import ExecutionStatus
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.actors import origin_or_none
+from jentic_one.shared.models.events import EventSeverity, EventTag, EventType
 from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger(__name__)
 
-_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _MAX_EVENT_SUMMARY_LEN = 128
 # A far-future expiry so the resolved-identity dataclass is well-formed; the
 # worker only runs an already-authorized, enqueued job — the inbound token was
@@ -88,7 +87,10 @@ class ExecutionHandler:
 
         upstream_url = payload.get("upstream_url", "")
         method = payload.get("method", "GET")
-        trace_id = payload.get("trace_id", "unknown")
+        # Minted-if-invalid so the credential audit event, the lifecycle
+        # events, and the persisted execution row all share one valid id —
+        # never the literal "unknown" (#903).
+        trace_id = valid_trace_id_or_minted(str(payload.get("trace_id") or ""))
         execution_id = payload.get("execution_id", f"exec_{job_id}")
         api_vendor = payload.get("api_vendor")
         api_name = payload.get("api_name")
@@ -103,15 +105,22 @@ class ExecutionHandler:
         upstream_url = validate_upstream_url(upstream_url, self._egress)
 
         headers: dict[str, str] = {}
+        credential_id: str | None = None
+        credential_name: str | None = None
+        signing = None
         if self._credential_injector is not None and api_vendor:
             injection = await self._credential_injector.inject(
                 api_vendor=api_vendor,
                 api_name=api_name or "",
                 api_version=api_version or "",
                 identity=_worker_identity(created_by, actor_type),
+                trace_id=trace_id,
             )
             applied = _apply_injection(upstream_url, injection)
             upstream_url, headers = applied.url, applied.headers
+            credential_id = injection.credential_id
+            credential_name = injection.credential_name
+            signing = injection.signing
             if injection.server_variables:
                 upstream_url = validate_upstream_url(upstream_url, self._egress)
 
@@ -130,6 +139,7 @@ class ExecutionHandler:
                     headers=headers,
                     body=body,
                     timeout_s=self._timeout,
+                    signing=signing,
                     metadata={
                         "execution_id": execution_id,
                         "trace_id": trace_id,
@@ -142,6 +152,11 @@ class ExecutionHandler:
                         "actor_id": created_by,
                         "actor_type": actor_type,
                         "origin": origin,
+                        # Credential attribution (#740): carried so the
+                        # pipeline persists the same credential_id/name on
+                        # the execution record as the sync router would.
+                        "credential_id": credential_id,
+                        "credential_name": credential_name,
                     },
                 ),
                 session=session,
@@ -182,6 +197,7 @@ class ExecutionHandler:
             actor_type=actor_type,
             toolkit_id=payload.get("toolkit_id"),
             operation_id=payload.get("operation_id"),
+            origin=origin,
         )
 
         result_body: dict[str, Any] = {
@@ -208,8 +224,14 @@ class ExecutionHandler:
         actor_type: str,
         toolkit_id: str | None = None,
         operation_id: str | None = None,
+        origin: str | None = None,
     ) -> None:
-        event_trace_id = trace_id if _TRACE_ID_RE.match(trace_id) else None
+        # The enqueue path persisted the request-derived Origin string in the
+        # job payload; it rides the lifecycle events as a closed-enum tag so
+        # the async path splits telemetry by surface like the sync path does.
+        origin_tag = origin_or_none(origin)
+        origin_tags: set[EventTag] | None = {origin_tag} if origin_tag is not None else None
+        event_trace_id = valid_trace_id_or_none(trace_id)
         try:
             if status == ExecutionStatus.COMPLETED:
                 await emit_event(
@@ -223,6 +245,7 @@ class ExecutionHandler:
                     created_by=created_by,
                     actor_id=created_by,
                     actor_type=actor_type,
+                    tags=origin_tags,
                 )
             else:
                 sanitized = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
@@ -238,6 +261,7 @@ class ExecutionHandler:
                     created_by=created_by,
                     actor_id=created_by,
                     actor_type=actor_type,
+                    tags=origin_tags,
                 )
         except Exception:
             logger.warning("emit_event_failed", job_id=job_id, execution_id=execution_id)
@@ -289,7 +313,7 @@ def _apply_injection(upstream_url: str, injection: InjectedAuth) -> AppliedAuth:
     are substituted into the URL template, query-param credentials are merged
     into the URL query, and cookie credentials into a ``Cookie`` header, so an
     ``apiKey in: query`` / ``apiKey in: cookie`` credential is applied rather
-    than silently dropped (the pre-RN-0 worker applied none of these).
+    than silently dropped.
     """
     if injection.server_variables:
         upstream_url = apply_server_variables(upstream_url, injection.server_variables)

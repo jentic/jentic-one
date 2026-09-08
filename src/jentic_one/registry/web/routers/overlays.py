@@ -31,12 +31,31 @@ from jentic_one.shared.web.links import build_link
 router = APIRouter(prefix="/apis/{vendor}/{name}/{version}/overlays")
 
 
+def _overlay_links(
+    self_link: str,
+    api_path: str,
+    *,
+    status: str,
+    confirmed_revision_id: object | None,
+) -> OverlayLinksResponse:
+    """Build the state-valid action links for an overlay (see OverlayLinksResponse)."""
+    is_pending = status == OverlayStatus.PENDING
+    is_materialized = status == OverlayStatus.CONFIRMED and confirmed_revision_id is not None
+    is_deprecated = status == OverlayStatus.DEPRECATED
+    return OverlayLinksResponse(
+        self_link=self_link,
+        api=api_path,
+        confirm=f"{self_link}:confirm" if is_pending else None,
+        rollback=f"{self_link}:rollback" if is_materialized else None,
+        deprecate=self_link if not is_deprecated else None,
+    )
+
+
 def _build_overlay_response(view: OverlayView, request: Request) -> OverlayResponse:
     api_path = build_link(request, f"/apis/{view.vendor}/{view.name}/{view.version}")
     self_link = build_link(
         request, f"/apis/{view.vendor}/{view.name}/{view.version}/overlays/{view.id}"
     )
-    confirm_link = f"{self_link}:confirm" if view.status == OverlayStatus.PENDING else None
 
     return OverlayResponse(
         id=view.id,
@@ -44,16 +63,25 @@ def _build_overlay_response(view: OverlayView, request: Request) -> OverlayRespo
         status=view.status,
         document=view.document,
         target_revision_id=str(view.target_revision_id) if view.target_revision_id else None,
+        confirmed_revision_id=(
+            str(view.confirmed_revision_id) if view.confirmed_revision_id else None
+        ),
+        superseded_revision_id=(
+            str(view.superseded_revision_id) if view.superseded_revision_id else None
+        ),
         contributed_by=view.contributed_by,
+        created_by=view.created_by,
         confirmed_by_execution_id=view.confirmed_by_execution_id,
         created_at=view.created_at,
         updated_at=view.updated_at,
         confirmed_at=view.confirmed_at,
         deprecated_at=view.deprecated_at,
-        links=OverlayLinksResponse(
-            self_link=self_link,
-            api=api_path,
-            confirm=confirm_link,
+        deprecated_reason=view.deprecated_reason,
+        links=_overlay_links(
+            self_link,
+            api_path,
+            status=view.status,
+            confirmed_revision_id=view.confirmed_revision_id,
         ),
     )
 
@@ -63,7 +91,6 @@ def _build_overlay_list_item(
 ) -> OverlayResponse:
     api_path = build_link(request, f"/apis/{vendor}/{name}/{version}")
     self_link = build_link(request, f"/apis/{vendor}/{name}/{version}/overlays/{item.id}")
-    confirm_link = f"{self_link}:confirm" if item.status == OverlayStatus.PENDING else None
 
     return OverlayResponse(
         id=item.id,
@@ -71,21 +98,30 @@ def _build_overlay_list_item(
         status=item.status,
         document=item.document,
         target_revision_id=str(item.target_revision_id) if item.target_revision_id else None,
+        confirmed_revision_id=(
+            str(item.confirmed_revision_id) if item.confirmed_revision_id else None
+        ),
+        superseded_revision_id=(
+            str(item.superseded_revision_id) if item.superseded_revision_id else None
+        ),
         contributed_by=item.contributed_by,
+        created_by=item.created_by,
         confirmed_by_execution_id=item.confirmed_by_execution_id,
         created_at=item.created_at,
         updated_at=item.updated_at,
         confirmed_at=item.confirmed_at,
         deprecated_at=item.deprecated_at,
-        links=OverlayLinksResponse(
-            self_link=self_link,
-            api=api_path,
-            confirm=confirm_link,
+        deprecated_reason=item.deprecated_reason,
+        links=_overlay_links(
+            self_link,
+            api_path,
+            status=item.status,
+            confirmed_revision_id=item.confirmed_revision_id,
         ),
     )
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, response_model=OverlayResponse)
 async def submit_overlay(
     request: Request,
     vendor: str,
@@ -121,7 +157,7 @@ async def submit_overlay(
     return JSONResponse(status_code=201, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("")
+@router.get("", response_model=OverlayListResponse)
 async def list_overlays(
     request: Request,
     vendor: str,
@@ -149,7 +185,7 @@ async def list_overlays(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/{overlay_id}")
+@router.get("/{overlay_id}", response_model=OverlayResponse)
 async def get_overlay(
     request: Request,
     vendor: str,
@@ -167,7 +203,7 @@ async def get_overlay(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.patch("/{overlay_id}")
+@router.patch("/{overlay_id}", response_model=OverlayResponse)
 async def update_overlay(
     request: Request,
     vendor: str,
@@ -178,7 +214,18 @@ async def update_overlay(
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Update an overlay's document or target revision."""
+    """Update an overlay's document or target revision.
+
+    Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
+    ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
+    (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
+    is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
+    the API's served spec (D1). That is an operator action, so it additionally requires
+    ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
+    (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
+    overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
+    if no clean base was recorded to re-apply over.
+    """
     target_revision_id: uuid.UUID | None = None
     if body.target_revision_id is not None:
         try:
@@ -219,7 +266,7 @@ async def deprecate_overlay(
     return Response(status_code=204)
 
 
-@router.post("/{overlay_id}:confirm")
+@router.post("/{overlay_id}:confirm", response_model=OverlayResponse)
 async def confirm_overlay(
     request: Request,
     vendor: str,
@@ -227,10 +274,21 @@ async def confirm_overlay(
     version: str,
     overlay_id: str,
     body: OverlayConfirmRequest,
-    identity: Identity = get_current_identity(required_permissions=["apis:write"]),
+    identity: Identity = get_current_identity(required_permissions=["overlays:confirm"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Confirm an overlay, transitioning from pending to confirmed."""
+    """Confirm an overlay, materializing it onto the served spec.
+
+    Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
+    re-ingests the base spec with the overlay applied and promotes the result to the
+    current revision), so it is an operator action, not a contributor one (contributors
+    ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
+    purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
+    owner can grant it to a trusted operator without handing over full admin power.
+    ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
+    deliberately excluded from an agent's self-service grantable set so a low-privilege
+    agent cannot escalate into it.
+    """
     svc = OverlayService(ctx)
     view = await svc.confirm(
         vendor, name, version, overlay_id, execution_id=body.execution_id, identity=identity
@@ -238,3 +296,27 @@ async def confirm_overlay(
 
     resp = _build_overlay_response(view, request)
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
+
+
+@router.post("/{overlay_id}:rollback", status_code=204)
+async def rollback_overlay(
+    vendor: str,
+    name: str,
+    version: str,
+    overlay_id: str,
+    identity: Identity = get_current_identity(required_permissions=["overlays:confirm"]),
+    ctx: Context = Depends(get_ctx),
+) -> Response:
+    """Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+
+    Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
+    rewrites the API's served spec (it archives the overlay's materialized revision and
+    promotes the prior revision back to current), so it is the same operator action as
+    confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
+    carry a recorded superseded revision that is still restorable; otherwise a 409 is
+    returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
+    changes.
+    """
+    svc = OverlayService(ctx)
+    await svc.rollback(vendor, name, version, overlay_id, identity=identity)
+    return Response(status_code=204)

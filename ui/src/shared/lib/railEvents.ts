@@ -1,9 +1,8 @@
 /**
  * Agent Rail — repository tier for the REAL platform event feed.
  *
- * The rail is no longer a mock: it consumes the same `/events` contract the
- * Monitor module consumes (STATUS.md [ui-agent-rail 2026-06-21] "make it real").
- * This module is the ONLY place the rail talks to `@/shared/api`; the provider
+ * The rail consumes the same real `/events` contract the Monitor module
+ * consumes. This module is the ONLY place the rail talks to `@/shared/api`; the provider
  * in `agentStream.tsx` and the rail components go through here.
  *
  *   GET   /events           — backlog (filter + cursor)            → listEvents
@@ -12,9 +11,9 @@
  *
  * The SSE call is hand-rolled over `fetch` + `ReadableStream` because the
  * backend requires `Authorization: Bearer <jwt>` and native `EventSource`
- * cannot set headers — this is a verbatim port of Monitor's proven client
- * (jentic-one-ui-monitor `modules/monitor/api/client.ts`), kept local to the
- * rail so the rail has no cross-module dependency.
+ * cannot set headers — this mirrors Monitor's proven client
+ * (`modules/monitor/api/client.ts`), kept local to the rail so the rail has
+ * no cross-module dependency.
  */
 import {
 	EventsService,
@@ -129,13 +128,14 @@ const RECONNECT_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 15_000];
 const HEALTHY_CONNECTION_MS = 30_000;
 
 /**
- * Subtract 1ms from an ISO timestamp. The backend's `since` filter is EXCLUSIVE
- * (`created_at > since`) at microsecond precision, so resuming from the exact
- * `created_at` of the last event we saw would skip any sibling event sharing
- * that instant if the stream dropped mid-batch. We rewind the resume point by a
- * millisecond so the boundary is re-requested; the provider dedups by id, so the
- * already-seen event is harmlessly dropped and only genuinely-missed siblings
- * come through. Returns the input unchanged if it can't be parsed.
+ * Subtract 1ms from an ISO timestamp used as the reconnect resume point.
+ * Belt-and-braces: since the overlap-window fix, the backend already re-queries
+ * a window BEHIND `since` on every poll (and dedups per connection), so
+ * same-instant boundary siblings are re-requested server-side. The 1ms rewind
+ * stays as defence in depth (e.g. if `overlap_seconds` were ever configured to
+ * 0) — it only ever WIDENS replay, and both the provider's id-dedup and
+ * `deliveredIds` swallow the duplicate. Returns the input unchanged if it can't
+ * be parsed.
  */
 function rewindIso(iso: string): string {
 	const ms = Date.parse(iso);

@@ -1,0 +1,144 @@
+# GoReleaser config for the jentic-one CLIs (jenticctl + jentic).
+#
+# The CLI is the install (see docs/releasing.md): on a vX.Y.Z
+# tag the release pipeline runs GoReleaser to build signed, checksummed binaries
+# with SBOMs and a Homebrew formula. Run against the repo's cli/ module.
+#
+# Local sanity check (no publish, no signing):
+#   cd cli && goreleaser release --snapshot --clean --skip=sign,sbom,publish
+#
+# NOTE: cosign keyless signing needs the release job's OIDC token + COSIGN_YES.
+version: 2
+
+project_name: jentic-one
+
+builds:
+  - id: jenticctl
+    main: ./cmd/jenticctl
+    binary: jenticctl
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.version={{ .Version }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.commit={{ .Commit }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.date={{ .Date }}
+  - id: jentic
+    main: ./cmd/jentic
+    binary: jentic
+    env: [CGO_ENABLED=0]
+    # windows is jentic-only (jenticctl stays build-only / not shipped for
+    # Windows — its surface is Docker/compose lifecycle, WSL territory). arm64
+    # cross-compiles but is only smoke-tested on the amd64 windows-latest runner.
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.version={{ .Version }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.commit={{ .Commit }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.date={{ .Date }}
+
+archives:
+  # Per-binary archives (not one bundling archive) so a user can download JUST
+  # the agent CLI (`jentic`), and so the Windows `jentic`-only zip is a clean
+  # additive entry rather than forcing jenticctl into a windows bundle.
+  # NOTE: keep these SEPARATE — jentic spans windows while jenticctl does not, so
+  # a shared archive would trip goreleaser's "different binary count per
+  # platform" (allow_different_binary_count) error. Do not recombine.
+  - id: jentic
+    ids: [jentic]
+    name_template: >-
+      jentic_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    # Windows ships a .zip containing jentic.exe (goreleaser appends .exe).
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+  - id: jenticctl
+    ids: [jenticctl]
+    name_template: >-
+      jenticctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+  # A THIRD, bundling archive carrying BOTH binaries for the Homebrew cask. A
+  # cask maps exactly one archive per OS/arch, so it can't consume the two
+  # per-binary archives above (that yields two darwin/amd64 archives → the "one
+  # tap can handle only one archive of an OS/Arch combination" error). This
+  # linux/darwin-only bundle is the cask's single source; direct downloaders use
+  # the per-binary archives. Windows is excluded (jenticctl isn't shipped there).
+  - id: cask
+    ids: [jenticctl, jentic]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    # jentic now also builds for windows (jenticctl doesn't), so this bundle
+    # would have 2 binaries on linux/darwin but 1 on windows. The cask only ever
+    # consumes the linux/darwin variants, so tell goreleaser the differing count
+    # is intentional rather than a footgun.
+    allow_different_binary_count: true
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# SBOM per archive (syft). Runs in the release job (needs syft on PATH).
+sboms:
+  - id: archive
+    artifacts: archive
+
+# Cosign keyless signing of the checksums file (sigstore/fulcio via the job's
+# OIDC token). The installer/Homebrew formula verify against the published
+# identity; see docs/releasing.md.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+
+homebrew_casks:
+  - name: jentic
+    ids: [cask]
+    repository:
+      owner: jentic
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://jentic.com
+    description: "Jentic One CLIs — jenticctl (installer/lifecycle) + jentic (API client)"
+    # GoReleaser links only the binary matching the cask name (jentic) when this
+    # is omitted, so jenticctl never lands on PATH. List both explicitly.
+    binaries:
+      - jenticctl
+      - jentic
+    # Both binaries are auto-installed from the archive (the two-step install:
+    # brew install, then jenticctl install).
+    # Remove the macOS quarantine attribute so the freshly-downloaded binaries run.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/jenticctl"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/jentic"]
+          end
+
+release:
+  github:
+    owner: jentic
+    name: jentic-one
+  # release-please already created the GitHub Release + notes; attach artifacts
+  # to it rather than letting GoReleaser generate its own notes.
+  mode: append
+
+changelog:
+  disable: true

@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
 from jentic_one.control.core.schema.toolkits import Toolkit
 
 
@@ -23,14 +25,12 @@ class ToolkitRepository:
         name: str,
         description: str | None = None,
         active: bool = True,
-        permissions: list[dict[str, object]] | None = None,
         created_by: str,
     ) -> Toolkit:
         toolkit = Toolkit(
             name=name,
             description=description,
             active=active,
-            permissions=permissions if permissions is not None else [],
             created_by=created_by,
         )
         session.add(toolkit)
@@ -97,6 +97,44 @@ class ToolkitRepository:
         stmt = stmt.limit(limit + 1)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def list_served_apis(
+        session: AsyncSession,
+        toolkit_ids: Sequence[str],
+        *,
+        credential_filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> list[tuple[str, str, str | None, str | None]]:
+        """Distinct (toolkit_id, api_vendor, api_name, api_version) across bindings.
+
+        ``credential_filters`` scopes the joined credentials to the caller's
+        visibility (see ``build_access_filters``): a binding whose credential the
+        caller cannot read contributes nothing. One query for the whole page.
+        """
+        if not toolkit_ids:
+            return []
+        stmt = (
+            select(
+                ToolkitCredentialBinding.toolkit_id,
+                Credential.api_vendor,
+                Credential.api_name,
+                Credential.api_version,
+            )
+            .join(Credential, Credential.id == ToolkitCredentialBinding.credential_id)
+            .where(ToolkitCredentialBinding.toolkit_id.in_(list(toolkit_ids)))
+            .distinct()
+            .order_by(
+                ToolkitCredentialBinding.toolkit_id,
+                Credential.api_vendor,
+                Credential.api_name,
+                Credential.api_version,
+            )
+        )
+        if credential_filters is not None:
+            for f in credential_filters:
+                stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return [(row[0], row[1], row[2], row[3]) for row in result.all()]
 
     @staticmethod
     async def update(

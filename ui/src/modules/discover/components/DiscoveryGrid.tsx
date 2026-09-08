@@ -9,8 +9,9 @@
  * into view (with a shared Button fallback for keyboard/no-IO environments).
  */
 import { useEffect, useRef } from 'react';
-import { Compass } from 'lucide-react';
-import { Button, EmptyState, ErrorAlert, Skeleton } from '@/shared/ui';
+import { Compass, Upload } from 'lucide-react';
+import { AppLink, Button, EmptyState, ErrorAlert, Skeleton } from '@/shared/ui';
+import { ROUTES } from '@/shared/app/routes';
 import { DiscoveryCard } from '@/modules/discover/components/DiscoveryCard';
 import type { DiscoveryEntity } from '@/modules/discover/api';
 
@@ -99,8 +100,19 @@ export function DiscoveryGrid({
 				title={hasQuery ? 'No matching APIs' : 'No APIs yet'}
 				description={
 					hasQuery
-						? 'Try a different search term, or switch the filter.'
+						? "Try a different search term, or switch the filter. Can't find it?"
 						: 'The public catalog will appear here.'
+				}
+				action={
+					<AppLink
+						href={`${ROUTES.workspace}?import=1`}
+						variant="outline"
+						size="sm"
+						data-testid="discover-empty-upload-own"
+					>
+						<Upload size={14} aria-hidden="true" />
+						Import your own API
+					</AppLink>
 				}
 			/>
 		);

@@ -23,7 +23,11 @@ _cache_misses = _meter.create_counter(
     "monitoring.cache.misses", description="Monitoring cache misses"
 )
 
-_CACHE_TTL_SECONDS = 120.0
+# Short enough that a repeated cache key (the fallback window is stable for a
+# whole minute — see get_usage_stats) can't pin the first response of the
+# minute much beyond the feed's freshness; long enough to absorb a dashboard
+# fan-out's thundering herd (#913).
+_CACHE_TTL_SECONDS = 30.0
 _USAGE_CACHE_MAX_ENTRIES = 256
 
 
@@ -159,9 +163,13 @@ class MonitoringService:
         filters: UsageFilters | None = None,
     ) -> UsageStats:
         current_ts = int(datetime.now(tz=UTC).timestamp())
-        # Floor the fallback to the nearest minute so default-parameter requests
-        # arriving within the same 60s window share an identical cache key.
-        stable_now_ts = (current_ts // 60) * 60
+        # Round the fallback UP to the next minute boundary: requests arriving
+        # within the same 60s window still share an identical cache key, but —
+        # because every aggregate filters `started_at < until` strictly — the
+        # current partial minute is INCLUDED. Flooring here made executions
+        # invisible to the volume chart / KPI for up to a minute while the
+        # executions feed (no upper bound) already listed them (#913).
+        stable_now_ts = (current_ts // 60 + 1) * 60
         resolved_until = until if until is not None else stable_now_ts
         resolved_since = since if since is not None else resolved_until - 86400
 
@@ -207,9 +215,29 @@ class MonitoringService:
             return 60
         if window_seconds <= 86400:
             return 3600
-        if window_seconds <= 604800:
+        # Up to 8 days still gets the 6h tier: a day-aligned "7d" window
+        # crossing a fall-back DST change is 7d + 1h, which must not drop to
+        # daily buckets (that would leave the week view with ~7 coarse
+        # segments misaligned from its 7 day bars).
+        if window_seconds <= 8 * 86400:
             return 21600
         return 86400
+
+    @staticmethod
+    def _compute_trend_points(window_seconds: int, bucket_seconds: int) -> int:
+        """Number of per-entity trend segments for a window.
+
+        One segment per aggregate bucket tier (24h → 24 hourly, 7d → 28
+        six-hour, 30d → 30 daily) instead of a fixed 12: equal twelfths of a
+        multi-day window (e.g. 14h for 7d) can never line up with calendar
+        days, which made the volume chart's day axis span more days than the
+        window. When the window is an exact multiple of the bucket size,
+        day-aligned bounds put segments exactly on day boundaries; a
+        DST-stretched window drifts slightly but stays re-bucketable into
+        day bars client-side. Capped so a pathologically wide window can't
+        inflate the payload.
+        """
+        return max(1, min(60, round(window_seconds / bucket_seconds)))
 
     @staticmethod
     def _build_repo_filters(filters: UsageFilters | None) -> UsageQueryFilters | None:
@@ -258,7 +286,13 @@ class MonitoringService:
             )
             top_keys = [r.key for r in top_rows]
             trends = await MonitoringRepository.grouped_trend(
-                session, cutoff, until_dt, group_by.value, top_keys, filters=repo_filters
+                session,
+                cutoff,
+                until_dt,
+                group_by.value,
+                top_keys,
+                num_points=self._compute_trend_points(window_seconds, bucket_seconds),
+                filters=repo_filters,
             )
 
         return UsageStats(

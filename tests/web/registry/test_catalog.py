@@ -177,12 +177,12 @@ async def _seed_snapshot(web_context: Context, api_ids: list[str]) -> None:
         await session.commit()
 
 
-def _walk_catalog(client: TestClient, **params: object) -> list[str]:
+def _walk_catalog(client: TestClient, **params: str | int) -> list[str]:
     """Page through /catalog via next_cursor and return the flat api_id list."""
     out: list[str] = []
     cursor: str | None = None
     for _ in range(1000):
-        query = {**params}
+        query: dict[str, str | int] = {**params}
         if cursor is not None:
             query["cursor"] = cursor
         body = client.get("/catalog", params=query).json()
@@ -215,10 +215,10 @@ async def test_browse_pagination_walks_all_entries_once(
     assert len(walked) == 25
 
 
-def _last_page(client: TestClient, **params: object) -> dict[str, Any]:
+def _last_page(client: TestClient, **params: str | int | bool) -> dict[str, Any]:
     cursor: str | None = None
     for _ in range(1000):
-        query = {**params}
+        query: dict[str, str | int | bool] = {**params}
         if cursor is not None:
             query["cursor"] = cursor
         body: dict[str, Any] = client.get("/catalog", params=query).json()
@@ -240,12 +240,13 @@ async def test_final_page_has_no_more_and_null_cursor(
 async def test_search_pagination_walks_ranked_results_in_order(
     admin_client: TestClient, web_context: Context
 ) -> None:
-    # 2-token query gives distinct scores: foo-bar (1.0) outranks the 0.5 halves.
+    # 2-token query gives distinct scores: foo-bar (both tokens covered, 8)
+    # outranks the single-token halves (4 each).
     ids = ["foo-bar.com", "foo-x.com", "bar-y.com", "unrelated.com"]
     await _seed_snapshot(web_context, ids)
 
     walked = _walk_catalog(admin_client, q="foo bar", limit=1)
-    # order must be preserved across pages: full match first, then 0.5 by api_id
+    # order must be preserved across pages: full match first, then the 4s by api_id
     assert walked == ["foo-bar.com", "bar-y.com", "foo-x.com"]
     assert "unrelated.com" not in walked
 
@@ -287,7 +288,7 @@ async def test_filtered_walk_exact_set_and_count_stability(
         counts: list[tuple[int, int]] = []
         cursor: str | None = None
         for _ in range(1000):
-            query: dict[str, object] = {"unregistered_only": True, "limit": 2}
+            query: dict[str, str | int | bool] = {"unregistered_only": True, "limit": 2}
             if cursor is not None:
                 query["cursor"] = cursor
             body = admin_client.get("/catalog", params=query).json()
@@ -342,6 +343,14 @@ def test_limit_out_of_bounds_rejected(admin_client: TestClient) -> None:
 
 def test_mutually_exclusive_filters_rejected(admin_client: TestClient) -> None:
     resp = admin_client.get("/catalog", params={"registered_only": True, "unregistered_only": True})
+    assert resp.status_code == 422
+    assert "mutually_exclusive" in resp.json()["type"]
+
+
+def test_outdated_only_with_unregistered_only_rejected(admin_client: TestClient) -> None:
+    # Outdated ⊆ registered, so combining with unregistered_only is a contradiction (422),
+    # not a silent empty page.
+    resp = admin_client.get("/catalog", params={"outdated_only": True, "unregistered_only": True})
     assert resp.status_code == 422
     assert "mutually_exclusive" in resp.json()["type"]
 
@@ -525,12 +534,15 @@ def test_to_import_source_threads_catalog_vendor_and_api_name(web_context: Conte
         github_url=None,
         registered=False,
     )
-    assert CatalogService(web_context)._to_import_source(view) == {
+    identity = Identity(sub="usr_importer", email="u@test.local", permissions=[])
+    assert CatalogService(web_context)._to_import_source(view, identity) == {
         "type": "url",
         "url": "https://example.test/coincap/openapi.json",
         "origin": "catalog",
+        "submitted_by": "usr_importer",
         "vendor": "coincap.io",
         "api_name": "coincap.io",
+        "catalog_api_id": "coincap.io",
     }
 
 
@@ -544,10 +556,15 @@ def test_to_import_source_threads_api_name_with_slash(web_context: Context) -> N
         github_url=None,
         registered=False,
     )
-    result = CatalogService(web_context)._to_import_source(view)
+    result = CatalogService(web_context)._to_import_source(
+        view, Identity(sub="usr_importer", email="u@test.local", permissions=[])
+    )
     assert result["api_name"] == "slack.com/api"
     assert result["vendor"] == "slack.com"
     assert result["origin"] == "catalog"
+    # The separable slug is also carried verbatim — `api_name` above gets
+    # slugified during identity resolution, this copy is persisted as-is.
+    assert result["catalog_api_id"] == "slack.com/api"
 
 
 def test_to_import_source_omits_absent_vendor(web_context: Context) -> None:
@@ -560,11 +577,15 @@ def test_to_import_source_omits_absent_vendor(web_context: Context) -> None:
         github_url=None,
         registered=False,
     )
-    assert CatalogService(web_context)._to_import_source(view) == {
+    assert CatalogService(web_context)._to_import_source(
+        view, Identity(sub="usr_importer", email="u@test.local", permissions=[])
+    ) == {
         "type": "url",
         "url": "https://example.test/x/openapi.json",
         "origin": "catalog",
+        "submitted_by": "usr_importer",
         "api_name": "x",
+        "catalog_api_id": "x",
     }
 
 

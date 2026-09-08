@@ -97,6 +97,26 @@ let serviceAccounts: ServiceAccountRow[] = [];
 /** Per-actor granted scopes, keyed by actor id (agents + service accounts). */
 let actorScopes: Record<string, string[]> = {};
 
+/** One consent→agent OAuth grant (`GET /agents/{id}/oauth-grants`, §4.8). */
+interface OAuthGrantRow {
+	id: string;
+	oauth_client_id: string;
+	client_name: string | null;
+	client_origin: string | null;
+	user_id: string;
+	agent_id: string;
+	scopes: string[];
+	status: 'active' | 'revoked';
+	created_at: string;
+	revoked_at: string | null;
+	last_used_at: string | null;
+	/** Per-item revoke capability for the CALLER (G10 list/revoke divergence). */
+	can_revoke: boolean;
+}
+
+/** Consent→agent grants, mutated by the `:revoke` kill switch. */
+let oauthGrants: OAuthGrantRow[] = [];
+
 /**
  * The platform permission catalogue (`GET /permissions`).
  *
@@ -301,6 +321,7 @@ export function resetAgentsStore(): void {
 		seedAgent({
 			id: 'agnt_active_1',
 			name: 'support-agent',
+			description: 'Handles support tickets end to end.',
 			status: 'active',
 			approved_by: ADMIN,
 			approved_at: now(-30),
@@ -349,6 +370,64 @@ export function resetAgentsStore(): void {
 		],
 		sva_active_1: ['credentials:read'],
 	};
+	// OAuth consent grants (§4.8): `agnt_active_1` has one live connected
+	// client plus revoked history; the consenting user_id deliberately differs
+	// from ADMIN on the revoked row so the G10 "who consented" column is
+	// observable. Other actors have none (exercises the empty state).
+	oauthGrants = [
+		{
+			id: 'ocg_active_1',
+			oauth_client_id: 'oc_cursor_ide',
+			client_name: 'Cursor',
+			client_origin: 'http://localhost:33418',
+			user_id: 'usr_admin_1',
+			agent_id: 'agnt_active_1',
+			scopes: ['apis:read', 'capabilities:execute'],
+			status: 'active',
+			created_at: now(-45),
+			revoked_at: null,
+			last_used_at: now(-5),
+			can_revoke: true,
+		},
+		{
+			id: 'ocg_revoked_1',
+			oauth_client_id: 'oc_old_tool',
+			client_name: 'Old Integration',
+			client_origin: 'https://old.example.com',
+			user_id: 'usr_departed_owner',
+			agent_id: 'agnt_active_1',
+			scopes: ['apis:read'],
+			status: 'revoked',
+			created_at: now(-600),
+			revoked_at: now(-300),
+			last_used_at: null,
+			can_revoke: false,
+		},
+	];
+}
+
+/**
+ * Test-only: append extra grant rows (e.g. to exercise the connected-clients
+ * pagination or a `can_revoke=false` disabled Revoke button). Resets with
+ * `resetAgentsStore()`.
+ */
+export function seedOauthGrants(rows: Array<Partial<OAuthGrantRow> & { id: string }>): void {
+	for (const over of rows) {
+		oauthGrants.push({
+			oauth_client_id: 'oc_seeded',
+			client_name: 'Seeded Client',
+			client_origin: 'https://seeded.example.com',
+			user_id: 'usr_admin_1',
+			agent_id: 'agnt_active_1',
+			scopes: ['apis:read'],
+			status: 'active',
+			created_at: now(-45),
+			revoked_at: null,
+			last_used_at: null,
+			can_revoke: true,
+			...over,
+		});
+	}
 }
 
 resetAgentsStore();
@@ -388,6 +467,26 @@ function genId(prefix: string): string {
 const SCOPE_PATTERN = /^[a-zA-Z0-9_:./-]{1,64}$/;
 
 /**
+ * The default baseline `AgentService.create` grants when the payload carries
+ * no scopes (mirror of `shared/scopes.py` DEFAULT_AGENT_SCOPES). Service
+ * accounts get NO baseline — grants only when provided.
+ */
+const DEFAULT_AGENT_SCOPES_MOCK = [
+	'capabilities:execute',
+	'capabilities:read',
+	'apis:read',
+	'catalog:import',
+	'executions:read',
+	'jobs:read',
+	'events:read',
+	'owner:resources:read',
+	'owner:toolkits:read',
+	'owner:agents:read',
+	'owner:credentials:read',
+	'owner:access-requests:read',
+] as const;
+
+/**
  * Validate a replacement scope set the way the real backend actually does.
  *
  * IMPORTANT: `PUT /agents/{id}/scopes` and `PUT /service-accounts/{id}/scopes`
@@ -416,9 +515,427 @@ function validateScopes(
 	return { ok: true };
 }
 
+/** An actor id known to this store (either roster) — else fall through. */
+function findActor(id: string): AgentRow | ServiceAccountRow | undefined {
+	return agents.find((a) => a.id === id) ?? serviceAccounts.find((s) => s.id === id);
+}
+
+/**
+ * Per-actor usage fixture for the detail page's KPI strip + Activity chart
+ * (`GET /monitoring/usage?agent_id=…`). Buckets are relative (spread over the
+ * trailing week at request time); actors without an entry are genuinely idle.
+ * Totals roughly echo the fleet-table fixture in the monitor module so the
+ * list and detail read consistently in mocked dev.
+ */
+const ACTOR_USAGE: Record<
+	string,
+	{ buckets: { total: number; success: number; failed: number }[] }
+> = {
+	agnt_active_1: {
+		buckets: [
+			{ total: 64, success: 64, failed: 0 },
+			{ total: 82, success: 81, failed: 1 },
+			{ total: 71, success: 70, failed: 1 },
+			{ total: 96, success: 95, failed: 1 },
+			{ total: 88, success: 87, failed: 1 },
+			{ total: 104, success: 103, failed: 1 },
+			{ total: 91, success: 90, failed: 1 },
+			{ total: 118, success: 117, failed: 1 },
+			{ total: 97, success: 96, failed: 1 },
+			{ total: 122, success: 121, failed: 1 },
+			{ total: 133, success: 131, failed: 2 },
+			{ total: 138, success: 137, failed: 1 },
+		],
+	},
+	agnt_disabled_1: {
+		buckets: [
+			{ total: 22, success: 15, failed: 7 },
+			{ total: 18, success: 13, failed: 5 },
+			{ total: 15, success: 11, failed: 4 },
+			{ total: 12, success: 9, failed: 3 },
+			{ total: 10, success: 8, failed: 2 },
+			{ total: 8, success: 6, failed: 2 },
+			{ total: 6, success: 5, failed: 1 },
+			{ total: 3, success: 2, failed: 1 },
+			{ total: 2, success: 2, failed: 0 },
+		],
+	},
+	sva_active_1: {
+		buckets: [
+			{ total: 28, success: 28, failed: 0 },
+			{ total: 28, success: 28, failed: 0 },
+			{ total: 27, success: 27, failed: 0 },
+			{ total: 29, success: 29, failed: 0 },
+			{ total: 28, success: 27, failed: 1 },
+			{ total: 28, success: 28, failed: 0 },
+			{ total: 27, success: 27, failed: 0 },
+			{ total: 28, success: 28, failed: 0 },
+			{ total: 29, success: 29, failed: 0 },
+			{ total: 28, success: 28, failed: 0 },
+			{ total: 28, success: 27, failed: 1 },
+			{ total: 29, success: 29, failed: 0 },
+		],
+	},
+};
+
+/** One execution feed row (shape mirrors the generated `ExecutionResponse`). */
+function executionRow(opts: {
+	id: string;
+	actorId: string;
+	status: 'completed' | 'failed';
+	toolkitId: string;
+	toolkitName: string;
+	operationId: string;
+	durationMs: number;
+	httpStatus: number;
+	minutesAgo: number;
+	error?: string;
+	origin?: string;
+}) {
+	return {
+		_links: { self: `/executions/${opts.id}` },
+		actor_id: opts.actorId,
+		actor_type: opts.actorId.startsWith('sva_') ? 'service_account' : 'agent',
+		api: null,
+		created_at: now(-opts.minutesAgo),
+		duration_ms: opts.durationMs,
+		error: opts.error ?? null,
+		execution_id: opts.id,
+		http_status: opts.httpStatus,
+		operation_id: opts.operationId,
+		origin: opts.origin ?? 'api',
+		pinned_revisions: null,
+		started_at: now(-opts.minutesAgo),
+		status: opts.status,
+		toolkit_id: opts.toolkitId,
+		toolkit_name: opts.toolkitName,
+		trace_id: `trace_${opts.id}`,
+	};
+}
+
+/**
+ * Per-actor recent-executions fixture (`GET /executions?actor_id=…`). Only
+ * for ids in THIS store — other actor ids fall through to the monitor
+ * module's cross-fleet fixture.
+ */
+const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
+	agnt_active_1: [
+		executionRow({
+			id: 'exec_agnt_1',
+			actorId: 'agnt_active_1',
+			status: 'completed',
+			toolkitId: 'github',
+			toolkitName: 'github',
+			operationId: 'create_issue',
+			durationMs: 412,
+			httpStatus: 200,
+			minutesAgo: 2,
+		}),
+		// MCP-origin run — the newest one is the MCP sessions card's
+		// "last active" signal (local-MCP 2-E2).
+		executionRow({
+			id: 'exec_agnt_mcp_1',
+			actorId: 'agnt_active_1',
+			status: 'completed',
+			toolkitId: 'github',
+			toolkitName: 'github',
+			operationId: 'search_issues',
+			durationMs: 180,
+			httpStatus: 200,
+			minutesAgo: 5,
+			origin: 'mcp',
+		}),
+		executionRow({
+			id: 'exec_agnt_2',
+			actorId: 'agnt_active_1',
+			status: 'failed',
+			toolkitId: 'slack',
+			toolkitName: 'slack',
+			operationId: 'post_message',
+			durationMs: 38,
+			httpStatus: 403,
+			minutesAgo: 9,
+			error: 'pbac_denied: scope violation chat:write',
+		}),
+		executionRow({
+			id: 'exec_agnt_3',
+			actorId: 'agnt_active_1',
+			status: 'completed',
+			toolkitId: 'github',
+			toolkitName: 'github',
+			operationId: 'list_pull_requests',
+			durationMs: 220,
+			httpStatus: 200,
+			minutesAgo: 11,
+		}),
+		executionRow({
+			id: 'exec_agnt_4',
+			actorId: 'agnt_active_1',
+			status: 'completed',
+			toolkitId: 'github',
+			toolkitName: 'github',
+			operationId: 'get_repo',
+			durationMs: 145,
+			httpStatus: 200,
+			minutesAgo: 34,
+		}),
+	],
+	sva_active_1: [
+		executionRow({
+			id: 'exec_sva_1',
+			actorId: 'sva_active_1',
+			status: 'completed',
+			toolkitId: 'petstore',
+			toolkitName: 'petstore',
+			operationId: 'sync_inventory',
+			durationMs: 1240,
+			httpStatus: 200,
+			minutesAgo: 15,
+		}),
+		executionRow({
+			id: 'exec_sva_2',
+			actorId: 'sva_active_1',
+			status: 'completed',
+			toolkitId: 'petstore',
+			toolkitName: 'petstore',
+			operationId: 'sync_inventory',
+			durationMs: 1180,
+			httpStatus: 200,
+			minutesAgo: 75,
+		}),
+	],
+};
+
+/** One actor-targeted audit row (shape mirrors the generated `AuditResponse`). */
+function auditRow(opts: {
+	id: string;
+	targetId: string;
+	action: string;
+	minutesAgo: number;
+	reason?: string;
+}) {
+	return {
+		action: opts.action,
+		actor_id: ADMIN,
+		actor_session_id: null,
+		actor_type: 'user',
+		after: null,
+		before: null,
+		diff: null,
+		id: opts.id,
+		ip_address: null,
+		job_id: null,
+		occurred_at: now(-opts.minutesAgo),
+		reason: opts.reason ?? null,
+		request_id: null,
+		target_id: opts.targetId,
+		target_parent_id: null,
+		target_type: opts.targetId.startsWith('sva_') ? 'service_account' : 'agent',
+		trace_id: null,
+		user_agent: null,
+	};
+}
+
+/**
+ * Per-actor audit fixture (`GET /audit?target_type=…&target_id=…`) — the
+ * detail console's "Recent changes" panel. Only for ids in THIS store; other
+ * targets fall through to the monitor module's org-wide fixture.
+ */
+const ACTOR_AUDIT: Record<string, ReturnType<typeof auditRow>[]> = {
+	agnt_active_1: [
+		auditRow({
+			id: 'aud_agnt_3',
+			targetId: 'agnt_active_1',
+			action: 'rotate',
+			minutesAgo: 240,
+		}),
+		auditRow({
+			id: 'aud_agnt_2',
+			targetId: 'agnt_active_1',
+			action: 'approve',
+			minutesAgo: 60 * 24 * 6,
+		}),
+		auditRow({
+			id: 'aud_agnt_1',
+			targetId: 'agnt_active_1',
+			action: 'register',
+			minutesAgo: 60 * 24 * 6 + 30,
+		}),
+	],
+	sva_active_1: [
+		auditRow({
+			id: 'aud_sva_2',
+			targetId: 'sva_active_1',
+			action: 'approve',
+			minutesAgo: 60 * 24 * 12,
+		}),
+		auditRow({
+			id: 'aud_sva_1',
+			targetId: 'sva_active_1',
+			action: 'create',
+			minutesAgo: 60 * 24 * 12,
+		}),
+	],
+};
+
+/**
+ * `mcp.session_started` internal-event fixture (`GET /events?event_type=…`,
+ * local-MCP 2-E2). Shapes mirror the generated `EventResponse`; `data` carries
+ * what the emitter writes (session_id / transport / client_name /
+ * client_version — see shared/events/mcp_session.py). Newest first, like the
+ * real feed. Only agnt_active_1 has sessions; other agents render the honest
+ * empty state.
+ */
+const MCP_SESSION_STARTED = 'mcp.session_started';
+
+function mcpSessionEvent(opts: {
+	id: string;
+	actorId: string;
+	sessionId: string;
+	minutesAgo: number;
+	clientName?: string;
+	clientVersion?: string;
+}) {
+	return {
+		_links: { self: `/events/${opts.id}` },
+		acknowledged: false,
+		acknowledged_at: null,
+		acknowledged_by: null,
+		actor_id: opts.actorId,
+		actor_type: 'agent',
+		created_at: now(-opts.minutesAgo),
+		data: {
+			session_id: opts.sessionId,
+			transport: 'stdio',
+			client_name: opts.clientName ?? null,
+			client_version: opts.clientVersion ?? null,
+		},
+		detail: null,
+		event_id: opts.id,
+		requires_action: false,
+		severity: 'info',
+		summary: `MCP session started for ${opts.actorId}`,
+		trace_id: null,
+		type: MCP_SESSION_STARTED,
+	};
+}
+
+const MCP_SESSION_EVENTS = [
+	mcpSessionEvent({
+		id: 'evt_mcp_3',
+		actorId: 'agnt_active_1',
+		sessionId: 'sess-uuid-3',
+		minutesAgo: 30,
+		clientName: 'claude-desktop',
+		clientVersion: '1.5.2',
+	}),
+	// clientInfo is a SHOULD in the MCP spec — a client that sent only a name
+	// (no version) and one that sent nothing both render, not error.
+	mcpSessionEvent({
+		id: 'evt_mcp_2',
+		actorId: 'agnt_active_1',
+		sessionId: 'sess-uuid-2',
+		minutesAgo: 60 * 24,
+		clientName: 'cursor',
+	}),
+	mcpSessionEvent({
+		id: 'evt_mcp_1',
+		actorId: 'agnt_active_1',
+		sessionId: 'sess-uuid-1',
+		minutesAgo: 60 * 24 * 3,
+	}),
+];
+
 export const agentsHandlers = [
 	// ---- Platform permission catalogue (#615) ----
 	http.get('/permissions', () => HttpResponse.json({ data: PERMISSION_CATALOGUE })),
+
+	// ---- Per-actor monitoring enrichment (detail page KPI strip + Activity) ----
+	//
+	// The detail page reads the same admin-gated monitoring endpoints Monitor
+	// does, filtered to one actor. These interceptors answer ONLY for ids that
+	// live in THIS module's store and return undefined otherwise, falling
+	// through to the monitor module's own `/monitoring/usage` + `/executions`
+	// handlers (agents registers before monitor in src/mocks/handlers.ts) —
+	// so Monitor's fixtures and tests are untouched.
+	http.get('/monitoring/usage', ({ request }) => {
+		const actorId = new URL(request.url).searchParams.get('agent_id');
+		if (!actorId || !findActor(actorId)) return undefined;
+		const usage = ACTOR_USAGE[actorId];
+		const nowSec = Math.floor(Date.now() / 60_000) * 60;
+		const since = nowSec - 7 * 86_400;
+		const buckets = (usage?.buckets ?? []).map((b, i, all) => ({
+			// Spread the fixture buckets across the trailing week, newest last
+			// (6h grid — what the backend derives for a 7d window).
+			ts: nowSec - (all.length - i) * 21_600,
+			total: b.total,
+			success: b.success,
+			failed: b.failed,
+			avg_ms: 400,
+		}));
+		const total = buckets.reduce((sum, b) => sum + b.total, 0);
+		const success = buckets.reduce((sum, b) => sum + b.success, 0);
+		return HttpResponse.json({
+			since,
+			until: nowSec,
+			bucket_seconds: 21_600,
+			group_by: 'api',
+			buckets,
+			stats: {
+				total,
+				success,
+				failed: total - success,
+				pending: 0,
+				active_now: 0,
+				avg_ms: total ? 400 : 0,
+				p50_ms: null,
+				p95_ms: null,
+			},
+			top: [],
+		});
+	}),
+	http.get('/executions', ({ request }) => {
+		const url = new URL(request.url);
+		const actorId = url.searchParams.get('actor_id');
+		if (!actorId || !findActor(actorId)) return undefined;
+		// Origin scoping (local-MCP 2-E2): the sessions card asks for the
+		// newest MCP-origin run (`?origin=mcp&limit=1`) as its "last active".
+		const origin = url.searchParams.get('origin');
+		const rows = (ACTOR_EXECUTIONS[actorId] ?? []).filter(
+			(r) => !origin || r.origin === origin,
+		);
+		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
+	}),
+	// MCP session history (local-MCP 2-E2): answer ONLY the
+	// `event_type=mcp.session_started` reads this module's MCP surfaces make;
+	// any other /events query falls through to the rail/monitor fixtures.
+	http.get('/events', ({ request }) => {
+		const url = new URL(request.url);
+		const eventTypes = url.searchParams.getAll('event_type');
+		if (!eventTypes.includes(MCP_SESSION_STARTED)) return undefined;
+		const actorId = url.searchParams.get('actor_id');
+		const rows = MCP_SESSION_EVENTS.filter((e) => !actorId || e.actor_id === actorId);
+		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
+	}),
+	// Actor-scoped audit slice ("Recent changes"): answer only for targets in
+	// THIS store, else fall through to the monitor module's org-wide fixture.
+	http.get('/audit', ({ request }) => {
+		const url = new URL(request.url);
+		const targetType = url.searchParams.get('target_type');
+		const targetId = url.searchParams.get('target_id');
+		if (
+			(targetType !== 'agent' && targetType !== 'service_account') ||
+			!targetId ||
+			!findActor(targetId)
+		) {
+			return undefined;
+		}
+		return HttpResponse.json({
+			data: ACTOR_AUDIT[targetId] ?? [],
+			has_more: false,
+			next_cursor: null,
+		});
+	}),
 
 	// ---- Agents ----
 	http.get('/agents', ({ request }) => paginate(agents, new URL(request.url))),
@@ -492,7 +1009,16 @@ export const agentsHandlers = [
 		const body = (await request.json().catch(() => ({}))) as {
 			name?: string;
 			description?: string | null;
+			scopes?: string[] | null;
 		};
+		// Validate BEFORE mutating the store — the real backend rejects via
+		// Pydantic before anything is created (no phantom row on a 422).
+		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
+			const check = validateScopes(body.scopes);
+			if (!check.ok) {
+				return HttpResponse.json({ detail: check.detail }, { status: check.status });
+			}
+		}
 		const row = seedAgent({
 			id: genId('agnt'),
 			name: body.name ?? 'unnamed',
@@ -501,7 +1027,31 @@ export const agentsHandlers = [
 			created_at: now(),
 		});
 		agents.unshift(row);
+		// `AgentService.create` grants the requested scopes verbatim, or the
+		// DEFAULT_AGENT_SCOPES baseline when the payload carries none — a fresh
+		// manual agent never has an empty Scopes card (shared/scopes.py).
+		actorScopes[row.id] =
+			Array.isArray(body.scopes) && body.scopes.length > 0
+				? [...new Set(body.scopes)]
+				: [...DEFAULT_AGENT_SCOPES_MOCK];
 		return HttpResponse.json(row, { status: 201 });
+	}),
+	// Partial in-place edit — name / description / owner_id. Mirrors
+	// `AgentService.update_agent`: archived rows reject with 409
+	// (InvalidTransitionError), and set fields pass through un-trimmed.
+	http.patch('/agents/:id', async ({ params, request }) => {
+		const row = agents.find((a) => a.id === params.id);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		if (row.status === 'archived') return new HttpResponse(null, { status: 409 });
+		const body = (await request.json().catch(() => ({}))) as {
+			name?: string | null;
+			description?: string | null;
+			owner_id?: string | null;
+		};
+		if (typeof body.name === 'string') row.name = body.name;
+		if (body.description !== undefined) row.description = body.description;
+		if (body.owner_id !== undefined) row.owner_id = body.owner_id;
+		return HttpResponse.json(row);
 	}),
 	// Generate API key for an agent.
 	http.post('/agents/:id\\:generate-api-key', ({ params }) => {
@@ -609,15 +1159,33 @@ export const agentsHandlers = [
 		const body = (await request.json().catch(() => ({}))) as {
 			name?: string;
 			description?: string | null;
+			scopes?: string[] | null;
 		};
+		// Validate BEFORE mutating the store — the real backend rejects via
+		// Pydantic before anything is created (no phantom row on a 422).
+		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
+			const check = validateScopes(body.scopes);
+			if (!check.ok) {
+				return HttpResponse.json({ detail: check.detail }, { status: check.status });
+			}
+		}
 		const row = seedSa({
 			id: genId('sva'),
 			name: body.name ?? 'unnamed',
 			description: body.description ?? null,
-			status: 'pending',
+			// ServiceAccountService.create approves inside the create
+			// transaction — a fresh SA is active, never pending.
+			status: 'active',
 			created_at: now(),
+			approved_by: ADMIN,
+			approved_at: now(),
 		});
 		serviceAccounts.unshift(row);
+		// Unlike agents, SAs get no default baseline — grants only when provided
+		// (ServiceAccountService.create).
+		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
+			actorScopes[row.id] = [...new Set(body.scopes)];
+		}
 		return HttpResponse.json(row, { status: 201 });
 	}),
 	http.get('/service-accounts/:id', ({ params }) => {
@@ -691,5 +1259,36 @@ export const agentsHandlers = [
 		}
 		actorScopes[row.id] = [...new Set(requested)];
 		return HttpResponse.json({ scopes: actorScopes[row.id] });
+	}),
+	// ---- OAuth consent grants (§4.8): the Connected-clients panel ----
+	http.get('/agents/:id/oauth-grants', ({ params, request }) => {
+		const agent = agents.find((a) => a.id === params.id);
+		if (!agent) return new HttpResponse(null, { status: 404 });
+		const url = new URL(request.url);
+		const status = url.searchParams.get('status');
+		const rows = oauthGrants.filter(
+			(g) => g.agent_id === params.id && (!status || g.status === status),
+		);
+		// Index-based cursor pagination, like the sibling mock stores: the card
+		// pages through `next_cursor` behind "Load more".
+		const limit = Number(url.searchParams.get('limit') ?? 50);
+		const start = Number(url.searchParams.get('cursor') ?? 0);
+		const pageRows = rows.slice(start, start + limit);
+		const hasMore = start + limit < rows.length;
+		return HttpResponse.json({
+			data: pageRows,
+			has_more: hasMore,
+			next_cursor: hasMore ? String(start + limit) : null,
+		});
+	}),
+	http.post('/oauth-grants/:id\\:revoke', ({ params }) => {
+		const grant = oauthGrants.find((g) => g.id === params.id);
+		if (!grant) return new HttpResponse(null, { status: 404 });
+		// Idempotent, like the backend: re-revoking is a 204 no-op.
+		if (grant.status === 'active') {
+			grant.status = 'revoked';
+			grant.revoked_at = now();
+		}
+		return new HttpResponse(null, { status: 204 });
 	}),
 ];

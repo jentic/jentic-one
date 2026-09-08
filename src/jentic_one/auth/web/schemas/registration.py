@@ -7,13 +7,18 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from jentic_one.shared.web.sensitive import SENSITIVE
+
 _SCOPE_TOKEN_RE = re.compile(r"^[a-zA-Z0-9_:./-]+$")
 
 
 class RegisterRequest(BaseModel):
     """POST /register request body."""
 
-    client_name: str
+    # Bounded to the agents.name column (String(255)): /register is
+    # unauthenticated per RFC 7591, and the name flows verbatim into event
+    # summaries surfaced on operator attention surfaces.
+    client_name: str = Field(min_length=1, max_length=255)
     jwks: dict[str, Any]
     grant_types: list[str] | None = None
     token_endpoint_auth_method: str | None = None
@@ -42,11 +47,17 @@ class RegisterResponse(BaseModel):
     """POST /register 201 response."""
 
     client_id: str
-    registration_access_token: str
+    registration_access_token: str = Field(json_schema_extra=SENSITIVE)
     registration_client_uri: str
     status: str
     grant_types: list[str] = ["urn:ietf:params:oauth:grant-type:jwt-bearer"]
     token_endpoint_auth_method: str = "private_key_jwt"
+    # Opaque, single-use ownership-claim token. Present only when the deployment
+    # installs a claim-token minter (multi-user deployments); the registering
+    # human presents it to POST /agents/{id}:claim to take ownership. Omitted on
+    # the OSS single-user default (no minter → no claim flow). Marked sensitive so
+    # the CLI's Layer-1 redactor masks it in output — it is a bearer capability.
+    claim_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
 
 class RegistrationStatusResponse(BaseModel):

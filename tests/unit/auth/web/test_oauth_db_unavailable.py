@@ -2,7 +2,7 @@
 
 Regression for issue #648: a SQLite ``database is locked`` on the token-mint
 write used to bubble up as ``DatabaseUnavailableError`` with no handler, so the
-auth surface returned a bare 500 and ``jentic bootstrap`` aborted. The auth app
+auth surface returned a bare 500 and ``jentic setup`` aborted. The auth app
 now registers ``database_error_handler`` so it returns a retryable 503 instead.
 
 This drives the real router + the real handlers wired in
@@ -65,7 +65,7 @@ def test_jwt_bearer_mint_db_unavailable_returns_503(
 
     resp = client.post(
         "/oauth/token",
-        data={
+        json={
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": "eyJ.test.assertion",
         },

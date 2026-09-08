@@ -28,7 +28,8 @@ test('hard-delete a toolkit from the detail page (type-to-confirm, generic warni
 	await page.goto(`/app/toolkits/${toolkitId}`);
 	await expect(page.getByRole('heading', { name })).toBeVisible();
 
-	// Open the cascade dialog from the danger-zone delete control.
+	// Open the cascade dialog from the Settings tab's danger-zone control.
+	await page.getByRole('tab', { name: 'Settings' }).click();
 	await page
 		.getByRole('button', { name: `Delete ${name}` })
 		.first()
@@ -40,10 +41,10 @@ test('hard-delete a toolkit from the detail page (type-to-confirm, generic warni
 	// blast-radius list isn't shown (no dependents endpoint yet — see fixme).
 	await expect(dialog).toContainText(/will be permanently/i);
 
-	// Confirm is gated behind typing the exact toolkit name.
+	// Confirm is gated behind typing the fixed confirm word "delete".
 	const confirm = dialog.getByRole('button', { name: 'Delete toolkit', exact: true });
 	await expect(confirm).toBeDisabled();
-	await dialog.getByRole('textbox', { name: new RegExp(`Type ${name} to confirm`) }).fill(name);
+	await dialog.getByRole('textbox', { name: /Type delete to confirm/i }).fill('delete');
 	await expect(confirm).toBeEnabled();
 	await confirm.click();
 

@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+> **If `.rules/` exists, read `.rules/AGENTS.md` and use it instead of this file.**
+> Otherwise use the guidance below.
+
 ## Quick Start
 
 ```bash

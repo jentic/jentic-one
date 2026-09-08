@@ -59,6 +59,7 @@ import {
 	type AccessRequestItem,
 	type ItemDecision,
 } from '@/shared/lib/accessRequests';
+import { isProvisioningPlan } from '@/shared/lib/provisioningPlan';
 
 type DraftStatus = 'pending' | 'denying' | 'approved' | 'denied';
 type Step = 'review' | 'confirm';
@@ -315,7 +316,7 @@ export function AccessRequestDialog({
 	}
 
 	function renderFooter() {
-		if (loading || error || !request) {
+		if (loading || error || !request || isProvisioningPlan(request)) {
 			return (
 				<Button variant="ghost" onClick={onClose}>
 					Close
@@ -897,9 +898,21 @@ export function AccessRequestDialog({
 		>
 			{loading && <LoadingState message="Loading the access request…" />}
 			{!loading && error && <ErrorAlert message={error} />}
+			{!loading && !error && request && isProvisioningPlan(request) && (
+				<div className="text-foreground space-y-3">
+					<p className="text-sm font-semibold">This request needs the setup wizard</p>
+					<p className="text-muted-foreground text-sm">
+						It’s a provisioning plan — approving it creates a toolkit and connects a
+						credential, then wires them before granting. Open it from{' '}
+						<span className="font-medium">Access Requests</span> to run the guided
+						setup; a plain approval here can’t complete it.
+					</p>
+				</div>
+			)}
 			{!loading &&
 				!error &&
 				request &&
+				!isProvisioningPlan(request) &&
 				(step === 'review' ? renderReview() : renderConfirm())}
 		</Dialog>
 	);

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from jentic_one.shared.db.base import AdminBase, AuditableMixin
+from jentic_one.shared.db.ids import generate_ksuid
 
 
 class AgentToolkitBinding(AuditableMixin, AdminBase):
@@ -24,6 +25,7 @@ class AgentToolkitBinding(AuditableMixin, AdminBase):
     id: Mapped[str] = mapped_column(
         String(30),
         primary_key=True,
+        default=lambda: generate_ksuid("atb"),
         server_default=func.generate_ksuid("atb"),
     )
     agent_id: Mapped[str] = mapped_column(

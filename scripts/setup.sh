@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+PG_PORT="${JENTIC_PG_PORT:-5432}"
+
 echo "==> Starting Docker services..."
 docker compose -f docker/local-setup/docker-compose.yaml up -d
 
@@ -50,6 +52,14 @@ fi
 
 echo ""
 echo "==> Setup complete. Database endpoint:"
-echo "    localhost:5432/jentic (schemas: registry, control, admin)"
+echo "    localhost:${PG_PORT}/jentic (schemas: registry, control, admin)"
 echo ""
 echo "    User: postgres / Password: postgres (default)"
+if [ "$PG_PORT" != "5432" ]; then
+    echo ""
+    echo "    NOTE: Postgres is published on ${PG_PORT} (not the default 5432)."
+    echo "    Point the app at it, e.g.:"
+    echo "      JENTIC__DATABASES__REGISTRY__PORT=${PG_PORT} \\"
+    echo "      JENTIC__DATABASES__CONTROL__PORT=${PG_PORT} \\"
+    echo "      JENTIC__DATABASES__ADMIN__PORT=${PG_PORT} make start-app"
+fi

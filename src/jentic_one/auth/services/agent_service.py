@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+from datetime import UTC, datetime
+
+import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,13 +18,19 @@ from jentic_one.admin.repos import (
     AgentToolkitBindingRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
+from jentic_one.auth.repos import ToolkitNameRepository
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
+    AgentAlreadyOwnedError,
+    ClaimActorNotAllowedError,
+    ClaimTokenInvalidError,
     InvalidOwnerError,
     InvalidTransitionError,
     ToolkitBindingConflictError,
     ToolkitBindingNotFoundError,
 )
+from jentic_one.auth.services.oauth_grant_service import revoke_active_grants_for_agent
+from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
@@ -29,11 +40,14 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
+
+logger = structlog.get_logger(__name__)
 
 _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
     ActorVerb.APPROVE: {ActorStatus.PENDING: ActorStatus.ACTIVE},
@@ -149,6 +163,36 @@ class AgentService:
         view.has_api_key = has_key
         return view
 
+    async def _settle_registration_alerts(
+        self, session: AsyncSession, agent_id: str, *, acknowledged_by: str
+    ) -> None:
+        """Acknowledge outstanding ``agent.self_registered`` alerts for the agent.
+
+        Self-registration files a ``requires_action`` event so operators are
+        prompted to review. Approving/denying IS that review, so leaving the
+        alert live would keep a stale "awaits approval" row (with a working
+        Review button) on the rail and dashboard forever. Best-effort like the
+        emit itself: alert bookkeeping must never roll back the decision.
+
+        The body runs inside a SAVEPOINT: on PostgreSQL a statement error
+        aborts the whole transaction, so a bare try/except here would swallow
+        the exception but leave the outer transaction poisoned — the decision's
+        commit would then fail anyway. Rolling back just the nested block keeps
+        the "never roll back the decision" promise for DB-level failures too.
+        """
+        try:
+            async with session.begin_nested():
+                await settle_actionable_events(
+                    session,
+                    event_type=EventType.AGENT_SELF_REGISTERED,
+                    acknowledged_by=acknowledged_by,
+                    acknowledgement_note="registration decided",
+                    actor_id=agent_id,
+                    actor_type=ActorType.AGENT.value,
+                )
+        except Exception:
+            logger.warning("settle_registration_alerts_failed", agent_id=agent_id, exc_info=True)
+
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.APPROVE)
@@ -184,17 +228,93 @@ class AgentService:
                 target_id=agent_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
+                after={"owner_id": agent.owner_id},
                 origin=identity.origin.value,
             )
             await emit_event_best_effort(
                 session,
                 type=EventType.AGENT_REGISTRATION_APPROVED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent_id} registration approved",
+                summary=f"Agent '{agent.name}' registration approved",
+                # `agent_id` lets the UI deep-link the rail row to the agent's
+                # page (the top-level actor here is the deciding USER).
+                data={"agent_id": agent_id, "agent_name": agent.name},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
+        return AgentView.model_validate(agent)
+
+    async def claim(self, agent_id: str, *, token: str, identity: Identity) -> AgentView:
+        """Assign ownership of a self-registered agent to the claiming caller.
+
+        The registering human presents the single-use claim token that was minted
+        at ``/register`` (see ``auth/core/claim.py``). Any *authenticated human
+        user* may claim — the token is the proof, not a role — so a plain member
+        can take ownership of the agent they registered. Once owned, the agent
+        shows under the caller via the normal scoping filter and the existing
+        approve path applies (an admin approving later no longer steals ownership,
+        because ``owner_id`` is already set).
+
+        Only ``USER`` actors may claim: ``Agent.owner_id`` is a FK to ``users.id``,
+        so a non-user actor (agent/service-account/toolkit) is rejected up front
+        with ``ClaimActorNotAllowedError`` rather than being allowed to write a
+        non-user id into the users-FK column.
+
+        Ordering note: existence (404) and ownership (409) are checked *before*
+        the token, so an authenticated caller who already knows an agent id can
+        learn whether it is unclaimed without holding a token. This is a
+        deliberate trade-off — it keeps the single-use replay semantics clean, and
+        agent ids are unguessable KSUIDs — not the stronger "never reveal which
+        agents are claimable" property (which holds only for the no-token-issued
+        case, treated as a plain mismatch below).
+
+        Raises ``ClaimActorNotAllowedError`` (non-user actor),
+        ``ActorNotFoundError`` (unknown/archived agent),
+        ``AgentAlreadyOwnedError`` (already claimed/owned), or
+        ``ClaimTokenInvalidError`` (no token issued, mismatch, or expired).
+        """
+        if identity.actor_type != ActorType.USER:
+            raise ClaimActorNotAllowedError(identity.actor_type.value)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+                if agent is None or agent.status == ActorStatus.ARCHIVED:
+                    raise ActorNotFoundError(agent_id)
+                if agent.owner_id is not None:
+                    raise AgentAlreadyOwnedError(agent_id)
+                # Constant-time compare, and treat "no token was ever issued" the
+                # same as a mismatch so we never leak which agents are claimable.
+                if not agent.claim_token_hash or not hmac.compare_digest(
+                    agent.claim_token_hash, token_hash
+                ):
+                    raise ClaimTokenInvalidError()
+                if agent.claim_expires_at is not None and agent.claim_expires_at < datetime.now(
+                    UTC
+                ):
+                    raise ClaimTokenInvalidError("claim_token_expired")
+                agent = await AgentRepository.set_owner_from_claim(
+                    session, agent, owner_id=identity.sub
+                )
+                await record_audit(
+                    session,
+                    action=AuditAction.CLAIM,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    before={"owner_id": None},
+                    after={"owner_id": identity.sub},
+                    reason="agent_ownership_claim",
+                    origin=identity.origin.value,
+                )
+        except DatabaseIntegrityError:
+            # owner_id is a FK to users.id. The actor-type guard above should make
+            # this unreachable, but if the caller's sub is ever a non-user id that
+            # slips the guard, surface a clean 403 rather than a raw 500.
+            raise ClaimActorNotAllowedError(identity.actor_type.value) from None
         return AgentView.model_validate(agent)
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
@@ -217,11 +337,13 @@ class AgentService:
                 session,
                 type=EventType.AGENT_REGISTRATION_DENIED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent_id} registration denied",
+                summary=f"Agent '{agent.name}' registration denied",
+                data={"agent_id": agent_id, "agent_name": agent.name},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:
@@ -276,7 +398,27 @@ class AgentService:
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentToolkitBindingRepository.list_for_agent(session, agent_id)
-        return [ToolkitBindingView.model_validate(b) for b in bindings]
+        views = [ToolkitBindingView.model_validate(b) for b in bindings]
+        # Enrich each binding from the control DB with (a) a human-readable
+        # toolkit name so an agent can map an opaque `tk_…` id to something it can
+        # show its operator (issue #686), and (b) the APIs the toolkit's bound
+        # credentials serve, so `whoami` tells the agent what it can already call
+        # and can skip a redundant provisioning plan / a throwaway denied execute.
+        # Names/serves live in the control DB; the bindings above are already
+        # scoped to this agent, so we only resolve for toolkits the caller is
+        # bound to. Failure to reach the control DB is non-fatal.
+        toolkit_ids = [v.toolkit_id for v in views]
+        if toolkit_ids and self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                names = await ToolkitNameRepository.get_names_for_ids(session, toolkit_ids)
+                served = await ToolkitNameRepository.get_served_apis_for_ids(session, toolkit_ids)
+            for view in views:
+                view.name = names.get(view.toolkit_id)
+                view.serves = [
+                    ServedApiRef(api_vendor=vendor, api_name=name, api_version=version)
+                    for vendor, name, version in served.get(view.toolkit_id, [])
+                ]
+        return views
 
     async def bind_toolkit(
         self, agent_id: str, *, toolkit_id: str, identity: Identity
@@ -388,6 +530,17 @@ class AgentService:
         update_data: dict[str, str | None],
         identity: Identity,
     ) -> AgentView:
+        """Partially update an agent; an ``owner_id`` change is a transfer.
+
+        Ownership transfer revokes every active OAuth client grant bound to
+        the agent in the SAME transaction (G10, #1222): a grant keys its
+        ``:revoke`` predicate on the consenting user, so leaving the old
+        owner's consent live would strand a grant the new owner cannot revoke
+        self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
+        back; the new owner re-consents through the normal flow if the
+        connection is still wanted. The agent's key channel (API key, scopes,
+        toolkit bindings) is deliberately untouched.
+        """
         try:
             async with self._ctx.admin_db.transaction() as session:
                 agent = await AgentRepository.get_by_id_for_update(session, agent_id)
@@ -396,8 +549,13 @@ class AgentService:
                 if agent.status == ActorStatus.ARCHIVED:
                     raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "update")
                 before = {k: getattr(agent, k) for k in update_data}
+                owner_transferred = (
+                    "owner_id" in update_data and update_data["owner_id"] != agent.owner_id
+                )
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
                 after = {k: getattr(agent, k) for k in update_data}
+                if owner_transferred:
+                    await revoke_active_grants_for_agent(session, agent_id, identity=identity)
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
@@ -411,6 +569,44 @@ class AgentService:
                 )
         except DatabaseIntegrityError:
             raise InvalidOwnerError(update_data.get("owner_id") or "") from None
+        return AgentView.model_validate(agent)
+
+    async def update_jwks(
+        self,
+        agent_id: str,
+        *,
+        jwks: dict[str, object],
+        identity: Identity,
+    ) -> AgentView:
+        """Update an agent's JWKS (public keys for JWT-bearer authentication).
+
+        The agent must be active (not pending, disabled, or archived). The JWKS
+        is validated to ensure it contains at least one Ed25519 public key and
+        no private key material.
+        """
+        validate_jwks(jwks)
+        async with self._ctx.admin_db.transaction() as session:
+            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+            if agent is None:
+                raise ActorNotFoundError(agent_id)
+            if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
+                raise ActorNotFoundError(agent_id)
+            if agent.status != ActorStatus.ACTIVE:
+                raise InvalidTransitionError(agent_id, agent.status, "update_jwks")
+            before_jwks = agent.jwks
+            agent.jwks = jwks
+            await session.flush()
+            await record_audit(
+                session,
+                action=AuditAction.UPDATE,
+                target_type=AuditTargetType.AGENT,
+                target_id=agent_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before={"jwks": "[redacted]" if before_jwks else None},
+                after={"jwks": "[redacted]"},
+                origin=identity.origin.value,
+            )
         return AgentView.model_validate(agent)
 
     async def _check_transition(

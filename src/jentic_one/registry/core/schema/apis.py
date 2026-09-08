@@ -52,6 +52,13 @@ class Api(AuditableMixin, RegistryBase):
     vendor: Mapped[str] = mapped_column(String(100), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     version: Mapped[str] = mapped_column(String(100), nullable=False)
+    # The catalog identity slug this API was imported from (e.g.
+    # `nytimes.com/article_search`) — the only identity field where the vendor
+    # and sub-API are separable, which display surfaces need for friendly
+    # titles. NULL for manually-imported/inline APIs that never had one.
+    # (`api_id` would shadow the ubiquitous `Api.id` UUID naming, hence the
+    # `catalog_` prefix.)
+    catalog_api_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     icon_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)

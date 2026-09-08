@@ -2,6 +2,9 @@
 
 All models inheriting from RegistryBase, ControlBase, or AdminBase must follow
 project naming and structural conventions.
+
+Enforced facts are sourced from the rules repo's ``orm.facts.yaml`` (see
+``_rules_facts.py``); do not hard-code them here.
 """
 
 from __future__ import annotations
@@ -12,14 +15,22 @@ from pathlib import Path
 
 import pytest
 
+from ._rules_facts import orm_facts
 from .conftest import SRC_ROOT, python_files_in
 
-VALID_BASES = frozenset({"RegistryBase", "ControlBase", "AdminBase"})
+_FACTS = orm_facts()
+
+VALID_BASES = frozenset(_FACTS["valid_bases"])
 
 # Mixins that provide audit columns (created_at, updated_at, created_by) to any
 # model that inherits them. A model gaining created_at via one of these mixins
 # satisfies the created_at convention without declaring the column directly.
-AUDIT_MIXINS = frozenset({"AuditableMixin"})
+AUDIT_MIXINS = frozenset(_FACTS["audit_mixins"])
+
+_TABLENAME_FACTS = _FACTS["tablename"]
+_SNAKE_CASE_REQUIRED = bool(_TABLENAME_FACTS["snake_case"])
+_PLURAL_SUFFIXES = tuple(_TABLENAME_FACTS["plural_suffixes"])
+_REQUIRED_COLUMNS = tuple(_FACTS["required_columns"])
 
 
 def _get_base_name(node: ast.expr) -> str | None:
@@ -92,13 +103,13 @@ def _check_model(filepath: Path, cls_node: ast.ClassDef) -> list[str]:
             f"(all ORM models must set __tablename__ explicitly)"
         )
     else:
-        if not _is_snake_case(tablename):
+        if _SNAKE_CASE_REQUIRED and not _is_snake_case(tablename):
             violations.append(
                 f"{loc} — class {class_name} has __tablename__ = '{tablename}' "
                 f"(table names must be snake_case, e.g. 'api_specs')"
             )
 
-        if not tablename.endswith("s") and not tablename.endswith("data"):
+        if not tablename.endswith(_PLURAL_SUFFIXES):
             violations.append(
                 f"{loc} — class {class_name} has __tablename__ = '{tablename}' "
                 f"(table names should be plural, e.g. 'jobs' not 'job')"
@@ -106,14 +117,18 @@ def _check_model(filepath: Path, cls_node: ast.ClassDef) -> list[str]:
 
     columns = _get_column_names(cls_node)
 
-    if "id" not in columns:
+    if "id" in _REQUIRED_COLUMNS and "id" not in columns:
         violations.append(
             f"{loc} — class {class_name} missing 'id' column "
             f"(all tables must have a primary key named 'id')"
         )
 
     # created_at may be declared directly or inherited from an audit mixin.
-    if "created_at" not in columns and not _has_base(cls_node, AUDIT_MIXINS):
+    if (
+        "created_at" in _REQUIRED_COLUMNS
+        and "created_at" not in columns
+        and not _has_base(cls_node, AUDIT_MIXINS)
+    ):
         violations.append(
             f"{loc} — class {class_name} missing 'created_at' column "
             f"(all tables must have a created_at timestamp)"
@@ -180,38 +195,7 @@ def test_orm_models_have_created_at() -> None:
     assert not violations, "ORM models missing 'created_at' timestamp:\n" + "\n".join(violations)
 
 
-EXEMPT_FROM_KSUID = frozenset(
-    {
-        "apis",
-        "api_revisions",
-        "operation_url_indexes",
-        "security_schemes",
-        "security_scheme_flows",
-        "spec_files",
-        "servers",
-        "server_variables",
-        "operations",
-        "oauth_client_credentials",
-        "basic_credentials",
-        "token_value_credentials",
-        # Structurally single-row cache of the upstream catalog manifest. Its id is
-        # a fixed sentinel (CatalogSnapshot.SINGLETON_ID), not a per-entity ksuid —
-        # that constant key is what makes a concurrent refresh collide instead of
-        # appending a second snapshot row.
-        "catalog_snapshots",
-        # Structurally single-row first-run lock. Its id is a fixed sentinel
-        # (SETUP_SENTINEL_ID), not a per-entity ksuid — that constant key is what
-        # makes a second concurrent first-admin attempt collide on the primary key
-        # instead of inserting a second row. A ksuid default would defeat the lock.
-        "setup_sentinels",
-        # Structurally single-row holder of the opaque telemetry instance id. Its
-        # id is a fixed sentinel (INSTANCE_IDENTITY_ID == "singleton"), not a
-        # per-entity ksuid — that constant key is what makes a concurrent seed on
-        # a second replica collide on the primary key (the loser reads the row),
-        # which is exactly the once-per-instance dedupe.
-        "instance_identities",
-    }
-)
+EXEMPT_FROM_KSUID = frozenset(_FACTS["ksuid_exempt_tables"])
 
 
 def _check_ksuid_default(filepath: Path, cls_node: ast.ClassDef) -> list[str]:
@@ -267,6 +251,8 @@ def _is_generate_ksuid_call(node: ast.expr) -> bool:
 @pytest.mark.arch
 def test_orm_id_uses_ksuid() -> None:
     """Non-exempt ORM models must use generate_ksuid for their id server_default."""
+    if _FACTS["primary_key"] != "ksuid":
+        pytest.skip(f"primary_key strategy is {_FACTS['primary_key']!r}, not 'ksuid'")
     violations: list[str] = []
     for py_file in python_files_in(SRC_ROOT):
         if py_file.is_relative_to(SRC_ROOT / "migrations"):

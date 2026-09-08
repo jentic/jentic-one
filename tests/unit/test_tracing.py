@@ -24,6 +24,7 @@ from jentic_one.shared.config import TracingConfig
 from jentic_one.shared.tracing import (
     JENTIC_TRACESTATE_KEY,
     configure_tracing,
+    current_trace_id,
     instrument_outbound_client,
     jentic_tracestate,
     pack_jentic_tracestate,
@@ -52,6 +53,30 @@ def test_configure_tracing_idempotent():
     first_provider = configure_tracing("test-service")
     second_provider = configure_tracing("test-service")
     assert first_provider is second_provider
+
+
+# --------------------------------------------------------------------------- #
+# current_trace_id
+# --------------------------------------------------------------------------- #
+
+
+def test_current_trace_id_formats_the_active_span_id_as_32_hex():
+    span_context = SpanContext(
+        trace_id=0x801384A0E0EB70D0C180CD38BCBA4D38,
+        span_id=0x9BAAEE8F1FB43393,
+        is_remote=True,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    token = otel_context.attach(set_span_in_context(NonRecordingSpan(span_context)))
+    try:
+        assert current_trace_id() == "801384a0e0eb70d0c180cd38bcba4d38"
+    finally:
+        otel_context.detach(token)
+
+
+def test_current_trace_id_is_none_without_a_valid_span():
+    """Outside a span (or with tracing unconfigured) callers get None, not garbage."""
+    assert current_trace_id() is None
 
 
 # --------------------------------------------------------------------------- #

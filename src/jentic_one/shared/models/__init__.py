@@ -8,6 +8,15 @@ from jentic_one.shared.models.actors import (
     Origin,
     actor_type_from_id,
 )
+from jentic_one.shared.models.api_identity import (
+    API_FIELD_MAX_LENGTH,
+    CredentialScope,
+    canonical_credential_scope,
+    credential_coverage_where,
+    credential_covers,
+    credential_specificity,
+    slugify_api_field,
+)
 from jentic_one.shared.models.audit import AuditAction, AuditReason, AuditTargetType
 from jentic_one.shared.models.credentials import (
     CredentialLocation,
@@ -17,14 +26,28 @@ from jentic_one.shared.models.credentials import (
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.executions import ExecutionStatus
 from jentic_one.shared.models.jobs import JobKind, JobStatus
+from jentic_one.shared.models.oauth_clients import (
+    OAuthClientApprovalStatus,
+    OAuthConsentModel,
+    OAuthGrantStatus,
+    OAuthRegistrationSource,
+    TokenEndpointAuthMethod,
+)
 from jentic_one.shared.models.registry import (
+    ORIGIN_CATALOG,
+    ORIGIN_OVERLAY,
     ApiRevisionSourceType,
     ApiRevisionState,
+    OverlayDeprecationReason,
     OverlayStatus,
+    RevisionOrigin,
 )
 from jentic_one.shared.models.users import AuthProvider, InviteState
 
 __all__ = [
+    "API_FIELD_MAX_LENGTH",
+    "ORIGIN_CATALOG",
+    "ORIGIN_OVERLAY",
     "AccessRequestItemStatus",
     "AccessRequestStatus",
     "ActorStatus",
@@ -37,6 +60,7 @@ __all__ = [
     "AuditTargetType",
     "AuthProvider",
     "CredentialLocation",
+    "CredentialScope",
     "CredentialType",
     "EventSeverity",
     "EventType",
@@ -44,8 +68,20 @@ __all__ = [
     "InviteState",
     "JobKind",
     "JobStatus",
+    "OAuthClientApprovalStatus",
+    "OAuthConsentModel",
+    "OAuthGrantStatus",
+    "OAuthRegistrationSource",
     "Origin",
+    "OverlayDeprecationReason",
     "OverlayStatus",
+    "RevisionOrigin",
     "StoredCredentialType",
+    "TokenEndpointAuthMethod",
     "actor_type_from_id",
+    "canonical_credential_scope",
+    "credential_coverage_where",
+    "credential_covers",
+    "credential_specificity",
+    "slugify_api_field",
 ]

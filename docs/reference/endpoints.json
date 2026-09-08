@@ -32,6 +32,51 @@
       "typical_caller": null
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "mcpOauthAuthorizationServer",
+      "path": "/.well-known/oauth-authorization-server/mcp",
+      "public": true,
+      "required_scopes": [],
+      "summary": "OAuth authorization server metadata for the MCP resource",
+      "surface": ".well-known",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "mcpOauthProtectedResourceRootAlias",
+      "path": "/.well-known/oauth-protected-resource",
+      "public": true,
+      "required_scopes": [],
+      "summary": "OAuth protected resource metadata (root alias for the MCP resource)",
+      "surface": ".well-known",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "mcpOauthProtectedResource",
+      "path": "/.well-known/oauth-protected-resource/mcp",
+      "public": true,
+      "required_scopes": [],
+      "summary": "OAuth protected resource metadata for the MCP resource",
+      "surface": ".well-known",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -279,6 +324,234 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:read": []
+      },
+      "method": "GET",
+      "operation_id": "listOauthClients",
+      "path": "/admin/oauth-clients",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:read"
+      ],
+      "summary": "List OAuth clients",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "createOauthClient",
+      "path": "/admin/oauth-clients",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Register OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "deactivateOauthClient",
+      "path": "/admin/oauth-clients/{id}",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Deactivate OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:read": []
+      },
+      "method": "GET",
+      "operation_id": "getOauthClient",
+      "path": "/admin/oauth-clients/{id}",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:read"
+      ],
+      "summary": "Get OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "updateOauthClient",
+      "path": "/admin/oauth-clients/{id}",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Update OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rotateOauthClientSecret",
+      "path": "/admin/oauth-clients/{id}/rotate-secret",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Rotate client secret",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "approveOauthClient",
+      "path": "/admin/oauth-clients/{id}:approve",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Approve OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "denyOauthClient",
+      "path": "/admin/oauth-clients/{id}:deny",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Deny OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:read": []
+      },
+      "method": "GET",
+      "operation_id": "listOauthGrants",
+      "path": "/admin/oauth-grants",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:read"
+      ],
+      "summary": "List OAuth grants",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
         "agents:read": []
@@ -451,6 +724,52 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "PUT",
+      "operation_id": "updateAgentJwks",
+      "path": "/agents/{agent_id}/jwks",
+      "public": false,
+      "required_scopes": [
+        "agents:write"
+      ],
+      "summary": "Update Agent Jwks",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "listAgentOauthGrants",
+      "path": "/agents/{agent_id}/oauth-grants",
+      "public": false,
+      "required_scopes": [],
+      "summary": "List agent OAuth grants",
+      "surface": "agents",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
         "agents:read": []
       },
       "method": "GET",
@@ -585,6 +904,23 @@
         "agents:write"
       ],
       "summary": "Approve Agent",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "claimAgent",
+      "path": "/agents/{agent_id}:claim",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Claim Agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -1033,11 +1369,10 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
+      "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
-        "apis:write": [
-          "apis:read",
-          "catalog:import"
+        "overlays:confirm": [
+          "apis:read"
         ]
       },
       "method": "POST",
@@ -1045,11 +1380,37 @@
       "path": "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm",
       "public": false,
       "required_scopes": [
-        "apis:write"
+        "overlays:confirm"
       ],
       "summary": "Confirm Overlay",
       "surface": "apis",
-      "typical_caller": "any"
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "overlays:confirm": [
+          "apis:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rollbackOverlay",
+      "path": "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback",
+      "public": false,
+      "required_scopes": [
+        "overlays:confirm"
+      ],
+      "summary": "Rollback Overlay",
+      "surface": "apis",
+      "typical_caller": "operator"
     },
     {
       "actor_types": [
@@ -1321,6 +1682,21 @@
       "authenticated": false,
       "group": "Public (unauthenticated)",
       "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "authIdpDescriptor",
+      "path": "/auth/idp",
+      "public": true,
+      "required_scopes": [],
+      "summary": "External IdP login descriptor",
+      "surface": "auth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
       "method": "POST",
       "operation_id": "login",
       "path": "/auth/login",
@@ -1329,6 +1705,23 @@
       "summary": "Log in",
       "surface": "auth",
       "typical_caller": null
+    },
+    {
+      "actor_types": [
+        "user"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "refreshSession",
+      "path": "/auth/refresh",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Refresh session token",
+      "surface": "auth",
+      "typical_caller": "operator"
     },
     {
       "actor_types": [],
@@ -1454,6 +1847,58 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
+        "events:write": [
+          "events:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "snoozeCatalogEntry",
+      "path": "/catalog/{api_id}:snooze",
+      "public": false,
+      "required_scopes": [
+        "events:write"
+      ],
+      "summary": "Snooze Catalog Entry",
+      "surface": "catalog",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "events:write": [
+          "events:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "unsnoozeCatalogEntry",
+      "path": "/catalog/{api_id}:unsnooze",
+      "public": false,
+      "required_scopes": [
+        "events:write"
+      ],
+      "summary": "Unsnooze Catalog Entry",
+      "surface": "catalog",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
         "org:admin": [
           "agents:read",
           "agents:write",
@@ -1472,6 +1917,9 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -1904,6 +2352,21 @@
       "typical_caller": "agent"
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getInstance",
+      "path": "/instance",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Backend identity",
+      "surface": "instance",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -2002,6 +2465,56 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "loginPage",
+      "path": "/login",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Local-account login form (authorization flow)",
+      "surface": "login",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "loginSubmit",
+      "path": "/login",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Local-account login submit (authorization flow)",
+      "surface": "login",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "reportMcpConfigRegistration",
+      "path": "/mcp/config-registrations",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Report MCP config registration",
+      "surface": "mcp",
+      "typical_caller": "any"
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -2050,6 +2563,9 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -2098,6 +2614,9 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -2223,12 +2742,118 @@
       "authenticated": false,
       "group": "Public (unauthenticated)",
       "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "registerOauthClientEndpoint",
+      "path": "/oauth-clients",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Register OAuth client (anonymous DCR)",
+      "surface": "oauth-clients",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "revokeOauthGrant",
+      "path": "/oauth-grants/{grant_id}:revoke",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Revoke OAuth grant",
+      "surface": "oauth-grants",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "approvalDecisionEndpoint",
+      "path": "/oauth/approval/decision",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Approve or deny a pending client inline (approval-pending page)",
+      "surface": "oauth",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "approvalStatusEndpoint",
+      "path": "/oauth/approval/status",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Poll client approval status (approval-pending page)",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
       "method": "GET",
       "operation_id": "authorizeOauthCallback",
       "path": "/oauth/callback",
       "public": true,
       "required_scopes": [],
-      "summary": "Oauth Callback",
+      "summary": "Authorize Oauth Callback",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "consentPage",
+      "path": "/oauth/consent",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Consent Page",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "consentSubmit",
+      "path": "/oauth/consent",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Consent Submit",
       "surface": "oauth",
       "typical_caller": null
     },
@@ -2276,7 +2901,7 @@
         "service_account",
         "toolkit"
       ],
-      "auth_note": null,
+      "auth_note": "Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.",
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {},
@@ -2739,6 +3364,26 @@
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getVersion",
+      "path": "/system/version",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Running and latest-available app version",
+      "surface": "system",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
       "implied_scopes": {
         "owner:toolkits:read": [],
         "toolkits:read": []
@@ -3038,6 +3683,32 @@
         "toolkits:write"
       ],
       "summary": "Replace binding permission rules",
+      "surface": "toolkits",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "owner:toolkits:read": [],
+        "toolkits:read": []
+      },
+      "method": "POST",
+      "operation_id": "testToolkitPermissions",
+      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test",
+      "public": false,
+      "required_scopes": [
+        "toolkits:read",
+        "owner:toolkits:read"
+      ],
+      "summary": "Dry-run permission evaluation",
       "surface": "toolkits",
       "typical_caller": "any"
     },
@@ -3617,6 +4288,9 @@
               "executions:read",
               "jobs:read",
               "jobs:write",
+              "oauth-clients:read",
+              "oauth-clients:write",
+              "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
               "toolkits:read",
@@ -3642,6 +4316,9 @@
               "executions:read",
               "jobs:read",
               "jobs:write",
+              "oauth-clients:read",
+              "oauth-clients:write",
+              "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
               "toolkits:read",
@@ -3764,6 +4441,26 @@
             ],
             "is_superuser": false,
             "name": "catalog:import"
+          }
+        ]
+      },
+      {
+        "blurb": "Confirming spec overlays — rewrites the API's served revision.",
+        "label": "Overlays",
+        "name": "overlays",
+        "scopes": [
+          {
+            "action": "confirm",
+            "description": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default)",
+            "family": "overlays",
+            "implies": [
+              "apis:read"
+            ],
+            "implies_transitive": [
+              "apis:read"
+            ],
+            "is_superuser": false,
+            "name": "overlays:confirm"
           }
         ]
       },
@@ -4070,6 +4767,35 @@
             "name": "config:write"
           }
         ]
+      },
+      {
+        "blurb": "",
+        "label": "Oauth Clients",
+        "name": "oauth-clients",
+        "scopes": [
+          {
+            "action": "read",
+            "description": "Read OAuth client registrations",
+            "family": "oauth-clients",
+            "implies": [],
+            "implies_transitive": [],
+            "is_superuser": false,
+            "name": "oauth-clients:read"
+          },
+          {
+            "action": "write",
+            "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+            "family": "oauth-clients",
+            "implies": [
+              "oauth-clients:read"
+            ],
+            "implies_transitive": [
+              "oauth-clients:read"
+            ],
+            "is_superuser": false,
+            "name": "oauth-clients:write"
+          }
+        ]
       }
     ],
     "schema": "jentic.scope-catalog/v1",
@@ -4266,6 +4992,28 @@
         "name": "jobs:write"
       },
       {
+        "action": "read",
+        "description": "Read OAuth client registrations",
+        "family": "oauth-clients",
+        "implies": [],
+        "implies_transitive": [],
+        "is_superuser": false,
+        "name": "oauth-clients:read"
+      },
+      {
+        "action": "write",
+        "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+        "family": "oauth-clients",
+        "implies": [
+          "oauth-clients:read"
+        ],
+        "implies_transitive": [
+          "oauth-clients:read"
+        ],
+        "is_superuser": false,
+        "name": "oauth-clients:write"
+      },
+      {
         "action": "admin",
         "description": "Full organisation administrator access",
         "family": "org",
@@ -4287,6 +5035,9 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -4312,6 +5063,9 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -4321,6 +5075,19 @@
         ],
         "is_superuser": true,
         "name": "org:admin"
+      },
+      {
+        "action": "confirm",
+        "description": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default)",
+        "family": "overlays",
+        "implies": [
+          "apis:read"
+        ],
+        "implies_transitive": [
+          "apis:read"
+        ],
+        "is_superuser": false,
+        "name": "overlays:confirm"
       },
       {
         "action": "read",
@@ -4451,7 +5218,7 @@
         "name": "users:write"
       }
     ],
-    "total": 30
+    "total": 33
   },
-  "total": 150
+  "total": 182
 }

@@ -19,15 +19,23 @@ const (
 	ModeDocker = "docker"
 )
 
-// Manifest records what `jentic install` / the installer put on disk so
-// `jentic update` knows what to track (which repo/ref) and how to refresh it
+// Manifest records what `jenticctl install` / the installer put on disk so
+// `jenticctl update` knows what to track (which repo/ref) and how to refresh it
 // (local venv vs Docker compose). It is written to ~/.jentic/install.json by
-// both tools/install.sh (CLI fields) and `jentic install` (stack fields).
+// both tools/install.sh (CLI fields) and `jenticctl install` (stack fields).
 type Manifest struct {
 	// Repo is the owner/name source repository (e.g. "jentic/jentic-one").
 	Repo string `json:"repo,omitempty"`
 	// Ref is the git branch, tag, or commit the install tracks.
 	Ref string `json:"ref,omitempty"`
+	// StackRef is the ref the *stack* (venv or Docker images) was last
+	// successfully built from. It is tracked separately from Ref because the two
+	// halves of `jentic update` advance independently: a Homebrew-managed CLI is
+	// refreshed out-of-band, and a CLI swap that is not followed by a successful
+	// stack rebuild must not advertise the stack as current. Empty on installs
+	// written before this field existed; ResolvedStackRef falls back to Ref so
+	// those keep their previous behaviour.
+	StackRef string `json:"stack_ref,omitempty"`
 	// Commit is the short SHA that was built.
 	Commit string `json:"commit,omitempty"`
 	// CLIVersion is the version stamped into the installed binary.
@@ -52,6 +60,28 @@ func (m *Manifest) ResolvedRepo() string {
 		return m.Repo
 	}
 	return DefaultRepo
+}
+
+// ResolvedStackRef returns the ref the stack was last built from, falling back
+// to Ref for installs written before StackRef existed. Callers gating a stack
+// rebuild must use this rather than Ref, so a CLI-only version bump can never
+// make a stale stack look current (#943).
+func (m *Manifest) ResolvedStackRef() string {
+	if m.StackRef != "" {
+		return m.StackRef
+	}
+	return m.Ref
+}
+
+// RecordStackBuild persists the ref the stack was just built from. Call it only
+// after a stack rebuild has actually succeeded: StackRef is what gates the next
+// `jentic update`, so writing it early is what wedges a user on a stale stack.
+func (m *Manifest) RecordStackBuild(paths Paths, ref string) error {
+	if ref == "" {
+		return nil
+	}
+	m.StackRef = ref
+	return m.Save(paths)
 }
 
 // LoadManifest reads <paths>/install.json. A missing file is not an error: it
@@ -93,9 +123,13 @@ func (m *Manifest) Save(paths Paths) error {
 
 // MergeStack updates the stack-related fields (mode, db, broker port) plus the
 // CLI metadata known at runtime (ref, commit, version) on top of whatever the
-// installer recorded, then saves. This is what `jentic install` calls so a
+// installer recorded, then saves. This is what `jenticctl install` calls so a
 // re-install keeps any CLI fields written by tools/install.sh while refreshing
 // the rest.
+//
+// `install` only reaches this point after the stack was built, so it also
+// advances StackRef — an install is the baseline the next `update` compares
+// against.
 func (m *Manifest) MergeStack(paths Paths, mode, db, brokerPort, ref, commit, cliVersion string) error {
 	m.Mode = mode
 	m.DB = db
@@ -104,6 +138,7 @@ func (m *Manifest) MergeStack(paths Paths, mode, db, brokerPort, ref, commit, cl
 	}
 	if ref != "" {
 		m.Ref = ref
+		m.StackRef = ref
 	}
 	if commit != "" {
 		m.Commit = commit

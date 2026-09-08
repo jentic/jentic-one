@@ -1,0 +1,5 @@
+exit: 1
+--- stdout ---
+
+--- stderr ---
+{"actionable_step":"Use an https broker URL, or a loopback (127.0.0.1/localhost) http broker for local installs.","error":"refusing to use insecure endpoint \"http://203.0.113.9:8100/v1/pets\": https is required (http allowed only for localhost)","error_code":"TRANSPORT_ERROR","schema_version":"1"}

@@ -15,12 +15,13 @@ type MockToolkit = {
 	credential_count: number;
 	permissions: Array<Record<string, unknown>>;
 	created_at: string;
+	created_by?: string | null;
 	updated_at: string | null;
 };
 
 const now = () => new Date().toISOString();
 
-const toolkits: MockToolkit[] = [
+const seedToolkits = (): MockToolkit[] => [
 	{
 		toolkit_id: 'tk_demo_github',
 		name: 'GitHub Tools',
@@ -30,6 +31,7 @@ const toolkits: MockToolkit[] = [
 		credential_count: 1,
 		permissions: [],
 		created_at: '2026-05-01T10:00:00Z',
+		created_by: 'admin@local',
 		updated_at: null,
 	},
 	{
@@ -41,9 +43,25 @@ const toolkits: MockToolkit[] = [
 		credential_count: 2,
 		permissions: [],
 		created_at: '2026-04-12T08:30:00Z',
+		created_by: 'admin@local',
 		updated_at: '2026-06-01T12:00:00Z',
 	},
 ];
+
+const toolkits: MockToolkit[] = seedToolkits();
+
+/**
+ * DEV+MSW-only e2e seeding hooks, aggregated by the shared MSW root
+ * (`src/mocks/handlers.ts` → `installE2eTestHooks`) — same additive-registry
+ * shape as `credentialsE2eHooks`. Lets a spec (or a screenshot script) reset
+ * the in-module store to the seed or to an arbitrary list (e.g. `[]` for the
+ * empty state). Tree-shaken from production builds.
+ */
+export const toolkitsE2eHooks = {
+	resetToolkitsStore(next?: MockToolkit[]) {
+		toolkits.splice(0, toolkits.length, ...(next ?? seedToolkits()));
+	},
+};
 
 const keysByToolkit: Record<string, Array<Record<string, unknown>>> = {
 	tk_demo_github: [
@@ -70,8 +88,22 @@ const bindingsByToolkit: Record<string, Array<Record<string, unknown>>> = {
 			api_vendor: 'github',
 			credential_type: 'api_key',
 			bound_at: '2026-05-01T10:10:00Z',
+			warnings: [],
 			permissions: [
-				{ effect: 'allow', methods: ['GET'], path: '/repos/.*', _system: false },
+				{
+					effect: 'allow',
+					methods: ['GET'],
+					path: '/repos/.*',
+					operations: [
+						'repos/get',
+						'repos/list-for-org',
+						'issues/list-for-repo',
+						'pulls/list',
+						'pulls/get',
+					],
+					_system: false,
+				},
+				{ effect: 'deny', methods: ['DELETE'], path: '/repos/.*', _system: false },
 				{
 					effect: 'deny',
 					methods: null,
@@ -127,25 +159,134 @@ const agents: Array<Record<string, unknown>> = [
 
 const find = (id: string) => toolkits.find((t) => t.toolkit_id === id);
 
+/**
+ * Zero-rules bind warning — mirrors the backend's `BindingWarningSchema`
+ * emitted when a binding lands with no permission rules (the broker denies by
+ * default until rules are added).
+ */
+const zeroRulesWarning = (credentialId: string) => ({
+	code: 'no_permission_rules',
+	credential_id: credentialId,
+	message:
+		'This binding has no permission rules — the broker denies every request by default. Add allow rules to open access.',
+});
+
+/**
+ * Per-toolkit observability fixtures for the detail page's KPI strip +
+ * Activity tab. The github toolkit is busy; the suspended billing toolkit is
+ * quiet (zero executions), which exercises the empty chart/feed states.
+ */
+const usageTrendByToolkit: Record<string, number[]> = {
+	tk_demo_github: [64, 88, 71, 120, 104, 141, 126],
+	tk_demo_billing: [],
+};
+
+const executionsByToolkit: Record<string, Array<Record<string, unknown>>> = {
+	tk_demo_github: [
+		{
+			execution_id: 'tkexec_1',
+			toolkit_id: 'tk_demo_github',
+			trace_id: 'trace_tk_1',
+			status: 'completed',
+			operation_id: 'github.create_issue',
+			api: { vendor: 'github', name: 'github-api' },
+			actor_id: 'agt_support_bot',
+			actor_type: 'agent',
+			http_status: 201,
+			duration_ms: 310,
+			error: null,
+			origin: 'agent',
+			started_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+			created_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+			_links: { self: '/executions/tkexec_1' },
+		},
+		{
+			execution_id: 'tkexec_2',
+			toolkit_id: 'tk_demo_github',
+			trace_id: 'trace_tk_2',
+			status: 'failed',
+			operation_id: 'github.delete_repo',
+			api: { vendor: 'github', name: 'github-api' },
+			actor_id: 'agt_support_bot',
+			actor_type: 'agent',
+			http_status: 403,
+			duration_ms: 22,
+			error: 'Denied by permission rule (deny /admin/.*).',
+			origin: 'agent',
+			started_at: new Date(Date.now() - 18 * 60_000).toISOString(),
+			created_at: new Date(Date.now() - 18 * 60_000).toISOString(),
+			_links: { self: '/executions/tkexec_2' },
+		},
+		{
+			execution_id: 'tkexec_3',
+			toolkit_id: 'tk_demo_github',
+			trace_id: 'trace_tk_3',
+			status: 'completed',
+			operation_id: 'github.list_prs',
+			api: { vendor: 'github', name: 'github-api' },
+			actor_id: 'agt_support_bot',
+			actor_type: 'agent',
+			http_status: 200,
+			duration_ms: 180,
+			error: null,
+			origin: 'agent',
+			started_at: new Date(Date.now() - 22 * 60_000).toISOString(),
+			created_at: new Date(Date.now() - 22 * 60_000).toISOString(),
+			_links: { self: '/executions/tkexec_3' },
+		},
+	],
+};
+
 export const toolkitsHandlers = [
-	http.get('/toolkits', () =>
-		HttpResponse.json({ data: toolkits, has_more: false, next_cursor: null }),
-	),
+	http.get('/toolkits', ({ request }) => {
+		const url = new URL(request.url);
+		const limit = Math.max(1, Number(url.searchParams.get('limit') ?? 50));
+		const cursor = url.searchParams.get('cursor');
+		const start = cursor ? Number(cursor) : 0;
+		const page = toolkits.slice(start, start + limit);
+		const nextStart = start + limit;
+		const hasMore = nextStart < toolkits.length;
+		return HttpResponse.json({
+			data: page,
+			has_more: hasMore,
+			next_cursor: hasMore ? String(nextStart) : null,
+		});
+	}),
 
 	http.post('/toolkits', async ({ request }) => {
-		const body = (await request.json()) as { name: string; description?: string | null };
+		const body = (await request.json()) as {
+			name: string;
+			description?: string | null;
+			credential_ids?: string[] | null;
+		};
+		const credentialIds = body.credential_ids ?? [];
 		const toolkit: MockToolkit = {
 			toolkit_id: `tk_${Math.random().toString(36).slice(2, 8)}`,
 			name: body.name,
 			description: body.description ?? null,
 			active: true,
 			key_count: 1,
-			credential_count: 0,
+			credential_count: credentialIds.length,
 			permissions: [],
 			created_at: now(),
+			created_by: 'admin@local',
 			updated_at: null,
 		};
 		toolkits.unshift(toolkit);
+		// Inline binds land with zero rules — mirror the backend's warning.
+		if (credentialIds.length > 0) {
+			bindingsByToolkit[toolkit.toolkit_id] = credentialIds.map((credentialId) => ({
+				toolkit_id: toolkit.toolkit_id,
+				credential_id: credentialId,
+				label: credentialId,
+				api_name: null,
+				api_vendor: null,
+				credential_type: null,
+				bound_at: now(),
+				warnings: [zeroRulesWarning(credentialId)],
+				permissions: [],
+			}));
+		}
 		return HttpResponse.json({ toolkit, api_key: 'jntc_live_mockplaintextkey_show_once' });
 	}),
 
@@ -160,7 +301,12 @@ export const toolkitsHandlers = [
 		if (!toolkit) return new HttpResponse(null, { status: 404 });
 		const body = (await request.json()) as Partial<MockToolkit>;
 		if (body.name != null) toolkit.name = body.name;
-		if (body.description !== undefined) toolkit.description = body.description ?? null;
+		// Mirror the real backend: a `null` description is IGNORED (leaves the
+		// current value untouched, so a clear sent as `null` silently reverts),
+		// while an empty string is HONOURED and clears the field. Only a
+		// non-`null` value (including `''`) is applied.
+		if (body.description !== undefined && body.description !== null)
+			toolkit.description = body.description;
 		if (body.active != null) toolkit.active = body.active;
 		toolkit.updated_at = now();
 		return HttpResponse.json(toolkit);
@@ -188,14 +334,17 @@ export const toolkitsHandlers = [
 
 	http.post('/toolkits/:toolkitId/keys', async ({ params, request }) => {
 		const toolkitId = params.toolkitId as string;
-		const body = (await request.json()) as { label?: string | null };
+		const body = (await request.json()) as {
+			label?: string | null;
+			allowed_ips?: string[] | null;
+		};
 		const key = {
 			key_id: `key_${Math.random().toString(36).slice(2, 8)}`,
 			toolkit_id: toolkitId,
 			label: body.label ?? null,
 			key_preview: 'jntc_live_new…',
 			revoked: false,
-			allowed_ips: null,
+			allowed_ips: body.allowed_ips?.length ? body.allowed_ips : null,
 			last_used_at: null,
 			created_at: now(),
 		};
@@ -207,9 +356,15 @@ export const toolkitsHandlers = [
 		const list = keysByToolkit[params.toolkitId as string] ?? [];
 		const key = list.find((k) => k.key_id === params.keyId);
 		if (!key) return new HttpResponse(null, { status: 404 });
-		const body = (await request.json()) as { revoked?: boolean | null; label?: string | null };
+		const body = (await request.json()) as {
+			revoked?: boolean | null;
+			label?: string | null;
+			allowed_ips?: string[] | null;
+		};
 		if (body.revoked != null) key.revoked = body.revoked;
 		if (body.label !== undefined) key.label = body.label ?? null;
+		if (body.allowed_ips !== undefined)
+			key.allowed_ips = body.allowed_ips?.length ? body.allowed_ips : null;
 		return HttpResponse.json(key);
 	}),
 
@@ -230,7 +385,33 @@ export const toolkitsHandlers = [
 
 	http.post('/toolkits/:toolkitId/credentials', async ({ params, request }) => {
 		const toolkitId = params.toolkitId as string;
-		const body = (await request.json()) as { credential_id: string };
+		const body = (await request.json()) as {
+			credential_id: string;
+			allow_all?: boolean;
+			permissions?: Array<Record<string, unknown>> | null;
+		};
+		// Mirror the backend's error contract: allow_all XOR permissions (422),
+		// duplicate bind (409) — so the dialog's failure paths stay testable.
+		if (body.allow_all && (body.permissions ?? []).length > 0) {
+			return HttpResponse.json(
+				{ detail: 'allow_all and permissions are mutually exclusive' },
+				{ status: 422 },
+			);
+		}
+		if (
+			(bindingsByToolkit[toolkitId] ?? []).some((b) => b.credential_id === body.credential_id)
+		) {
+			return HttpResponse.json(
+				{ detail: 'Credential is already bound to this toolkit.' },
+				{ status: 409 },
+			);
+		}
+		// `allow_all` expands to one catch-all allow rule; `permissions` is stored
+		// verbatim; neither ⇒ zero rules and the broker default-denies (flagged
+		// via the warning). The backend does NOT append system rules on bind.
+		const agentRules: Array<Record<string, unknown>> = body.allow_all
+			? [{ effect: 'allow', methods: null, path: '.*', operations: null }]
+			: (body.permissions ?? []);
 		const binding = {
 			toolkit_id: toolkitId,
 			credential_id: body.credential_id,
@@ -239,10 +420,11 @@ export const toolkitsHandlers = [
 			api_vendor: null,
 			credential_type: null,
 			bound_at: now(),
-			permissions: [],
+			warnings: agentRules.length === 0 ? [zeroRulesWarning(body.credential_id)] : [],
+			permissions: agentRules,
 		};
 		bindingsByToolkit[toolkitId] = [...(bindingsByToolkit[toolkitId] ?? []), binding];
-		return HttpResponse.json(binding);
+		return HttpResponse.json(binding, { status: 201 });
 	}),
 
 	http.delete('/toolkits/:toolkitId/credentials/:credentialId', ({ params }) => {
@@ -265,18 +447,124 @@ export const toolkitsHandlers = [
 			const list = bindingsByToolkit[params.toolkitId as string] ?? [];
 			const binding = list.find((b) => b.credential_id === params.credentialId);
 			const rules = (await request.json()) as Array<Record<string, unknown>>;
-			const withSystem = [
-				...rules,
-				{
-					effect: 'deny',
-					methods: null,
-					path: '/admin/.*',
-					_system: true,
-					_comment: 'system safety',
-				},
-			];
-			if (binding) binding.permissions = withSystem;
-			return HttpResponse.json({ data: withSystem });
+			// Backend contract: a condition-less allow is a 422, and an invalid
+			// regex path is a 422 — reject like the real schema does.
+			for (const rule of rules) {
+				const conditionless =
+					!(rule.methods as string[] | null)?.length &&
+					!(typeof rule.path === 'string' && rule.path.trim()) &&
+					!(rule.operations as string[] | null)?.length;
+				if (rule.effect === 'allow' && conditionless) {
+					return HttpResponse.json(
+						{ detail: 'A condition-less allow rule is not permitted.' },
+						{ status: 422 },
+					);
+				}
+				const mode = (rule.match_mode as string | undefined) ?? 'regex';
+				if (typeof rule.path === 'string' && rule.path && mode === 'regex') {
+					try {
+						new RegExp(rule.path);
+					} catch {
+						return HttpResponse.json(
+							{ detail: `Invalid path regex: ${rule.path}` },
+							{ status: 422 },
+						);
+					}
+				}
+			}
+			// Replace USER rules only — pre-existing system rules are
+			// platform-managed and survive the save untouched.
+			const systemRules = (
+				(binding?.permissions as Array<Record<string, unknown>>) ?? []
+			).filter((r) => r._system);
+			const next = [...rules.map((r) => ({ ...r, _system: false })), ...systemRules];
+			if (binding) {
+				binding.permissions = next;
+				// Authoring rules resolves the zero-rules warning.
+				if (rules.length > 0) binding.warnings = [];
+			}
+			return HttpResponse.json({ data: next });
+		},
+	),
+
+	// Broker dry-run (`POST …/permissions:test`) — a faithful port of the
+	// backend's vendor-POOLED evaluation: rules from every same-vendor binding
+	// on the toolkit compete in one ordered list (binding insertion order mirrors
+	// the sequence column); null conditions match everything; condition-less
+	// allows are skipped; operation-scoped rules only fire when the request
+	// carries an operation id; prefix/exact match modes are honoured. The colon
+	// is escaped so path-to-regexp reads a literal `permissions:test` segment.
+	http.post(
+		'/toolkits/:toolkitId/credentials/:credentialId/permissions\\:test',
+		async ({ params, request }) => {
+			const list = bindingsByToolkit[params.toolkitId as string] ?? [];
+			const binding = list.find((b) => b.credential_id === params.credentialId);
+			if (!binding) return new HttpResponse(null, { status: 404 });
+			const body = (await request.json()) as {
+				method: string;
+				path: string;
+				operation_id?: string | null;
+			};
+			// Pool rules across all bindings sharing this binding's vendor.
+			const vendor = (binding.api_vendor as string | null) ?? null;
+			const pooled: Array<{ rule: Record<string, unknown>; credentialId: string }> = [];
+			for (const b of list) {
+				if (((b.api_vendor as string | null) ?? null) !== vendor) continue;
+				for (const rule of (b.permissions as Array<Record<string, unknown>>) ?? []) {
+					pooled.push({ rule, credentialId: b.credential_id as string });
+				}
+			}
+			const method = body.method.toUpperCase();
+			for (let i = 0; i < pooled.length; i++) {
+				const { rule, credentialId } = pooled[i];
+				const methods = rule.methods as string[] | null;
+				const path = rule.path as string | null;
+				const operations = rule.operations as string[] | null;
+				// The broker skips a condition-less allow — it must not silently
+				// unlock a dry-run any more than it unlocks a real request.
+				if (!methods?.length && !path && !operations?.length && rule.effect === 'allow')
+					continue;
+				if (methods?.length && !methods.map((m) => m.toUpperCase()).includes(method))
+					continue;
+				if (path != null && path !== '') {
+					const mode = (rule.match_mode as string | undefined) ?? 'regex';
+					let matches = false;
+					if (mode === 'prefix') matches = body.path.startsWith(path);
+					else if (mode === 'exact') matches = body.path === path;
+					else {
+						try {
+							// `^(?:…)$` mirrors Python's re.fullmatch, including
+							// for alternations like `a|b`.
+							matches = new RegExp(`^(?:${path})$`).test(body.path);
+						} catch {
+							matches = false;
+						}
+					}
+					if (!matches) continue;
+				}
+				if (
+					operations?.length &&
+					(body.operation_id == null || !operations.includes(body.operation_id))
+				)
+					continue;
+				return HttpResponse.json({
+					allowed: rule.effect === 'allow',
+					matched: true,
+					effect: rule.effect,
+					rule_index: i,
+					is_system: Boolean(rule._system),
+					credential_id: credentialId,
+				});
+			}
+			// No rule matched → default deny.
+			return HttpResponse.json({
+				allowed: false,
+				matched: false,
+				effect: null,
+				rule_index: null,
+				is_system: null,
+				credential_id: null,
+			});
 		},
 	),
 
@@ -328,9 +616,10 @@ export const toolkitsHandlers = [
 		const url = new URL(request.url);
 		const targetType = url.searchParams.get('target_type');
 		const targetId = url.searchParams.get('target_id');
-		if (targetType !== 'toolkit') {
-			return HttpResponse.json({ data: [], has_more: false, next_cursor: null });
-		}
+		// Only the toolkit-scoped lens belongs to this module — other targets
+		// (agents, service accounts, the org-wide Monitor lens) fall through to
+		// their owners' handlers further down the root table.
+		if (targetType !== 'toolkit') return undefined;
 		const data = [
 			{
 				id: 'aud_2',
@@ -354,5 +643,140 @@ export const toolkitsHandlers = [
 			},
 		];
 		return HttpResponse.json({ data, has_more: false, next_cursor: null });
+	}),
+
+	// --- Toolkit-scoped observability lenses -------------------------------
+	//
+	// These two handlers answer ONLY the toolkit-scoped variants of the shared
+	// monitoring endpoints (`?toolkit_id=…`, or `group_by=toolkit` for the list
+	// page's sparklines). Anything else falls through (returns undefined) to
+	// the dashboard/monitor fixtures registered later — MSW is first-match-wins
+	// and the toolkits module registers first.
+
+	http.get('/monitoring/usage', ({ request }) => {
+		const url = new URL(request.url);
+		const toolkitId = url.searchParams.get('toolkit_id');
+		const groupBy = url.searchParams.get('group_by');
+		// The sparkline query is `group_by=toolkit&top_limit=50` (the repository
+		// pins top_limit to the max). The dashboard's Top-usage toolkit lens uses
+		// top_limit=5, so it keeps falling through to its own fixtures.
+		const isSparklineQuery =
+			groupBy === 'toolkit' && url.searchParams.get('top_limit') === '50';
+		if (!toolkitId && !isSparklineQuery) return undefined;
+
+		const nowSec = Math.floor(Date.now() / 60_000) * 60;
+		const untilParam = url.searchParams.get('until');
+		const until = untilParam != null ? Number(untilParam) : nowSec;
+		const sinceParam = url.searchParams.get('since');
+		const since = sinceParam != null ? Number(sinceParam) : until - 7 * 86_400;
+
+		const trendFor = (id: string) => usageTrendByToolkit[id] ?? [];
+		const statsOf = (trend: number[]) => {
+			const total = trend.reduce((sum, v) => sum + v, 0);
+			const failed = Math.round(total * 0.024);
+			return { total, success: total - failed, failed };
+		};
+
+		const bucketsFor = (trend: number[]) =>
+			trend.map((total, i) => {
+				const { failed } = statsOf([total]);
+				return {
+					ts: until - (trend.length - i) * 86_400,
+					total,
+					success: total - failed,
+					failed,
+					avg_ms: 420,
+				};
+			});
+
+		if (toolkitId) {
+			const trend = trendFor(toolkitId);
+			const { total, success, failed } = statsOf(trend);
+			return HttpResponse.json({
+				since,
+				until,
+				bucket_seconds: 86_400,
+				group_by: groupBy ?? 'api',
+				stats: {
+					total,
+					success,
+					failed,
+					pending: 0,
+					avg_ms: total ? 420 : 0,
+					p50_ms: total ? 310 : null,
+					p95_ms: total ? 412 : null,
+					active_now: 0,
+				},
+				buckets: bucketsFor(trend),
+				top: [],
+			});
+		}
+
+		// group_by=toolkit — the list page's sparkline query. Top rows keyed by
+		// the seeded toolkit ids so cards can join on toolkit_id.
+		const top = toolkits
+			.map((t) => {
+				const trend = trendFor(t.toolkit_id);
+				const { total, success, failed } = statsOf(trend);
+				return {
+					key: t.toolkit_id,
+					label: t.toolkit_id,
+					total,
+					success,
+					failed,
+					avg_ms: total ? 420 : 0,
+					trend,
+				};
+			})
+			.filter((row) => row.total > 0)
+			.sort((a, b) => b.total - a.total);
+		const total = top.reduce((sum, r) => sum + r.total, 0);
+		const success = top.reduce((sum, r) => sum + r.success, 0);
+		const failed = top.reduce((sum, r) => sum + r.failed, 0);
+		return HttpResponse.json({
+			since,
+			until,
+			bucket_seconds: 86_400,
+			group_by: 'toolkit',
+			stats: {
+				total,
+				success,
+				failed,
+				pending: 0,
+				avg_ms: total ? 420 : 0,
+				p50_ms: total ? 310 : null,
+				p95_ms: total ? 412 : null,
+				active_now: 0,
+			},
+			buckets: [],
+			top,
+		});
+	}),
+
+	http.get('/executions', ({ request }) => {
+		const url = new URL(request.url);
+		const toolkitId = url.searchParams.get('toolkit_id');
+		if (!toolkitId) return undefined; // Monitor's org-wide fixtures answer.
+		// Honour Monitor's filters too — this handler wins first-match over the
+		// monitor fixtures whenever the toolkit scope chip is active, so the
+		// deep-linked Executions view must keep its status/window/cursor
+		// behaviour instead of silently ignoring them.
+		const status = url.searchParams.get('status');
+		const from = url.searchParams.get('from');
+		const cursor = Number(url.searchParams.get('cursor') ?? 0);
+		const limit = Math.max(1, Number(url.searchParams.get('limit') ?? 25));
+		let rows = executionsByToolkit[toolkitId] ?? [];
+		if (status) rows = rows.filter((r) => r.status === status);
+		if (from) {
+			const fromTs = Date.parse(from);
+			rows = rows.filter((r) => Date.parse(r.started_at as string) >= fromTs);
+		}
+		const page = rows.slice(cursor, cursor + limit);
+		const hasMore = cursor + limit < rows.length;
+		return HttpResponse.json({
+			data: page,
+			has_more: hasMore,
+			next_cursor: hasMore ? String(cursor + limit) : null,
+		});
 	}),
 ];

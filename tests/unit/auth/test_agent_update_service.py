@@ -58,11 +58,16 @@ def _make_agent_row(
 
 
 @pytest.mark.asyncio
+@patch(
+    "jentic_one.auth.services.agent_service.revoke_active_grants_for_agent",
+    new_callable=AsyncMock,
+)
 @patch("jentic_one.auth.services.agent_service.record_audit", new_callable=AsyncMock)
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 async def test_update_agent_sets_owner(
     mock_repo: MagicMock,
     mock_audit: AsyncMock,
+    mock_revoke: AsyncMock,
 ) -> None:
     ctx = _make_ctx()
     svc = AgentService(ctx)
@@ -72,23 +77,95 @@ async def test_update_agent_sets_owner(
     mock_repo.get_by_id_for_update = AsyncMock(return_value=agent_before)
     mock_repo.update_agent = AsyncMock(return_value=agent_after)
 
+    identity = _admin_identity()
     view = await svc.update_agent(
         "agnt_test123",
         update_data={"owner_id": "usr_new_owner"},
-        identity=_admin_identity(),
+        identity=identity,
     )
 
     assert view.owner_id == "usr_new_owner"
     mock_repo.update_agent.assert_called_once()
     mock_audit.assert_called_once()
+    # An owner change is a transfer — the G10 (#1222) grant sweep runs in the
+    # same transaction, attributed to the transferring actor.
+    mock_revoke.assert_awaited_once()
+    assert mock_revoke.await_args is not None
+    assert mock_revoke.await_args.args[1] == "agnt_test123"
+    assert mock_revoke.await_args.kwargs["identity"] is identity
 
 
 @pytest.mark.asyncio
+@patch(
+    "jentic_one.auth.services.agent_service.revoke_active_grants_for_agent",
+    new_callable=AsyncMock,
+)
+@patch("jentic_one.auth.services.agent_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.auth.services.agent_service.AgentRepository")
+async def test_update_agent_unchanged_owner_skips_grant_sweep(
+    mock_repo: MagicMock,
+    mock_audit: AsyncMock,
+    mock_revoke: AsyncMock,
+) -> None:
+    """A PATCH carrying the CURRENT owner_id is not a transfer — no sweep."""
+    ctx = _make_ctx()
+    svc = AgentService(ctx)
+
+    same_owner = _make_agent_row(owner_id="usr_owner")
+    mock_repo.get_by_id_for_update = AsyncMock(return_value=same_owner)
+    mock_repo.update_agent = AsyncMock(return_value=same_owner)
+
+    await svc.update_agent(
+        "agnt_test123",
+        update_data={"owner_id": "usr_owner"},
+        identity=_admin_identity(),
+    )
+
+    mock_revoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch(
+    "jentic_one.auth.services.agent_service.revoke_active_grants_for_agent",
+    new_callable=AsyncMock,
+)
+@patch("jentic_one.auth.services.agent_service.record_audit", new_callable=AsyncMock)
+@patch("jentic_one.auth.services.agent_service.AgentRepository")
+async def test_update_agent_grant_sweep_failure_fails_transfer(
+    mock_repo: MagicMock,
+    mock_audit: AsyncMock,
+    mock_revoke: AsyncMock,
+) -> None:
+    """The sweep is NOT best-effort: its failure propagates (and, in the real
+    transaction context manager, rolls the owner write back) rather than
+    leaving a transferred agent with live grants."""
+    ctx = _make_ctx()
+    svc = AgentService(ctx)
+
+    mock_repo.get_by_id_for_update = AsyncMock(return_value=_make_agent_row(owner_id="usr_old"))
+    mock_repo.update_agent = AsyncMock(return_value=_make_agent_row(owner_id="usr_new"))
+    mock_revoke.side_effect = RuntimeError("sweep failed")
+
+    with pytest.raises(RuntimeError, match="sweep failed"):
+        await svc.update_agent(
+            "agnt_test123",
+            update_data={"owner_id": "usr_new"},
+            identity=_admin_identity(),
+        )
+    mock_audit.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch(
+    "jentic_one.auth.services.agent_service.revoke_active_grants_for_agent",
+    new_callable=AsyncMock,
+)
 @patch("jentic_one.auth.services.agent_service.record_audit", new_callable=AsyncMock)
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 async def test_update_agent_sets_name_and_description(
     mock_repo: MagicMock,
     mock_audit: AsyncMock,
+    mock_revoke: AsyncMock,
 ) -> None:
     ctx = _make_ctx()
     svc = AgentService(ctx)
@@ -106,6 +183,8 @@ async def test_update_agent_sets_name_and_description(
 
     assert view.name == "new-name"
     assert view.description == "new desc"
+    # No owner change — the grant sweep must not run.
+    mock_revoke.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -139,11 +218,16 @@ async def test_update_agent_archived_raises(mock_repo: MagicMock) -> None:
 
 
 @pytest.mark.asyncio
+@patch(
+    "jentic_one.auth.services.agent_service.revoke_active_grants_for_agent",
+    new_callable=AsyncMock,
+)
 @patch("jentic_one.auth.services.agent_service.record_audit", new_callable=AsyncMock)
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 async def test_update_agent_invalid_owner_raises(
     mock_repo: MagicMock,
     mock_audit: AsyncMock,
+    mock_revoke: AsyncMock,
 ) -> None:
     ctx = _make_ctx()
     ctx.admin_db.transaction.return_value.__aexit__ = AsyncMock(

@@ -5,40 +5,76 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+import secrets
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
+from urllib.parse import urlparse
 
 import structlog
 import yaml
-from pydantic import BaseModel, BeforeValidator, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from jentic_one.shared.state.factory import StateBackendConfig
 
 _logger = structlog.get_logger(__name__)
 
-# Sentinel value shipped in default configs; rejected as an actual secret in
-# production by the validators below. Defined once so the literal lives in a
-# single place (and the secrets scanner only has to allow it here).
-_DEFAULT_SECRET_PLACEHOLDER = "CHANGE-ME-IN-PRODUCTION"  # pragma: allowlist secret
+# Per-process cache of dev-generated secrets, keyed by dotted config path.
+# Keeps repeated config loads within one process (tests, re-reads) signing
+# with the same key, while never persisting a secret-shaped literal anywhere:
+# shipped images must not contain default credentials (AWS Marketplace
+# container policy — their scanner flags hardcoded defaults even when a
+# production guard would reject them at boot).
+_EPHEMERAL_DEV_SECRETS: dict[str, SecretStr] = {}
+
+# A configured value matching this is a forgotten placeholder (copied from an
+# old example or config), never a real secret — any such value is publicly
+# known, so signing with it is equivalent to signing with no key at all.
+# Expressed as a pattern, not a literal, so no secret-shaped string ships in
+# the image.
+_PLACEHOLDER_SECRET_RE = re.compile(r"change.?me", re.IGNORECASE)
 
 
-def _require_production_secret(value: SecretStr, *, field_path: str) -> None:
-    """Reject the shipped placeholder (or a blank value) as a real secret in prod.
+def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretStr:
+    """Return the configured secret, or mint a per-process one for dev.
 
-    A single guard for the admin ``jwt_secret`` / invite ``pepper``: both ship the
-    same ``_DEFAULT_SECRET_PLACEHOLDER`` in default configs and must be replaced
-    before running in production. Treats both the literal placeholder and an
-    empty/whitespace value as unsafe. Only fires when ``JENTIC_ENV=production`` so
-    development/test keep working with the default. ``field_path`` is the
-    dotted config key surfaced in the error (e.g. ``admin.auth.jwt_secret``).
+    A single guard for every scalar secret the app cannot safely default
+    (admin ``jwt_secret``, invite ``pepper``, connect ``state_secret``). The
+    shipped default for all of them is empty:
+
+    - ``JENTIC_ENV=production``: an empty/whitespace value — or a change-me
+      placeholder — is a hard ``ConfigError``. The install path (jenticctl
+      install, the Helm chart's generated Secret) provides real values, so an
+      unusable value reaching production means that step was skipped.
+    - development/test: generate a random per-process secret so the app still
+      boots with zero configuration. Cached per ``field_path`` so repeated
+      loads in one process agree; deliberately NOT persisted, so restarts
+      rotate it (dev sessions ending on restart beats shipping a known key).
+      Per-process means multi-process dev setups (standalone surfaces,
+      ``--workers > 1``) each mint their own value; each secret is consumed
+      only by its own surface, so a shared value is never assumed.
     """
     secret = value.get_secret_value()
-    is_unsafe = secret == _DEFAULT_SECRET_PLACEHOLDER or not secret.strip()
-    if is_unsafe and os.environ.get("JENTIC_ENV", "development") == "production":
+    if secret.strip() and not _PLACEHOLDER_SECRET_RE.search(secret):
+        return value
+    if os.environ.get("JENTIC_ENV", "development") == "production":
         raise ConfigError(
-            f"{field_path} must be explicitly configured in production "
+            f"{field_path} must be explicitly configured in production — "
+            "empty and placeholder values are rejected "
             "(jenticctl install generates one automatically)"
         )
+    if field_path not in _EPHEMERAL_DEV_SECRETS:
+        _EPHEMERAL_DEV_SECRETS[field_path] = SecretStr(secrets.token_urlsafe(32))
+        _logger.info("generated ephemeral dev secret", field_path=field_path)
+    return _EPHEMERAL_DEV_SECRETS[field_path]
 
 
 class ConfigError(Exception):
@@ -62,7 +98,11 @@ class DatabaseConfig(BaseModel):
     user: str = "postgres"
     password: SecretStr = SecretStr("")
     pool_max: int = 10
-    schema_name: str = "public"
+    # Interpolated into `CREATE SCHEMA IF NOT EXISTS "{schema_name}"` and
+    # search_path by the migration runner; the identifier pattern is
+    # defense-in-depth so a hostile config value cannot escape the quoted
+    # identifier (SEC-2).
+    schema_name: str = Field(default="public", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     # SQLite: filesystem path to the database file (":memory:" for in-memory).
     path: str | None = None
     # SQLite concurrency knobs (ignored for non-SQLite backends). ``journal_mode``
@@ -93,7 +133,7 @@ class ServicesConfig(BaseModel):
 
 
 class WorkerConfig(BaseModel):
-    """Background job-worker durability knobs (§09 E4.2).
+    """Background job-worker durability knobs.
 
     The worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``
     from claim), and processes it. A job left ``RUNNING`` past that deadline by a
@@ -111,7 +151,7 @@ class WorkerConfig(BaseModel):
     # Backoff before a failed job becomes claimable again: min(base * 2**(n-1), max).
     retry_backoff_base_s: float = 2.0
     retry_backoff_max_s: float = 60.0
-    # Bounded wait for in-flight jobs to finish on graceful drain (§09 E4.3); past
+    # Bounded wait for in-flight jobs to finish on graceful drain; past
     # this the worker stops claiming and lets the still-RUNNING job be reclaimed
     # via its visibility timeout after restart (no work dropped).
     drain_timeout_s: float = 25.0
@@ -172,14 +212,28 @@ class ObservabilityConfig(BaseModel):
 class AdminAuthConfig(BaseModel):
     """Admin authentication settings."""
 
-    jwt_secret: SecretStr = SecretStr(_DEFAULT_SECRET_PLACEHOLDER)
-    jwt_ttl_seconds: int = 3600
+    jwt_secret: SecretStr = SecretStr("")
+    jwt_ttl_seconds: int = Field(default=3600, gt=0)
+    # Absolute cap on a web session: `POST /auth/refresh` re-mints the login
+    # JWT (sliding session) only while `now - auth_time` stays inside this
+    # window, so a leaked token cannot be kept alive indefinitely.
+    session_ttl_seconds: int = Field(default=43200, gt=0)
     failed_login_lockout_threshold: int = 5
     failed_login_lockout_seconds: int = 900
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> AdminAuthConfig:
-        _require_production_secret(self.jwt_secret, field_path="admin.auth.jwt_secret")
+    def _require_or_generate_secret_in_dev(self) -> AdminAuthConfig:
+        self.jwt_secret = _require_or_generate_secret(
+            self.jwt_secret, field_path="admin.auth.jwt_secret"
+        )
+        return self
+
+    @model_validator(mode="after")
+    def _session_window_covers_jwt_ttl(self) -> AdminAuthConfig:
+        # A session window shorter than one JWT would make every refresh fail
+        # while the first token is still valid — always a misconfiguration.
+        if self.session_ttl_seconds < self.jwt_ttl_seconds:
+            raise ValueError("admin.auth.session_ttl_seconds must be >= admin.auth.jwt_ttl_seconds")
         return self
 
 
@@ -187,11 +241,11 @@ class AdminInviteConfig(BaseModel):
     """Admin invite token settings."""
 
     ttl_days: int = 7
-    pepper: SecretStr = SecretStr(_DEFAULT_SECRET_PLACEHOLDER)
+    pepper: SecretStr = SecretStr("")
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> AdminInviteConfig:
-        _require_production_secret(self.pepper, field_path="admin.invite.pepper")
+    def _require_or_generate_secret_in_dev(self) -> AdminInviteConfig:
+        self.pepper = _require_or_generate_secret(self.pepper, field_path="admin.invite.pepper")
         return self
 
 
@@ -228,19 +282,139 @@ class IdpConfig(BaseModel):
     authorization_endpoint: str | None = None
     exchange_endpoint: str | None = None
     userinfo_endpoint: str | None = None
+    # Google `hd` (hosted-domain) restriction. When set, only accounts whose
+    # userinfo carries a matching `hd` claim should be admitted. OSS surfaces the
+    # claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's
+    # admission policy.
+    hosted_domain: str | None = None
+
+
+class PlatformClientConfig(BaseModel):
+    """A static first-party OAuth client (e.g. the operator SPA).
+
+    Platform clients authenticate via PKCE only — no client secret. They are
+    defined in config (not the oauth_clients DB table) because they are
+    deployment-time constants, not admin-managed dynamic registrations.
+    """
+
+    client_id: str
+    redirect_uris: list[str] = Field(min_length=1)
+
+    @field_validator("redirect_uris", mode="after")
+    @classmethod
+    def _validate_redirect_uris(cls, uris: list[str]) -> list[str]:
+        for uri in uris:
+            parsed = urlparse(uri)
+            if not parsed.scheme or not parsed.netloc:
+                msg = f"invalid platform redirect_uri (must be an absolute URL): {uri}"
+                raise ValueError(msg)
+            if parsed.scheme not in ("https", "http"):
+                msg = f"platform redirect_uri must use https or http: {uri}"
+                raise ValueError(msg)
+            if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
+                msg = f"http redirect_uri only allowed for localhost: {uri}"
+                raise ValueError(msg)
+        return uris
+
+
+_SPA_CLIENT_ID = "jentic-one-spa"
+_SPA_CALLBACK_PATH = "/app/auth/callback"
+
+_LOCAL_DEV_KEY_FINGERPRINT = "d35355bfb727b96b885e0ff817efd947bc5d8a88f169cabfa764932b57b3f3db"
+_LOCAL_DEV_KEY_KID = "local-dev-key"
+
+
+class OAuthRateLimitConfig(BaseModel):
+    """Pre-auth rate limit tunables for OAuth endpoints."""
+
+    authorize_rpm: int = 30
+    authorize_burst: int = 30
+    exchange_rpm: int = 60
+    exchange_burst: int = 60
+    # Anonymous dynamic client registration (POST /oauth-clients).
+    registration_rpm: int = 10
+    registration_burst: int = 5
+    # Approval-pending status poll (GET /oauth/approval/status). One tab polls
+    # at 12 rpm, so 120/60 keeps ~10 concurrent pending tabs behind one NAT
+    # inside the bucket; the page also honors Retry-After with backoff, so
+    # saturation degrades to a slower cadence rather than a thundering retry.
+    # Lives in its own namespace so polling can never drain the /authorize
+    # (or registration) quota.
+    approval_status_rpm: int = 120
+    approval_status_burst: int = 60
+    trusted_proxies: list[str] = Field(default_factory=list)
+
+
+class LocalLoginConfig(BaseModel):
+    """Local-account login form on the ``/authorize`` flow (no external IdP).
+
+    Default **off**: ``/authorize`` behaviour is byte-identical (including the
+    ``server_error`` redirect when no IdP is configured) and ``GET|POST /login``
+    answer the framework's plain 404. Enabling it makes the standards-track
+    native-app sign-in flow (RFC 8252: DCR + system browser + loopback redirect
+    + PKCE) work against the first-party password account store, without any
+    client ever handling a password. An external IdP always wins: when
+    ``auth.idp.enabled`` is true the login form is never offered (no mixed
+    mode in v1).
+    """
+
+    enabled: bool = False
 
 
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
+    # Expected shape: scheme://host[:port] with NO path. Unvalidated — a
+    # path-bearing value (e.g. https://host/jentic) silently breaks the fixed
+    # RFC 8414/9728 well-known routes: path-insertion metadata URLs derived
+    # from a path-bearing issuer are not served (root and /mcp docs alike).
     canonical_base_url: str = ""
     access_ttl_seconds: int = 3600
     refresh_ttl_seconds: int = 604800
     rat_ttl_seconds: int = 900
+    # TTL for the agent-ownership claim token minted at /register (see
+    # auth/core/claim.py). Only meaningful when a claim-token minter is installed;
+    # OSS default mints no token so this is inert.
+    claim_ttl_seconds: int = 900
     assertion_max_ttl_seconds: int = 300
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
+    local_login: LocalLoginConfig = Field(default_factory=LocalLoginConfig)
+    platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
+    oauth_rate_limit: OAuthRateLimitConfig = Field(default_factory=OAuthRateLimitConfig)
+
+    def model_post_init(self, __context: object) -> None:
+        """Ensure the SPA platform client is always registered.
+
+        If no platform_clients entry exists for the operator SPA and a
+        canonical_base_url is configured, synthesise one so existing
+        deployments continue to work without a config change on upgrade.
+        """
+        if os.environ.get("JENTIC_ENV", "development") == "production":
+            from jentic_one.shared.crypto.signing import signing_key_spki_fingerprint
+
+            for sk in self.id_signing:
+                if sk.kid == _LOCAL_DEV_KEY_KID:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] uses the local-dev key id "
+                        "which must not be used in production"
+                    )
+                fp = signing_key_spki_fingerprint(sk.private_key_pem.get_secret_value())
+                if fp == _LOCAL_DEV_KEY_FINGERPRINT:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] contains the local-dev "
+                        "signing key material which must not be used in production"
+                    )
+        spa_present = any(pc.client_id == _SPA_CLIENT_ID for pc in self.platform_clients)
+        if not spa_present and self.canonical_base_url:
+            base = self.canonical_base_url.rstrip("/")
+            self.platform_clients.append(
+                PlatformClientConfig(
+                    client_id=_SPA_CLIENT_ID,
+                    redirect_uris=[f"{base}{_SPA_CALLBACK_PATH}"],
+                )
+            )
 
 
 _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -320,17 +494,14 @@ ProviderConfig = Annotated[
 class ConnectConfig(BaseModel):
     """Configuration for the OAuth connect flow."""
 
-    state_secret: SecretStr = SecretStr("change-me-in-production")
+    state_secret: SecretStr = SecretStr("")
     state_ttl_seconds: int = 600
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> ConnectConfig:
-        if self.state_secret.get_secret_value() == "change-me-in-production":
-            env = os.environ.get("JENTIC_ENV", "development")
-            if env == "production":
-                raise ConfigError(
-                    "credentials.connect.state_secret must be explicitly configured in production"
-                )
+    def _require_or_generate_secret_in_dev(self) -> ConnectConfig:
+        self.state_secret = _require_or_generate_secret(
+            self.state_secret, field_path="credentials.connect.state_secret"
+        )
         return self
 
 
@@ -356,12 +527,12 @@ class ControlSurfaceConfig(BaseModel):
 
 
 class UpstreamClientConfig(BaseModel):
-    """Bounds for the single shared outbound ``httpx.AsyncClient`` (§04, PR-B).
+    """Bounds for the single shared outbound ``httpx.AsyncClient``.
 
     The timeouts are httpx semantics: ``read_timeout_s`` is the *between-bytes*
     gap timeout (per read), **not** a whole-stream cap — a trickle that keeps
     sending under the limit can hold a pool slot open. The overall transfer
-    deadline is owned by the response-streaming guard (§08/E2.4), not here.
+    deadline is owned by the response-streaming guard, not here.
     """
 
     connect_timeout_s: float = 5.0
@@ -388,18 +559,18 @@ class UpstreamClientConfig(BaseModel):
             "multipart/form-data": 50 * 1024 * 1024,
         }
     )
-    # Response-side counterpart to the request-body cap (§08 E2.4). The runner
+    # Response-side counterpart to the request-body cap. The runner
     # enforces this *mid-stream* while reading the upstream body, aborting the
     # connection the moment it's exceeded so a hostile/large upstream can't OOM
     # the instance. 0 disables the cap (unbounded — not recommended).
     max_response_bytes: int = 10 * 1024 * 1024
     # Stream the upstream response straight through to the client instead of
-    # whole-buffering it (§08 E2.4). On by default; applies only to the sync
+    # whole-buffering it. On by default; applies only to the sync
     # proxy path with no Idempotency-Key (idempotent requests + the async worker
     # keep buffering, since replay/persistence need the full body). Disable to
     # force the buffered path everywhere.
     stream_passthrough_enabled: bool = True
-    # Whole-stream transfer deadline for a streamed response (§08 E2.4). Unlike
+    # Whole-stream transfer deadline for a streamed response. Unlike
     # ``read_timeout_s`` (a between-bytes gap), this bounds the *total* time the
     # body may take to transfer, so a steady trickle — or a slow client draining
     # the proxied body — can't pin the upstream connection/pool slot forever. The
@@ -409,13 +580,13 @@ class UpstreamClientConfig(BaseModel):
 
 
 class RateLimitConfig(BaseModel):
-    """Per-caller token-bucket rate limit (§05 R2).
+    """Per-caller token-bucket rate limit.
 
     Keyed on the resolved ``actor_id`` and enforced in a post-auth dependency
     (the actor isn't known at admission time, so this can't be a plain
     pre-auth middleware). The token bucket itself lives on the shared-state
     backend (``RateLimitStore``); with the memory backend the limit is
-    per-instance, with Redis (§06) it is cluster-wide — no call-site change.
+    per-instance, with Redis it is cluster-wide — no call-site change.
     """
 
     enabled: bool = True
@@ -426,7 +597,7 @@ class RateLimitConfig(BaseModel):
 
 
 class CircuitBreakerConfig(BaseModel):
-    """Per-upstream circuit breaker (§05 R5.1).
+    """Per-upstream circuit breaker.
 
     Counts failures/totals per rolling ``window_s`` on the shared-state
     backend's atomic counters; when the failure ratio crosses
@@ -446,7 +617,7 @@ class CircuitBreakerConfig(BaseModel):
 
 
 class RetryConfig(BaseModel):
-    """Idempotency-aware upstream retry (§09 E4.1).
+    """Idempotency-aware upstream retry.
 
     The ``RetryRunner`` decorator retries a failed attempt **only** when it is
     safe to do so: a connect-phase failure (no bytes on the wire) is retryable
@@ -479,7 +650,7 @@ def _csv_to_list(value: Any) -> list[str]:
 
 
 class EgressConfig(BaseModel):
-    """Outbound SSRF/egress policy for upstream calls (§08 E2).
+    """Outbound SSRF/egress policy for upstream calls.
 
     Defaults are **strict** (both lists empty) — identical to the historical
     hard-coded behaviour: every private range and the cloud-metadata host are
@@ -503,7 +674,7 @@ class EgressConfig(BaseModel):
     )
     # Pin the outbound connection to the IP validated at connect time, closing the
     # DNS-rebinding TOCTOU between pre-request validation and the runner's own
-    # resolution (§08 E2). On by default; disable only to debug egress issues.
+    # resolution. On by default; disable only to debug egress issues.
     dns_pinning_enabled: bool = True
 
     @field_validator("allowed_private_subnets")
@@ -518,11 +689,11 @@ class EgressConfig(BaseModel):
 
 
 class BrokerResilienceConfig(BaseModel):
-    """Resilience envelope: admission (§04 R1) + rate limit / circuit (§05).
+    """Resilience envelope: admission + rate limit / circuit.
 
     The shared-state ``backend`` selection drives *both* the rate limiter and
-    the circuit breaker (memory default; Redis is cluster-wide, §06). Queue
-    backpressure / async-credential / retention knobs land in a later §05 slice.
+    the circuit breaker (memory default; Redis is cluster-wide). Queue
+    backpressure / async-credential / retention knobs are future work.
     """
 
     max_in_flight: int = 200
@@ -535,8 +706,8 @@ class BrokerResilienceConfig(BaseModel):
     # a single healthy slow attempt isn't pre-empted by the envelope deadline.
     request_deadline_s: float = 30.0
     # Fraction of ``max_in_flight`` at/above which ``/ready`` reports unready so
-    # the LB drains this instance *before* it hits the hard admission shed wall
-    # (§05 R5.2). Kept < 1.0 for that headroom.
+    # the LB drains this instance *before* it hits the hard admission shed wall.
+    # Kept < 1.0 for that headroom.
     readiness_saturation_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
     upstream: UpstreamClientConfig = Field(default_factory=UpstreamClientConfig)
     backend: StateBackendConfig = Field(default_factory=StateBackendConfig)
@@ -546,7 +717,7 @@ class BrokerResilienceConfig(BaseModel):
 
 
 class IdempotencyConfig(BaseModel):
-    """``Idempotency-Key`` replay store (§07, PR-E/1 slim).
+    """``Idempotency-Key`` replay store.
 
     Sync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory
     default; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim
@@ -557,7 +728,7 @@ class IdempotencyConfig(BaseModel):
     a duplicate side-effect; only byte-for-byte body replay is dropped).
 
     Compliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,
-    async same-``job_id`` replay, and at-rest encryption are later §07 slices.
+    async same-``job_id`` replay, and at-rest encryption are future work.
     """
 
     enabled: bool = True
@@ -611,7 +782,7 @@ class TrustedIssuerConfig(BaseModel):
 
 
 class JwtVerificationConfig(BaseModel):
-    """Hardened inbound-JWT verification for the broker edge (§08 E1).
+    """Hardened inbound-JWT verification for the broker edge.
 
     When ``trusted_issuers`` is non-empty the broker verifies self-contained JWTs
     against the issuers' published JWKS (asymmetric, key-rotation-aware) and
@@ -655,7 +826,7 @@ class BrokerConfig(BaseModel):
 
     upstream_timeout_s: float = 30.0
     resolve_cache_ttl_seconds: float = 3.0
-    # Short TTL (seconds) for the per-instance toolkit-derivation cache (§05 R3).
+    # Short TTL (seconds) for the per-instance toolkit-derivation cache.
     # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
     # double hit is served from cache for header-less requests. Agent/credential
     # bindings change infrequently, so a short TTL bounds revocation staleness
@@ -664,7 +835,7 @@ class BrokerConfig(BaseModel):
     # Authorization correctness never depends on the cache — it is a latency
     # optimization over the authoritative DB lookup. 0 disables it.
     toolkit_cache_ttl_s: float = 3.0
-    # Short TTL (seconds) for the per-instance permission-rule cache (§05 R3).
+    # Short TTL (seconds) for the per-instance permission-rule cache.
     # Caches the ordered toolkit_permission_rules per toolkit_id. Same staleness
     # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
     rule_cache_ttl_s: float = 3.0
@@ -672,18 +843,18 @@ class BrokerConfig(BaseModel):
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
     jobs_api_base_url: str | None = None
-    # Shared secret for the self-contained-JWT path (PR-A2, §03). None disables
+    # Shared secret for the self-contained-JWT path. None disables
     # the JWT path entirely (opaque tokens only). The minimal verifier is HS256
-    # signature + exp; TODO(§08/E1) hardens (JWKS, iss/aud, alg allowlist) before
+    # signature + exp; TODO hardens (JWKS, iss/aud, alg allowlist) before
     # this is enabled in production.
     jwt_secret: SecretStr | None = None
-    # Hardened inbound-JWT verification (§08 E1): trusted-issuer JWKS, iss/aud/nbf
+    # Hardened inbound-JWT verification: trusted-issuer JWKS, iss/aud/nbf
     # + clock-skew, strict asymmetric alg allowlist. When trusted_issuers is set
     # it supersedes the HS256 jwt_secret path for self-contained JWTs.
     jwt_verification: JwtVerificationConfig = Field(default_factory=JwtVerificationConfig)
     # Public base URL of the account-linking/provisioning UI. When set, a 424
     # (credential not provisioned) carries a `prompt_human` directive with a
-    # `provisioning_url` the agent can relay to the user (§02b). None keeps the
+    # `provisioning_url` the agent can relay to the user. None keeps the
     # directive but omits the URL. The URL is non-secret (where to *go* to
     # provision, never the credential itself).
     account_linking_base_url: str | None = None
@@ -693,19 +864,23 @@ class BrokerConfig(BaseModel):
 
 
 class SearchConfig(BaseModel):
-    """Lexical search configuration.
+    """Search configuration.
 
-    Search is lexical (full-text / BM25) only: ingest builds an
-    ``operations.search_text`` projection and the query is matched against it.
+    The built-in mode is "lexical" (BM25 on SQLite, native full-text on
+    PostgreSQL). ``search_mode`` is validated against the registered
+    SearchStrategy set at resolve time (``resolve_strategy``), so an unknown mode
+    fails loudly with the available modes for the active dialect rather than at
+    config load. Additional modes (e.g. "semantic", "vector") can be registered
+    via ``register_strategy`` without editing this schema.
     """
 
     # Gate ingest-time construction of the lexical search_text projection.
     enabled: bool = True
     # Toggle query-time search independently of ingest-time indexing.
     search_enabled: bool = True
-    # Only "lexical" is supported in the open-source build (BM25 on SQLite,
-    # native full-text on PostgreSQL).
-    search_mode: Literal["lexical"] = "lexical"
+    # Search mode name; resolved against the SearchStrategy registry per dialect.
+    # "lexical" is the built-in mode.
+    search_mode: str = "lexical"
 
 
 class IngestConfig(BaseModel):
@@ -733,6 +908,76 @@ class CatalogConfig(BaseModel):
     # Lazy refresh-on-read: a manifest older than this is refreshed on the next
     # list()/get(). Zero disables auto-refresh (manual :refresh only).
     manifest_max_age_seconds: int = 86400
+    # Update-notify (Flow 3): the standalone ``CatalogUpdateScanner`` (started in
+    # app_factory when both the registry + admin DBs are present) runs one sweep per
+    # this interval, conditionally re-fetching the spec URLs of upstream-tracked APIs
+    # (If-None-Match) and emitting a ``catalog.update_available`` event when the
+    # upstream spec changed. The manual ``POST /catalog:refresh`` also triggers a
+    # sweep. A given API is re-probed at most once per this interval (a persistent
+    # per-API gate, so scanner + manual refresh don't double-probe). Zero disables the
+    # sweep + scanner entirely (kill switch for air-gapped installs — no event spam,
+    # no egress). Standalone-registry deployments (no admin DB) get no scanner.
+    update_check_interval_seconds: int = 86400
+    # Aggregate guardrails for one update-notify sweep. The sweep is offloaded off
+    # the triggering read (fire-and-forget), but it still probes N registered specs
+    # over the network, so bound the batch: stop after this many wall-clock seconds
+    # and run at most this many probes concurrently. Concurrency is kept below the
+    # registry DB pool so the sweep never starves live request traffic.
+    update_sweep_deadline_seconds: int = 300
+    update_sweep_max_concurrency: int = 4
+    # Full-jitter fraction added to the per-cycle sweep interval, to de-phase the
+    # scanner across replicas (thundering-herd mitigation). Each time a sweep runs,
+    # the next one is due after ``interval * (1 + uniform(0, jitter_ratio))``, so N
+    # replicas that start in lock-step drift apart instead of all re-probing the
+    # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
+    # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
+    update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+
+
+class McpOAuthConfig(BaseModel):
+    """Interactive-OAuth settings for the MCP surface.
+
+    Minimal seam: the full ``server.mcp`` sub-config (``server.mcp.enabled``
+    etc.) extends this model in place — fields here must keep their names and
+    defaults.
+    """
+
+    enabled: bool = False
+    """Master switch for the interactive-OAuth surface. Off (the default) the
+    anonymous DCR front door ``POST /oauth-clients`` returns a plain 404,
+    indistinguishable from not-shipped."""
+    auto_approve_clients: bool = False
+    """D9 (amended): auto-approve DCR registrations (``approval_status='approved'``
+    + ``active=true`` at registration). Default **false** everywhere —
+    approval-first posture: new registrations land ``pending`` + inactive in
+    the admin queue until an operator approves them. Setting this ``true`` is
+    an explicit opt-in for deployments that accept self-registered clients
+    without review (e.g. self-hosted single-user installs)."""
+    registration_gc_days: int = 90
+    """Long-TTL GC policy for never-consented DCR rows: rows are
+    GC-eligible only after this many days, and rows with any grant history are
+    never GC'd. Policy knob only — no sweep runs yet."""
+
+
+class McpConfig(BaseModel):
+    """``server.mcp`` sub-config."""
+
+    enabled: bool = False
+    """Master switch for the daemon-native Streamable HTTP ``/mcp`` endpoint.
+    Off (the default) the mounted app answers the framework's
+    plain route-not-found 404 — unless ``oauth.enabled`` keeps the
+    discovery-challenge behaviour alive (401 + ``WWW-Authenticate``) so OAuth
+    clients can still walk the RFC 9728 chain ahead of the endpoint being
+    turned on. Flipping this on is an explicit operator choice."""
+    broker_url: str = "http://127.0.0.1:8100"
+    """Broker base URL for the MCP ``execute`` tools' server-side
+    control-plane→broker proxy hop (the broker stays MCP-free,
+    so the mounted app forwards execute calls to the broker exactly like the
+    CLI does). The default matches the local install topology (plain-HTTP
+    loopback broker on 8100); compose/split deployments set the broker
+    service's URL. Plaintext ``http://`` is refused for non-loopback hosts —
+    the caller's bearer rides this hop (SEC-1 posture)."""
+    oauth: McpOAuthConfig = Field(default_factory=McpOAuthConfig)
 
 
 class ServerConfig(BaseModel):
@@ -741,6 +986,13 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = False
+    backend: Literal["local", "remote"] = "local"
+    """Self-declared backend locality surfaced by ``GET /instance``: ``local`` for
+    a self-hosted install on the operator's own machine/network, ``remote`` for a
+    hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
+    which backend they reached — not an authorization signal. Defaults to
+    ``local``; the hosted platform sets ``remote`` in its own config."""
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
 
 class TelemetryConfig(BaseModel):
@@ -750,11 +1002,21 @@ class TelemetryConfig(BaseModel):
     or hand-rolled) sends nothing. The onboarding CLI writes ``enabled``
     explicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in
     the prompt, not the code default. ``instance_id`` seeds the durable admin-DB
-    identity row on first startup for opted-in instances.
+    identity row on first startup for opted-in instances. ``host_os`` is the
+    operator's OS family, stamped by the CLI at install time so a Docker-run
+    instance reports the host's OS rather than the container's; sent once per
+    boot, on the ``instance_booted`` event.
     """
 
     enabled: bool = False
     instance_id: str | None = None
+    host_os: str | None = None
+    """Host OS family stamped at install time by the onboarding CLI (from Go's
+    ``runtime.GOOS``): the recommended install runs the app in Docker, where
+    runtime detection would always report the container's Linux instead of the
+    operator's machine. ``None`` (hand-rolled config) falls back to runtime
+    detection. Consumed once per boot, on the ``instance_booted`` telemetry
+    event; values outside the closed ``HostOs`` enum degrade to ``other``."""
     endpoint: str = "https://api.jentic.com/api/v1"
     """Ingest endpoint for telemetry events. Not intended for operator override —
     this is a hardcoded Jentic service URL. Exposed in config only for internal
@@ -781,8 +1043,99 @@ class TelemetryConfig(BaseModel):
         return value
 
 
+class ReleaseCheckConfig(BaseModel):
+    """ "Update available" check for the running jentic-one build itself.
+
+    Powers ``GET /system/version``: the backend asks GitHub for the newest
+    published release of ``repo`` and compares it against the running build so the
+    web console can surface an "update available" banner (and the user menu can
+    always show the current version). This is about *jentic-one's own* release —
+    distinct from ``CatalogConfig``, which tracks the public *API catalog*.
+
+    Runs only on a ``local`` backend (a self-hosted install the operator can
+    actually update); the hosted platform (``server.backend == "remote"``) skips
+    it. The result is cached in-process for ``cache_ttl_seconds`` (fetch-on-read,
+    no background job), so at most one GitHub request happens per TTL regardless
+    of how many clients poll. Every failure degrades to "latest unknown" (no
+    banner) rather than erroring — the version probe must never break the app.
+    """
+
+    enabled: bool = True
+    # ``owner/name`` slug of the GitHub repo whose releases represent this build.
+    # The check hits ``https://api.github.com/repos/{repo}/releases/latest``.
+    repo: str = "jentic/jentic-one"
+    # In-process cache lifetime for the resolved latest release. Zero is a kill
+    # switch (disables the check outright — air-gapped installs, no egress),
+    # mirroring the catalog scanner's ``interval <= 0`` convention.
+    cache_ttl_seconds: int = 21600  # 6h
+
+
+class EntitlementConfig(BaseModel):
+    """AWS Marketplace license gate for the Marketplace-listed deployment.
+
+    Powers the entitlement checker (``integrations/aws_marketplace``): on
+    startup — and every ``refresh_interval_seconds`` after — the process asks
+    AWS whether this deployment's Marketplace subscription is still active, and
+    locks the HTTP surface (503, health excepted) when it definitively is not.
+    Defaults to **OFF**: a non-Marketplace install that omits this block runs
+    exactly as before — nothing is wired, no AWS call is ever made.
+
+    Failure posture: an *unreachable* or *erroring* AWS API is never grounds
+    for lockout by itself — the last definitive verdict holds for
+    ``grace_period_seconds`` before the gate fails closed. Only an explicit
+    "not entitled" answer from AWS locks out immediately.
+    """
+
+    enabled: bool = False
+    # The Marketplace product code, issued by the AWS Marketplace portal when
+    # the container product is created. Required whenever ``enabled``.
+    product_code: str | None = None
+    region: str = "us-east-1"
+    # Which paid listing model the check calls: ``contract`` → License Manager
+    # ``CheckoutLicense`` (needs ``license_sku``); ``usage`` → Metering Service
+    # ``RegisterUsage`` (hourly/usage pricing). The live listing is contract
+    # priced (decided 2026-08-20), hence the default; the usage variant is kept
+    # until the listing is public in case the model changes during review.
+    pricing_model: Literal["usage", "contract"] = "contract"
+    refresh_interval_seconds: int = 3600
+    grace_period_seconds: int = 86400
+    # Contract pricing only (License Manager); unused for usage pricing.
+    # This is the Marketplace **product ID** from the portal (CheckoutLicense
+    # ``ProductSKU``) — NOT the product code above; the portal issues both.
+    license_sku: str | None = None
+    # Contract pricing only: the listing's entitlement dimension keys the gate
+    # checks out (all must be granted by the buyer's license). The live listing
+    # defines ``users`` and ``executions``. Accepts a YAML list or a
+    # comma-separated string (env: JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS).
+    license_dimensions: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
+        default_factory=list
+    )
+    # Test-only endpoint override (same posture as ``TelemetryConfig.endpoint``):
+    # points the client at a stub server for deployed-gate rehearsal —
+    # moto/LocalStack do not implement these AWS APIs. Not for operators.
+    endpoint: str | None = None
+
+    @model_validator(mode="after")
+    def _require_gate_inputs(self) -> EntitlementConfig:
+        if not self.enabled:
+            return self
+        if not self.product_code:
+            raise ValueError("entitlement.enabled requires entitlement.product_code")
+        if self.pricing_model == "contract" and not self.license_sku:
+            raise ValueError(
+                "entitlement.pricing_model 'contract' requires entitlement.license_sku"
+            )
+        return self
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
+
+    # Reject unknown top-level keys that are neither a known field nor a
+    # registered extension — surfaces misconfig loudly instead of dropping it.
+    # Registered extension sections are extracted by load_config() before
+    # validation, so they never reach this model as unknown keys.
+    model_config = ConfigDict(extra="forbid")
 
     databases: DatabasesConfig
     services: ServicesConfig = Field(default_factory=ServicesConfig)
@@ -801,7 +1154,53 @@ class AppConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
+    entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
+
+    # Validated extension sub-configs, keyed by their registered section name.
+    # Populated by load_config() from top-level keys matching the registry
+    # (see register_config). Empty unless a section has been registered.
+    extensions: dict[str, BaseModel] = Field(default_factory=dict)
+
+    def extension(self, name: str) -> BaseModel | None:
+        """Return a registered extension config by section name (None if absent)."""
+        return self.extensions.get(name)
+
+
+# --- Extension config registry -----------------------------------------------
+# A downstream package registers extra sub-config models at import time; by
+# default the registry is empty. Keyed by the top-level YAML/env section name.
+# load_config() pulls any matching top-level key out of the merged config and
+# validates it with the registered model, storing the result in
+# AppConfig.extensions[name].
+_CONFIG_EXTENSIONS: dict[str, type[BaseModel]] = {}
+
+
+def register_config(name: str, model: type[BaseModel]) -> None:
+    """Register an extension sub-config model under a top-level config key.
+
+    Idempotent for the same (name, model); raises on a conflicting re-register so
+    two extensions can't fight over one key. Call at import time (e.g. in a
+    registering package's __init__) before load_config() runs.
+    """
+    # Collision guard: an extension key must not shadow a core AppConfig field
+    # (e.g. "broker", "search") nor the reserved "extensions" container itself —
+    # either would break the parser or silently override core config.
+    if name in AppConfig.model_fields or name == "extensions":
+        raise ConfigError(
+            f"Config extension name {name!r} collides with a core AppConfig field "
+            "or the reserved 'extensions' key"
+        )
+    existing = _CONFIG_EXTENSIONS.get(name)
+    if existing is not None and existing is not model:
+        raise ConfigError(f"Config extension {name!r} already registered to {existing!r}")
+    _CONFIG_EXTENSIONS[name] = model
+
+
+def registered_config_models() -> dict[str, type[BaseModel]]:
+    """Snapshot of the extension registry (for tests/introspection)."""
+    return dict(_CONFIG_EXTENSIONS)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -815,10 +1214,40 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+def _coerce_indexed_dicts_to_lists(value: Any) -> Any:
+    """Recursively turn digit-keyed dicts into lists.
+
+    The env convention (``JENTIC__SECTION__KEY``) can only ever build nested
+    dicts, so a *list*-valued field addressed by index —
+    ``JENTIC__AUTH__ID_SIGNING__0__KID`` — arrives as ``{"0": {"kid": ...}}``
+    rather than ``[{"kid": ...}]`` and fails validation with ``list_type``.
+
+    A dict is treated as a list when its keys are exactly the contiguous integer
+    sequence ``0..n-1`` (as strings); it's then rebuilt in index order. Any other
+    dict (real string keys, or a sparse/1-based set) is left untouched and
+    recursed into, so ordinary config is unaffected.
+    """
+    if isinstance(value, dict):
+        coerced = {k: _coerce_indexed_dicts_to_lists(v) for k, v in value.items()}
+        keys = list(coerced.keys())
+        if keys and all(k.isdigit() for k in keys):
+            ordered = sorted(keys, key=int)
+            if [int(k) for k in ordered] == list(range(len(ordered))):
+                return [coerced[k] for k in ordered]
+        return coerced
+    if isinstance(value, list):
+        return [_coerce_indexed_dicts_to_lists(item) for item in value]
+    return value
+
+
 def _env_overrides() -> dict[str, Any]:
     """Build a nested dict from JENTIC__* environment variables.
 
     Convention: JENTIC__SECTION__KEY=value → {"section": {"key": "value"}}
+
+    A numeric path segment addresses a list index, so
+    ``JENTIC__AUTH__ID_SIGNING__0__KID`` builds ``{"0": {...}}`` here and is
+    coerced to a one-element list by :func:`_coerce_indexed_dicts_to_lists`.
     """
     prefix = "JENTIC__"
     result: dict[str, Any] = {}
@@ -830,7 +1259,9 @@ def _env_overrides() -> dict[str, Any]:
         for part in parts[:-1]:
             current = current.setdefault(part, {})
         current[parts[-1]] = value
-    return result
+    # Top-level keys are section names (never all-digit), so the result stays a
+    # dict; the coercion only reshapes nested indexed segments.
+    return cast("dict[str, Any]", _coerce_indexed_dicts_to_lists(result))
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -867,6 +1298,19 @@ def load_config(path: Path | None = None) -> AppConfig:
 
     if "apps" in merged and isinstance(merged["apps"], str):
         merged["apps"] = [item.strip() for item in merged["apps"].split(",") if item.strip()]
+
+    # Extract registered extension sections before validating the core model, so
+    # extra="forbid" accepts them and each is validated by its own model.
+    extensions: dict[str, BaseModel] = {}
+    for name, model in _CONFIG_EXTENSIONS.items():
+        if name in merged:
+            raw = merged.pop(name)
+            try:
+                extensions[name] = model.model_validate(raw)
+            except ValidationError as e:
+                raise ConfigError(f"Invalid config for extension {name!r}: {e}") from e
+    if extensions:
+        merged["extensions"] = extensions
 
     try:
         return AppConfig.model_validate(merged)

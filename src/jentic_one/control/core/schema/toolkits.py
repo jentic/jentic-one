@@ -10,7 +10,6 @@ from sqlalchemy.sql import func
 
 from jentic_one.shared.db.base import AuditableMixin, ControlBase
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.db.types import json_variant
 
 if TYPE_CHECKING:
     from jentic_one.control.core.schema.toolkit_credential_bindings import (
@@ -34,9 +33,6 @@ class Toolkit(AuditableMixin, ControlBase):
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
-    )
-    permissions: Mapped[list[dict[str, object]]] = mapped_column(
-        json_variant(), nullable=False, default=list, server_default=text("'[]'")
     )
 
     keys: Mapped[list[ToolkitKey]] = relationship(

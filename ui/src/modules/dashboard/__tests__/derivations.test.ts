@@ -4,8 +4,12 @@ import {
 	isSuccessfulExecution,
 	approxCountFromPage,
 	formatApproxCount,
+	usageToKpis,
+	usageToSuccessRateSeries,
+	usageToLatencySeries,
+	usageToTopRows,
 } from '@/modules/dashboard/api/types';
-import type { ExecutionResponse } from '@/shared/api';
+import type { ExecutionResponse, UsageResponse } from '@/shared/api';
 
 function exec(partial: Partial<ExecutionResponse>): ExecutionResponse {
 	return {
@@ -112,6 +116,177 @@ describe('dashboard derivations', () => {
 			const count = approxCountFromPage({ data: [], has_more: true });
 			expect(count).toEqual({ value: 0, atLeast: true });
 			expect(formatApproxCount(count)).toBe('0+');
+		});
+	});
+
+	describe('usage derivations (GET /monitoring/usage)', () => {
+		function usage(partial: Partial<UsageResponse> = {}): UsageResponse {
+			return {
+				since: 1_700_000_000,
+				until: 1_700_086_400,
+				bucket_seconds: 3_600,
+				group_by: 'api',
+				stats: {
+					total: 200,
+					success: 188,
+					failed: 10,
+					avg_ms: 433.2,
+					p50_ms: 388,
+					p95_ms: 1239.6,
+					active_now: 3,
+					pending: 2,
+				},
+				buckets: [
+					{ ts: 1_700_000_000, total: 40, success: 38, failed: 2, avg_ms: 420 },
+					{ ts: 1_700_003_600, total: 0, success: 0, failed: 0, avg_ms: 0 },
+					{ ts: 1_700_007_200, total: 60, success: 45, failed: 15, avg_ms: 510 },
+				],
+				top: [],
+				...partial,
+			};
+		}
+
+		describe('usageToKpis', () => {
+			it('maps the stats block into the four headline KPIs', () => {
+				expect(usageToKpis(usage())).toEqual({
+					total: 200,
+					successRate: 0.94,
+					p95Ms: 1240,
+					activeNow: 3,
+				});
+			});
+
+			it('nulls the rate and p95 on an empty window', () => {
+				const kpis = usageToKpis(
+					usage({
+						stats: {
+							total: 0,
+							success: 0,
+							failed: 0,
+							avg_ms: 0,
+							p50_ms: null,
+							p95_ms: null,
+							active_now: 0,
+							pending: 0,
+						},
+					}),
+				);
+				expect(kpis).toEqual({ total: 0, successRate: null, p95Ms: null, activeNow: 0 });
+			});
+		});
+
+		describe('usageToSuccessRateSeries / usageToLatencySeries', () => {
+			it('derives per-bucket percentages and skips empty buckets', () => {
+				expect(usageToSuccessRateSeries(usage())).toEqual([
+					{ ts: 1_700_000_000, value: 95 },
+					{ ts: 1_700_007_200, value: 75 },
+				]);
+			});
+
+			it('carries avg_ms per bucket (avg, not p95 — buckets have no p95)', () => {
+				expect(usageToLatencySeries(usage())).toEqual([
+					{ ts: 1_700_000_000, value: 420 },
+					{ ts: 1_700_007_200, value: 510 },
+				]);
+			});
+		});
+
+		describe('usageToTopRows', () => {
+			it('formats labels per group and sorts busiest-first', () => {
+				const rows = usageToTopRows(
+					usage({
+						group_by: 'api',
+						top: [
+							{
+								key: 'github/github-api',
+								label: 'github/github-api',
+								total: 80,
+								success: 72,
+								failed: 6,
+								avg_ms: 655.4,
+								trend: [1, 2],
+							},
+							{
+								key: 'stripe/stripe-api',
+								label: 'stripe/stripe-api',
+								total: 120,
+								success: 116,
+								failed: 4,
+								avg_ms: 412,
+								trend: [3, 4],
+							},
+						],
+					}),
+				);
+				expect(rows.map((r) => r.label)).toEqual(['stripe-api', 'github-api']);
+				expect(rows[0]).toMatchObject({
+					id: 'stripe/stripe-api',
+					total: 120,
+					avgMs: 412,
+					trend: [3, 4],
+				});
+				expect(rows[0].successRate).toBeCloseTo(116 / 120);
+			});
+
+			it('strips the actor_type prefix for agent rows', () => {
+				const rows = usageToTopRows(
+					usage({
+						group_by: 'agent',
+						top: [
+							{
+								key: 'agent/invoice-bot',
+								label: 'agent/invoice-bot',
+								total: 10,
+								success: 10,
+								failed: 0,
+								avg_ms: 100,
+								trend: [],
+							},
+						],
+					}),
+				);
+				expect(rows[0].label).toBe('invoice-bot');
+			});
+
+			it('surfaces null keys as an explicit Unattributed bucket', () => {
+				const rows = usageToTopRows(
+					usage({
+						group_by: 'toolkit',
+						top: [
+							{
+								key: null as unknown as string,
+								label: null as unknown as string,
+								total: 5,
+								success: 4,
+								failed: 1,
+								avg_ms: 90,
+								trend: [],
+							},
+						],
+					}),
+				);
+				expect(rows[0]).toMatchObject({ id: '__unattributed__', label: 'Unattributed' });
+			});
+
+			it('nulls the rate for an empty row instead of dividing by zero', () => {
+				const rows = usageToTopRows(
+					usage({
+						group_by: 'toolkit',
+						top: [
+							{
+								key: 'tk_idle',
+								label: 'tk_idle',
+								total: 0,
+								success: 0,
+								failed: 0,
+								avg_ms: 0,
+								trend: [],
+							},
+						],
+					}),
+				);
+				expect(rows[0].successRate).toBeNull();
+			});
 		});
 	});
 });

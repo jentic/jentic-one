@@ -49,6 +49,11 @@ class ExecutionResponse(BaseModel):
     actor_id: str
     actor_type: str
     origin: str | None = None
+    # Credential the broker used for this execution (#740). Both ``None`` for
+    # executions using inline auth, credential-less APIs, historical rows, and
+    # executions that failed before the resolver picked a credential.
+    credential_id: str | None = None
+    credential_name: str | None = None
     links: ExecutionRecordLinks = Field(serialization_alias="_links")
 
 

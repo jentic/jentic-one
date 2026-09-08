@@ -59,12 +59,19 @@ export interface ActorLabelProps {
 	actorId: string;
 	/** Optional hint used for a subtle type prefix; accepts the enum or a raw string. */
 	actorType?: ActorType | string | null;
+	/**
+	 * A name the caller already resolved out-of-band (e.g. a direct
+	 * `GET /agents/{id}` fallback when the cached directory predates a
+	 * just-registered agent). Takes precedence over the directory lookup so a
+	 * surface that resolved the name elsewhere never shows the raw id here.
+	 */
+	resolvedName?: string;
 	className?: string;
 }
 
-export function ActorLabel({ actorId, actorType, className }: ActorLabelProps) {
+export function ActorLabel({ actorId, actorType, resolvedName, className }: ActorLabelProps) {
 	const { resolve } = useActorDirectory();
-	const name = resolve(actorId);
+	const name = resolvedName ?? resolve(actorId);
 	const typeLabel = typePrefix(actorType);
 
 	// Resolved → friendly name (with an optional subtle type prefix). The raw id

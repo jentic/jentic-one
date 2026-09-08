@@ -57,12 +57,13 @@ jentic catalog import <api_id>`,
 		title: 'Execute through the Broker',
 		body: (
 			<>
-				Send a real request through the Broker by <code>METHOD:/path</code> or
+				Send a real request through the Broker by <code>METHOD:URL</code> (the
+				operation&apos;s full upstream URL, as returned by search and inspect) or
 				<code> operation_id</code>. The Broker injects your bound credential, forwards the
 				call, and records an execution.
 			</>
 		),
-		code: `jentic execute GET:/get --query foo=bar --json`,
+		code: `jentic execute GET:https://httpbin.org/get --query foo=bar --json`,
 		prompt: true,
 	},
 ];

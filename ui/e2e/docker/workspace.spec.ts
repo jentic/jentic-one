@@ -69,8 +69,11 @@ test('an imported API renders as a card in the grid', async ({ page, request }) 
 	});
 
 	await page.goto('/app/workspace');
+	// The card heading is humanized (#631: apiRefDisplayName title-cases the
+	// slug), so match on the mono `vendor/name/version` subtitle, which still
+	// renders the raw api_name verbatim, and scope to the enclosing card.
 	await expect(
-		page.getByRole('link', { name: new RegExp(`Open .*${apiName}`, 'i') }).first(),
+		page.getByTestId('workspace-api-card').filter({ hasText: apiName }).first(),
 	).toBeVisible({ timeout: 30_000 });
 });
 
@@ -89,7 +92,9 @@ test('open an API detail page for an imported spec', async ({ page, request }) =
 	await page.goto('/app/workspace');
 	await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
 
-	const card = page.getByRole('link', { name: new RegExp(`Open .*${apiName}`, 'i') }).first();
+	// Match the mono `vendor/name/version` subtitle (raw api_name) rather than
+	// the humanized heading/aria-label (#631), then click the enclosing card.
+	const card = page.getByTestId('workspace-api-card').filter({ hasText: apiName }).first();
 	await expect(card).toBeVisible({ timeout: 30_000 });
 	await card.click();
 

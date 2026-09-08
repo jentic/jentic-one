@@ -2,7 +2,7 @@
  * DiscoveryCard — one API row in the Discover grid.
  *
  * Every row is a public-catalog entry; its `registered` flag drives two visual
- * modes, mirroring jentic-mini's API card:
+ * modes:
  *
  *   imported (registered)  — emerald left rail; the surface is a button that
  *                            opens the detail sheet (trailing chevron), plus a
@@ -76,7 +76,11 @@ export function DiscoveryCard({
 						className="mt-auto flex w-full flex-wrap items-center gap-1.5 pt-2.5"
 						data-testid="discovery-card-footer"
 					>
-						<CardStatusPill registered={registered} pending={importPending} />
+						<CardStatusPill
+							registered={registered}
+							pending={importPending}
+							updateAvailable={entity.updateAvailable}
+						/>
 					</div>
 				</div>
 

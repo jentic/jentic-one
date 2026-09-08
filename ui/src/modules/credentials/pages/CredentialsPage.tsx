@@ -7,27 +7,27 @@ import {
 	useCredentials,
 	useDeleteCredential,
 	type Credential,
-} from '@/modules/credentials/api';
-import { CredentialsList } from '@/modules/credentials/components/CredentialsList';
+} from '@/shared/credentials/api';
+import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
 import {
 	CredentialsToolbar,
 	type CredentialTypeFilter,
-} from '@/modules/credentials/components/CredentialsToolbar';
+} from '@/shared/credentials/components/CredentialsToolbar';
 import {
 	CreateCredentialDialog,
 	type CreatedCredentialInfo,
-} from '@/modules/credentials/components/CreateCredentialDialog';
-import { EditCredentialSheet } from '@/modules/credentials/components/EditCredentialSheet';
+} from '@/shared/credentials/components/CreateCredentialDialog';
+import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 
 /**
  * Credentials module home. Lists stored credentials and hosts the create
  * dialog, edit sheet, and the delete confirmation. Data flows through the
  * module's React Query hooks only.
  *
- * Note: we used to surface a one-time secret dialog after creation to echo
- * back the raw secret. That added friction without security benefit for
- * user-provided values, so it was removed — the success toast is now the
- * sole feedback for a created credential.
+ * Note: creation deliberately doesn't echo the raw secret back (no
+ * one-time-secret dialog) — echoing a value the user just typed adds friction
+ * without security benefit. The success toast is the sole feedback for a
+ * created credential.
  */
 export function CredentialsPage() {
 	const [search, setSearch] = useState('');

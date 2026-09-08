@@ -1,6 +1,24 @@
 {
   "components": {
     "headers": {
+      "JenticCredentialId": {
+        "description": "ID of the stored credential the broker resolved and used to sign\nthis execution. Present only when a stored credential was actually\nused — a missing header unambiguously means no credential (inline\nauth, a credential-less API, or a failure before resolution).\n",
+        "schema": {
+          "examples": [
+            "cred_abc123"
+          ],
+          "type": "string"
+        }
+      },
+      "JenticCredentialName": {
+        "description": "Human-readable label of the credential in `Jentic-Credential-Id`,\nsanitized to printable ASCII (unsafe characters replaced with `?`).\nPresent under the same condition as the id header. The same header\nname is also accepted on requests to disambiguate credential\nresolution.\n",
+        "schema": {
+          "examples": [
+            "Stripe prod key"
+          ],
+          "type": "string"
+        }
+      },
       "JenticExecutionId": {
         "description": "Execution ID — unique identifier for this brokered request.",
         "schema": {
@@ -140,7 +158,7 @@
             }
           }
         },
-        "description": "No credential is connected for the resolved upstream API — the\nbound credential is a missing dependency, so the broker cannot\nsign the upstream call. Body is RFC 9457\n`application/problem+json`; the `agent_directive` is a\n`prompt_human` instruction carrying a non-secret `provisioning_url`\n(when account-linking is configured) and an `intent_id` correlation\nid, so an autonomous agent stops and asks the user to connect the\naccount rather than retrying or guessing the credential.\n"
+        "description": "A bound credential is an unusable dependency, so the broker cannot\nsign the upstream call. Body is RFC 9457\n`application/problem+json`; the `type` discriminates two cases with\nopposite recovery paths:\n- `credential_not_provisioned` — no credential is connected for the\n  resolved upstream API. The `agent_directive` is a `prompt_human`\n  instruction carrying a non-secret `provisioning_url` (when\n  account-linking is configured) and an `intent_id` correlation id,\n  so an autonomous agent stops and asks the user to connect the\n  account rather than retrying or guessing the credential.\n- `credential_undecryptable` — a credential is connected but its\n  stored secret can no longer be decrypted (typically the\n  deployment's encryption key rotated underneath it, e.g. a\n  reinstall over existing data). The caller cannot self-provision\n  and retrying will not help; the `prompt_human` directive tells\n  the agent to ask an operator to remove and re-add the credential.\n"
       },
       "Default": {
         "content": {
@@ -263,6 +281,12 @@
               ],
               "type": "string"
             }
+          },
+          "Jentic-Credential-Id": {
+            "$ref": "#/components/headers/JenticCredentialId"
+          },
+          "Jentic-Credential-Name": {
+            "$ref": "#/components/headers/JenticCredentialName"
           },
           "Jentic-Execution-Id": {
             "$ref": "#/components/headers/JenticExecutionId"
@@ -547,7 +571,7 @@
       "name": "Jentic Platform Team",
       "url": "https://jentic.com"
     },
-    "description": "## Overview\n\nThe Broker is the platform's stateless data plane. Send it any\nHTTP request with the upstream URL as the path; it injects the\ncaller's stored credentials, forwards method/headers/body as-is,\nand returns the upstream response.\n\n```\nPOST https://broker.your-instance.example/petstore.swagger.io/v2/pet\n```\n\nSecrets stay off agents and end-user devices, outbound traffic\nhas one auditable choke-point, and credentials rotate centrally\nwithout redeploying callers. Sync responses return `200` with the\nupstream body; long calls fall back to `202` with a polling link\ninto the control plane (see `Prefer` on `/{upstream_url}`).\n\nAuth: every operation expects `Authorization: Bearer <token>` except\n`GET /health`. Broker-added metadata is confined to the `Jentic-*`\nheader namespace — anything else on a response belongs to the\nupstream.\n\nToolkit, credential, and API-revision management live on the\n[control plane](https://control-plane.example.com), not here.\n\n## Tracing and audit\n\nEvery brokered response carries W3C trace context (`traceparent`,\n`tracestate`) and a `Jentic-*` header layer with the execution ID\n(`exec_…`), toolkit ID (`tk_…`), and upstream API reference\n(`vendor:name:version`). OpenTelemetry clients pick this up\nautomatically; nothing else needs to parse `tracestate`.\n\nTo see what happened, ask the control plane:\n\n- `GET /executions/{exec_id}` — full execution metadata (latency,\n  status, pinned revisions, caller).\n- `GET /executions` — list and filter recent executions.\n- `GET /executions/{exec_id}/steps` — per-step trace for workflow\n  executions.\n- `GET /jobs/{job_id}` and `GET /jobs/{job_id}/result` — async\n  job status and pickup of the upstream body.\n- `GET /events` / `GET /events/stream` — audit event feed.\n\nRequest and response bodies are not persisted by default. Execution\nmetadata is retained for 30 days (configurable). Body capture is\nexplicit opt-in. Async response bodies live in a short-lived\npickup buffer collected via `/jobs/{id}/result`, not in the audit\nstore.\n",
+    "description": "## Overview\n\nThe Broker is the platform's stateless data plane. Send it any\nHTTP request with the upstream URL as the path; it injects the\ncaller's stored credentials, forwards method/headers/body as-is,\nand returns the upstream response.\n\n```\nPOST https://broker.your-instance.example/petstore.swagger.io/v2/pet\n```\n\nSecrets stay off agents and end-user devices, outbound traffic\nhas one auditable choke-point, and credentials rotate centrally\nwithout redeploying callers. Sync responses return `200` with the\nupstream body; long calls fall back to `202` with a polling link\ninto the control plane (see `Prefer` on `/{upstream_url}`).\n\nAuth: every operation expects `Authorization: Bearer <token>` except\n`GET /health`. Broker-added metadata is confined to the `Jentic-*`\nheader namespace — anything else on a response belongs to the\nupstream.\n\nToolkit, credential, and API-revision management live on the\n[control plane](https://control-plane.example.com), not here.\n\n## Path format\n\nThe request path **is** the upstream URL. The broker reconstructs the\nfull target from your path, adding `https://` when no scheme is present:\n\n| You send | Broker proxies to |\n|----------|-------------------|\n| `GET /api.example.com/v1/users` | `https://api.example.com/v1/users` |\n| `POST /petstore.swagger.io/v2/pet` | `https://petstore.swagger.io/v2/pet` |\n| `GET /http://127.0.0.1:8080/get` | `http://127.0.0.1:8080/get` |\n| `GET /https://api.example.com/v1/users` | `https://api.example.com/v1/users` |\n\nFor HTTPS upstream targets (the common case), omit the scheme — just use\n`/{host}/{path}`. For plain HTTP targets (e.g. local development), include\nthe full `http://` scheme in the path so the broker doesn't upgrade to HTTPS.\n\nQuery strings pass through as-is: `/api.example.com/search?q=foo` works.\n\n## Tracing and audit\n\nEvery brokered response carries W3C trace context (`traceparent`,\n`tracestate`) and a `Jentic-*` header layer with the execution ID\n(`exec_…`), toolkit ID (`tk_…`), and upstream API reference\n(`vendor:name:version`). OpenTelemetry clients pick this up\nautomatically; nothing else needs to parse `tracestate`.\n\nTo see what happened, ask the control plane:\n\n- `GET /executions/{exec_id}` — full execution metadata (latency,\n  status, pinned revisions, caller).\n- `GET /executions` — list and filter recent executions.\n- `GET /executions/{exec_id}/steps` — per-step trace for workflow\n  executions.\n- `GET /jobs/{job_id}` and `GET /jobs/{job_id}/result` — async\n  job status and pickup of the upstream body.\n- `GET /events` / `GET /events/stream` — audit event feed.\n\nRequest and response bodies are not persisted by default. Execution\nmetadata is retained for 30 days (configurable). Body capture is\nexplicit opt-in. Async response bodies live in a short-lived\npickup buffer collected via `/jobs/{id}/result`, not in the audit\nstore.\n",
     "summary": "Secure execution proxy for upstream APIs — credentials never leave the Broker.",
     "title": "Broker API",
     "version": "beta.1"

@@ -13,13 +13,20 @@ import type {
 	ToolkitCredentialBindingResponse,
 	ToolkitCredentialListResponse,
 	PermissionRuleReadSchema,
-	PermissionRuleSchema,
 	ToolkitBindingResponse,
 	AuditResponse,
+	UsageResponse,
+	UsageBucket,
+	BindingWarningSchema,
+	PermissionTestResponse,
+	ToolkitUpdateRequest,
 } from '@/shared/api';
 
 /** A toolkit as rendered by the list/detail UI. */
 export type Toolkit = ToolkitResponse;
+
+/** Write shape for an in-place toolkit edit (PATCH /toolkits/{id}). */
+export type ToolkitUpdate = ToolkitUpdateRequest;
 
 /** Cursor-paginated toolkit list envelope. */
 export type ToolkitList = ToolkitListResponse;
@@ -36,15 +43,15 @@ export type ToolkitCredentialList = ToolkitCredentialListResponse;
 export type PermissionRule = PermissionRuleReadSchema;
 
 /** Write shape for a permission rule (allow/deny + methods/path/operations). */
-export type PermissionRuleInput = PermissionRuleSchema;
+export type { PermissionRuleInput } from '@/shared/ui';
 
 /**
  * Rule effect values, as plain string literals matching the backend enum
- * (`allow` / `deny`). Defined here so views/editors don't import the generated
- * enum *value* (which the layering ESLint rule forbids outside `api/client.ts`).
+ * (`allow` / `deny`). Re-exported from the shared `PermissionRuleEditor` home so
+ * the editor and the toolkits module share one definition.
  */
-export const PERMISSION_EFFECTS = ['allow', 'deny'] as const;
-export type PermissionEffect = (typeof PERMISSION_EFFECTS)[number];
+export { PERMISSION_EFFECTS } from '@/shared/ui';
+export type { PermissionEffect } from '@/shared/ui';
 
 /** An agent binding (from `GET /agents/{id}/toolkits` — agent side). */
 export type AgentToolkitBinding = ToolkitBindingResponse;
@@ -86,6 +93,11 @@ export interface BindableCredential {
 	name: string;
 	type: string;
 	vendor: string | null;
+	/** The API's `name` segment (sub-API path), for deriving a friendly title. */
+	apiName: string | null;
+	/** Catalog identity slug (`domain[/sub-api]`), when recorded — the
+	 * preferred friendly-title source. */
+	catalogApiId: string | null;
 	provider: string | null;
 }
 
@@ -100,4 +112,57 @@ export interface ToolkitAgent {
 	agent_name: string;
 	status: string;
 	bound_at: string | null;
+}
+
+/**
+ * Per-toolkit usage aggregation (`GET /monitoring/usage?toolkit_id=…`) — the
+ * detail page's KPI strip and Activity chart. Admin-gated: the repository maps
+ * 401/403 to `null` so the surfaces hide rather than error for non-admins.
+ */
+export type ToolkitUsage = UsageResponse;
+
+/** One time bucket of the usage aggregation (unix-second `ts`). */
+export type ToolkitUsageBucket = UsageBucket;
+
+/**
+ * Minimal projection of an execution record for the toolkit Activity feed —
+ * just what a feed row renders. Sourced from the admin `GET /executions`
+ * surface via the repository tier (401/403 → `null`, same gating as usage).
+ */
+export interface ToolkitExecution {
+	execution_id: string;
+	trace_id: string;
+	status: string;
+	operation_id: string | null;
+	api_label: string | null;
+	actor_id: string;
+	actor_type: string;
+	http_status: number | null;
+	duration_ms: number | null;
+	error: string | null;
+	started_at: string;
+}
+
+/**
+ * Non-fatal bind-time signal on a credential binding (e.g. "zero rules — the
+ * broker denies by default"). Returned by both the bind call and the bindings
+ * list; rendered verbatim on the Access tab.
+ */
+export type BindingWarning = BindingWarningSchema;
+
+/**
+ * Broker dry-run verdict from `POST …/permissions:test`. Vendor pooling means
+ * `credential_id` may name a *different* binding than the one tested against.
+ */
+export type PermissionTestResult = PermissionTestResponse;
+
+/**
+ * One toolkit's slice of the `group_by=toolkit` usage aggregation — the list
+ * page's card sparklines (7d volume trend + totals).
+ */
+export interface ToolkitUsageSummary {
+	total: number;
+	success: number;
+	failed: number;
+	trend: number[];
 }

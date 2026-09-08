@@ -8,7 +8,7 @@ the instrumentation here means the **redaction hooks can't be forgotten** by a
 new call site (a compliance requirement — the broker proxies ``Authorization``,
 injected API keys, cookies, and arbitrary tenant bodies that may carry PII).
 
-It owns three concerns (§04 PR-B tracing slice):
+It owns three concerns:
 
 1. ``configure_tracing`` — the global ``TracerProvider`` (OTLP gRPC or no-op).
 2. ``instrument_outbound_client`` — W3C ``traceparent``/``tracestate`` propagation
@@ -144,13 +144,30 @@ def configure_tracing(
     return provider
 
 
+def current_trace_id() -> str | None:
+    """Return the active span's trace id as 32 lowercase hex chars, or ``None``.
+
+    Within a request handler this is the sanctioned way to obtain the request's
+    trace id: the inbound instrumentation (``instrument_inbound_app``) has
+    already extracted the W3C ``traceparent`` — or started a fresh trace when
+    the header was absent — so the active span context carries exactly the id
+    a caller would want to correlate on. Returns ``None`` when there is no
+    valid span context (e.g. tracing was never configured), so callers must
+    bring their own fallback.
+    """
+    span_context = trace.get_current_span().get_span_context()
+    if not span_context.is_valid:
+        return None
+    return format(span_context.trace_id, "032x")
+
+
 # ---------------------------------------------------------------------------
 # Outbound (upstream) propagation
 # ---------------------------------------------------------------------------
 
 
 def instrument_outbound_client(client: httpx.AsyncClient) -> None:
-    """Instrument the shared outbound ``httpx`` client for W3C propagation (§04).
+    """Instrument the shared outbound ``httpx`` client for W3C propagation.
 
     Distributed tracing must continue *into* the upstream: the outbound request
     carries the W3C ``traceparent``/``tracestate`` so a vendor running OTel can
@@ -185,7 +202,7 @@ _INBOUND_SANITIZE_FIELDS: list[str] = [
 
 
 def instrument_inbound_app(app: object) -> None:
-    """Instrument a FastAPI app for inbound (server-side) tracing (§04).
+    """Instrument a FastAPI app for inbound (server-side) tracing.
 
     Routed through the facade — not called inline with an ad-hoc
     ``opentelemetry`` import at the call site — so the redaction policy lives in

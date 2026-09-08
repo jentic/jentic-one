@@ -123,7 +123,7 @@ def _endpoints_from_app(app: FastAPI, surface_default: str) -> list[Endpoint]:
 
     The scope/actor/typical_caller/auth_note all come from
     :func:`build_operation_auth_map` (the curated source of truth) — never from
-    OpenAPI vendor extensions, which the spec no longer carries.
+    OpenAPI vendor extensions (the spec carries none).
     """
     auth_map = build_operation_auth_map(app)
     spec: dict[str, Any] = app.openapi()

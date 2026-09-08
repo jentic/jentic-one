@@ -25,9 +25,9 @@ const apiHost = process.env.VITE_API_HOST || 'http://localhost:8000';
 //   * `/@id`, `/@fs`, `/@vite`    — Vite module-resolution endpoints.
 //
 // Anything else (`/auth`, `/credentials`, `/agents`, `/openapi.json`, the
-// Monitor aggregation endpoint `/monitoring/executions` (#386), a brand new
-// router added tomorrow, …) is proxied with zero config changes. This is
-// drift-proof: adding a backend router needs no edit here.
+// Monitor aggregation endpoint `/monitoring/usage` (jentic-one-internal#561),
+// a brand new router added tomorrow, …) is proxied with zero config changes.
+// This is drift-proof: adding a backend router needs no edit here.
 //
 // `/app-config.json` is the one root-level path the SPA fetches that the
 // backend owns; it is NOT under `/app`, so the regex below proxies it (which is
@@ -103,5 +103,14 @@ export default defineConfig({
 	server: {
 		host: '0.0.0.0',
 		proxy: backendProxy,
+		// Extensibility seam: this config intentionally sets NO `server.fs`
+		// restriction. OSS uses the plain `@` alias for its own source (`ui/src`).
+		// A downstream host that consumes this SPA as a shared module graph must
+		// alias `@` -> this repo's `ui/src` (so OSS's own `@/` imports resolve
+		// here, not into the host tree) and use a DISTINCT prefix for its own
+		// code (e.g. `@ent/`) — it must NOT claim `@` for itself. The host adds a
+		// matching `server.fs.allow` entry in its own vite config, not here.
+		// Leaving `server.fs` unrestricted here avoids pre-emptively blocking that
+		// cross-package mount; do not hardcode `server.fs` in a way that would.
 	},
 });

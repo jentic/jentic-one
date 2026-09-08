@@ -10,6 +10,9 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+
+from jentic_one.shared.context import Context
 
 pytestmark = pytest.mark.integration
 
@@ -124,6 +127,96 @@ def test_delete_toolkit(tk_admin_client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+# --- Bound-but-orphaned agent visibility (issues #665 / #682) ---
+
+
+def test_orphaned_agent_reads_bound_toolkit(bound_orphan_client: TestClient) -> None:
+    """A bound agent that owns nothing gets 200 (not 404) on its bound toolkit.
+
+    Pins #665/#682: owner-only scoping must not return 404 for an
+    orphaned agent that is actively bound to the toolkit.
+    """
+    resp = bound_orphan_client.get("/toolkits/tk_target")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["toolkit_id"] == "tk_target"
+
+
+def test_orphaned_agent_lists_bound_toolkit(bound_orphan_client: TestClient) -> None:
+    """The bound toolkit appears in the orphaned agent's list, not an empty page."""
+    resp = bound_orphan_client.get("/toolkits")
+    assert resp.status_code == 200, resp.text
+    ids = [t["toolkit_id"] for t in resp.json()["data"]]
+    assert "tk_target" in ids
+
+
+def test_orphaned_agent_denied_unbound_toolkit(bound_orphan_client: TestClient) -> None:
+    """Visibility is scoped to bindings — an unbound/unknown toolkit is still 404."""
+    resp = bound_orphan_client.get("/toolkits/tk_not_bound")
+    assert resp.status_code == 404
+
+
+# --- Bound-agent WRITE access (issue #682) ---
+
+
+def test_bound_orphan_writer_can_bind_credential(bound_orphan_writer_client: TestClient) -> None:
+    """A bound agent with toolkits:write can write to its bound toolkit.
+
+    Reproduces #682: before the fix the write path scoped to owner-only, so a
+    bound-but-orphaned agent got 404 on a toolkit it is actively bound to.
+    """
+    resp = bound_orphan_writer_client.post(
+        "/toolkits/tk_target/credentials",
+        json={"credential_id": "cred_001"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["toolkit_id"] == "tk_target"
+    assert body["credential_id"] == "cred_001"
+
+
+def test_bound_orphan_writer_can_create_key(bound_orphan_writer_client: TestClient) -> None:
+    """The same bound agent can issue a key on its bound toolkit."""
+    resp = bound_orphan_writer_client.post(
+        "/toolkits/tk_target/keys",
+        json={"label": "bound-orphan-key"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["api_key"].startswith("jntc_live_")
+
+
+def test_unbound_writer_denied_with_403_not_404(unbound_writer_client: TestClient) -> None:
+    """A writer that is neither owner, bound, nor admin gets 403 (not a misleading 404).
+
+    The toolkit exists (owned by another operator); reporting it as
+    ``404 toolkit_not_found`` hid an authorization outcome. Issue #682.
+    """
+    resp = unbound_writer_client.post(
+        "/toolkits/tk_target/credentials",
+        json={"credential_id": "cred_001"},
+    )
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["type"] == "toolkit_access_denied"
+
+
+def test_unbound_writer_genuine_missing_toolkit_is_404(unbound_writer_client: TestClient) -> None:
+    """A truly non-existent toolkit id still returns 404, not 403."""
+    resp = unbound_writer_client.post(
+        "/toolkits/tk_does_not_exist/credentials",
+        json={"credential_id": "cred_001"},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_admin_writer_bypasses_scoping(admin_writer_client: TestClient) -> None:
+    """org:admin can still write to any toolkit regardless of ownership/binding."""
+    resp = admin_writer_client.post(
+        "/toolkits/tk_target/credentials",
+        json={"credential_id": "cred_001"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["toolkit_id"] == "tk_target"
+
+
 # --- Keys ---
 
 
@@ -207,3 +300,111 @@ def test_list_toolkit_agents_respects_limit_bounds(tk_owner_client: TestClient) 
 
     assert tk_owner_client.get(f"/toolkits/{toolkit_id}/agents?limit=0").status_code == 422
     assert tk_owner_client.get(f"/toolkits/{toolkit_id}/agents?limit=201").status_code == 422
+
+
+# --- Served APIs on the list/get response (#890) ---
+
+
+async def test_toolkit_response_carries_served_apis(
+    tk_owner_client: TestClient, web_context: Context
+) -> None:
+    """`apis` aggregates the distinct APIs behind the toolkit's credential
+    bindings — deduped (two credentials for one API yield one entry) and
+    vendor-sorted — so pickers can rank/badge toolkits by the API a plan
+    targets without a per-toolkit child fetch (#890). Unbound toolkits report
+    an empty list.
+    """
+    created = _create_toolkit(tk_owner_client, name="served-apis-test")
+    toolkit_id = created["toolkit"]["toolkit_id"]
+    assert created["toolkit"]["apis"] == []
+
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials "
+                "(id, type, name, api_vendor, api_name, api_version, created_by) VALUES "
+                "('cred_srvapi_1', 'token_value', 'srvapi-one', "
+                "'webtest-alpha', 'alpha-api', 'v1', 'usr_webtest_tk_owner'), "
+                "('cred_srvapi_2', 'token_value', 'srvapi-two', "
+                "'webtest-alpha', 'alpha-api', 'v1', 'usr_webtest_tk_owner'), "
+                "('cred_srvapi_3', 'token_value', 'srvapi-three', "
+                "'webtest-beta', NULL, NULL, 'usr_webtest_tk_owner') "
+                "ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings (id, toolkit_id, credential_id) VALUES "
+                "('tcb_srvapi_1', :tk, 'cred_srvapi_1'), "
+                "('tcb_srvapi_2', :tk, 'cred_srvapi_2'), "
+                "('tcb_srvapi_3', :tk, 'cred_srvapi_3') ON CONFLICT DO NOTHING"
+            ),
+            {"tk": toolkit_id},
+        )
+        await session.commit()
+    try:
+        got = tk_owner_client.get(f"/toolkits/{toolkit_id}").json()
+        assert got["apis"] == [
+            {"api_vendor": "webtest-alpha", "api_name": "alpha-api", "api_version": "v1"},
+            # NULL name/version are preserved (the covers-all wildcard, #775),
+            # matching the `/me` response's ServedApiRef convention.
+            {"api_vendor": "webtest-beta", "api_name": None, "api_version": None},
+        ]
+
+        listed = tk_owner_client.get("/toolkits").json()
+        row = next(t for t in listed["data"] if t["toolkit_id"] == toolkit_id)
+        assert row["apis"] == got["apis"]
+    finally:
+        # Bindings cascade with the toolkit (clean_toolkits); the credentials
+        # belong to no cleanup fixture, so drop them here.
+        async with web_context.control_db.session() as session:
+            await session.execute(
+                text(
+                    "DELETE FROM credentials "
+                    "WHERE id IN ('cred_srvapi_1', 'cred_srvapi_2', 'cred_srvapi_3')"
+                )
+            )
+            await session.commit()
+
+
+async def test_served_apis_scoped_by_credential_visibility(
+    tk_owner_client: TestClient, web_context: Context
+) -> None:
+    """`apis` reveals only the APIs of credentials the caller can read.
+
+    A binding to someone else's credential (possible via an org:admin bind)
+    still counts in `credential_count`, but its API identity stays hidden —
+    the aggregation runs under the caller's Credential read filter, so
+    top-level toolkit visibility (including enterprise shares) never leaks
+    the bound credentials' metadata.
+    """
+    created = _create_toolkit(tk_owner_client, name="served-apis-scope-test")
+    toolkit_id = created["toolkit"]["toolkit_id"]
+
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials "
+                "(id, type, name, api_vendor, api_name, api_version, created_by) VALUES "
+                "('cred_srvapi_foreign', 'token_value', 'srvapi-foreign', "
+                "'webtest-hidden', 'hidden-api', 'v1', 'usr_webtest_other') "
+                "ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings (id, toolkit_id, credential_id) "
+                "VALUES ('tcb_srvapi_foreign', :tk, 'cred_srvapi_foreign') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"tk": toolkit_id},
+        )
+        await session.commit()
+    try:
+        got = tk_owner_client.get(f"/toolkits/{toolkit_id}").json()
+        assert got["credential_count"] == 1
+        assert got["apis"] == []
+    finally:
+        async with web_context.control_db.session() as session:
+            await session.execute(text("DELETE FROM credentials WHERE id = 'cred_srvapi_foreign'"))
+            await session.commit()

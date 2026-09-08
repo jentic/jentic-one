@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from base64 import b64decode, b64encode
 from datetime import UTC, datetime
@@ -113,6 +114,8 @@ def decode_catalog_cursor(cursor: str) -> tuple[str, float | None]:
             raise ValueError("id must be a string")
         raw_score = payload.get("s")
         score = None if raw_score is None else float(raw_score)
+        if score is not None and not math.isfinite(score):
+            raise ValueError("score must be finite")
         return api_id, score
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc

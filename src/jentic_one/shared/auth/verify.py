@@ -5,7 +5,7 @@ from __future__ import annotations
 import structlog
 
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.tokens import decode_jwt
+from jentic_one.shared.auth.tokens import InvalidTokenError, decode_jwt
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 
@@ -24,7 +24,8 @@ async def resolve_permissions_for_actor(
         tuple[list[str], list[str]]: (permissions, parent_permissions)
     """
     # NOTE: Moving this to module-level would cause a circular dependency (shared -> admin).
-    # A test-arch exception will handle this lazy import until Phase 2 extracts resolution.
+    # A test-arch exception will handle this lazy import until permission
+    # resolution is extracted out of the admin surface.
     from jentic_one.admin.services.permission_service import PermissionService
 
     svc = PermissionService(ctx)
@@ -35,7 +36,7 @@ async def resolve_permissions_for_actor(
         view = await svc.get_effective_for_user(actor_id)
         permissions = view.effective
     elif actor_type == ActorType.AGENT:
-        # TODO (Phase 3): Fetch Agent's direct permissions via svc.get_effective_for_agent
+        # TODO: fetch the agent's direct permissions via svc.get_effective_for_agent
         if parent_actor_id:
             view = await svc.get_effective_for_user(parent_actor_id)
             parent_permissions = view.effective
@@ -51,12 +52,33 @@ async def resolve_permissions_for_actor(
 async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     """Decode and verify a JWT, returning the Identity.
 
-    When the JWT already embeds ``permissions`` in its claims (e.g. login JWTs),
-    those are trusted directly — no DB lookup. Otherwise falls back to the
-    database-resolved permission path for backwards compatibility.
+    Fail-closed on the actor type (#862): every JWT we mint carries an
+    explicit ``actor_type`` claim, so a validly-signed token without one —
+    or with a value we don't recognise — is refused rather than assumed to
+    be a USER (the most-privileged interpretation). Raises the same
+    ``InvalidTokenError`` as a bad signature; the web layer maps it to 401.
+
+    When the JWT already embeds ``permissions`` in its claims (e.g. login
+    JWTs), those are trusted directly — no DB lookup. Otherwise falls back
+    to the database-resolved permission path for backwards compatibility.
     """
     claims = decode_jwt(token, secret)
-    actor_type = ActorType(claims.get("actor_type", ActorType.USER))
+    actor_type_claim = claims.get("actor_type")
+    if actor_type_claim is None:
+        # The wire response is deliberately uniform with any other bad token
+        # (401, no oracle for forgers) — log the real cause so an operator
+        # can tell a claim-less token from a bad signature or wrong secret.
+        logger.warning("jwt_actor_type_missing", sub=claims.get("sub"))
+        raise InvalidTokenError("Token does not declare an actor_type")
+    try:
+        actor_type = ActorType(actor_type_claim)
+    except ValueError as exc:
+        # Typed, deliberate rejection instead of relying on the web layer's
+        # catch-all to absorb a ValueError from the enum constructor.
+        logger.warning(
+            "jwt_actor_type_unknown", sub=claims.get("sub"), actor_type=str(actor_type_claim)
+        )
+        raise InvalidTokenError("Token declares an unknown actor_type") from exc
     sub = claims["sub"]
     parent_actor_id = claims.get("parent_actor_id")
 

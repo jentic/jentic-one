@@ -1,6 +1,7 @@
 package install
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -252,6 +253,9 @@ func TestRenderTelemetryDefaultsOff(t *testing.T) {
 	if _, ok := tel["instance_id"]; ok {
 		t.Errorf("did not expect instance_id when telemetry is off, got %v", tel["instance_id"])
 	}
+	if _, ok := tel["host_os"]; ok {
+		t.Errorf("did not expect host_os when telemetry is off, got %v", tel["host_os"])
+	}
 }
 
 func TestRenderTelemetryOptedIn(t *testing.T) {
@@ -267,5 +271,49 @@ func TestRenderTelemetryOptedIn(t *testing.T) {
 	}
 	if tel["instance_id"] != "inst-abc-123" {
 		t.Errorf("telemetry.instance_id = %v, want inst-abc-123", tel["instance_id"])
+	}
+	// The CLI runs on the operator's machine, so runtime.GOOS here IS the host
+	// OS — stamping it is what keeps the backend's per-boot OS report accurate
+	// when the app itself runs inside Docker (where it would detect linux).
+	if tel["host_os"] != runtime.GOOS {
+		t.Errorf("telemetry.host_os = %v, want %v", tel["host_os"], runtime.GOOS)
+	}
+}
+
+func TestRenderEncryptionKeysetOverrideWritesVerbatim(t *testing.T) {
+	// On a reinstall ReuseSecrets pre-seeds Draft.EncryptionKeyset with the
+	// existing config's keyset verbatim. Render must write that block
+	// unchanged (so a hand-rotated multi-key keyset survives) and ignore
+	// EncryptionKey. Flattening back to a single v1 entry would silently
+	// invalidate rows encrypted under a retired key.
+	d := NewDraft()
+	d.EncryptionKey = "should-be-ignored"
+	d.EncryptionKeyset = &encryptionOut{
+		ActiveID: "v2",
+		Entries: []encryptionEntryOut{
+			{ID: "v1", Material: "old-material"},
+			{ID: "v2", Material: "new-material"},
+		},
+	}
+	if err := d.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets: %v", err)
+	}
+
+	out := renderToMap(t, d)
+	enc := out["credentials"].(map[string]any)["encryption"].(map[string]any)
+	if enc["active_id"] != "v2" {
+		t.Errorf("active_id = %v, want v2", enc["active_id"])
+	}
+	entries := enc["entries"].([]any)
+	if len(entries) != 2 {
+		t.Fatalf("entries len = %d, want 2", len(entries))
+	}
+	if entries[0].(map[string]any)["id"] != "v1" ||
+		entries[0].(map[string]any)["material"] != "old-material" {
+		t.Errorf("entry[0] not preserved: %v", entries[0])
+	}
+	if entries[1].(map[string]any)["id"] != "v2" ||
+		entries[1].(map[string]any)["material"] != "new-material" {
+		t.Errorf("entry[1] not preserved: %v", entries[1])
 	}
 }

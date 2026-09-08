@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
@@ -58,7 +59,7 @@ async def test_validate_raises_on_unknown_token(mock_resolver: AsyncMock) -> Non
     mock_resolver.resolve_access_token.return_value = None
     validator = CachedTokenValidator(resolver=mock_resolver)
 
-    with pytest.raises(ValueError, match="unknown_token"):
+    with pytest.raises(TokenValidationError, match="unknown_token"):
         await validator.validate("at_unknown")
 
 
@@ -67,7 +68,7 @@ async def test_validate_raises_on_inactive_token(mock_resolver: AsyncMock) -> No
     mock_resolver.resolve_access_token.return_value = _make_identity(active=False)
     validator = CachedTokenValidator(resolver=mock_resolver)
 
-    with pytest.raises(ValueError, match="token_inactive"):
+    with pytest.raises(TokenValidationError, match="token_inactive"):
         await validator.validate("at_inactive")
 
 
@@ -78,7 +79,7 @@ async def test_validate_raises_on_expired_token(mock_resolver: AsyncMock) -> Non
     )
     validator = CachedTokenValidator(resolver=mock_resolver)
 
-    with pytest.raises(ValueError, match="token_expired"):
+    with pytest.raises(TokenValidationError, match="token_expired"):
         await validator.validate("at_expired")
 
 
@@ -107,9 +108,9 @@ async def test_negative_cache_entry(mock_resolver: AsyncMock) -> None:
     mock_resolver.resolve_access_token.return_value = None
     validator = CachedTokenValidator(resolver=mock_resolver, cache_ttl_seconds=5.0)
 
-    with pytest.raises(ValueError, match="unknown_token"):
+    with pytest.raises(TokenValidationError, match="unknown_token"):
         await validator.validate("at_bad")
-    with pytest.raises(ValueError, match="unknown_token"):
+    with pytest.raises(TokenValidationError, match="unknown_token"):
         await validator.validate("at_bad")
 
     mock_resolver.resolve_access_token.assert_called_once()
@@ -123,7 +124,7 @@ async def test_expires_at_override_despite_active_flag(mock_resolver: AsyncMock)
     )
     validator = CachedTokenValidator(resolver=mock_resolver)
 
-    with pytest.raises(ValueError, match="token_expired"):
+    with pytest.raises(TokenValidationError, match="token_expired"):
         await validator.validate("at_edge_case")
 
 

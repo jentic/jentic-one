@@ -28,6 +28,10 @@ export type CatalogListResponse = {
      */
     next_cursor?: (string | null);
     /**
+     * Count of whole-manifest registered entries with an upstream update available.
+     */
+    outdated_count?: number;
+    /**
      * Count of whole-manifest entries already imported locally.
      */
     registered_count: number;

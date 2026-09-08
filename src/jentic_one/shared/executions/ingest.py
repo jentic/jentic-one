@@ -31,6 +31,8 @@ async def record_execution(
     actor_id: str,
     actor_type: str,
     origin: str | None = None,
+    credential_id: str | None = None,
+    credential_name: str | None = None,
 ) -> str:
     """Persist a terminal execution record. Returns the record ID."""
     if status not in tuple(ExecutionStatus):
@@ -54,6 +56,8 @@ async def record_execution(
         actor_id=actor_id,
         actor_type=actor_type,
         origin=origin,
+        credential_id=credential_id,
+        credential_name=credential_name,
     )
     session.add(record)
     await session.flush()

@@ -1,4 +1,4 @@
-"""``RunnerRegistry`` — scheme→runner selection + runner lifecycle (§11 RN-0.3).
+"""``RunnerRegistry`` — scheme→runner selection + runner lifecycle.
 
 The broker generalises from "an HTTP proxy" to "a credential-injecting upstream
 executor with pluggable transports, selected by the upstream URL scheme". The
@@ -10,9 +10,9 @@ registry is that selection seam plus the owner of every runner's lifecycle.
   :class:`~jentic_one.broker.adapters.runners.base.UpstreamRunner` (the
   decorator-wrapped transport the sync router and async worker both dispatch
   through). It routes over the *live HTTP-shaped* runner — migrating onto the
-  transport-neutral ``PluggableUpstreamRunner`` is a later §11 sub-PR.
+  transport-neutral ``PluggableUpstreamRunner`` is future work.
 - Owns runner **lifecycle**: ``startup()`` for every registered runner on app
-  start, ``aclose()`` for all of them on shutdown (the §09 E4.3 graceful-drain
+  start, ``aclose()`` for all of them on shutdown (the graceful-drain
   step closes **every** runner, not just the HTTP client).
 
 **Startup-failure semantics (a flaky non-HTTP runner must never block HTTP
@@ -135,7 +135,7 @@ class RunnerRegistry:
     async def aclose(self) -> None:
         """Close every registered runner, best-effort — an error never blocks drain.
 
-        The §09 E4.3 drain path calls this after the worker has drained, so no
+        The graceful-drain path calls this after the worker has drained, so no
         in-flight call hits a closed pool. Each distinct runner is closed once.
         """
         for entry in self._distinct_entries():

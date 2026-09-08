@@ -9,9 +9,11 @@
  * the service tier can branch on.
  *
  * Dashboard has no endpoint of its own — each function here reads ONE existing
- * list endpoint cheaply (small page), and the composition happens at the hook /
- * component layer. We read across domains ONLY through the shared facade's
- * generated services, never by importing sibling modules.
+ * endpoint cheaply: small pages from the list endpoints for the action queues,
+ * plus the org:admin `GET /monitoring/usage` aggregate for the health layer.
+ * Composition happens at the hook / component layer. We read across domains
+ * ONLY through the shared facade's generated services, never by importing
+ * sibling modules.
  */
 import {
 	EventsService,
@@ -19,9 +21,12 @@ import {
 	ApIsService,
 	ApiError,
 	AgentsService,
+	MonitoringService,
+	GroupBy,
 	type AgentListResponse,
 	type EventListResponse,
 	type ExecutionListResponse,
+	type UsageResponse,
 } from '@/shared/api';
 import {
 	approxCountFromPage,
@@ -123,13 +128,15 @@ export async function fetchAccessRequestsPage(params: {
 }
 
 /**
- * Actionable events via `GET /events?requires_action=true`. These are the
- * alerts that need a human — the card lists them and links into Monitor.
+ * Actionable events via `GET /events?requires_action=true&acknowledged=false`.
+ * These are the alerts that still need a human — acknowledged (or otherwise
+ * settled) alerts must not linger on the card.
  */
 export async function fetchActionableEvents(): Promise<AlertsOverview> {
 	try {
 		const res: EventListResponse = await EventsService.listEvents({
 			requiresAction: true,
+			acknowledged: false,
 			limit: OVERVIEW_PAGE_SIZE,
 		});
 		return { count: approxCountFromPage(res), events: res.data };
@@ -172,5 +179,55 @@ export async function fetchCatalogSize(): Promise<CatalogOverview> {
 		return { apiCount: approxCountFromPage(page) };
 	} catch (error) {
 		throw toDashboardError(error, 'Failed to load the API catalog size.');
+	}
+}
+
+/**
+ * Cheapest possible "does this workspace have any agents at all?" probe
+ * (`GET /agents?limit=1`, no status filter). Drives the first-run switch:
+ * pending-only counts can't distinguish "fresh install" from "all approved".
+ */
+export async function fetchHasAgents(): Promise<boolean> {
+	try {
+		const res: AgentListResponse = await AgentsService.listAgents({ limit: 1 });
+		return res.data.length > 0;
+	} catch (error) {
+		throw toDashboardError(error, 'Failed to check for agents.');
+	}
+}
+
+export interface UsageOverviewParams {
+	/** Unix-second window lower bound (the endpoint defaults `until` to now). */
+	since: number;
+	/** Unix-second window upper bound (exclusive). Sent explicitly so the
+	 * window width — which drives the backend's bucket-tier choice — is
+	 * deterministic, and ceiled so the current partial minute is included
+	 * (#913). */
+	until?: number;
+	/** Top-rows grouping dimension (defaults to `api` server-side). */
+	groupBy?: GroupBy;
+	/** How many top rows to return (1–50). */
+	topLimit?: number;
+}
+
+/**
+ * Real gateway aggregates via `GET /monitoring/usage` — the ONE endpoint the
+ * old composed-only dashboard never called. It returns window stats (incl.
+ * latency percentiles + `active_now`), sparse time buckets for the volume
+ * chart, and top api/toolkit/agent rows with sparkline trends. org:admin
+ * gated server-side; the hook layer gates the query client-side so
+ * non-admins never fire a doomed request. Wraps the shared generated
+ * `MonitoringService` (already consumed by Monitor) — no new wire types.
+ */
+export async function fetchUsageOverview(params: UsageOverviewParams): Promise<UsageResponse> {
+	try {
+		return await MonitoringService.getUsageStats({
+			since: params.since,
+			until: params.until ?? null,
+			groupBy: params.groupBy ?? GroupBy.API,
+			topLimit: params.topLimit ?? 5,
+		});
+	} catch (error) {
+		throw toDashboardError(error, 'Failed to load usage statistics.');
 	}
 }

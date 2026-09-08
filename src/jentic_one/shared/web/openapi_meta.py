@@ -91,10 +91,13 @@ client credentials — every authenticated operation expects
 token) except `GET /health`, `POST /auth/login`,
 `POST /users:create-admin`, and `POST /users:redeem-invite`.
 Human tokens are issued by `POST /auth/login` with a fixed 1-hour
-TTL; agents and service accounts obtain tokens from
-`POST /oauth/token` (see `BearerAuth`). The `permissions` claim on a
-token is a snapshot at issue time; permission changes take effect at
-the next re-issue (≤ 1 hour with the default TTL).
+TTL and can be re-minted before expiry via `POST /auth/refresh`
+(sliding session, bounded by an absolute window —
+`admin.auth.session_ttl_seconds`, 12 hours by default); agents and
+service accounts obtain tokens from `POST /oauth/token` (see
+`BearerAuth`). The `permissions` claim on a token is a snapshot at
+issue time; permission changes take effect at the next re-issue —
+the next refresh or re-login (≤ 1 hour with the default TTL).
 
 The platform ships **no default credentials**. On a fresh
 install the users table is empty, so `GET /health` returns
@@ -273,9 +276,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "`allow` — the strictest matching rule wins. Absence of a matching rule is an "
             "implicit deny. System rules (`_system: true`) participate in the same priority "
             "pool as user rules.\n\n"
-            "The coarse JWT-embedded scope tier on `Toolkit.permissions` "
-            "(`capabilities:execute`, `apis:read`) is checked separately and composes with "
-            "these rules — both must allow."
+            "Toolkits have no separate scope tier of their own: a toolkit API key is minted "
+            "with the fixed broker-execute scope (`capabilities:execute`), and every gated "
+            "operation is decided by these per-binding rules."
         ),
     },
     {
@@ -524,9 +527,16 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "provider-specific router. The on-the-wire token contract — `Authorization: Bearer "
             "<jwt>` — is unchanged either way.\n\n"
             "**Disabling and revocation.** `:disable` flips `active=false` and rejects "
-            "subsequent `POST /auth/login`. **Existing JWTs keep working until they expire** "
-            "(≤ 1 hour with the platform's default TTL). This is a deliberate trade-off; "
-            "sub-minute revocation would require a server-side session table."
+            "subsequent `POST /auth/login` **and** `POST /auth/refresh`. **Existing JWTs keep "
+            "working until they expire** (≤ 1 hour with the platform's default TTL). This is a "
+            "deliberate trade-off; sub-minute revocation would require a server-side session "
+            "table.\n\n"
+            "**Session lifetime.** Login JWTs carry a 1-hour TTL. The UI keeps an active "
+            "session alive by calling `POST /auth/refresh` before expiry (sliding session); "
+            "refresh re-reads permissions and the `must_change_password` gate from the "
+            "database and is refused with 401 `session_expired` once the original "
+            "authentication is older than the absolute window "
+            "(`admin.auth.session_ttl_seconds`, 12 hours by default), forcing a fresh login."
         ),
     },
     {
@@ -544,10 +554,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "(full deployment-wide access, granted via direct DB action). It is not enumerated "
             "to non-holders by `GET /permissions`, and is rejected by `PUT "
             "/users/{user_id}/permissions` from any caller who doesn't already hold it.\n\n"
-            "The same vocabulary is used for `User.permissions` and for `Toolkit.permissions` "
-            "— coarse JWT-embedded scopes — so the one catalogue covers both. Per-binding "
-            "fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately under the "
-            "`Toolkit Permissions` tag."
+            "The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — "
+            "so the catalogue below covers user assignment. Toolkits have no separate scope tier "
+            "of their own: a toolkit API key is minted with the fixed broker-execute scope, and "
+            "the per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives "
+            "separately under the `Toolkit Permissions` tag."
         ),
     },
     {
@@ -644,6 +655,26 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "tracked follow-up."
         ),
     },
+    {
+        "name": "OAuth Clients",
+        "description": (
+            "Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). "
+            "Registered clients integrate with Jentic One via the standard Authorization Code + "
+            "PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. "
+            "Deactivating a client immediately invalidates all tokens issued through it."
+        ),
+    },
+    {
+        "name": "MCP",
+        "description": (
+            "MCP (Model Context Protocol) transport reporting. The `jentic mcp` stdio "
+            "server terminates all MCP protocol traffic locally; the control plane only "
+            "sees plain HTTP. This tag covers the small reporting surface behind it — "
+            "today, the config-registration report `jentic setup`/`jentic skill init` "
+            "send after writing an MCP server entry for a detected agent runtime, which "
+            "feeds the config-written → first-session → first-execute adoption funnel."
+        ),
+    },
 ]
 
 # Redoc tag groups (vendor extension). Tags not listed here still render; this
@@ -686,6 +717,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Audit",
             "Monitoring",
             "Configuration",
+            "OAuth Clients",
         ],
     },
     {
@@ -701,7 +733,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
     },
     {
         "name": "Operations",
-        "tags": ["System"],
+        "tags": ["System", "MCP"],
     },
 ]
 
@@ -739,6 +771,8 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
     {
         # Health probes (root + per-surface) are dependency-free liveness checks.
         "getHealth",
+        # Backend-identity probe: unauthenticated, self-describing, no secrets.
+        "getInstance",
         "health",
         "controlHealth",
         "adminHealth",
@@ -755,14 +789,41 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "tokenEndpoint",
         "authorizeEndpoint",
         "registerEndpoint",
+        # Anonymous OAuth-client DCR front door: flagship MCP
+        # clients register anonymously; the boundary is admin approval +
+        # consent, not registration. Rate limited and config-gated instead.
+        "registerOauthClientEndpoint",
         # OAuth redirect callbacks (bound by a signed state param, not a session).
         "oauthCallback",
         "authorizeOauthCallback",
+        # Approval-pending status poll: anonymous by design (the polling
+        # browser has no platform token yet), bound by the signed
+        # approval-state blob minted at /authorize — not a session and not a
+        # bare client_id. Returns only the pending/approved/denied tri-state;
+        # rate limited in its own bucket instead.
+        "approvalStatusEndpoint",
+        # OAuth consent screen (presented after IdP login, before issuing the code).
+        "consentPage",
+        "consentSubmit",
+        # Local-account login form on the /authorize flow: the caller is a
+        # browser mid-authorization with no token yet. Config-gated
+        # (auth.local_login.enabled → 404) and rate limited instead.
+        "loginPage",
+        "loginSubmit",
         # Browser-facing OAuth error page (no auth; just renders an error code).
         "errorPage",
         # Unauthenticated discovery metadata.
         "jwks",
         "oauthAuthorizationServer",
+        # /mcp-scoped discovery documents: RFC 8414 for the
+        # path-scoped issuer, RFC 9728 protected-resource metadata, and its
+        # root-path alias. Unauthenticated by spec; config-gated (404) instead.
+        "mcpOauthAuthorizationServer",
+        "mcpOauthProtectedResource",
+        "mcpOauthProtectedResourceRootAlias",
+        # Public IdP-login capability hint (enabled flag + provider name only;
+        # no secrets). The SPA reads this pre-login to render the SSO button.
+        "authIdpDescriptor",
     }
 )
 
@@ -781,6 +842,25 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
         # token. It still returns 401 on a missing/invalid/expired RAT
         # (RegistrationAccessDeniedError -> 401), so the 401 response stays.
         "pollStatusEndpoint",
+        # RFC 7009 token revocation (G11): dual-arm client authentication. The
+        # form-encoded arm authenticates by OAuth client_id lineage binding
+        # (public clients, auth method "none" — no platform bearer); the JSON
+        # arm keeps the pre-G11 platform-bearer contract and still 401s on a
+        # bad bearer, so the 401 response stays while the blanket BearerAuth
+        # requirement is dropped.
+        "revokeEndpoint",
+    }
+)
+
+
+#: Operations whose request-validation failures are reshaped at the router into
+#: RFC 7591 §3.2.2 ``400 {"error": "invalid_client_metadata"}`` responses (see
+#: ``_Rfc7591Route`` in ``auth/web/routers/oauth_client_registration.py``).
+#: They never emit the FastAPI 422, so the auto-generated 422 response is
+#: dropped from the spec (the 400 is documented on the route decorator).
+RFC7591_ERROR_OPERATION_IDS: frozenset[str] = frozenset(
+    {
+        "registerOauthClientEndpoint",
     }
 )
 
@@ -792,6 +872,8 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
 _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/health$"), "System"),
     (re.compile(r"^/[^/]+/health$"), "System"),
+    (re.compile(r"^/instance$"), "System"),
+    (re.compile(r"^/system/version$"), "System"),
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
     (re.compile(r"^/toolkits/[^/]+/keys"), "Toolkit Keys"),
@@ -814,17 +896,25 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/executions"), "Executions"),
     (re.compile(r"^/jobs"), "Jobs"),
     (re.compile(r"^/events"), "Events"),
+    (re.compile(r"^/mcp"), "MCP"),
     (re.compile(r"^/permissions"), "Permissions"),
     (re.compile(r"^/actors"), "Actors"),
     (re.compile(r"^/users"), "Users"),
-    (re.compile(r"^/auth/login"), "Users"),
+    (re.compile(r"^/auth/(login|refresh)"), "Users"),
+    (re.compile(r"^/auth/idp"), "Discovery"),
     (re.compile(r"^/audit"), "Audit"),
+    (re.compile(r"^/admin/oauth-clients"), "OAuth Clients"),
+    # Grant listings/revoke share the OAuth tag with the grant kill switch.
+    (re.compile(r"^/admin/oauth-grants"), "OAuth"),
+    # Anonymous DCR front door — before the broader ^/oauth rule below.
+    (re.compile(r"^/oauth-clients"), "OAuth Clients"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
     (re.compile(r"^/service-accounts"), "Service Accounts"),
     (re.compile(r"^/oauth"), "OAuth"),
     (re.compile(r"^/authorize"), "OAuth"),
     (re.compile(r"^/error"), "OAuth"),
+    (re.compile(r"^/login$"), "OAuth"),
     (re.compile(r"^/register"), "Agent Registration"),
     (re.compile(r"^/\.well-known"), "Discovery"),
     (re.compile(r"^/me$"), "Identity"),
@@ -995,6 +1085,10 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     operation.get("responses", {}).pop("403", None)
                 else:
                     _stamp_scope_metadata(method, path, operation, operation_auth)
+                if op_id in RFC7591_ERROR_OPERATION_IDS:
+                    # Validation failures are reshaped to the RFC 7591 400 at
+                    # the router; the framework 422 can never be returned.
+                    operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
 
         app.openapi_schema = schema

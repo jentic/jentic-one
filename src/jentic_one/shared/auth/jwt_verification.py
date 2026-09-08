@@ -1,4 +1,4 @@
-"""Hardened inbound-JWT verification over trusted-issuer JWKS (§08 E1).
+"""Hardened inbound-JWT verification over trusted-issuer JWKS.
 
 The single source for *asymmetric* JWT verification across surfaces (the broker
 edge today). Key resolution is delegated to PyJWT's :class:`PyJWKClient` — one
@@ -17,7 +17,7 @@ Hardening rules enforced here:
 - **``aud``** must equal the broker's configured audience (when set).
 - **``exp``/``nbf``/``iat``** validated with ``leeway`` clock-skew.
 
-This module deliberately does **not** live in the broker: per §08 the JWKS/key
+This module deliberately does **not** live in the broker: the JWKS/key
 machinery is single-sourced under ``shared/auth`` (``test_jwks_single_source``).
 """
 
@@ -29,13 +29,19 @@ import jwt
 import structlog
 from jwt import PyJWKClient
 
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.config import JwtVerificationConfig, TrustedIssuerConfig
 
 logger = structlog.get_logger(__name__)
 
 
-class JwtVerificationError(ValueError):
-    """Raised when a JWT fails any hardened-verification check."""
+class JwtVerificationError(TokenValidationError):
+    """Raised when a JWT fails any hardened-verification check.
+
+    Subclasses the shared :class:`TokenValidationError` so the broker edge can
+    catch every token refusal with one typed clause and map it to a uniform
+    401 (jentic-one#866).
+    """
 
 
 @dataclass
@@ -120,5 +126,12 @@ class TrustedIssuerVerifier:
                 options={"require": require},
             )
         except jwt.InvalidTokenError as exc:
+            raise JwtVerificationError(f"jwt_invalid: {exc}") from exc
+        except (OverflowError, ValueError) as exc:
+            # PyJWT validates exp/nbf/iat via ``int(payload[...])``, so a signed
+            # non-finite/absurd numeric claim (e.g. ``exp: inf``) raises
+            # OverflowError/ValueError here rather than an InvalidTokenError.
+            # This is the only decode that validates those claims — the earlier
+            # unverified decode disables verification, so it can't hit this.
             raise JwtVerificationError(f"jwt_invalid: {exc}") from exc
         return claims

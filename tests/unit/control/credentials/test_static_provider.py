@@ -52,6 +52,11 @@ def test_supports_oauth2() -> None:
     assert provider.supports(CredentialType.OAUTH2) is True
 
 
+def test_supports_sigv4() -> None:
+    provider = StaticProvider()
+    assert provider.supports(CredentialType.SIGV4) is True
+
+
 @pytest.mark.asyncio()
 async def test_begin_connect_raises() -> None:
     provider = StaticProvider()

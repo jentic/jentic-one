@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import exists, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.access_requests import AccessRequest
@@ -51,14 +53,101 @@ _DELEGATION_SCOPES: dict[type[Any], str] = {
     AccessRequest: OWNER_ACCESS_REQUESTS_READ,
 }
 
+# ---------------------------------------------------------------------------
+# Extra access-filter providers (extension seam).
+#
+# An out-of-tree extension (e.g. the enterprise package) may widen READ-only
+# visibility beyond ownership — e.g. a "shared-with-me" grant — WITHOUT this OSS
+# module importing the extension. A provider is `fn(identity, model) -> clause |
+# None`; it returns an extra OR-clause for a model it widens, or None otherwise.
+# Providers run ONLY on read paths (`include_shared=True`); mutations stay
+# owner-only. OSS ships zero providers, so with no extension present behaviour is
+# byte-for-byte the owner-scoped default. Mirrors `register_telemetry_event`.
+# ---------------------------------------------------------------------------
+AccessFilterProvider = Callable[[Identity, type], "ColumnElement[bool] | None"]
 
-def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnElement[bool]]:
+_ACCESS_FILTER_PROVIDERS: list[AccessFilterProvider] = []
+
+
+def register_access_filter_provider(provider: AccessFilterProvider) -> None:
+    """Register an extra READ-only visibility-clause provider (idempotent).
+
+    Call at import time from a registering package (see the enterprise
+    ``register()``). The clause a provider returns is OR-merged into the caller's
+    owner-scoped read filter. Any table the clause references must be readable by
+    the control DB role (i.e. live in the ``control`` schema).
+    """
+    if provider not in _ACCESS_FILTER_PROVIDERS:
+        _ACCESS_FILTER_PROVIDERS.append(provider)
+
+
+def _provider_clauses(identity: Identity, model: type[Any]) -> list[ColumnElement[bool]]:
+    """Collect the non-null clauses every registered provider yields for a model."""
+    clauses: list[ColumnElement[bool]] = []
+    for provider in _ACCESS_FILTER_PROVIDERS:
+        extra = provider(identity, model)
+        if extra is not None:
+            clauses.append(extra)
+    return clauses
+
+
+def _binding_visibility_clause(
+    model: type[Any], bound_toolkit_ids: list[str] | None
+) -> ColumnElement[bool] | None:
+    """Extra visibility a bound-toolkit set grants for ``Toolkit``/``Credential``.
+
+    Returns ``None`` when there is nothing to add (no ids, or a model whose
+    visibility is not widened by bindings). A toolkit is visible directly by id;
+    a credential is visible when it is bound (via ``ToolkitCredentialBinding``) to
+    one of those toolkits. Both stay within the control DB — the ids are supplied
+    by the caller, so no admin table is referenced here.
+    """
+    if not bound_toolkit_ids:
+        return None
+    if model is Toolkit:
+        return Toolkit.id.in_(bound_toolkit_ids)
+    if model is Credential:
+        # Alias so the subquery keeps its own FROM even when the outer query
+        # also selects from ToolkitCredentialBinding (e.g. the served-APIs
+        # aggregation join) — otherwise auto-correlation strips it away.
+        tcb = aliased(ToolkitCredentialBinding)
+        subq = select(tcb.credential_id).where(
+            tcb.toolkit_id.in_(bound_toolkit_ids),
+            tcb.credential_id == Credential.id,
+        )
+        return exists(subq)
+    return None
+
+
+def build_access_filters(
+    identity: Identity,
+    model: type[Any],
+    *,
+    bound_toolkit_ids: list[str] | None = None,
+    include_shared: bool = False,
+) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy filter expressions scoping queries to the caller's visibility.
 
     Rules (evaluated in order):
     1. org:admin -> no restriction (empty list).
     2. Agent with delegation scope + parent_actor_id -> OR filter.
     3. Otherwise -> owner == self.
+
+    ``bound_toolkit_ids`` widens visibility for the ``Toolkit`` and ``Credential``
+    models: a caller may always read a toolkit it is actively bound to — and the
+    credentials attached to that toolkit — regardless of owner scoping (issues
+    #665/#682). This matters for an orphaned agent (``created_by``/owner ``None``)
+    that owns nothing yet is legitimately bound to a toolkit. Binding lives in the
+    admin DB, so the service resolves the ids there (via
+    :meth:`PrerequisiteRepository.list_toolkit_ids_for_agent`) and passes them in;
+    this module stays single-DB and free of admin imports. ``None``/empty leaves
+    the owner-only behaviour unchanged.
+
+    ``include_shared`` (READ call sites only) invokes any registered
+    access-filter providers (see :func:`register_access_filter_provider`) and
+    OR-merges their clauses — e.g. an extension's "shared-with-me" grant. It must
+    NOT be set on write call sites, so a sharee can see but never mutate. With no
+    providers registered (stock OSS) it is a no-op.
 
     Raises ValueError for an unknown model or empty sub.
     """
@@ -76,8 +165,18 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
             and delegation_scope in identity.permissions
             and identity.parent_actor_id is not None
         ):
-            return [or_(col == identity.sub, col == identity.parent_actor_id)]
-        return [col == identity.sub]
+            owner_clause: ColumnElement[bool] = or_(
+                col == identity.sub, col == identity.parent_actor_id
+            )
+        else:
+            owner_clause = col == identity.sub
+        clauses: list[ColumnElement[bool]] = [owner_clause]
+        binding_clause = _binding_visibility_clause(model, bound_toolkit_ids)
+        if binding_clause is not None:
+            clauses.append(binding_clause)
+        if include_shared:
+            clauses.extend(_provider_clauses(identity, model))
+        return [or_(*clauses)] if len(clauses) > 1 else clauses
 
     if model in _CHILD_MODELS:
         child_fk, _parent_model, parent_pk, parent_owner = _CHILD_MODELS[model]

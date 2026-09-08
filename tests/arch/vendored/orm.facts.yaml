@@ -1,0 +1,25 @@
+# Vendored fallback of the ORM enforcement facts — do not hand-edit except to track upstream (test_rules_facts_vendored.py guards it when a fuller rules source is mounted).
+schema_version: jentic.orm-facts/v1
+primary_key: ksuid
+valid_bases: [RegistryBase, ControlBase, AdminBase]
+audit_mixins: [AuditableMixin]
+tablename:
+  snake_case: true
+  plural_suffixes: [s, data]
+required_columns: [id, created_at]
+ksuid_exempt_tables:
+  - apis
+  - api_revisions
+  - operation_url_indexes
+  - security_schemes
+  - security_scheme_flows
+  - spec_files
+  - servers
+  - server_variables
+  - operations
+  - oauth_client_credentials
+  - basic_credentials
+  - token_value_credentials
+  - catalog_snapshots
+  - setup_sentinels
+  - instance_identities

@@ -1,11 +1,13 @@
 """Same-origin SPA static serving for the admin surface.
 
-The built UI bundle (``ui/dist``) is packaged into the wheel at
-``jentic_one/static`` via ``pyproject.toml`` ``force-include`` — the same
-mechanism used for the bundled OpenAPI specs. At runtime we resolve that
-directory with ``importlib.resources`` and, when present, serve it via
-FastAPI's first-class :meth:`FastAPI.frontend` so the admin surface serves the
-SPA same-origin (no CORS).
+The bundle is packaged into the wheel at ``jentic_one/static`` via
+``pyproject.toml`` ``force-include`` — the same mechanism used for the bundled
+OpenAPI specs. At runtime we resolve that directory with
+``importlib.resources`` and, when present, serve it via FastAPI's first-class
+:meth:`FastAPI.frontend` so the admin surface serves the SPA same-origin (no
+CORS). When running from a source checkout (``make dev``) the packaged copy
+does not exist, so we fall back to the repo's ``ui/dist`` directly — no manual
+``ui/dist`` → ``src/jentic_one/static`` copy step is needed.
 
 The bundle is mounted under :data:`SPA_MOUNT_PATH` (``/app``), NOT the site
 root. This is the key namespace-isolation property: the SPA owns ``/app`` and
@@ -35,6 +37,12 @@ collide). The serving layer is the only component that knows which mode it's
 in, so it exposes that path to the SPA via a tiny JSON config endpoint
 (``GET /app-config.json``) the SPA fetches on boot — replacing the older
 ``index.html`` HTML-rewrite. The bundle is served byte-for-byte as built.
+
+Cache policy is applied by :class:`SPACacheHeadersMiddleware`: the unversioned
+shell is revalidated on every navigation while Vite's content-hashed assets are
+cached immutably. Without it a browser can serve a stale ``index.html`` that
+names the *previous* build's assets, so a correctly-upgraded server still
+renders the old UI (#945).
 """
 
 from __future__ import annotations
@@ -46,6 +54,7 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _logger = structlog.get_logger(__name__)
 
@@ -54,6 +63,25 @@ _logger = structlog.get_logger(__name__)
 # is a true 404. Kept in lockstep with the UI's Vite ``base`` and React Router
 # ``basename`` (both ``/app`` — see ``ui/vite.config.ts`` / ``ui/src/main.tsx``).
 SPA_MOUNT_PATH = "/app"
+
+# Subpath under the SPA mount holding Vite's content-hashed build output
+# (``/app/assets/index-<hash>.js``). A new build emits new filenames, so these
+# URLs are immutable and safe to cache forever — see :data:`_IMMUTABLE_CACHE`.
+_ASSETS_PREFIX = f"{SPA_MOUNT_PATH}/assets/"
+
+# Cache policy for content-hashed assets: the hash *is* the version, so a URL's
+# bytes never change and the client need never revalidate. One year is the
+# conventional maximum (RFC 9111 caps practical freshness lifetimes there).
+_IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+
+# Cache policy for the SPA shell (``index.html``) and every deep-link URL that
+# falls back to it. The filename is *not* versioned, so a cached shell keeps
+# referencing the previous build's hashed assets and the app renders stale
+# indefinitely after an upgrade. ``no-cache`` does not mean "don't store" — it
+# means "always revalidate before reuse", so the existing ``ETag`` still yields
+# a cheap 304 when the build is unchanged, but a new build is picked up on the
+# next navigation without a manual hard reload (#945).
+_REVALIDATE_CACHE = "no-cache"
 
 # Fixed, mode-independent path the SPA fetches on boot to learn deploy-mode
 # facts (currently just the admin health path). Served at the site root (NOT
@@ -76,20 +104,146 @@ _ROOT_ICON_PROBES = {
 }
 
 
+def _repo_root() -> Path:
+    """Repo root of a source checkout, four parents up from this module.
+
+    ``src/jentic_one/shared/web/static.py`` → repo root. In a wheel install this
+    still resolves to *some* directory under ``site-packages``; callers guard
+    against that via the ``pyproject.toml`` check in :func:`_resolve_dev_static_dir`.
+    """
+    return Path(__file__).resolve().parents[4]
+
+
+def _resolve_dev_static_dir(repo_root: Path | None = None) -> Path | None:
+    """Return ``ui/dist`` from a source checkout if it holds a built SPA.
+
+    Dev-only fallback for running straight from the repo (``make dev`` /
+    ``uv run python -m jentic_one``), where the SPA is **not** packaged under
+    ``jentic_one/static`` — that copy only exists in the built wheel. The
+    ``ui/dist`` bundle is produced by ``make ui-build`` and lives at the repo
+    root. Resolving it here removes the former manual ``ui/dist`` →
+    ``src/jentic_one/static`` symlink step.
+
+    Returns ``None`` when the checkout layout is absent (e.g. a wheel install,
+    where this module lives under ``site-packages`` and there is no sibling
+    ``ui/dist``) or the bundle has not been built, so production/wheel serving
+    is unaffected — the packaged ``static/`` in :func:`_resolve_static_dir`
+    still takes precedence.
+    """
+    root = repo_root if repo_root is not None else _repo_root()
+    if not (root / "pyproject.toml").is_file():
+        # Not a source checkout (e.g. installed under site-packages): bail out
+        # so wheel installs never accidentally resolve an unrelated directory.
+        return None
+
+    dist = root / "ui" / "dist"
+    if not (dist / "index.html").is_file():
+        return None
+    return dist
+
+
 def _resolve_static_dir() -> Path | None:
-    """Return the packaged static dir if it holds a built SPA, else None."""
+    """Return the SPA bundle directory if one holds a built SPA, else None.
+
+    Prefers the packaged ``jentic_one/static`` bundle (wheel/production); when
+    that is absent, falls back to a source checkout's ``ui/dist`` so a dev run
+    from the repo serves the SPA without a manual copy/symlink step.
+    """
     try:
         static_root = importlib.resources.files("jentic_one") / "static"
     except (ModuleNotFoundError, FileNotFoundError):
-        return None
+        static_root = None
 
-    index = static_root / "index.html"
-    if not index.is_file():
-        return None
-    # ``files()`` may return a non-filesystem traversable; ``app.frontend``
-    # needs a real directory path. The wheel install is always on the
-    # filesystem.
-    return Path(str(static_root))
+    if static_root is not None and (static_root / "index.html").is_file():
+        # ``files()`` may return a non-filesystem traversable; ``app.frontend``
+        # needs a real directory path. The wheel install is always on the
+        # filesystem.
+        return Path(str(static_root))
+
+    return _resolve_dev_static_dir()
+
+
+def _cache_control_for(path: str, status: int) -> str:
+    """Return the ``Cache-Control`` value for an SPA response.
+
+    Content-hashed assets are immutable; everything else under the mount is (or
+    falls back to) the unversioned shell and must be revalidated.
+
+    ``status`` gates the immutable directive because "this URL's bytes never
+    change" is only true of a response that actually *served* those bytes. A
+    ``404`` for a hashed asset is transient — a client that loaded a new shell
+    while a replica still served the old build, or a partially-synced deploy —
+    and caching it for a year would pin a broken UI that no later deploy could
+    repair. Negative and error responses therefore revalidate.
+
+    ``304 Not Modified`` counts as success: it is the cache *working*, and the
+    directive has to survive on it or the client has nothing to apply next time.
+    """
+    if path.startswith(_ASSETS_PREFIX) and (200 <= status < 300 or status == 304):
+        return _IMMUTABLE_CACHE
+    return _REVALIDATE_CACHE
+
+
+class SPACacheHeadersMiddleware:
+    """Stamp cache policy on SPA responses so an upgrade is picked up.
+
+    ``app.frontend()`` serves the bundle with an ``ETag`` but no
+    ``Cache-Control``, and it exposes no hook to add one. Without an explicit
+    directive a browser applies *heuristic* freshness to ``index.html`` and may
+    reuse it for a long time without revalidating. Since the shell names the
+    hashed asset files, a stale shell keeps loading the previous build's JS/CSS
+    and the app renders the old UI indefinitely after a correct server-side
+    upgrade — indistinguishable, from the operator's seat, from a broken
+    update (#945).
+
+    So the shell (and every deep-link path that falls back to it) is served
+    ``no-cache``: still cached, but always revalidated, which the existing
+    ``ETag`` turns into a cheap 304 when nothing changed. The hashed assets
+    under ``/app/assets/`` go the other way and are cached immutably — their URL
+    changes whenever their bytes do, so revalidating them is pure waste. The
+    immutable directive is applied only to a *successful* asset response: a
+    transient 404 (mid-deploy skew) cached for a year would pin a broken UI that
+    no later deploy could repair.
+
+    Implemented as **pure ASGI middleware** (not ``BaseHTTPMiddleware``) for the
+    same reason as ``RequestIDMiddleware``: it operates on ``scope``/``send``
+    without materialising a Starlette ``Response`` or wrapping the downstream
+    app in a cancel scope (#627).
+
+    Only responses under :data:`SPA_MOUNT_PATH` are touched, and an explicit
+    ``Cache-Control`` already set by a route is never overwritten — the
+    middleware fills a gap, it does not impose policy on API responses.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not self._owns(scope.get("path", "")):
+            await self._app(scope, receive, send)
+            return
+        await self._app(scope, receive, self._with_cache_control(send, scope["path"]))
+
+    @staticmethod
+    def _owns(path: str) -> bool:
+        """Whether path is the SPA mount itself or lives under it.
+
+        Guards against a sibling prefix (``/apple-touch-icon.png``,
+        ``/application/...``) matching on a bare ``startswith``.
+        """
+        return path == SPA_MOUNT_PATH or path.startswith(f"{SPA_MOUNT_PATH}/")
+
+    @staticmethod
+    def _with_cache_control(send: Send, path: str) -> Send:
+        async def wrapped(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                if not any(name.lower() == b"cache-control" for name, _ in headers):
+                    directive = _cache_control_for(path, message["status"]).encode("latin-1")
+                    message = {**message, "headers": [*headers, (b"cache-control", directive)]}
+            await send(message)
+
+        return wrapped
 
 
 def mount_spa(app: FastAPI, *, health_path: str = "/health") -> bool:
@@ -158,6 +312,17 @@ def mount_spa(app: FastAPI, *, health_path: str = "/health") -> bool:
     # routes never live under /app anyway, so this only governs unknown /app/*
     # subpaths (always SPA routes in practice).
     app.frontend(SPA_MOUNT_PATH, directory=str(static_dir), fallback="auto")
+
+    # Cache policy for the bundle. ``app.frontend()`` sets an ETag but no
+    # Cache-Control, which lets browsers heuristically cache the unversioned
+    # shell and keep rendering a previous build's assets after an upgrade
+    # (#945). See :class:`SPACacheHeadersMiddleware`.
+    app.add_middleware(SPACacheHeadersMiddleware)
+
+    # Flag consumed by the shared 401 handler (app_factory): only when an SPA
+    # is actually mounted does an anonymous HTML navigation that 401s get
+    # redirected into the app instead of receiving raw problem+json (#813).
+    app.state.spa_mounted = True
 
     _logger.info(
         "spa_mounted",

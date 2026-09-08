@@ -11,6 +11,7 @@ import type {
 	ApiRef,
 	ApiRevision,
 	CursorPage,
+	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
 
@@ -55,6 +56,7 @@ export function toWorkspaceApi(value: unknown): WorkspaceApi {
 	const r = asRecord(value);
 	return {
 		api: toApiRef(r.api),
+		catalogApiId: strOrNull(r.catalog_api_id),
 		displayName: strOrNull(r.display_name),
 		description: strOrNull(r.description),
 		iconUrl: strOrNull(r.icon_url),
@@ -64,6 +66,14 @@ export function toWorkspaceApi(value: unknown): WorkspaceApi {
 		securitySchemes: strArray(r.security_schemes),
 		source: typeof r.source === 'string' ? r.source : undefined,
 		registered: typeof r.registered === 'boolean' ? r.registered : undefined,
+		origin: typeof r.origin === 'string' ? r.origin : r.origin === null ? null : undefined,
+		sourceUrl:
+			typeof r.source_url === 'string'
+				? r.source_url
+				: r.source_url === null
+					? null
+					: undefined,
+		updateAvailable: typeof r.update_available === 'boolean' ? r.update_available : undefined,
 		createdAt: str(r.created_at),
 		updatedAt: str(r.updated_at),
 	};
@@ -108,11 +118,42 @@ export function toApiRevision(value: unknown): ApiRevision {
 		specDigest: str(r.spec_digest),
 		operationCount: num(r.operation_count),
 		state: str(r.state),
+		origin: strOrNull(r.origin),
+		// The backend surfaces the submitter both top-level and nested in
+		// `source`; prefer top-level, fall back to the source block.
+		submittedBy: strOrNull(r.submitted_by) ?? strOrNull(source.submitted_by),
 		isCurrent: bool(r.is_current),
 		promotedAt: strOrNull(r.promoted_at),
 		archivedAt: strOrNull(r.archived_at),
 		createdAt: str(r.created_at),
 		promoteHref: strOrNull(links.promote),
 		archiveHref: strOrNull(links.archive),
+	};
+}
+
+/**
+ * Overlay row → `Overlay`. The overlay list/get responses are typed `any` on
+ * this branch's generated client, so this is the single boundary that casts the
+ * raw JSON into the module's typed shape (same pattern as `toWorkspaceApi`).
+ */
+export function toOverlay(value: unknown): Overlay {
+	const r = asRecord(value);
+	const links = asRecord(r._links);
+	return {
+		id: str(r.id || r.overlay_id),
+		status: str(r.status),
+		createdBy: strOrNull(r.created_by),
+		contributedBy: strOrNull(r.contributed_by),
+		document: r.document ?? null,
+		createdAt: str(r.created_at),
+		confirmedAt: strOrNull(r.confirmed_at),
+		deprecatedAt: strOrNull(r.deprecated_at),
+		deprecatedReason: strOrNull(r.deprecated_reason),
+		targetRevisionId: strOrNull(r.target_revision_id),
+		confirmedRevisionId: strOrNull(r.confirmed_revision_id),
+		supersededRevisionId: strOrNull(r.superseded_revision_id),
+		confirmHref: strOrNull(links.confirm),
+		rollbackHref: strOrNull(links.rollback),
+		deprecateHref: strOrNull(links.deprecate),
 	};
 }

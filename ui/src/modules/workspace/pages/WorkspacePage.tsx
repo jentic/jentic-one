@@ -2,14 +2,14 @@
  * WorkspacePage — the user's home base: the APIs registered in this jentic-one
  * instance.
  *
- * Ported from jentic-mini's Workspace home, narrowed to **APIs only** (mini's
- * page also carried workflows + toolkits, which live in other modules here).
+ * Scoped to **APIs only** (workflows + toolkits live in other modules).
  * The page owns the import dialog open-state (a single dialog reachable from
  * both the header button and the empty-state CTA) and an in-memory filter over
  * the loaded rows. Catalog-wide search lives in Discover, not here.
  */
-import { useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
+import { Upload } from 'lucide-react';
 import { PageShell, PageHeader, PageHelp, Button } from '@/shared/ui';
 import { ApiGrid } from '@/modules/workspace/components/ApiGrid';
 import { ImportSpecDialog } from '@/modules/workspace/components/ImportSpecDialog';
@@ -19,9 +19,27 @@ import { WorkspaceCatalogFooter } from '@/modules/workspace/components/Workspace
 import { useWorkspaceApis } from '@/modules/workspace/api';
 
 export default function WorkspacePage() {
-	const [importOpen, setImportOpen] = useState(false);
+	const [searchParams, setSearchParams] = useSearchParams();
+	// Deep-link support: Discover cross-links here with `?import=1` to open the
+	// import dialog on arrival (the import UI is a Workspace-module concern, so
+	// Discover navigates rather than embedding the dialog). Strip the param once
+	// consumed so a refresh or back-nav doesn't re-trigger it.
+	//
+	// Seed the open state from the URL in the initializer AND re-sync in the
+	// effect below on purpose: the initializer opens the dialog on the very
+	// first paint (no closed-then-open flash), while the effect handles later
+	// param changes and strips it. Don't collapse the two into one.
+	const [importOpen, setImportOpen] = useState(() => searchParams.get('import') === '1');
 	const [filter, setFilter] = useState('');
 	const query = useWorkspaceApis();
+
+	useEffect(() => {
+		if (searchParams.get('import') !== '1') return;
+		setImportOpen(true);
+		const next = new URLSearchParams(searchParams);
+		next.delete('import');
+		setSearchParams(next, { replace: true });
+	}, [searchParams, setSearchParams]);
 
 	const apis = query.data?.items;
 	const filtered = useMemo(() => {
@@ -48,13 +66,13 @@ export default function WorkspacePage() {
 
 	const importButton = (
 		<Button
-			variant="primary"
+			variant="outline"
 			size="sm"
 			onClick={() => setImportOpen(true)}
 			data-testid="workspace-import-open"
 		>
-			<Plus size={14} aria-hidden="true" />
-			Add
+			<Upload size={14} aria-hidden="true" />
+			Import API
 		</Button>
 	);
 

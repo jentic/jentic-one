@@ -21,6 +21,19 @@ class IngestJobError(BaseIngestError):
     """Raised when an ingest job fails."""
 
 
+class DuplicateRevisionError(IngestStageError):
+    """Raised when a revision with identical content already exists for the API."""
+
+    _MESSAGE = (
+        "A revision with identical content already exists for this API version "
+        "(a previous import may have completed or failed midway). Re-import under "
+        "a new version, or remove the existing revision"
+    )
+
+    def __init__(self) -> None:
+        super().__init__(self._MESSAGE)
+
+
 class MissingRequiredKeysError(IngestStageError):
     """Raised when required keys are missing from stage context."""
 

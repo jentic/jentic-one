@@ -28,6 +28,7 @@ describe('DiscoverPage', () => {
 	afterEach(() => {
 		restorePollInterval?.();
 		restorePollInterval = null;
+		vi.restoreAllMocks();
 	});
 
 	it('renders the public catalog with imported/available badges', async () => {
@@ -95,6 +96,47 @@ describe('DiscoverPage', () => {
 			expect(screen.queryByText('stripe.com')).not.toBeInTheDocument();
 		});
 		expect(await screen.findByText('github.com')).toBeInTheDocument();
+	});
+
+	it('resets scroll to the top when the search query changes (#602)', async () => {
+		const user = userEvent.setup();
+		// Restored by the describe-level afterEach (vi.restoreAllMocks).
+		const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+
+		renderWithProviders(<DiscoverPage />);
+		await screen.findByText('stripe.com');
+
+		// Initial mount must not yank the viewport.
+		expect(scrollSpy).not.toHaveBeenCalled();
+
+		await user.type(screen.getByLabelText('Search APIs'), 'github');
+		await screen.findByText('github.com');
+
+		// The committed (debounced) query change snaps back to the top so the
+		// freshly-ranked results are in view.
+		await waitFor(() => {
+			expect(scrollSpy).toHaveBeenCalledWith({ top: 0, left: 0 });
+		});
+	});
+
+	it('resets scroll to the top when the registration filter changes (#602)', async () => {
+		const user = userEvent.setup();
+		const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+
+		renderWithProviders(<DiscoverPage />);
+		await screen.findByText('stripe.com');
+		expect(scrollSpy).not.toHaveBeenCalled();
+
+		// Toggling the filter re-ranks the visible list (imported rows drop out),
+		// so the viewport must snap back to the top too — same UX as a new query.
+		await user.click(screen.getByRole('button', { name: 'Available' }));
+		await waitFor(() => {
+			expect(screen.queryByText('stripe.com')).not.toBeInTheDocument();
+		});
+
+		await waitFor(() => {
+			expect(scrollSpy).toHaveBeenCalledWith({ top: 0, left: 0 });
+		});
 	});
 
 	it('filters by registration state (Available hides imported rows)', async () => {

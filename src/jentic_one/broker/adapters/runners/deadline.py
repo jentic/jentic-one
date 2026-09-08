@@ -1,13 +1,13 @@
 """``DeadlineRunner`` — the overall request-deadline budget as a runner decorator.
 
-Part of the always-on, transport-agnostic envelope (plan.md RN-0 / §11): the
+Part of the always-on, transport-agnostic envelope: the
 deadline wraps *any* ``UpstreamRunner`` rather than living as an inline branch in
 the handler, so the pipeline composes it without the edge knowing it is active.
 
 It is the **whole-call wall-clock budget**, distinct from the per-attempt
 connect/read timeout the transport already enforces: a single attempt can read
 within its `read_timeout_s` yet the *call* still blow its budget once the retry
-loop (§09 E4.1, a later slice) replays attempts. The deadline sits **outermost**
+loop replays attempts. The deadline sits **outermost**
 in the envelope — outside the circuit breaker and (eventually) the retry loop —
 so the budget bounds the entire envelope, not one hop. Exceeding it raises the
 domain :class:`DeadlineExceededError` (``504``) carrying an agent directive, which
@@ -81,12 +81,12 @@ class DeadlineRunner:
 
     @asynccontextmanager
     async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
-        """Stream variant of :meth:`run` (§08 E2.4).
+        """Stream variant of :meth:`run`.
 
         The deadline guards **opening** the upstream stream (connect + first
         response). Once the :class:`StreamingResult` is yielded the body transfer
         is governed by the streaming guard's own whole-transfer deadline
-        (§08 E2.4 ``transfer_deadline_s``), not re-budgeted here — so a long but
+        (``transfer_deadline_s``), not re-budgeted here — so a long but
         healthy download isn't aborted by the request-admission deadline.
         """
         if not isinstance(self._inner, StreamingUpstreamRunner):  # pragma: no cover - config guard

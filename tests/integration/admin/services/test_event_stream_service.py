@@ -213,6 +213,168 @@ async def test_stream_same_second_events_not_dropped(
     assert items[0].id == id_a
 
 
+async def test_stream_delivers_event_committed_after_watermark_passed(
+    integration_context: Context, clean_events: None
+) -> None:
+    """A late-committing event whose created_at is already behind the watermark still arrives.
+
+    ``created_at`` is stamped at ORM flush, but the row only becomes visible at
+    COMMIT — e.g. ``agent.self_registered`` is stamped early inside the DCR
+    ``/register`` transaction and committed at the end. A strict high-watermark
+    poll would skip it forever (the rail then misses the registration until a
+    page refresh). The overlap-window re-query must deliver it — exactly once.
+    """
+    ctx = integration_context
+    service = EventStreamService(ctx)
+
+    # Connect FIRST: watermark = now. The event then appears with a created_at
+    # 5 seconds in the past (inside the overlap), as if its transaction had
+    # been open across the connect and committed late.
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        service.stream(poll_interval_seconds=0, overlap_seconds=15.0),
+    )
+    first = await gen.__anext__()
+    assert isinstance(first, Heartbeat)
+
+    late_id = "evt_1a7ec0331775c0331775c033"
+    async with ctx.admin_db.session() as session:
+        session.add(
+            Event(
+                id=late_id,
+                type="agent.self_registered",
+                severity="info",
+                summary="Late-committed registration",
+                requires_action=True,
+                acknowledged=False,
+                data={},
+                created_by="usr_test",
+                created_at=datetime.now(UTC) - timedelta(seconds=5),
+            )
+        )
+        await session.commit()
+
+    item = await gen.__anext__()
+    assert isinstance(item, EventView)
+    assert item.id == late_id
+
+    # The overlap re-query must not re-yield it on the next poll.
+    dup_check = await gen.__anext__()
+    assert isinstance(dup_check, Heartbeat)
+    await gen.aclose()
+
+
+async def test_stream_accepts_timezone_naive_since(
+    integration_context: Context, clean_events: None
+) -> None:
+    """A naive ``since`` (offset-less ``?since=`` query param) must not crash the stream.
+
+    FastAPI parses ``?since=2026-07-27T10:00:00`` (no offset) as a NAIVE
+    datetime; rows come back timezone-aware from ``UTCDateTime``. The
+    overlap-window fix introduced Python-side comparisons against ``since``
+    (watermark advance + dedup pruning) which raise ``TypeError`` on
+    naive-vs-aware — killing the generator mid-SSE and hot-looping the client's
+    reconnect. The service must coerce naive input to UTC.
+    """
+    ctx = integration_context
+
+    async with ctx.admin_db.session() as session:
+        await EventRepository.create(
+            session,
+            type="toolkit.error",
+            severity="error",
+            summary="After naive since",
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    naive_since = (datetime.now(UTC) - timedelta(seconds=1)).replace(tzinfo=None)
+    service = EventStreamService(ctx)
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        service.stream(since=naive_since, poll_interval_seconds=0),
+    )
+    item = await gen.__anext__()
+    assert isinstance(item, EventView)
+    assert item.summary == "After naive since"
+    # The pruning comprehension also compares timestamps — drive one more poll.
+    beat = await gen.__anext__()
+    assert isinstance(beat, Heartbeat)
+    await gen.aclose()
+
+
+async def test_stream_fresh_connect_does_not_replay_visible_history(
+    integration_context: Context, clean_events: None
+) -> None:
+    """A fresh connect (``since=None``) must not replay already-visible events.
+
+    The overlap window exists to rescue LATE COMMITS, not to re-deliver
+    history: an event committed (visible) before the client connected is
+    already served by the durable backlog fetch, and replaying it over SSE
+    re-fires client-side toasts/audio/invalidations on every page load. The
+    connect-time seed scan must swallow it.
+    """
+    ctx = integration_context
+
+    async with ctx.admin_db.session() as session:
+        await EventRepository.create(
+            session,
+            type="toolkit.error",
+            severity="error",
+            summary="Committed before connect",
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    service = EventStreamService(ctx)
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        service.stream(poll_interval_seconds=0, overlap_seconds=15.0),
+    )
+    first = await gen.__anext__()
+    assert isinstance(first, Heartbeat)
+    await gen.aclose()
+
+
+async def test_stream_future_since_is_clamped_to_now(
+    integration_context: Context, clean_events: None
+) -> None:
+    """A future ``since`` (fast client clock) must not black-hole the stream.
+
+    Un-clamped, ``watermark = since`` puts the poll window's lower bound in the
+    future, so every normally-stamped event committed after connect sits below
+    it and is never returned — symmetric to the watermark-advance clamp for
+    future-stamped ROWS. The service must floor ``since`` at the present.
+    """
+    ctx = integration_context
+    service = EventStreamService(ctx)
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        service.stream(
+            since=datetime.now(UTC) + timedelta(seconds=120),
+            poll_interval_seconds=0,
+            overlap_seconds=15.0,
+        ),
+    )
+    first = await gen.__anext__()
+    assert isinstance(first, Heartbeat)
+
+    async with ctx.admin_db.session() as session:
+        await EventRepository.create(
+            session,
+            type="toolkit.error",
+            severity="error",
+            summary="After future since",
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    item = await gen.__anext__()
+    assert isinstance(item, EventView)
+    assert item.summary == "After future since"
+    await gen.aclose()
+
+
 async def test_stream_filters_with_cursor(integration_context: Context, clean_events: None) -> None:
     """Cursor-based resumption composes correctly with event_type filters."""
     ctx = integration_context
@@ -287,7 +449,7 @@ async def test_stream_cancellation_mid_query_returns_pooled_connection(
     ever checked out and the test passed even with the bug present (false
     positive).
 
-    Here we patch ``EventRepository.list_since`` to hang forever, freezing the
+    Here we patch ``EventRepository.list_after_cursor`` to hang forever, freezing the
     generator *inside* the ``async with self._ctx.admin_db.session()`` block with
     a connection actively checked out of the pool. We then prove:
 
@@ -314,10 +476,10 @@ async def test_stream_cancellation_mid_query_returns_pooled_connection(
     # banned; we only delay the repo call) so the lazy ``AsyncSession`` actually
     # pulls a connection from the pool before hanging.
     release = asyncio.Event()
-    real_list_since = EventRepository.list_since
+    real_list_after_cursor = EventRepository.list_after_cursor
 
     async def _hang(session: object, *args: object, **kwargs: object) -> list[Event]:
-        await real_list_since(session, *args, **kwargs)  # type: ignore[arg-type]
+        await real_list_after_cursor(session, *args, **kwargs)  # type: ignore[arg-type]
         await release.wait()
         return []
 
@@ -333,7 +495,7 @@ async def test_stream_cancellation_mid_query_returns_pooled_connection(
 
     with (
         warnings.catch_warnings(),
-        patch.object(EventRepository, "list_since", new=_hang),
+        patch.object(EventRepository, "list_after_cursor", new=_hang),
     ):
         warnings.simplefilter("error", SAWarning)
         task = asyncio.ensure_future(drive())

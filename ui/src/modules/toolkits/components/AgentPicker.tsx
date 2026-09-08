@@ -142,13 +142,32 @@ function AgentRow({
 	onSelect: (agentId: string) => void;
 	disabled?: boolean;
 }) {
+	// Only ACTIVE agents can be linked: the approval queue is where a human
+	// vouches for an agent, so a pending/rejected/disabled one must not gain
+	// capabilities beforehand (the backend doesn't enforce this on the bind
+	// endpoint today). The row stays listed — with its status badge and an
+	// accessible rationale — because hiding it would read as "my agent is
+	// missing" rather than "it isn't approved yet". Mirrors the agent-side
+	// ToolkitPicker's suspended-toolkit grammar: aria-disabled (not native
+	// disabled) keeps the row focusable so AT can reach the reason.
+	const notActive = agent.status !== 'active';
+	const inactive = notActive || Boolean(disabled);
+	const rationale =
+		agent.status === 'pending'
+			? 'Pending agents cannot be linked — approve the agent first.'
+			: `${agent.status.charAt(0).toUpperCase()}${agent.status.slice(1)} agents cannot be linked.`;
 	return (
 		<button
 			type="button"
-			disabled={disabled}
-			onClick={() => onSelect(agent.agent_id)}
+			aria-disabled={inactive || undefined}
+			title={notActive ? rationale : undefined}
+			onClick={() => {
+				if (inactive) return;
+				onSelect(agent.agent_id);
+			}}
 			data-testid="agent-picker-row"
-			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+			data-not-active={notActive || undefined}
+			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
 		>
 			<div className="bg-primary/10 text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
 				<Bot className="h-4 w-4" />
@@ -161,6 +180,7 @@ function AgentRow({
 					{agent.agent_id}
 				</p>
 			</div>
+			{notActive && <span className="sr-only">{rationale}</span>}
 			<ActorStatusBadge status={agent.status} className="shrink-0 text-[10px]" />
 			<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
 		</button>

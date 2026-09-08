@@ -1,8 +1,8 @@
 /**
  * ImportSpecDialog — register a new API by importing an OpenAPI spec.
  *
- * Ported from jentic-mini's `ImportSourceDialog`, narrowed to **APIs only**
- * (no Arazzo/workflow kind — that's another module) and rewired to jentic-one's
+ * Scoped to **APIs only**
+ * (no Arazzo/workflow kind — that's another module) and wired to jentic-one's
  * **async** import contract: `POST /apis` returns 202 + a job id, then the hook
  * polls `/jobs/{id}` to a terminal state. On `succeeded` we toast + close; on
  * `failed` we keep the dialog open and surface the job's `error` inline (e.g.
@@ -199,7 +199,7 @@ export function ImportSpecDialog({ open, onClose }: ImportSpecDialogProps) {
 		<Dialog
 			open={open}
 			onClose={onClose}
-			title="Add to your workspace"
+			title="Import an API"
 			size="lg"
 			className="max-w-xl"
 			dismissOnBackdrop={false}

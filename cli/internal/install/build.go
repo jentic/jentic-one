@@ -2,6 +2,7 @@ package install
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -76,6 +77,17 @@ type BuildPlan struct {
 	FromGit bool
 	// GitURL is the clone source (set when FromGit is true).
 	GitURL string
+	// Ref pins the git ref (tag, branch, or commit) the source is synced to
+	// before building. Empty means "track the remote's default branch". When set,
+	// the build MUST land on exactly this ref or fail — silently building
+	// something else is how `update --ref vX.Y.Z` used to produce a stack built
+	// from main (#949).
+	Ref string
+	// RefPinned records that Ref came from an explicit `--ref`, rather than being
+	// the release tag `update` resolves on its own. Only an operator's explicit
+	// pin is worth reporting as "ignored" when it cannot be applied; saying that
+	// about a ref they never typed reads as if their input was discarded.
+	RefPinned bool
 }
 
 // PlanLocalBuild decides whether to build from a local checkout or to clone the
@@ -85,6 +97,23 @@ func PlanLocalBuild(venvDir, cloneDir string) BuildPlan {
 		return BuildPlan{SourceDir: root, VenvDir: venvDir}
 	}
 	return BuildPlan{SourceDir: cloneDir, VenvDir: venvDir, FromGit: true, GitURL: GitURL}
+}
+
+// AtRef returns a copy of the plan targeting ref. pinned distinguishes an
+// explicit `--ref` from a ref the caller resolved itself. An empty ref is a
+// no-op, so callers can pass through whatever they resolved without branching.
+func (p BuildPlan) AtRef(ref string, pinned bool) BuildPlan {
+	p.Ref = ref
+	p.RefPinned = pinned && ref != ""
+	return p
+}
+
+// PinnedRefIgnored reports whether an explicitly requested ref cannot be honoured
+// because the build reads a local checkout rather than a managed clone. The
+// working tree belongs to the operator, so syncing it to a ref would clobber
+// their work; the caller must surface this instead of implying the ref was used.
+func (p BuildPlan) PinnedRefIgnored() bool {
+	return p.RefPinned && !p.FromGit
 }
 
 // VenvPython returns the python interpreter path inside the given venv dir.
@@ -101,13 +130,23 @@ func (p BuildPlan) VenvPython() string {
 }
 
 // writeSourceLine appends the "source:" row shared by the local and Docker
-// build headers: either a git clone target or the local checkout path.
+// build headers: either a git clone target or the local checkout path. A pinned
+// ref is named so the operator can see which build they are getting — and, for
+// a local checkout, that the pin does not apply.
 func (p BuildPlan) writeSourceLine(b *strings.Builder) {
 	if p.FromGit {
-		b.WriteString("  source: " + commandStyle.Render("git clone "+p.GitURL) +
+		src := "git clone " + p.GitURL
+		if p.Ref != "" {
+			src += " @ " + p.Ref
+		}
+		b.WriteString("  source: " + commandStyle.Render(src) +
 			" -> " + p.SourceDir + "\n")
-	} else {
-		b.WriteString("  source: " + commandStyle.Render(p.SourceDir) + " (local checkout)\n")
+		return
+	}
+	b.WriteString("  source: " + commandStyle.Render(p.SourceDir) + " (local checkout)\n")
+	if p.PinnedRefIgnored() {
+		b.WriteString(warnStyle.Render("  note:   --ref "+p.Ref+
+			" does not apply to a local checkout; building it as-is") + "\n")
 	}
 }
 
@@ -216,20 +255,14 @@ func (p BuildPlan) fetchSource(w io.Writer) error {
 	common := append([]string{"-c", "credential.helper="}, gitAuthArgs()...)
 
 	if isGitRepo(p.SourceDir) {
-		// Sync to the remote's default branch by fetch + hard reset rather than
-		// `pull --ff-only`. A fast-forward pull dead-ends ("Not possible to
-		// fast-forward") whenever upstream history was rewritten/force-pushed —
-		// e.g. after an OSS re-baseline of the published repo. $SourceDir is a
-		// throwaway build checkout under ~/.jentic (never a tree the user edits),
-		// so matching the remote exactly is the correct, always-succeeding sync.
-		fetch := append(append([]string{}, common...), "fetch", "--prune", "origin")
-		if err := runGit(w, p.SourceDir, fetch...); err != nil {
-			return fmt.Errorf("fetch source: %w", err)
-		}
-		branch := remoteDefaultBranch(p.SourceDir)
-		reset := append(append([]string{}, common...), "reset", "--hard", "origin/"+branch)
-		if err := runGit(w, p.SourceDir, reset...); err != nil {
-			return fmt.Errorf("sync source to origin/%s: %w", branch, err)
+		// Sync by fetch + hard reset rather than `pull --ff-only`. A fast-forward
+		// pull dead-ends ("Not possible to fast-forward") whenever upstream
+		// history was rewritten/force-pushed — e.g. after an OSS re-baseline of
+		// the published repo. $SourceDir is a throwaway build checkout under
+		// ~/.jentic (never a tree the user edits), so matching the requested
+		// target exactly is the correct, always-succeeding sync.
+		if err := p.syncTo(w, common); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -237,6 +270,13 @@ func (p BuildPlan) fetchSource(w io.Writer) error {
 		return fmt.Errorf("create source parent: %w", err)
 	}
 
+	// Clone the default branch even when a ref is requested, then move onto the
+	// ref below. `clone --branch <tag>` would be one step shorter but implies
+	// --single-branch, which rewrites remote.origin.fetch to just that tag and
+	// leaves no origin/<default-branch>. A later *unpinned* build could then
+	// never reset, so pinning once would permanently wedge the managed checkout
+	// (found reviewing #949). Cloning unpinned keeps the refspec general, and
+	// makes one code path serve tags, branches and bare commit SHAs alike.
 	args := append(append([]string{}, common...), "clone", "--depth", "1", p.GitURL, p.SourceDir)
 	if err := runGit(w, "", args...); err != nil {
 		if os.Getenv("GITHUB_TOKEN") == "" {
@@ -245,9 +285,67 @@ func (p BuildPlan) fetchSource(w io.Writer) error {
 				"or set a token with 'repo' read scope: GITHUB_TOKEN=ghp_xxx jenticctl install: %w",
 				p.GitURL, SrcEnv, err)
 		}
-		return fmt.Errorf("clone failed (check the ref and your token's access): %w", err)
+		return fmt.Errorf("clone failed (check your token's access): %w", err)
+	}
+	return p.syncTo(w, common)
+}
+
+// syncTo points the build checkout at the requested target: the pinned Ref, or
+// origin's default branch when unpinned. Shared by the fresh-clone and
+// existing-checkout paths so both resolve a ref identically.
+func (p BuildPlan) syncTo(w io.Writer, common []string) error {
+	// --force is required, not cosmetic: since git 2.20 a fetch will not move an
+	// existing tag, and exits non-zero with "would clobber existing tag". Any
+	// upstream tag that gets re-pointed (a re-cut release, the OSS re-baseline
+	// this fetch+reset design exists to survive) would otherwise break every
+	// later install/update against ~/.jentic/src until it was deleted by hand.
+	//
+	// A shallow clone only carries the default branch's tip, so a pinned ref has
+	// to be named explicitly here or it cannot be resolved at all.
+	fetch := append(append([]string{}, common...), "fetch", "--prune", "--tags", "--force", "origin")
+	if p.Ref != "" {
+		fetch = append(fetch, p.Ref)
+	}
+	if err := runGit(w, p.SourceDir, fetch...); err != nil {
+		return fmt.Errorf("fetch source: %w", err)
+	}
+	target, err := p.resetTarget(p.SourceDir)
+	if err != nil {
+		return err
+	}
+	reset := append(append([]string{}, common...), "reset", "--hard", target)
+	if err := runGit(w, p.SourceDir, reset...); err != nil {
+		return fmt.Errorf("sync source to %s: %w", target, err)
 	}
 	return nil
+}
+
+// resetTarget resolves what `git reset --hard` should land on. With no Ref that
+// is origin's default branch (track upstream). With a Ref it is the ref itself,
+// verified to exist first so a typo fails loudly here rather than silently
+// building whatever the checkout happened to be on (#949).
+//
+// FETCH_HEAD is preferred when the ref resolves to it: the preceding fetch
+// pulled exactly the requested ref, and a shallow checkout may not have a local
+// branch/tag for it yet.
+func (p BuildPlan) resetTarget(dir string) (string, error) {
+	if p.Ref == "" {
+		return "origin/" + remoteDefaultBranch(dir), nil
+	}
+	for _, candidate := range []string{"origin/" + p.Ref, p.Ref, "FETCH_HEAD"} {
+		if gitRevParseSucceeds(dir, candidate) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"ref %q not found in %s after fetch (check the tag/branch/commit exists)", p.Ref, p.GitURL)
+}
+
+// gitRevParseSucceeds reports whether rev names something this checkout can
+// resolve to a commit.
+func gitRevParseSucceeds(dir, rev string) bool {
+	//nolint:gosec // dir is a CLI-internal build checkout; rev is a CLI-resolved ref.
+	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", rev+"^{commit}").Run() == nil
 }
 
 // remoteDefaultBranch returns origin's default branch name (e.g. "main"),
@@ -396,10 +494,15 @@ func RenderStartWarning(err error) string {
 // RunMigrations applies Alembic migrations for all databases using the freshly
 // built venv interpreter, pointed at the generated config. Output is streamed to
 // w. The runner is cwd-independent (it loads packaged migration scripts).
-func RunMigrations(w io.Writer, venvPython, configPath string) error {
+//
+// ctx is threaded through to exec.CommandContext (F2, review round-3 #7) so a
+// Ctrl-C during a long migration cancels the Python child instead of orphaning it
+// — which, against a live DB mid-rollback, is the worst input to the rollback
+// path. Callers hold the command's signal-cancelled context; pass it here.
+func RunMigrations(ctx context.Context, w io.Writer, venvPython, configPath string) error {
 	fmt.Fprintf(w, "\n$ JENTIC_CONFIG_FILE=%s %s -m jentic_one.migrations.run\n",
 		configPath, venvPython)
-	cmd := exec.Command(venvPython, "-m", "jentic_one.migrations.run")
+	cmd := exec.CommandContext(ctx, venvPython, "-m", "jentic_one.migrations.run")
 	cmd.Env = append(os.Environ(), "JENTIC_CONFIG_FILE="+configPath)
 	cmd.Stdout = w
 	cmd.Stderr = w

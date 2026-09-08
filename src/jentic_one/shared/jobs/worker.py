@@ -12,6 +12,8 @@ from sqlalchemy.sql import func
 
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
+from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
@@ -25,6 +27,10 @@ logger = structlog.get_logger(__name__)
 
 _POLL_INTERVAL_SECONDS = 2.0
 _RETENTION_SWEEP_INTERVAL = 60
+# Post-expiry grace before an access/refresh token row is deleted by the sweep.
+# Expired tokens never verify, but keeping them briefly aids introspection and
+# refresh-token reuse forensics.
+_TOKEN_RETENTION_DAYS = 7
 _ERROR_MAX_LEN = 128
 
 
@@ -128,7 +134,7 @@ class WorkerLoop:
         A job is claimable when it is ``QUEUED`` with no future ``visible_at``
         (respecting exponential-backoff delay on requeued jobs), **or** it is
         ``RUNNING`` but its ``visible_at`` deadline has passed (orphaned by a
-        dead worker — recover it, §09 E4.2). The claim atomically flips it to
+        dead worker — recover it). The claim atomically flips it to
         ``RUNNING``, stamps a fresh visibility deadline, and increments
         ``attempts`` so a poison job's retry budget is enforced.
         ``SKIP LOCKED`` keeps concurrent workers from contending on the same row.
@@ -287,7 +293,7 @@ class WorkerLoop:
                 logger.warning("emit_event_failed", job_id=job_id)
 
     async def _sweep_expired(self) -> None:
-        """Periodically remove expired job results."""
+        """Periodically remove expired job results and long-expired token rows."""
         try:
             async with self._db.transaction() as session:
                 stmt = delete(JobResult).where(
@@ -298,6 +304,23 @@ class WorkerLoop:
                 count = int(result.rowcount)  # type: ignore[attr-defined]
                 if count > 0:
                     logger.info("retention_sweep_removed", count=count)
+
+            # Expired access/refresh tokens are dead weight: they can never
+            # verify again, so keep only a short post-expiry grace window (for
+            # introspection/debugging and refresh-reuse forensics) and then
+            # delete the rows — otherwise they accumulate forever (#610 audit).
+            cutoff = datetime.now(UTC) - timedelta(days=_TOKEN_RETENTION_DAYS)
+            async with self._db.transaction() as session:
+                access_removed = await AccessTokenRepository.delete_expired(session, before=cutoff)
+                refresh_removed = await RefreshTokenRepository.delete_expired(
+                    session, before=cutoff
+                )
+                if access_removed or refresh_removed:
+                    logger.info(
+                        "token_retention_sweep_removed",
+                        access_tokens=access_removed,
+                        refresh_tokens=refresh_removed,
+                    )
         except Exception:
             logger.exception("retention_sweep_failed")
 
@@ -306,7 +329,7 @@ class WorkerLoop:
         self._running = False
 
     async def drain(self, timeout_s: float | None = None) -> bool:
-        """Stop claiming new jobs and wait for the in-flight job to finish (§09 E4.3).
+        """Stop claiming new jobs and wait for the in-flight job to finish.
 
         Flips into draining mode so ``_tick`` stops claiming immediately, then
         waits (bounded by ``timeout_s``, default ``WorkerConfig.drain_timeout_s``)

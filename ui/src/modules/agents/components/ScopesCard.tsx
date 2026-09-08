@@ -17,11 +17,9 @@ import { ShieldCheck } from 'lucide-react';
 import {
 	Badge,
 	Button,
-	Card,
-	CardBody,
-	CardHeader,
-	CardTitle,
+	DetailSection,
 	Dialog,
+	EmptyRow,
 	ErrorAlert,
 	LoadingState,
 	ScopePicker,
@@ -64,7 +62,7 @@ export interface ScopesCardProps {
 const HIGH_PRIVILEGE_SCOPES = new Set<string>(['org:admin']);
 
 /** Map the platform permission catalogue into the picker's scope shape. */
-function catalogueToScopes(catalogue: PermissionCatalogEntry[]): EnhancedScope[] {
+export function catalogueToScopes(catalogue: PermissionCatalogEntry[]): EnhancedScope[] {
 	return catalogue.map((p) => ({
 		scope: p.name,
 		description: p.description,
@@ -93,34 +91,33 @@ export function ScopesCard({ actorKind, actorId, actorName, canEdit = true }: Sc
 	const granted = scopesQuery.data ?? [];
 
 	return (
-		<Card>
-			<CardHeader className="flex flex-row items-center justify-between gap-2">
-				<div className="flex items-center gap-2">
-					<ShieldCheck className="text-primary h-4 w-4" />
-					<CardTitle>Scopes</CardTitle>
-				</div>
-				{canEdit && !scopesQuery.isPending && !scopesQuery.error && (
-					<Button
-						size="sm"
-						variant="outline"
-						onClick={() => setEditing(true)}
-						aria-label={`Edit scopes for ${actorName}`}
-					>
-						Edit scopes
-					</Button>
-				)}
-			</CardHeader>
-			<CardBody className="space-y-2">
+		<>
+			<DetailSection
+				title="Scopes"
+				icon={<ShieldCheck className="h-4 w-4" />}
+				trailing={
+					canEdit && !scopesQuery.isPending && !scopesQuery.error ? (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => setEditing(true)}
+							aria-label={`Edit scopes for ${actorName}`}
+						>
+							Edit scopes
+						</Button>
+					) : null
+				}
+			>
 				{scopesQuery.isPending ? (
 					<LoadingState size="sm" />
 				) : scopesQuery.error ? (
 					<ErrorAlert message={scopesQuery.error as Error} />
 				) : granted.length === 0 ? (
-					<div className="text-muted-foreground border-border/60 rounded-lg border border-dashed p-4 text-center text-sm">
+					<EmptyRow icon={<ShieldCheck />}>
 						No scopes granted.
 						{canEdit &&
 							' This actor can’t perform privileged operations until you grant some.'}
-					</div>
+					</EmptyRow>
 				) : (
 					<ul className="flex flex-wrap gap-2" aria-label="Granted scopes">
 						{[...granted]
@@ -134,7 +131,7 @@ export function ScopesCard({ actorKind, actorId, actorName, canEdit = true }: Sc
 							))}
 					</ul>
 				)}
-			</CardBody>
+			</DetailSection>
 
 			{editing && (
 				<EditScopesDialog
@@ -161,7 +158,7 @@ export function ScopesCard({ actorKind, actorId, actorName, canEdit = true }: Sc
 					}}
 				/>
 			)}
-		</Card>
+		</>
 	);
 }
 

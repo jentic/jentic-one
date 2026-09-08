@@ -17,6 +17,13 @@ PATH_PARAM_RE = re.compile(r"\{([^}]+)\}")
 PERCENT_ENCODED_RE = re.compile(r"%[0-9A-Fa-f]{2}")
 UNRESERVED_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
+# RFC 6570 expression operators. These are single-character prefixes on the
+# expression (e.g. ``{+var}``, ``{#var}``), never part of the variable name, so
+# they must be stripped before a templated token is reconciled against a declared
+# ``in: path`` parameter name. ``+`` (reserved expansion) additionally signals a
+# catch-all that matches across path separators.
+RFC6570_OPERATORS = frozenset("+#./;?&")
+
 
 @dataclass
 class ParsedServerURL:
@@ -83,15 +90,33 @@ def normalize_path(path: str) -> str:
 
 
 def normalize_path_template(template: str) -> str:
-    """Normalize a path template, preserving parameter placeholders."""
+    """Normalize a path template to the same canonical form as ``normalize_path``.
+
+    ``{...}`` parameter tokens are preserved verbatim (including RFC 6570
+    operators such as ``{+param}``); everything else — trailing slash, dot
+    segments, percent-encoding — is normalized exactly as ``normalize_path``
+    normalizes a request path. This symmetry is what lets an index entry built
+    from the template match a request path normalized at lookup time (#1085).
+
+    Tokens are shielded behind NUL-delimited sentinels while the whole template
+    goes through ``normalize_path`` in one pass; normalizing literal chunks
+    individually would strip the slash *before* a token (``/pets/{petId}`` →
+    ``/pets{petId}``), because each chunk's trailing slash looks like a
+    trailing slash to ``normalize_path``.
+    """
     parts = PATH_PARAM_RE.split(template)
-    normalized_parts: list[str] = []
+    tokens: list[str] = []
+    shielded: list[str] = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
-            normalized_parts.append(normalize_path(part) if part else "")
+            shielded.append(part)
         else:
-            normalized_parts.append("{" + part + "}")
-    return "".join(normalized_parts)
+            tokens.append(part)
+            shielded.append(f"\x00{len(tokens) - 1}\x00")
+    normalized = normalize_path("".join(shielded))
+    for idx, token in enumerate(tokens):
+        normalized = normalized.replace(f"\x00{idx}\x00", "{" + token + "}")
+    return normalized
 
 
 def normalise_host(host: str, scheme: str = "https") -> str:
@@ -222,13 +247,36 @@ def _safe_param_name(name: str) -> str:
 def _split_param_token(token: str) -> tuple[str, bool]:
     """Split a path-param token into ``(name, is_catch_all)``.
 
-    OpenAPI / RFC 6570 catch-all params use a ``{+param}`` prefix, which matches
-    across path separators (``.+``). A plain ``{param}`` matches a single segment
-    (``[^/]+``). The leading ``+`` is stripped from the returned name.
+    OpenAPI / RFC 6570 expressions may carry a single-character operator prefix
+    (``+#./;?&``) that is *not* part of the variable name — Google discovery-derived
+    specs template reserved-expansion params as ``{+property}`` while declaring the
+    parameter plainly as ``property``. Any such operator is stripped from the
+    returned name so the token reconciles with its declared ``in: path`` parameter.
+
+    The reserved-expansion operator (``+``) additionally marks a catch-all that
+    matches across path separators (``.+``); a plain ``{param}`` matches a single
+    segment (``[^/]+``).
     """
-    if token.startswith("+"):
-        return token[1:], True
-    return token, False
+    is_catch_all = token.startswith("+")
+    if token and token[0] in RFC6570_OPERATORS:
+        return token[1:], is_catch_all
+    return token, is_catch_all
+
+
+def reconcile_declared_path_params(path_template: str, declared_names: list[str]) -> list[str]:
+    """Return declared path-parameter names that map to a token in the template.
+
+    Reconciles OpenAPI ``in: path`` parameter *names* against the ``{...}`` tokens
+    in a path template, stripping RFC 6570 operators from the tokens first. This is
+    what keeps a declared ``property`` parameter from being silently dropped when
+    the path templates it as ``{+property}`` (RFC 6570 reserved expansion) — the
+    class of bug that made the GA4 Data API and other Google APIs uncallable (#759).
+
+    Order follows ``declared_names``; a declared name with no matching token is
+    omitted.
+    """
+    token_names = set(extract_param_names(path_template))
+    return [name for name in declared_names if name in token_names]
 
 
 def build_path_regex(path_template: str) -> re.Pattern[str]:
@@ -288,17 +336,27 @@ def build_index_entry(
     path_template: str,
     scheme: str = "https",
 ) -> URLIndexEntry:
-    """Build a complete URL index entry for an operation."""
+    """Build a complete URL index entry for an operation.
+
+    The template is canonicalized through ``normalize_path_template`` first and
+    every derived field (regex, params, segment count, stored pattern) comes
+    from that canonical form. ``URLLookupService.resolve`` normalizes the
+    incoming request path with ``normalize_path`` before matching, so both
+    sides of the comparison must agree on one canonical form — building the
+    regex from the raw template made any trailing-slash path unmatchable
+    (#1085).
+    """
     normalized_host = normalise_host(host, scheme)
     host_regex = build_host_regex(normalized_host)
-    path_regex = build_path_regex(path_template)
-    param_names = extract_param_names(path_template)
-    segment_count = count_segments(path_template)
+    normalized_template = normalize_path_template(path_template)
+    path_regex = build_path_regex(normalized_template)
+    param_names = extract_param_names(normalized_template)
+    segment_count = count_segments(normalized_template)
 
     return URLIndexEntry(
         host_pattern=normalized_host,
         host_regex=host_regex,
-        path_pattern=path_template,
+        path_pattern=normalized_template,
         path_regex=path_regex,
         segment_count=segment_count,
         param_names=param_names,

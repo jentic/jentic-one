@@ -51,6 +51,11 @@ async def noop_lifespan(_app: object) -> AsyncGenerator[None]:
 
 _DB_NAMES: tuple[str, ...] = ("registry", "admin", "control")
 
+# A deterministic 32-byte AES key (base64). Web tests that create credentials
+# need a non-empty encryption keyset or the Context boot fails with
+# "EncryptionConfig.entries must not be empty".
+_TEST_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
 
 @pytest.fixture(scope="session")
 def web_config() -> AppConfig:
@@ -84,6 +89,12 @@ def web_config() -> AppConfig:
                     "password": "control_pass",
                     "pool_max": 2,
                     "schema_name": "control",
+                },
+            },
+            "credentials": {
+                "encryption": {
+                    "active_id": "v1",
+                    "entries": [{"id": "v1", "material": _TEST_ENCRYPTION_KEY}],
                 },
             },
         }

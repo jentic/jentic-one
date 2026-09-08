@@ -134,30 +134,82 @@ def _tokenise(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (text or "").lower())
 
 
-def score_entry(api_id: str, q_tokens: list[str]) -> float:
-    """Token-overlap score for an api_id against query tokens (0.0-1.0)."""
+#: Encoding of the two ranking signals into one sortable integer (the cursor
+#: carries a single number). ``coverage`` — how many query tokens matched at
+#: all — is the dominant signal and preserves the pre-existing recall-fraction
+#: ordering exactly: matching more of the query always outranks matching less
+#: of it, no matter how "strong" the individual hits are (so a multi-word query
+#: like "google api" still ranks ``googleapis.com`` — both words covered —
+#: above the hundreds of ids that merely contain the whole word "api").
+#: ``whole`` — how many of those matches are whole ``api_id`` tokens rather
+#: than substrings buried in longer tokens — only breaks ties *within* a
+#: coverage class (the #604 fix: query "stripe" ranks ``stripe.com``, a whole
+#: token, above ``soundstripe.com``, a substring).
+#:
+#: ``score = coverage * (len(q_tokens) + 1) + whole`` is order-isomorphic to
+#: the tuple ``(coverage, whole)`` because ``whole <= coverage <= len(q_tokens)
+#: < len(q_tokens) + 1`` — the quality digit can never carry into the coverage
+#: digit. Scores are only ever compared within one query (the cursor is
+#: re-paired with the same ``q`` on each page), so the query-length-dependent
+#: base is safe.
+
+
+def score_entry(api_id: str, q_tokens: list[str]) -> int:
+    """Relevance score for an ``api_id`` against (deduplicated) query tokens.
+
+    Two signals, folded into one integer (see the encoding note above):
+
+    - **coverage** (dominant): the number of query tokens that match at all —
+      as a whole ``api_id`` token or as a substring of one. Identical to the
+      membership/recall predicate used since the original scorer.
+    - **whole-token quality** (tie-break): of the covered tokens, how many are
+      whole ``api_id`` tokens (query "stripe" IS the id token "stripe") rather
+      than incidental substrings ("box" buried inside "mapbox").
+
+    A whole-token hit and a substring hit are mutually exclusive per query
+    token — a whole-token match already satisfies the substring test, so it is
+    counted once, at the higher tier. Integer scores add and compare exactly,
+    so the sort key and the cursor round-trip without float error.
+    """
     name_tokens = _tokenise(api_id)
-    if not name_tokens:
-        return 0.0
-    matches = sum(1.0 for t in q_tokens if any(t in nt for nt in name_tokens))
-    return matches / max(len(q_tokens), 1)
+    if not name_tokens or not q_tokens:
+        return 0
+    name_token_set = set(name_tokens)
+    coverage = 0
+    whole = 0
+    for t in q_tokens:
+        if t in name_token_set:
+            coverage += 1
+            whole += 1
+        elif any(t in nt for nt in name_tokens):
+            coverage += 1
+    return coverage * (len(q_tokens) + 1) + whole
 
 
 def score_entries(
     entries: list[ManifestEntry], q: str | None
-) -> list[tuple[ManifestEntry, float | None]]:
+) -> list[tuple[ManifestEntry, int | None]]:
     """Order entries for paging, returning each with its sort score.
 
     Two stable orderings, each with a unique tail key (``api_id``) so keyset
     paging never skips or repeats:
 
     - **Browse** (empty ``q``): the natural ``api_id`` order, score ``None``.
-    - **Search**: matches only, sorted by ``(-score, api_id)``; the score is
-      carried in the cursor so the next page resumes at the exact tie-break.
+    - **Search**: matches only, sorted by ``(-score, api_id)``; the integer score
+      is carried in the cursor so the next page resumes at the exact tie-break.
+
+    Membership (which entries appear at all) is unchanged from the original
+    token-overlap behaviour: an entry qualifies iff at least one query token
+    substring-matches one of its ``api_id`` tokens. Only the *scoring* — and thus
+    the *order* — is graded by match quality (see ``score_entry``); recall is
+    identical to before.
     """
     if not q or not q.strip():
         return [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
-    q_tokens = _tokenise(q)
+    # Dedupe tokens (order-preserving): duplicates would scale every entry's
+    # score uniformly — no ranking effect — while inflating scan cost, and the
+    # coverage encoding assumes each query token counts once.
+    q_tokens = list(dict.fromkeys(_tokenise(q)))
     if not q_tokens:
         return [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
     scored = [(e, score_entry(e.api_id, q_tokens)) for e in entries]
@@ -176,11 +228,11 @@ class EntryPage:
     items: list[ManifestEntry]
     has_more: bool
     next_api_id: str | None
-    next_score: float | None
+    next_score: int | None
 
 
 def paginate_entries(
-    scored: list[tuple[ManifestEntry, float | None]],
+    scored: list[tuple[ManifestEntry, int | None]],
     *,
     after_api_id: str | None,
     after_score: float | None,
@@ -193,6 +245,10 @@ def paginate_entries(
     request resumes at the first item strictly after it in that same order. This
     is an in-memory slice — the whole catalog is a ~1 MB cached blob — so there
     is no DB cost to paging.
+
+    ``after_score`` is decoded from a client cursor and typed ``float`` so any
+    historical/foreign cursor value round-trips; our own scores are integers, and
+    ``int``/``float`` compare exactly for these small values in ``_is_after_cursor``.
     """
     if after_api_id is not None:
         start = 0
@@ -229,7 +285,7 @@ def paginate_entries(
 
 
 def _is_after_cursor(
-    score: float | None, api_id: str, cursor_score: float | None, cursor_api_id: str
+    score: int | None, api_id: str, cursor_score: float | None, cursor_api_id: str
 ) -> bool:
     """Whether ``(score, api_id)`` sorts strictly after the cursor position.
 
@@ -423,6 +479,9 @@ def parse_preview_operations(
             op_keys = {(p.name, p.location) for p in op_params}
             merged = op_params + [p for p in path_params if (p.name, p.location) not in op_keys]
             op_security_raw = op.get("security")
+            # Op security overrides doc security entirely; absence inherits it.
+            # The same op-else-doc resolution is applied at ingest in
+            # OpenAPIOperationParser (issue #772) — keep the two aligned.
             security = (
                 flatten_security(op_security_raw) if op_security_raw is not None else doc_security
             )

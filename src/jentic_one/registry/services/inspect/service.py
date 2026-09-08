@@ -11,6 +11,7 @@ from jentic_one.registry.repos.operation_repo import OperationRepository
 from jentic_one.registry.repos.security_repo import SecurityRepository
 from jentic_one.registry.services.errors import OperationNotFoundError
 from jentic_one.registry.services.inspect.auth import translate_security_schemes
+from jentic_one.registry.services.inspect.inputs import build_operation_inputs
 from jentic_one.registry.services.inspect.models import (
     ApiContext,
     AuthInstruction,
@@ -84,6 +85,7 @@ class InspectService:
 
         api_context = self._build_api_context(operation)
         links = _build_links(method, url, self._base_url)
+        inputs = build_operation_inputs(operation.raw_operation)
 
         return OperationInspectResult(
             operation_id=operation.id,
@@ -92,7 +94,7 @@ class InspectService:
             name=operation.summary,
             description=operation.description,
             api=api_context,
-            parameters=None,
+            inputs=inputs,
             response_schema=None,
             auth=auth,
             server=server,

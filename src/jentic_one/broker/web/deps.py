@@ -1,9 +1,9 @@
 """Broker-specific FastAPI dependencies for token validation and authorization.
 
-Toolkit *selection* no longer lives here: it needs the discovered API identity,
-which is only known inside the handler (after discovery). These dependencies do
-auth + scope only; the handler calls ``select_toolkit`` (see ``routers/execute``)
-through the injected ``get_toolkit_deriver`` provider (§03 / §00 DI convention).
+Toolkit *selection* happens in the handler (see ``routers/execute``): it needs
+the discovered API identity, which is only known after discovery. These
+dependencies do auth + scope only; the handler calls ``select_toolkit``
+through the injected ``get_toolkit_deriver`` provider.
 """
 
 from __future__ import annotations
@@ -22,10 +22,12 @@ from jentic_one.broker.core.exceptions import RateLimitExceededError
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import RuleEvaluatorProtocol, ToolkitDeriverProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event
+from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.resilience import RateLimiter
@@ -105,7 +107,7 @@ async def require_broker_identity(request: Request) -> Identity:
     validator: CompositeTokenValidator = request.app.state.broker_token_validator
     try:
         resolved = await validator.validate(credential)
-    except ValueError as exc:
+    except TokenValidationError as exc:
         raise Unauthorized(
             detail="Invalid or expired access token",
             instance=request.url.path,
@@ -113,6 +115,17 @@ async def require_broker_identity(request: Request) -> Identity:
         ) from exc
 
     resolved.origin = derive_origin(request.headers.get("user-agent"))
+
+    # Broker half of the two-plane ``mcp.session_started`` emit: an MCP session
+    # whose only traffic is ``execute`` never touches the control plane, so it
+    # must be detected here too (table-backed dedupe keeps it to one event).
+    schedule_mcp_session_emit(
+        getattr(request.app.state, "ctx", None),
+        user_agent=request.headers.get("user-agent"),
+        session_id=request.headers.get(SESSION_ID_HEADER),
+        actor_id=resolved.sub,
+        actor_type=resolved.actor_type.value,
+    )
     return resolved
 
 
@@ -145,7 +158,7 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
     """Auth + scope, then enforce the per-caller rate limit keyed on ``sub``.
 
     Enforced here — a post-auth dependency — because the actor isn't resolved at
-    admission time (§04 middleware runs before auth). The limiter lives on
+    admission time (the admission middleware runs before auth). The limiter lives on
     ``app.state``; when rate limiting is disabled it is ``None`` and this is a
     pure pass-through of ``require_execute_scope``. A deny surfaces directly as a
     ``429`` carrying ``RateLimit-*`` + ``Retry-After`` (we are at the web edge).
@@ -172,9 +185,9 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
 def get_http_runner(request: Request) -> UpstreamRunner:
     """Select the upstream runner for this request via the scheme→runner registry.
 
-    Handlers reach the runner only through this provider (§04 DI convention),
+    Handlers reach the runner only through this provider (DI convention),
     never by reading ``request.app.state`` inline. The runner is chosen by the
-    upstream URL's **scheme** through the :class:`RunnerRegistry` (§11 RN-0.3):
+    upstream URL's **scheme** through the :class:`RunnerRegistry`:
     an unsupported scheme raises ``501`` and a degraded runner ``503``, before
     any operation discovery. A test swaps the runner via
     ``app.dependency_overrides[get_http_runner]``.
@@ -185,7 +198,7 @@ def get_http_runner(request: Request) -> UpstreamRunner:
 
 
 def get_idempotency_store(request: Request) -> SharedStateIdempotencyStore | None:
-    """Provide the idempotency store, or ``None`` when idempotency is disabled (§07).
+    """Provide the idempotency store, or ``None`` when idempotency is disabled.
 
     The handler treats ``None`` as "no idempotency": an ``Idempotency-Key`` is
     ignored and the request executes normally. A test swaps the store via

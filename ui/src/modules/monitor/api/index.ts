@@ -8,7 +8,7 @@
 export {
 	useExecutions,
 	useExecution,
-	useExecutionStats,
+	useUsageStats,
 	useJobs,
 	useJob,
 	useCancelJob,
@@ -30,7 +30,7 @@ export type {
 	ListEventsParams,
 	ListAuditParams,
 	ListActorsParams,
-	ExecutionStatsParams,
+	UsageStatsParams,
 } from '@/modules/monitor/api/client';
 
 export {
@@ -52,9 +52,10 @@ export type {
 export type {
 	ExecutionResponse,
 	ExecutionListResponse,
-	ExecutionStatsResponse,
-	DailyExecutionBucket,
-	TopOperation,
+	UsageResponse,
+	UsageStatsBlock,
+	UsageBucket,
+	UsageTopRow,
 	JobResponse,
 	JobListResponse,
 	EventResponse,
@@ -64,4 +65,4 @@ export type {
 	ActorSummaryResponse,
 	ActorListResponse,
 } from '@/shared/api';
-export { EventSeverity, AuditTargetType } from '@/shared/api';
+export { EventSeverity, AuditTargetType, GroupBy } from '@/shared/api';

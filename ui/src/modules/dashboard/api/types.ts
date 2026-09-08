@@ -8,7 +8,7 @@
  * the raw list responses. Keeping the math here (not in components or hooks)
  * makes it unit-testable in isolation and keeps the layers thin.
  */
-import type { AgentResponse, EventResponse, ExecutionResponse } from '@/shared/api';
+import type { AgentResponse, EventResponse, ExecutionResponse, UsageResponse } from '@/shared/api';
 import type { AccessRequest } from '@/shared/lib';
 
 /**
@@ -91,4 +91,123 @@ export function approxCountFromPage<T>(page: { data: T[]; has_more: boolean }): 
 /** Format an `ApproxCount` for display, e.g. `0`, `3`, or `50+`. */
 export function formatApproxCount(count: ApproxCount): string {
 	return count.atLeast ? `${count.value}+` : `${count.value}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Gateway health — real aggregates from GET /monitoring/usage          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The time windows the health/usage layers offer. Values map to `since`
+ * lower bounds for `GET /monitoring/usage` (the endpoint defaults `until`
+ * to "now floored to the minute").
+ */
+export type DashboardRange = '24h' | '7d' | '30d';
+
+export const RANGE_SECONDS: Record<DashboardRange, number> = {
+	'24h': 86_400,
+	'7d': 604_800,
+	'30d': 2_592_000,
+};
+
+/** One point of a bucketed trend series (unix-second x, metric y). */
+export interface UsageTrendPoint {
+	ts: number;
+	value: number;
+}
+
+/** The four headline gateway KPIs for the selected window. */
+export interface UsageKpis {
+	total: number;
+	/** Successes / total over the window (0..1), null when nothing ran. */
+	successRate: number | null;
+	/** Aggregate p95 latency — a window-level KPI only (buckets carry avg, not p95). */
+	p95Ms: number | null;
+	activeNow: number;
+}
+
+export function usageToKpis(usage: UsageResponse): UsageKpis {
+	const total = usage.stats.total ?? 0;
+	return {
+		total,
+		successRate: total > 0 ? (usage.stats.success ?? 0) / total : null,
+		p95Ms: usage.stats.p95_ms != null ? Math.round(usage.stats.p95_ms) : null,
+		activeNow: usage.stats.active_now ?? 0,
+	};
+}
+
+/**
+ * Per-bucket success rate (0..100 percent) for the trend line. Empty buckets
+ * (total 0) carry no rate and are skipped — the endpoint returns sparse
+ * buckets anyway, so gaps are already the norm.
+ */
+export function usageToSuccessRateSeries(usage: UsageResponse): UsageTrendPoint[] {
+	return usage.buckets
+		.filter((b) => b.total > 0)
+		.map((b) => ({ ts: b.ts, value: (b.success / b.total) * 100 }));
+}
+
+/**
+ * Per-bucket average latency (ms) for the trend line. Buckets carry only
+ * `avg_ms` (p95 exists solely as a window aggregate), so this series is
+ * explicitly the AVERAGE — label it as such.
+ */
+export function usageToLatencySeries(usage: UsageResponse): UsageTrendPoint[] {
+	return usage.buckets.filter((b) => b.total > 0).map((b) => ({ ts: b.ts, value: b.avg_ms }));
+}
+
+/** One top api/toolkit/agent row for the usage-context table. */
+export interface TopUsageRow {
+	id: string;
+	label: string;
+	total: number;
+	/** Successes / total for the row (0..1), null when the row is empty. */
+	successRate: number | null;
+	avgMs: number;
+	/** 12-point sparkline series (may be empty). */
+	trend: number[];
+}
+
+/**
+ * Format a top-row key into a display label, per grouping dimension. The
+ * backend composes keys mechanically (see monitoring_repo.grouped_top):
+ * api → "vendor/name" (NULLs coalesced to "unknown"), toolkit → the raw
+ * toolkit_id, agent → "actor_type/actor_id" (NULL propagates to a null key).
+ * Strip the mechanical prefixes and surface null/unknown groups as an
+ * explicit "Unattributed" bucket. (Monitor derives the same labels in its
+ * own lib — modules can't share siblings' code, and the rule is small.)
+ */
+function formatTopRowLabel(groupBy: string, key: string | null | undefined): string {
+	if (!key) return 'Unattributed';
+	if (groupBy === 'api') {
+		const [vendor, ...rest] = key.split('/');
+		const name = rest.join('/');
+		if (vendor === 'unknown' && (name === 'unknown' || name === '')) return 'Unattributed';
+		return name && name !== 'unknown' ? name : key;
+	}
+	if (groupBy === 'agent') {
+		const slash = key.indexOf('/');
+		return slash >= 0 ? key.slice(slash + 1) || 'Unattributed' : key;
+	}
+	return key;
+}
+
+/** Map the response's `top` rows into display rows, sorted busiest-first. */
+export function usageToTopRows(usage: UsageResponse): TopUsageRow[] {
+	return usage.top
+		.map((row) => {
+			const total = row.total ?? 0;
+			// The generated type says `key: string`, but the SQL key expression
+			// is nullable on the wire for toolkit/agent groupings.
+			const key = (row.key ?? null) as string | null;
+			return {
+				id: key ?? '__unattributed__',
+				label: formatTopRowLabel(usage.group_by, key),
+				total,
+				successRate: total > 0 ? (row.success ?? 0) / total : null,
+				avgMs: Math.round(row.avg_ms ?? 0),
+				trend: row.trend ?? [],
+			};
+		})
+		.sort((a, b) => b.total - a.total);
 }

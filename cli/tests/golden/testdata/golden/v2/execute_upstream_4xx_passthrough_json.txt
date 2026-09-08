@@ -1,0 +1,16 @@
+exit: 0
+--- stdout ---
+{
+  "body": {
+    "error": "upstream said no"
+  },
+  "headers": {
+    "Content-Length": "28",
+    "Content-Type": "application/json",
+    "Jentic-Error-Origin": "upstream"
+  },
+  "schema_version": "1",
+  "status": 403
+}
+--- stderr ---
+

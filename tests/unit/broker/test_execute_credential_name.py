@@ -12,6 +12,7 @@ import pytest
 from jentic_one.broker.core.exceptions import AmbiguousMatchError, InvalidCredentialNameError
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
+    CredentialCandidate,
     CredentialNameNotFoundError,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
@@ -139,8 +140,17 @@ async def test_credential_name_forwarded_when_header_present(
 
 @pytest.mark.asyncio
 async def test_ambiguous_response_contains_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
-    """409 from AmbiguousCredentialError includes candidates list in extra."""
-    exc = AmbiguousCredentialError("stripe", "payments", "v1", 2, candidates=["read-only", "admin"])
+    """409 from AmbiguousCredentialError includes distinguishable candidates in extra."""
+    exc = AmbiguousCredentialError(
+        "stripe",
+        "payments",
+        "v1",
+        2,
+        candidates=[
+            CredentialCandidate(id="cred_1", name="shared", last4="ed_1"),
+            CredentialCandidate(id="cred_2", name="shared", last4="ed_2"),
+        ],
+    )
     resolve = AsyncMock(side_effect=exc)
     monkeypatch.setattr(
         "jentic_one.broker.services.credentials.orchestrator.CredentialResolver",
@@ -155,16 +165,26 @@ async def test_ambiguous_response_contains_candidates(monkeypatch: pytest.Monkey
             identity=_IDENTITY,
         )
 
-    assert raised.value.extra["candidates"] == ["read-only", "admin"]
+    candidates = raised.value.extra["candidates"]
+    assert [c["id"] for c in candidates] == ["cred_1", "cred_2"]
+    assert [c["last4"] for c in candidates] == ["ed_1", "ed_2"]
+    assert {c["name"] for c in candidates} == {"shared"}
 
 
 @pytest.mark.asyncio
 async def test_invalid_credential_name_response_contains_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """400 from CredentialNameNotFoundError includes candidates list in extra."""
+    """400 from CredentialNameNotFoundError includes distinguishable candidates in extra."""
     exc = CredentialNameNotFoundError(
-        "stripe", "payments", "v1", "nonexistent", ["read-only", "admin"]
+        "stripe",
+        "payments",
+        "v1",
+        "nonexistent",
+        [
+            CredentialCandidate(id="cred_1", name="read-only", last4="ed_1"),
+            CredentialCandidate(id="cred_2", name="admin", last4="ed_2"),
+        ],
     )
     resolve = AsyncMock(side_effect=exc)
     monkeypatch.setattr(
@@ -181,5 +201,6 @@ async def test_invalid_credential_name_response_contains_candidates(
             credential_name="nonexistent",
         )
 
-    assert raised.value.extra["candidates"] == ["read-only", "admin"]
+    candidates = raised.value.extra["candidates"]
+    assert [c["name"] for c in candidates] == ["read-only", "admin"]
     assert raised.value.type == "credential_name_not_found"

@@ -142,3 +142,135 @@ async def test_get_active_for_user(admin_db: DatabaseSession, test_user: str) ->
         assert active[0].token_hash == "active_hash_1"
         assert all(t.id != expired_id for t in active)
         assert all(t.id != redeemed_id for t in active)
+
+
+async def test_user_ids_with_active_invite_empty_input(
+    admin_db: DatabaseSession, clean_invite_tokens: None
+) -> None:
+    async with admin_db.session() as session:
+        assert await InviteTokenRepository.user_ids_with_active_invite(session, []) == set()
+
+
+async def test_user_ids_with_active_invite_only_active_counts(
+    admin_db: DatabaseSession, test_user: str
+) -> None:
+    # A user with an unredeemed, unexpired token IS active.
+    async with admin_db.session() as session:
+        await InviteTokenRepository.create(
+            session,
+            user_id=test_user,
+            token_hash="batch_active_1",
+            expires_at=datetime.now(UTC) + timedelta(hours=24),
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    async with admin_db.session() as session:
+        result = await InviteTokenRepository.user_ids_with_active_invite(session, [test_user])
+        assert result == {test_user}
+
+
+async def test_user_ids_with_active_invite_expired_and_redeemed_excluded(
+    admin_db: DatabaseSession, test_user: str
+) -> None:
+    # A user whose only tokens are expired or redeemed is NOT active — this is
+    # what lets the service derive an "expired" invite state.
+    async with admin_db.session() as session:
+        await InviteTokenRepository.create(
+            session,
+            user_id=test_user,
+            token_hash="batch_expired_1",
+            expires_at=datetime.now(UTC) - timedelta(hours=1),
+            created_by="usr_test",
+        )
+        redeemed = await InviteTokenRepository.create(
+            session,
+            user_id=test_user,
+            token_hash="batch_redeemed_1",
+            expires_at=datetime.now(UTC) + timedelta(hours=24),
+            created_by="usr_test",
+        )
+        await session.commit()
+        redeemed_id = redeemed.id
+
+    async with admin_db.session() as session:
+        await InviteTokenRepository.redeem(session, redeemed_id)
+        await session.commit()
+
+    async with admin_db.session() as session:
+        result = await InviteTokenRepository.user_ids_with_active_invite(session, [test_user])
+        assert result == set()
+
+
+async def test_user_ids_with_active_invite_reissued_after_expiry_is_active(
+    admin_db: DatabaseSession, test_user: str
+) -> None:
+    # The re-issue path: a user with a lapsed token PLUS a fresh active one is
+    # active (any live token counts). This is what flips a regenerated invite
+    # back from expired to pending in the derived state.
+    async with admin_db.session() as session:
+        await InviteTokenRepository.create(
+            session,
+            user_id=test_user,
+            token_hash="reissue_old_expired",
+            expires_at=datetime.now(UTC) - timedelta(hours=1),
+            created_by="usr_test",
+        )
+        await InviteTokenRepository.create(
+            session,
+            user_id=test_user,
+            token_hash="reissue_fresh_active",
+            expires_at=datetime.now(UTC) + timedelta(hours=24),
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    async with admin_db.session() as session:
+        result = await InviteTokenRepository.user_ids_with_active_invite(session, [test_user])
+        assert result == {test_user}
+
+
+async def test_user_ids_with_active_invite_batches_users(
+    admin_db: DatabaseSession, clean_invite_tokens: None
+) -> None:
+    # One query resolves many users: only those with a live token come back.
+    async with admin_db.session() as session:
+        active_user = await UserRepository.create(
+            session,
+            email="batch-active@example.com",
+            first_name="Active",
+            last_name="User",
+            created_by="usr_test",
+        )
+        expired_user = await UserRepository.create(
+            session,
+            email="batch-expired@example.com",
+            first_name="Expired",
+            last_name="User",
+            created_by="usr_test",
+        )
+        await session.commit()
+        active_id, expired_id = active_user.id, expired_user.id
+
+    async with admin_db.session() as session:
+        await InviteTokenRepository.create(
+            session,
+            user_id=active_id,
+            token_hash="batch_multi_active",
+            expires_at=datetime.now(UTC) + timedelta(hours=24),
+            created_by="usr_test",
+        )
+        await InviteTokenRepository.create(
+            session,
+            user_id=expired_id,
+            token_hash="batch_multi_expired",
+            expires_at=datetime.now(UTC) - timedelta(hours=1),
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    async with admin_db.session() as session:
+        result = await InviteTokenRepository.user_ids_with_active_invite(
+            session, [active_id, expired_id]
+        )
+        assert result == {active_id}

@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
 import { AuthProvider } from '@/shared/auth/AuthContext';
-import { clearToken, setToken } from '@/shared/api';
+import { clearToken, setSession, setToken } from '@/shared/api';
 import { App } from '@/App';
 
 function renderApp(route: string) {
@@ -22,6 +22,7 @@ function renderApp(route: string) {
 describe('auth flow', () => {
 	beforeEach(() => {
 		clearToken();
+		sessionStorage.clear();
 	});
 
 	it('redirects an unauthenticated visit to the login screen', async () => {
@@ -238,6 +239,133 @@ describe('auth flow', () => {
 		renderApp('/');
 		expect(await screen.findByRole('heading', { name: 'Sign in to Jentic One' })).toBeVisible();
 		await waitFor(() => expect(localStorage.getItem('jentic-one.access_token')).toBeNull());
+	});
+
+	// #610: the FIRST login attempt after a session expires must succeed. The
+	// expired token leaves the cached /users/me query in error state; adopting
+	// the fresh token must not let that stale 401 clear it (the pre-fix race
+	// forced users through 2–3 retries and a blank screen).
+	it('logs in on the first attempt when an expired token was previously rejected', async () => {
+		setToken('expired-token');
+		worker.use(
+			// Reject the expired token; accept the freshly-minted one.
+			http.get('/users/me', ({ request }) => {
+				if (request.headers.get('authorization') !== 'Bearer fresh-token') {
+					return new HttpResponse(null, { status: 401 });
+				}
+				return HttpResponse.json({
+					id: '1',
+					email: 'admin@local',
+					first_name: 'Admin',
+					last_name: 'User',
+					active: true,
+					permissions: ['org:admin'],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				});
+			}),
+			http.post('/auth/login', () =>
+				HttpResponse.json({
+					access_token: 'fresh-token',
+					token_type: 'bearer',
+					expires_in: 3600,
+					must_change_password: false,
+				}),
+			),
+		);
+		renderApp('/');
+		const user = userEvent.setup();
+
+		// The dead token bounces us to login…
+		await screen.findByRole('heading', { name: 'Sign in to Jentic One' });
+
+		// …and a single sign-in lands on the dashboard with the new token held.
+		await user.type(await screen.findByLabelText('Email'), 'admin@local');
+		await user.type(screen.getByLabelText('Password'), 'password');
+		await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+		expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		await waitFor(() =>
+			expect(localStorage.getItem('jentic-one.access_token')).toBe('fresh-token'),
+		);
+	});
+
+	// #608: the session renews itself before the JWT dies. Adopt a token that
+	// expires in ~1s — the refresh slot (80% of the remaining lifetime) comes up
+	// almost immediately, so the re-minted token must land without any user
+	// interaction. Real timers: the schedule maths is the code under test.
+	it('proactively refreshes the session before the token expires', async () => {
+		worker.use(
+			// Accept both the short-lived and re-minted tokens (the default
+			// /users/me handler only accepts the canned MOCK_TOKEN).
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: '1',
+					email: 'admin@local',
+					first_name: 'Admin',
+					last_name: 'User',
+					active: true,
+					permissions: ['org:admin'],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+			http.post('/auth/refresh', () =>
+				HttpResponse.json({
+					access_token: 'refreshed-token',
+					token_type: 'bearer',
+					expires_in: 3600,
+					must_change_password: false,
+				}),
+			),
+		);
+		setSession('short-lived-token', 1);
+		renderApp('/');
+
+		await screen.findByRole('heading', { name: 'Dashboard' });
+		await waitFor(
+			() => expect(localStorage.getItem('jentic-one.access_token')).toBe('refreshed-token'),
+			{ timeout: 5000 },
+		);
+	});
+
+	// When the backend refuses the refresh (absolute session window elapsed,
+	// user deactivated…), the session is over: back to login WITH the notice
+	// explaining why — not a silent bare form.
+	it('signs out with an expiry notice when the refresh is refused', async () => {
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: '1',
+					email: 'admin@local',
+					first_name: 'Admin',
+					last_name: 'User',
+					active: true,
+					permissions: ['org:admin'],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+			http.post('/auth/refresh', () => new HttpResponse(null, { status: 401 })),
+		);
+		// 2s expiry: long enough for the dashboard to render before the refresh
+		// slot (80% → 1.6s) fires and the 401 kicks the session out.
+		setSession('doomed-token', 2);
+		renderApp('/');
+
+		await screen.findByRole('heading', { name: 'Dashboard' });
+		expect(
+			await screen.findByRole(
+				'heading',
+				{ name: 'Sign in to Jentic One' },
+				{ timeout: 5000 },
+			),
+		).toBeVisible();
+		expect(screen.getByRole('status')).toHaveTextContent(/session expired/i);
+		expect(localStorage.getItem('jentic-one.access_token')).toBeNull();
 	});
 
 	it('routes a first-run visit (setup_required) to the setup screen', async () => {

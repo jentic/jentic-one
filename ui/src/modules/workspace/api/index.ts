@@ -12,17 +12,42 @@ export {
 	useApiRevisions,
 	useApiSpec,
 	useRevisionActions,
+	useOverlays,
+	useOverlayActions,
+	useSnoozeCatalogUpdate,
 	useDeleteApi,
 	useImportSpec,
+	useReimportFromCatalog,
 	workspaceKeys,
 } from '@/modules/workspace/api/hooks';
 export type { UseImportSpec } from '@/modules/workspace/api/hooks';
-export type { UseApiOperations } from '@/modules/workspace/api/hooks';
+export type { UseApiOperations, UsePagedList } from '@/modules/workspace/api/hooks';
 
 export { WorkspaceApiError } from '@/modules/workspace/api/client';
 
 export { parseSpecOperations, opDetailKey } from '@/modules/workspace/api/specOperations';
 export type { ParsedSpec, SpecOperationDetail } from '@/modules/workspace/api/specOperations';
+
+export {
+	shortOverlayId,
+	shortRevisionId,
+	formatDateTime,
+	summarizeOverlayActions,
+	overlayLifecycle,
+	overlayLifecycleNote,
+	OVERLAY_LIFECYCLE_LABEL,
+	revisionStateLabel,
+	revisionOriginLabel,
+	overlayForRevision,
+	revisionChangeSummary,
+	diffBaseFor,
+	describeLastChange,
+	describeServingState,
+} from '@/modules/workspace/api/insights';
+export type { OverlayLifecycle, SpecDiffBase } from '@/modules/workspace/api/insights';
+
+export { diffSpecs } from '@/modules/workspace/api/specDiff';
+export type { SpecDiffEntry, SpecDiffKind, SpecDiffResult } from '@/modules/workspace/api/specDiff';
 
 export { encodeApiId, formatApiKey } from '@/modules/workspace/api/apiId';
 export type { ApiKey } from '@/modules/workspace/api/apiId';
@@ -33,6 +58,9 @@ export type {
 	ApiOperation,
 	ApiRevision,
 	RevisionState,
+	RevisionOrigin,
+	Overlay,
+	OverlayStatus,
 	CursorPage,
 	ImportJob,
 	JobStatus,

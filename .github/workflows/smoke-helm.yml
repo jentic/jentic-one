@@ -18,6 +18,11 @@ on:
         type: boolean
         default: false
 
+  # Release gate: release.yml calls this workflow on every vX.Y.Z tag and
+  # refuses to publish until the full matrix is green (same cells as a push
+  # to main).
+  workflow_call:
+
   # Post-merge gate: run the full matrix on main so a regression is caught
   # before it sits on the default branch unnoticed. Path filter keeps the
   # cost off doc-only commits (each cell takes ~5–8m on a free runner).
@@ -51,8 +56,9 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             cells='[{"mode":"${{ inputs.mode }}","obs":${{ inputs.obs }}}]'
           else
-            # push to main: every mode without obs, plus combined+obs to
-            # cover the OTel sidecar / central collector / remote-write wiring.
+            # push to main / release-gate workflow_call: every mode without
+            # obs, plus combined+obs to cover the OTel sidecar / central
+            # collector / remote-write wiring.
             cells='[
               {"mode":"combined","obs":false},
               {"mode":"parts","obs":false},

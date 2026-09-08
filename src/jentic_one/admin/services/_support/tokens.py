@@ -11,14 +11,27 @@ import hmac
 import secrets
 from base64 import b32encode
 
-from jentic_one.shared.auth.tokens import decode_jwt, issue_jwt
+from jentic_one.shared.auth.tokens import InvalidTokenError, decode_jwt, issue_jwt
 
 __all__ = [
+    "InvalidTokenError",
     "decode_jwt",
+    "generate_client_id",
+    "generate_client_secret",
     "generate_invite_token",
     "hash_invite_token",
     "issue_jwt",
 ]
+
+
+def generate_client_id() -> str:
+    """Generate a unique OAuth client_id with `oc_` prefix."""
+    return f"oc_{secrets.token_urlsafe(24)}"
+
+
+def generate_client_secret() -> str:
+    """Generate a plaintext OAuth client secret."""
+    return secrets.token_urlsafe(32)
 
 
 def generate_invite_token() -> str:

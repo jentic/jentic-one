@@ -1,0 +1,163 @@
+# Labels-as-code for jentic/jentic-one.
+#
+# Synced to the repo by .github/workflows/labels-sync.yml on push to main.
+# This is the authoritative source for the issue/PR label taxonomy — edit here,
+# not in the GitHub UI. The issue-intake harness (.harness/ISSUE_INTAKE_STANDARDS.md)
+# may only apply labels defined in this file.
+#
+# Layers:
+#   type       — what kind of issue it is (exactly one)
+#   area:*      — which part of Jentic One (exactly one, when determinable)
+#   severity:*  — priority / impact (bugs & pain points)
+#   fit:*       — harness product-fit score (see docs/product-scope.md)
+#   feasibility:* — harness build-feasibility score
+#   status      — lifecycle (needs-triage, needs-info, confirmed, needs-human, …)
+#   agent/ai    — harness trigger + provenance labels
+
+# --- Type (exactly one) ---
+- name: bug
+  color: d73a4a
+  description: "Something isn't working"
+- name: enhancement
+  color: a2eeef
+  description: New feature or request
+- name: pain-point
+  color: b60205
+  description: Friction, confusion, or frustration during a real workflow (dogfooding focus)
+- name: idea
+  color: c2e0c6
+  description: Early-stage idea or suggestion, not yet a concrete feature request
+- name: documentation
+  color: 0075ca
+  description: Improvements or additions to documentation
+- name: question
+  color: d876e3
+  description: Further information is requested
+
+# --- Area (exactly one, when determinable) ---
+- name: area:broker
+  color: 1d76db
+  description: Broker data plane (credential-injecting proxy)
+- name: area:cli
+  color: 1d76db
+  description: jentic / jenticctl CLI binaries
+- name: area:control
+  color: 1d76db
+  description: Control — credential storage
+- name: area:install
+  color: 1d76db
+  description: Install wizard, install.sh, setup / onboarding
+- name: area:admin
+  color: 1d76db
+  description: Admin — users, permissions, jobs, audit, telemetry
+- name: area:auth
+  color: 1d76db
+  description: Auth — identity, tokens, IdP
+- name: area:registry
+  color: 1d76db
+  description: Registry — API spec catalogue
+- name: area:api
+  color: 1d76db
+  description: HTTP/OpenAPI surface (broker/control/admin APIs)
+- name: area:ui
+  color: 1d76db
+  description: Web UI
+- name: area:deploy
+  color: 1d76db
+  description: Docker, Helm, Terraform, k8s, versioning
+- name: area:docs
+  color: 1d76db
+  description: Documentation site / guides
+
+# --- Severity / priority (bugs & pain points) ---
+- name: severity:blocker
+  color: b60205
+  description: Cannot proceed; no workaround
+- name: severity:major
+  color: d93f0b
+  description: Significant impact; painful workaround exists
+- name: severity:minor
+  color: fbca04
+  description: Annoying but low impact
+
+# --- Harness scores (see docs/product-scope.md) ---
+- name: fit:high
+  color: 0e8a16
+  description: "Harness: squarely fits the product scope"
+- name: fit:med
+  color: fbca04
+  description: "Harness: plausibly in scope but needs product judgment"
+- name: fit:low
+  color: e99695
+  description: "Harness: matches a non-goal or out-of-scope audience"
+- name: feasibility:high
+  color: 0e8a16
+  description: "Harness: realistically buildable here"
+- name: feasibility:med
+  color: fbca04
+  description: "Harness: buildable with meaningful effort/risk"
+- name: feasibility:low
+  color: e99695
+  description: "Harness: hard/risky to build in this architecture"
+
+# --- Status / lifecycle ---
+- name: needs-triage
+  color: ededed
+  description: Awaiting first review by the team
+- name: needs-info
+  color: d4c5f9
+  description: Waiting on the author for missing information (harness-requested)
+- name: confirmed
+  color: 0e8a16
+  description: Reproduced and accepted
+- name: needs-human
+  color: d93f0b
+  description: Agent blocked, needs human intervention
+- name: duplicate
+  color: cfd3d7
+  description: This issue or pull request already exists
+- name: duplicate-candidate
+  color: cfd3d7
+  description: "Harness: looks like a duplicate — awaiting human confirmation (author may veto)"
+- name: invalid
+  color: e4e669
+  description: This doesn't seem right
+- name: wontfix
+  color: ffffff
+  description: This will not be worked on
+
+# --- Agent / harness ---
+- name: ai-intake
+  color: 5319e7
+  description: Trigger the issue-intake harness (auto-applied on new issues)
+- name: Agent-Harness
+  color: eda5c1
+  description: Handled by the Jentic agent harness
+- name: ai-review
+  color: 0e8a16
+  description: Trigger AI review agent
+- name: ai-implement
+  color: 1d76db
+  description: Trigger AI implement agent
+- name: ai-review-and-trigger-implement
+  color: 5319e7
+  description: Trigger AI review that cascades to implement
+
+# --- Experience ---
+- name: ux
+  color: f9d0c4
+  description: User experience — friction, clarity, or polish in the human-facing UI or CLI
+- name: ax
+  color: c5def5
+  description: Agent experience — friction, clarity, or reliability for AI agents (APIs, SDKs, CLI)
+
+# --- Community / housekeeping ---
+- name: good first issue
+  color: 7057ff
+  description: Good for newcomers
+- name: help wanted
+  color: "008672"
+  description: Extra attention is needed
+- name: security
+  color: b60205
+  description: Security findings

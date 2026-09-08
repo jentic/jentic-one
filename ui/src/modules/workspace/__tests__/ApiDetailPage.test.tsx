@@ -160,6 +160,23 @@ describe('ApiDetailPage', () => {
 		expect(screen.getByText('/v1/resource/0')).toBeInTheDocument();
 	});
 
+	it('titles a draft-only sub-API through the shared friendly-name rule, matching the tile', async () => {
+		// The Adyen sub-API has no user-set display_name, so the header must
+		// route the raw `vendor`/`name` through `apiRefDisplayName` — the same
+		// rule the workspace tile uses — instead of rendering the raw
+		// `vendor/name` tuple. `pos-terminal-management-api` → `Pos Terminal
+		// Management Api` (the vendor prefix doesn't match, so nothing is stripped).
+		renderAt('/workspace/adyen/pos-terminal-management-api/1');
+
+		expect(
+			await screen.findByRole('heading', { name: 'Pos Terminal Management Api' }),
+		).toBeInTheDocument();
+		// The raw tuple must not leak into the heading.
+		expect(
+			screen.queryByRole('heading', { name: 'adyen/pos-terminal-management-api' }),
+		).not.toBeInTheDocument();
+	});
+
 	it('removes the API through the cascade dialog (generic-warning mode)', async () => {
 		// Per-test DELETE handler so we record the call without mutating the
 		// shared APIS fixture (other tests rely on its presence).
@@ -185,10 +202,11 @@ describe('ApiDetailPage', () => {
 		).toBeInTheDocument();
 		expect(within(dialog).queryByText(/will also remove/i)).not.toBeInTheDocument();
 
-		// Type-to-confirm — the page header displays the API's display name.
+		// Type-to-confirm — the delete gate now requires a fixed word, not the
+		// API's (tuple) name. The name still shows in the dialog body for context.
 		const confirm = within(dialog).getByRole('button', { name: /^remove api$/i });
 		expect(confirm).toBeDisabled();
-		await user.type(within(dialog).getByLabelText(/type stripe to confirm/i), 'Stripe');
+		await user.type(within(dialog).getByLabelText(/type delete to confirm/i), 'delete');
 		await waitFor(() => expect(confirm).toBeEnabled());
 
 		await user.click(confirm);

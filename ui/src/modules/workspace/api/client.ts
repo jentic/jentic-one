@@ -20,11 +20,14 @@ import {
 	ApIsService,
 	ApiSpecService,
 	ApiOperationsService,
+	CatalogService,
+	OverlaysService,
 } from '@/shared/api';
 import {
 	toApiOperation,
 	toApiRevision,
 	toCursorPage,
+	toOverlay,
 	toWorkspaceApi,
 } from '@/modules/workspace/api/adapters';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
@@ -35,6 +38,7 @@ import type {
 	ImportJob,
 	ImportSource,
 	JobStatus,
+	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
 
@@ -255,6 +259,124 @@ export async function importSources(sources: ImportSource[]): Promise<ImportJob>
 		return { jobId: String(body.job_id ?? ''), status: String(body.status ?? 'queued') };
 	} catch (error) {
 		throw toWorkspaceError(error, 'Failed to start the import.');
+	}
+}
+
+/**
+ * Re-import a catalog-backed API from the public catalog to adopt an upstream
+ * spec update (Flow-3 "Update available"). Enqueues an async import of the
+ * catalog entry keyed by its `api_id` (`POST /catalog/{id}:import`) and returns
+ * the queued job — the same endpoint Discover uses to import. On success the
+ * API's `update_available` clears on the next `GET /apis` read.
+ *
+ * NOTE: sibling-module boundaries forbid reaching into Discover's repository, so
+ * this thin wrapper mirrors Discover's `importCatalogEntry` against the shared
+ * `CatalogService` (the repository tier is the sanctioned place to touch it).
+ */
+export async function reimportCatalogEntry(apiId: string): Promise<ImportJob> {
+	try {
+		const res = await CatalogService.importCatalogEntry({ apiId });
+		return { jobId: res.job_id, status: res.status };
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to start the re-import.');
+	}
+}
+
+/**
+ * List overlays for an API (`GET /apis/{v}/{n}/{ver}/overlays`). The generated
+ * response is typed `any`, so `toOverlay` casts each row into the module's typed
+ * shape. Optional `status` filter mirrors the backend's query param.
+ */
+export async function listOverlays(params: {
+	key: ApiKey;
+	status?: Overlay['status'] | null;
+	cursor?: string | null;
+	limit?: number;
+}): Promise<CursorPage<Overlay>> {
+	try {
+		const res = await OverlaysService.listOverlays({
+			...params.key,
+			status: params.status ?? null,
+			cursor: params.cursor ?? null,
+			limit: params.limit ?? 50,
+		});
+		return toCursorPage(res, toOverlay);
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to load overlays.');
+	}
+}
+
+/**
+ * Confirm an overlay, materializing it onto the served spec
+ * (`POST /apis/{…}/overlays/{id}:confirm`). Requires `overlays:confirm`.
+ */
+export async function confirmOverlay(key: ApiKey, overlayId: string): Promise<void> {
+	try {
+		await OverlaysService.confirmOverlay({
+			...key,
+			overlayId,
+			// The confirm body is optional metadata (note/target); an empty object
+			// is the "confirm as-is" default the backend accepts.
+			requestBody: {},
+		});
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to confirm the overlay.');
+	}
+}
+
+/**
+ * Roll back a confirmed overlay, restoring the revision it superseded
+ * (`POST /apis/{…}/overlays/{id}:rollback`). Requires `overlays:confirm`.
+ */
+export async function rollbackOverlay(key: ApiKey, overlayId: string): Promise<void> {
+	try {
+		await OverlaysService.rollbackOverlay({ ...key, overlayId });
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to roll back the overlay.');
+	}
+}
+
+/**
+ * Deprecate an overlay — soft delete (`DELETE /apis/{…}/overlays/{id}`). The
+ * "close the overlay-update loop" backend also deprecates confirmed overlays
+ * automatically on re-import; this is the manual path.
+ */
+export async function deprecateOverlay(key: ApiKey, overlayId: string): Promise<void> {
+	try {
+		await OverlaysService.deprecateOverlay({ ...key, overlayId });
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to deprecate the overlay.');
+	}
+}
+
+/**
+ * Snooze ("Mute") catalog-update notifications for an API (C2, #926).
+ *
+ * The backend exposes `POST /catalog/{api_id}:snooze` (optional `{snoozed_until}`
+ * body) + `POST /catalog/{api_id}:unsnooze`, both gated on `events:write`. Both
+ * are served by the generated `CatalogService`. `snoozedUntil` omitted → mute
+ * until a newer upstream digest lands; a value → time-boxed snooze.
+ */
+export async function snoozeCatalogEntry(
+	apiId: string,
+	snoozedUntil?: string | null,
+): Promise<void> {
+	try {
+		await CatalogService.snoozeCatalogEntry({
+			apiId,
+			requestBody: snoozedUntil !== undefined ? { snoozed_until: snoozedUntil } : undefined,
+		});
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to mute update notifications.');
+	}
+}
+
+/** Un-snooze catalog-update notifications for an API (`POST /catalog/{id}:unsnooze`). */
+export async function unsnoozeCatalogEntry(apiId: string): Promise<void> {
+	try {
+		await CatalogService.unsnoozeCatalogEntry({ apiId });
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to resume update notifications.');
 	}
 }
 

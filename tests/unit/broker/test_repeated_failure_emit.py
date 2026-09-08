@@ -36,7 +36,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult,
 from jentic_one.broker.core.exceptions import BrokerError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import (
-    default_pipeline,
+    default_broker,
     persist_streaming_execution,
     run_execution,
 )
@@ -163,7 +163,7 @@ async def test_run_execution_emits_repeated_failure_on_broker_error(session: Asy
                 body=None,
                 headers=None,
                 session=session,
-                pipeline=default_pipeline(_FailRunner()),
+                broker=default_broker(_FailRunner()),
                 actor_id=_ACTOR,
                 actor_type="agent",
                 security_config=config,
@@ -189,7 +189,7 @@ async def test_run_execution_no_repeated_failure_without_security_config(
             body=None,
             headers=None,
             session=session,
-            pipeline=default_pipeline(_FailRunner()),
+            broker=default_broker(_FailRunner()),
             actor_id=_ACTOR,
             actor_type="agent",
         )

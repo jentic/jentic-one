@@ -1,9 +1,9 @@
 import { motion } from 'framer-motion';
 import { Ban, Calendar, ChevronRight, Key, KeyRound } from 'lucide-react';
-import { AppLink } from '@/shared/ui';
+import { AppLink, SparklineChart } from '@/shared/ui';
 import { timeAgo } from '@/modules/toolkits/lib/time';
 import { ToolkitGlyph } from '@/modules/toolkits/components/ToolkitGlyph';
-import type { Toolkit } from '@/modules/toolkits/api/types';
+import type { Toolkit, ToolkitUsageSummary } from '@/modules/toolkits/api/types';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
@@ -11,6 +11,8 @@ import { ROUTE_PATHS } from '@/shared/app/routes';
  * detail route so it stays a single keyboard/AT target. Counts come straight
  * from the list endpoint's roll-ups (`key_count` / `credential_count`); a
  * suspended toolkit (`active === false`) gets a danger treatment + pill.
+ * When the admin-gated `group_by=toolkit` usage aggregation is available, a
+ * 7d sparkline + call count rides above the footer.
  */
 export const toolkitCardVariants = {
 	hidden: { opacity: 0, y: 8 },
@@ -19,11 +21,14 @@ export const toolkitCardVariants = {
 
 export interface ToolkitCardProps {
 	toolkit: Toolkit;
+	/** 7d usage slice for this toolkit; undefined/null hides the sparkline row. */
+	usage?: ToolkitUsageSummary | null;
 }
 
-export function ToolkitCard({ toolkit }: ToolkitCardProps) {
+export function ToolkitCard({ toolkit, usage }: ToolkitCardProps) {
 	const suspended = !toolkit.active;
 	const created = Date.parse(toolkit.created_at);
+	const showUsage = usage != null && usage.total > 0 && usage.trend.length >= 2;
 
 	return (
 		<motion.div variants={toolkitCardVariants}>
@@ -65,6 +70,28 @@ export function ToolkitCard({ toolkit }: ToolkitCardProps) {
 						) : null}
 					</div>
 				</div>
+
+				{showUsage && (
+					<div
+						className="text-muted-foreground flex items-center gap-2 text-[11px]"
+						data-testid="toolkit-card-usage"
+					>
+						<SparklineChart
+							data={usage.trend}
+							width={96}
+							height={22}
+							color={
+								suspended ? 'var(--color-muted-foreground)' : 'var(--color-primary)'
+							}
+						/>
+						<span>
+							{usage.total.toLocaleString()} call{usage.total === 1 ? '' : 's'} · 7d
+						</span>
+						{usage.failed > 0 && (
+							<span className="text-danger">{usage.failed} failed</span>
+						)}
+					</div>
+				)}
 
 				<div className="text-muted-foreground mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
 					<span className="inline-flex items-center gap-1">

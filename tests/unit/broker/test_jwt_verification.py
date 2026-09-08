@@ -19,6 +19,7 @@ from pydantic import SecretStr
 
 from jentic_one.broker.core.setup import build_jwt_verifier
 from jentic_one.broker.services.auth import JwtVerifier
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.jwt_verification import (
     JwtVerificationError,
     TrustedIssuerVerifier,
@@ -177,6 +178,20 @@ def test_expired_token_rejected() -> None:
         _verifier({"k1": key.public_key()}).verify(token)
 
 
+def test_non_finite_exp_rejected() -> None:
+    """A signed ``exp: inf`` raises OverflowError inside PyJWT's decode; the hardened
+    verifier must map it to the typed error, not let it escape as a 500 (#880 review)."""
+    key = _ec_key()
+    token = jwt.encode(
+        {"iss": _ISS, "sub": "user-1", "aud": _AUD, "exp": float("inf")},
+        key,
+        algorithm="ES256",
+        headers={"kid": "k1"},
+    )
+    with pytest.raises(JwtVerificationError, match="jwt_invalid"):
+        _verifier({"k1": key.public_key()}).verify(token)
+
+
 def test_expiry_within_leeway_accepted() -> None:
     key = _ec_key()
     # Expired 5s ago, but leeway is 10s.
@@ -238,3 +253,8 @@ def test_build_verifier_falls_back_to_hs256_secret() -> None:
 
 def test_build_verifier_disabled_when_unconfigured() -> None:
     assert build_jwt_verifier(BrokerConfig(jwt_secret=None)) is None
+
+
+def test_jwt_verification_error_is_token_validation_error() -> None:
+    """The broker edge catches every refusal as one typed base (jentic-one#866)."""
+    assert issubclass(JwtVerificationError, TokenValidationError)

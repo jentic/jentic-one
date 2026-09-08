@@ -1,0 +1,66 @@
+name: "🐛 Bug"
+description: Something is broken, errors out, crashes, or produces the wrong output.
+title: "[bug] "
+labels: ["needs-triage", "ai-intake"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Only the first field is required — but concrete
+        beats vague, and our intake assistant may follow up in the comments asking
+        for anything important that's missing, so the more you add now the faster
+        this moves.
+
+        🔒 **Redact secrets** — never paste API keys, tokens, OAuth secrets, or
+        passwords. Replace them with `***`.
+
+        🛡️ **Security vulnerability?** Do **not** open an issue — follow
+        [SECURITY.md](https://github.com/jentic/jentic-one/blob/main/SECURITY.md)
+        for private responsible disclosure.
+  - type: textarea
+    id: what
+    attributes:
+      label: What's broken?
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: false
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output / error (paste verbatim)
+      description: The exact error or output. Redact secrets first.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      value: |
+        - Jentic One version / commit:
+        - OS:
+        - Install method (install.sh / source / Docker):
+        - Database backend (Postgres / SQLite):
+    validations:
+      required: false
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [existing issues](https://github.com/jentic/jentic-one/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I have removed any secrets, credentials, or tokens from this report.
+          required: true
+        - label: I agree to follow this project's [Code of Conduct](https://github.com/jentic/.github/blob/main/CODE_OF_CONDUCT.md).
+          required: true

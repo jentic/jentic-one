@@ -60,7 +60,7 @@ class TelemetrySink:
 
     def record(
         self,
-        name: TelemetryEventName,
+        name: TelemetryEventName | str,
         tags: Iterable[EventTag] = (),
         actor_type: str | None = None,
     ) -> None:

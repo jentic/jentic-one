@@ -48,7 +48,8 @@ export class ToolkitsService {
      *
      * The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
      * never retrievable again. Optional `credential_ids` bind existing credentials
-     * at creation time.
+     * at creation time; each inline bind emits a ``no_permission_rules`` warning
+     * because the broker denies by default until rules are added.
      * @returns ToolkitCreateResponse Successful Response
      * @throws ApiError
      */

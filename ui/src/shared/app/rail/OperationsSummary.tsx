@@ -20,8 +20,8 @@ import { OperationsDialog } from '@/shared/app/rail/OperationsDialog';
  * shows its effect + method/path and at most a handful of example operations;
  * the full set (which can be 100+ operations) lives in the dedicated
  * {@link OperationsDialog}, reached via "View all N operations". That keeps a
- * card's height constant regardless of how large the grant is — the wall of
- * chips that a big grant used to produce can't happen here.
+ * card's height constant regardless of how large the grant is — a big grant
+ * can never produce an unbounded wall of chips here.
  *
  * Read-only by design: the `:decide` verb only accepts approve/deny + reason,
  * so narrowing the rule set is a separate `:amend` concern, not something this
@@ -89,7 +89,15 @@ function RuleRow({ rule }: { rule: PermissionRule }) {
 					<span className="text-muted-foreground">any request</span>
 				) : null}
 				{rule.path ? (
-					<span className="text-muted-foreground font-mono break-all">{rule.path}</span>
+					<span className="text-muted-foreground font-mono break-all">
+						{/* Non-regex modes change the path's meaning — say so inline. */}
+						{rule.match_mode === 'prefix' || rule.match_mode === 'exact' ? (
+							<span className="text-muted-foreground/70 not-italic">
+								{rule.match_mode}:
+							</span>
+						) : null}
+						{rule.path}
+					</span>
 				) : null}
 			</div>
 			{ops.length > 0 && (

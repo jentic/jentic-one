@@ -67,7 +67,7 @@ def test_client_credentials_success(
 ) -> None:
     mock_sa_auth = MagicMock()
     mock_sa_auth.authenticate_client_credentials = AsyncMock(
-        return_value=("at_sa_token", "rt_sa_token")
+        return_value=("at_sa_token", "rt_sa_token", ["capabilities:execute"])
     )
     mock_sa_auth.access_ttl_seconds = 3600
     mock_sa_auth_cls.return_value = mock_sa_auth
@@ -76,7 +76,7 @@ def test_client_credentials_success(
 
     resp = client.post(
         "/oauth/token",
-        data={
+        json={
             "grant_type": "client_credentials",
             "client_id": "sva_test123",
             "client_secret": "jcs_secret_value",
@@ -88,6 +88,7 @@ def test_client_credentials_success(
     assert data["refresh_token"] == "rt_sa_token"
     assert data["token_type"] == "bearer"
     assert data["expires_in"] == 3600
+    assert data["scope"] == "capabilities:execute"
 
 
 @patch("jentic_one.auth.web.routers.oauth.ServiceAccountAuthService")
@@ -102,7 +103,7 @@ def test_client_credentials_missing_client_id(
 
     resp = client.post(
         "/oauth/token",
-        data={
+        json={
             "grant_type": "client_credentials",
             "client_secret": "jcs_secret_value",
         },
@@ -129,7 +130,7 @@ def test_client_credentials_invalid_secret(
 
     resp = client.post(
         "/oauth/token",
-        data={
+        json={
             "grant_type": "client_credentials",
             "client_id": "sva_test123",
             "client_secret": "jcs_wrong_secret",

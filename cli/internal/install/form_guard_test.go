@@ -17,8 +17,15 @@ import (
 func TestAllFormsUseSharedConstructors(t *testing.T) {
 	root := moduleRoot(t)
 
-	// The only sanctioned home of the raw huh constructors.
-	allowed := filepath.Join(root, "internal", "install", "theme.go")
+	// The sanctioned homes of the raw huh constructors: internal/cli/prompt (the
+	// shared themed helpers) and the binder's dynamic-form generator, whose output
+	// is themed at run time via prompt.RunForm (impl/6.1 — the one generic
+	// schema-driven form builder; it builds raw huh fields and the caller applies
+	// the theme).
+	allowed := map[string]bool{
+		filepath.Join(root, "internal", "cli", "prompt", "prompt.go"): true,
+		filepath.Join(root, "internal", "cli", "binder", "form.go"):   true,
+	}
 	forbidden := []string{"huh.NewForm(", "huh.NewInput("}
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -28,7 +35,7 @@ func TestAllFormsUseSharedConstructors(t *testing.T) {
 		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		if path == allowed {
+		if allowed[path] {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
@@ -39,7 +46,7 @@ func TestAllFormsUseSharedConstructors(t *testing.T) {
 		for _, tok := range forbidden {
 			if strings.Contains(src, tok) {
 				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s calls %s directly; use install.NewForm / install.Input instead", rel, tok)
+				t.Errorf("%s calls %s directly; use prompt.NewForm / prompt.Input instead", rel, tok)
 			}
 		}
 		return nil
@@ -57,8 +64,8 @@ func TestAllFormsUseSharedConstructors(t *testing.T) {
 // on the confirm itself.
 func TestNoConfirmRunEscapeHatch(t *testing.T) {
 	root := moduleRoot(t)
-	// theme.go documents and implements the sanctioned helper; exempt it.
-	allowed := filepath.Join(root, "internal", "install", "theme.go")
+	// prompt.go documents and implements the sanctioned helper; exempt it.
+	allowed := filepath.Join(root, "internal", "cli", "prompt", "prompt.go")
 	// Matches huh.NewConfirm()...Run() across lines, with any builder chain in
 	// between, but stops at the first Run( so it can't span unrelated calls.
 	pattern := regexp.MustCompile(`huh\.NewConfirm\((?s:[^;]*?)\.Run\(`)

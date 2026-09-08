@@ -10,6 +10,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
 from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
@@ -27,6 +28,7 @@ __all__ = [
     "CustomerAPIKey",
     "OAuthClientCredential",
     "OAuthToken",
+    "Sigv4Credential",
     "TokenValueCredential",
     "Toolkit",
     "ToolkitCredentialBinding",

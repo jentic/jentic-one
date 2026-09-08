@@ -1,0 +1,161 @@
+name: Intake output guard
+
+# Deterministic post-hoc guard for the issue-intake harness. The steering note
+# (.harness/ISSUE_INTAKE_STANDARDS.md) TELLS the model what it may do; this
+# workflow ENFORCES it, so a prompt-injected issue body cannot make the harness
+# do damage even if it fully overrides the model. It reverts any action taken by
+# the harness bot that is outside its allow-list:
+#   - a label that does not exist in .github/labels.yml (model invented it)
+#   - a label the harness is forbidden to apply (security / human-authority verdicts)
+#   - closing or locking an issue (harness must NEVER close — "triage, don't close")
+#   - an unmarked comment, or a second intake comment (one <!-- jentic-intake --> only)
+# The orchestrator's own "[Orchestrator] …" lifecycle notices (e.g. "Session
+# started") carry no intake marker by design; the guard silently minimizes them
+# (collapsed, tidy) WITHOUT posting a "reverted" notice or failing — they are
+# harness-controlled, not a violation.
+#
+# This is reactive (the bad action exists for the seconds until this runs, then is
+# reverted) — the same limitation as label-guard.yml / Kubernetes Prow. It only
+# polices the harness bot; humans are governed by label-guard.yml. Runs as the
+# default GITHUB_TOKEN, whose actions do not re-trigger issue/comment workflows.
+#
+# Prior art: GitHub gh-aw safe-outputs (agent proposes, trusted code disposes),
+# Prow restricted-labels, and the Gemini-CLI gh-issue-edit exploit (why the
+# agent's own toolset is not a sufficient boundary).
+
+on:
+  issues:
+    types: [labeled, closed, locked]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: intake-output-guard-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+env:
+  HARNESS_BOT: jentic-harness
+  # Labels that exist in labels.yml but the harness must never apply itself:
+  # security (route via needs-human + SECURITY.md), the human-authority verdicts,
+  # and the privileged AI trigger labels.
+  FORBIDDEN_FOR_HARNESS: >-
+    security confirmed duplicate wontfix invalid
+    ai-implement ai-review ai-review-and-trigger-implement
+    Agent-Harness
+
+jobs:
+  guard:
+    # Only police actions taken BY the harness bot — whether it authenticates as a
+    # plain login or a GitHub App "<name>[bot]" identity.
+    # IMPORTANT: this login must match the harness's real authenticated identity.
+    # If it doesn't, this guard silently never runs and the enforcement it provides
+    # disappears with a green check — keep HARNESS_BOT/this value in sync with the
+    # platform's actual bot identity.
+    if: >-
+      github.event.sender.login == 'jentic-harness' ||
+      github.event.sender.login == 'jentic-harness[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out labels manifest
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/labels.yml
+          sparse-checkout-cone-mode: false
+
+      - name: Enforce intake output allow-list
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          COMMENT_NODE_ID: ${{ github.event.comment.node_id }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          violation=""
+
+          # ---- Never close / lock ------------------------------------------
+          case "$ACTION" in
+            closed)
+              echo "::error::Harness closed #$NUMBER — reopening (triage, don't close)."
+              gh issue reopen "$NUMBER" --repo "$REPO" || true
+              violation="closed the issue"
+              ;;
+            locked)
+              echo "::error::Harness locked #$NUMBER — unlocking."
+              gh issue unlock "$NUMBER" --repo "$REPO" || true
+              violation="locked the issue"
+              ;;
+          esac
+
+          # ---- Label allow-list --------------------------------------------
+          if [ "$ACTION" = "labeled" ] && [ -n "${LABEL:-}" ]; then
+            # Must exist in labels.yml (extract the `- name:` values with python).
+            known="$(python3 -c '
+          import re,sys
+          names=[]
+          for line in open(".github/labels.yml"):
+              m=re.match(r"\s*-\s*name:\s*(.+?)\s*$", line)
+              if m:
+                  v=m.group(1).strip().strip("\"").strip("\x27")
+                  names.append(v)
+          print("\n".join(names))')"
+            if ! printf '%s\n' "$known" | grep -Fxq "$LABEL"; then
+              echo "::error::Harness applied undefined label '$LABEL' — removing."
+              gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" || true
+              violation="applied undefined label '$LABEL'"
+            else
+              set -f
+              for f in $FORBIDDEN_FOR_HARNESS; do
+                if [ "$LABEL" = "$f" ]; then
+                  echo "::error::Harness applied forbidden label '$LABEL' — removing."
+                  gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" || true
+                  violation="applied forbidden label '$LABEL'"
+                fi
+              done
+              set +f
+            fi
+          fi
+
+          # ---- Comment discipline: marked, and only one --------------------
+          if [ "$ACTION" = "created" ] && [ -n "${COMMENT_NODE_ID:-}" ]; then
+            if printf '%s' "$COMMENT_BODY" | grep -Eq '^\[Orchestrator\]'; then
+              # The orchestrator's own lifecycle notice (e.g. "[Orchestrator]
+              # Session started …"). Harness-controlled, NOT model output (the
+              # intake agent is tokenless and posts nothing itself), and the prefix
+              # is applied mechanically by the harness runtime (github_messages.py),
+              # so it can't be forged via a prompt-injected issue body. Minimize it
+              # silently for a tidy thread — but it is NOT a violation, so post no
+              # "reverted" notice and do not fail the job.
+              echo "Minimizing orchestrator lifecycle notice (not a violation)."
+              gh api graphql -f query='mutation($id:ID!){minimizeComment(input:{classifier:OUTDATED,subjectId:$id}){clientMutationId}}' -f id="$COMMENT_NODE_ID" || true
+            elif ! printf '%s' "$COMMENT_BODY" | grep -Fq '<!-- jentic-intake -->'; then
+              echo "::error::Harness posted an unmarked comment — hiding it."
+              gh api graphql -f query='mutation($id:ID!){minimizeComment(input:{classifier:OFF_TOPIC,subjectId:$id}){clientMutationId}}' -f id="$COMMENT_NODE_ID" || true
+              violation="posted an unmarked comment"
+            else
+              # Count marked intake comments by the marker alone (robust to whether
+              # the harness posts as "<name>" or "<name>[bot]").
+              existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" \
+                --jq "[.[] | select(.body | contains(\"<!-- jentic-intake -->\")) ] | length" 2>/dev/null || echo 0)
+              if [ "${existing:-0}" -gt 1 ]; then
+                echo "::error::Harness posted a second intake comment — hiding it."
+                gh api graphql -f query='mutation($id:ID!){minimizeComment(input:{classifier:DUPLICATE,subjectId:$id}){clientMutationId}}' -f id="$COMMENT_NODE_ID" || true
+                violation="posted a duplicate intake comment"
+              fi
+            fi
+          fi
+
+          # ---- Record & fail on any violation ------------------------------
+          if [ -n "$violation" ]; then
+            gh issue comment "$NUMBER" --repo "$REPO" --body \
+              "🛡️ **Intake output guard**: the intake harness $violation — outside its allow-list — so I reverted it. If intended, a maintainer can redo it manually. (event: \`$ACTION\`)" || true
+            echo "::error::Reverted a harness action outside the allow-list: $violation"
+            exit 1
+          fi
+          echo "Harness action within allow-list — nothing to revert."

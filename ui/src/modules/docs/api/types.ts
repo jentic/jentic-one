@@ -6,8 +6,8 @@
  *
  * This is the docs SPA's source of truth for the per-endpoint authorization
  * model (required scopes, the advisory "typical caller" hint, and any
- * non-standard auth note). It is deliberately NOT in the OpenAPI document (see
- * #602 / docs/plans/docs-spa-portal.md). The SPA fetches it separately and uses
+ * non-standard auth note). It is deliberately NOT in the OpenAPI document
+ * (#602). The SPA fetches it separately and uses
  * it to enrich each operation in the native API reference — it never mutates
  * the spec.
  */

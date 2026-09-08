@@ -11,7 +11,7 @@
  * the overview still renders the others. That isolation is the whole point of
  * composing client-side instead of behind one aggregate call.
  */
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
 	fetchAccessRequestsPage,
 	fetchActionableEvents,
@@ -19,17 +19,21 @@ import {
 	fetchPendingAccessRequests,
 	fetchPendingAgents,
 	fetchRecentExecutions,
+	fetchUsageOverview,
+	fetchHasAgents,
 } from '@/modules/dashboard/api/client';
 import type { DashboardApiError } from '@/modules/dashboard/api/client';
-import type {
-	AlertsOverview,
-	CatalogOverview,
-	PendingAccessRequestsOverview,
-	PendingAgentsOverview,
-	RecentExecutionsOverview,
+import {
+	RANGE_SECONDS,
+	type AlertsOverview,
+	type CatalogOverview,
+	type DashboardRange,
+	type PendingAccessRequestsOverview,
+	type PendingAgentsOverview,
+	type RecentExecutionsOverview,
 } from '@/modules/dashboard/api/types';
 import type { AccessRequestPage } from '@/shared/lib';
-import { sharedQueryKeys } from '@/shared/api';
+import { sharedQueryKeys, GroupBy, type UsageResponse } from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely.
  * `all` derives from the shared cross-module registry so sibling modules (e.g.
@@ -47,6 +51,9 @@ export const dashboardKeys = {
 	alerts: () => [...dashboardKeys.all, 'alerts'] as const,
 	executions: () => [...dashboardKeys.all, 'recent-executions'] as const,
 	catalog: () => [...dashboardKeys.all, 'catalog-size'] as const,
+	hasAgents: () => [...dashboardKeys.all, 'has-agents'] as const,
+	usage: (range: DashboardRange, lens: GroupBy) =>
+		[...dashboardKeys.all, 'usage', range, lens] as const,
 };
 
 /**
@@ -137,5 +144,70 @@ export function useCatalogSize() {
 		queryKey: dashboardKeys.catalog(),
 		queryFn: fetchCatalogSize,
 		staleTime: OVERVIEW_STALE_TIME,
+	});
+}
+
+/**
+ * "Does this workspace have any agents at all?" — the first-run switch input
+ * (`GET /agents?limit=1`, no status filter). Together with the recent-
+ * executions sample this decides whether the landing page shows the working
+ * dashboard or the setup checklist. Longer stale time: flipping from
+ * first-run to working happens once per workspace lifetime, and the pending
+ * queue (registered but unapproved agents) already flips it live because a
+ * pending agent IS an agent.
+ */
+export function useHasAgents() {
+	return useQuery<boolean, DashboardApiError>({
+		queryKey: dashboardKeys.hasAgents(),
+		queryFn: fetchHasAgents,
+		staleTime: OVERVIEW_STALE_TIME,
+		refetchInterval: OVERVIEW_REFETCH_INTERVAL,
+	});
+}
+
+/**
+ * Real gateway aggregates for the health + usage layers
+ * (`GET /monitoring/usage`, org:admin).
+ *
+ * Permission-aware via the caller: the endpoint 403s for non-admins, so the
+ * consuming view passes `enabled: usePermission(ORG_ADMIN)` and hides the
+ * section rather than firing a doomed request. The gate lives in the view
+ * tier (not here) so this service tier never imports `@/shared/auth` — that
+ * barrel reaches `@/shared/app/routes`, which imports this module's pages,
+ * and the resulting cycle would evaluate components before `dashboardKeys`
+ * initializes (TDZ).
+ *
+ * The query key carries the range + lens tokens (not raw timestamps — those
+ * would mint a new cache slice every refetch); the actual window bounds are
+ * computed at fetch time, ceiled to the NEXT minute so (a) refetches within
+ * the same minute are cache-coherent server-side, (b) the window width stays
+ * exactly the range (the backend picks its bucket tier from `until - since`,
+ * so a server-defaulted `until` would tip a 24h window into the 6h tier),
+ * and (c) the current partial minute is included — the aggregate must never
+ * trail the executions feed (#913).
+ *
+ * `placeholderData: keepPreviousData` — flipping range/lens re-keys the query;
+ * keeping the previous aggregate on screen (with `isFetching` signalling the
+ * swap) stops the whole section collapsing to skeletons on every toggle.
+ */
+export function useUsageOverview(
+	range: DashboardRange,
+	lens: GroupBy = GroupBy.API,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	return useQuery<UsageResponse, DashboardApiError>({
+		queryKey: dashboardKeys.usage(range, lens),
+		queryFn: () => {
+			const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
+			return fetchUsageOverview({
+				since: until - RANGE_SECONDS[range],
+				until,
+				groupBy: lens,
+			});
+		},
+		enabled,
+		placeholderData: keepPreviousData,
+		staleTime: OVERVIEW_STALE_TIME,
+		refetchInterval: OVERVIEW_REFETCH_INTERVAL,
 	});
 }

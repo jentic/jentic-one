@@ -91,6 +91,26 @@ class CatalogRepository:
         return list(snapshot.entries) if snapshot is not None else []
 
     @staticmethod
+    async def manifest_spec_urls(session: AsyncSession) -> set[str]:
+        """Spec URLs advertised by the current catalog manifest snapshot.
+
+        Distinct from :meth:`registered_spec_urls` (which is the *local* coverage key —
+        source URLs of imported revisions). This is the set of ``spec_url`` the upstream
+        catalog *offers*, used by the update-notify scanner to decide whether an
+        overlay-origin or manual revision is still catalog-tracked (its ``source_url``
+        appears in the manifest). Empty when the cache is empty.
+        """
+        snapshot = await CatalogRepository.current(session)
+        if snapshot is None:
+            return set()
+        urls: set[str] = set()
+        for entry in snapshot.entries:
+            url = entry.get("spec_url") if isinstance(entry, dict) else None
+            if url:
+                urls.add(url)
+        return urls
+
+    @staticmethod
     async def fetched_at(session: AsyncSession) -> datetime | None:
         """Explicit freshness of the current snapshot (``None`` when empty).
 

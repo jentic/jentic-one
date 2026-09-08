@@ -1,12 +1,12 @@
-"""``Idempotency-Key`` store over the shared-state ``AtomicStore`` role (§07).
+"""``Idempotency-Key`` store over the shared-state ``AtomicStore`` role.
 
 An application service (not ``broker/core/``) that gives the spec's
-``Idempotency-Key`` semantics on top of the §06 shared-state backend's atomic
+``Idempotency-Key`` semantics on top of the shared-state backend's atomic
 ``set_if_absent`` claim. The same code path works on the memory backend
 (single-instance) and the Redis backend (cross-instance) — only the injected
 ``AtomicStore`` differs.
 
-Two TTLs guard against a poison-pill (§07 "Pending claim must be short"):
+Two TTLs guard against a poison-pill (a pending claim must be short):
 
 - ``pending_ttl_s`` — a **short** claim written by :meth:`begin`. If the broker
   is hard-killed after the claim but before :meth:`complete`, the key frees
@@ -16,7 +16,7 @@ Two TTLs guard against a poison-pill (§07 "Pending claim must be short"):
   :meth:`complete` stores the real response.
 
 Per-caller keyspace (``idem:{caller}:{key}``) stops one caller replaying
-another's response; ``caller`` is the resolved ``actor_id`` (§03), never the raw
+another's response; ``caller`` is the resolved ``actor_id``, never the raw
 token.
 """
 
@@ -36,7 +36,7 @@ from jentic_one.shared.state.backend import AtomicStore, KeyValueStore
 class IdempotencyStateStore(KeyValueStore, AtomicStore, Protocol):
     """The store roles idempotency needs: ``get``/``set`` (KV) + ``set_if_absent`` (atomic).
 
-    A narrow union (ISP) over the §06 backend — the claim is an atomic
+    A narrow union (ISP) over the shared-state backend — the claim is an atomic
     ``set_if_absent``; the pending read and the DONE promotion are plain KV
     ``get``/``set``. Both the memory and Redis backends satisfy it.
     """
@@ -85,7 +85,7 @@ class IdempotencyOutcome:
 
 
 def _scrub_headers(headers: dict[str, str]) -> dict[str, str]:
-    """Drop security-bearing headers before a response is persisted (§07 §3c)."""
+    """Drop security-bearing headers before a response is persisted."""
     return {k: v for k, v in headers.items() if k.lower() not in SENSITIVE_RESPONSE_HEADERS}
 
 

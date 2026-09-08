@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AccessRequestItemResponse } from './AccessRequestItemResponse';
+import type { AccessRequestOwnerResponse } from './AccessRequestOwnerResponse';
 import type { EvaluationResponse } from './EvaluationResponse';
 /**
  * Response model for an access request envelope.
@@ -14,6 +15,7 @@ export type AccessRequestResponse = {
     evaluation?: (EvaluationResponse | null);
     expires_at: string;
     filed_at: string;
+    filer_owner?: (AccessRequestOwnerResponse | null);
     filer_owner_id?: (string | null);
     id: string;
     items: Array<AccessRequestItemResponse>;

@@ -15,6 +15,9 @@ class IdpClaims:
     first_name: str
     last_name: str
     email_verified: bool = False
+    # Google's `hd` (hosted-domain) claim, present only for Google Workspace
+    # accounts. None for generic OIDC providers and consumer Google accounts.
+    hosted_domain: str | None = None
 
 
 class IdpAdapter(Protocol):

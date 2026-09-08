@@ -68,11 +68,11 @@ test('a credential created via the API can be deleted from the UI', async ({ pag
 	// The card exposes an explicit per-credential delete control (aria-labelled),
 	// which opens the shared CascadeDeleteDialog. Hard delete is irreversible, so
 	// the dialog gates the confirm button behind a type-to-confirm field — type
-	// the credential name (like a real operator) to enable "Delete credential".
+	// the fixed word "delete" (like a real operator) to enable "Delete credential".
 	await page.getByRole('button', { name: `Delete credential ${name}` }).click();
 
 	const dialog = page.getByRole('dialog', { name: 'Delete credential' });
-	await dialog.getByRole('textbox', { name: new RegExp(`Type ${name} to confirm`) }).fill(name);
+	await dialog.getByRole('textbox', { name: /Type delete to confirm/i }).fill('delete');
 	const confirm = dialog.getByRole('button', { name: 'Delete credential', exact: true });
 	await expect(confirm).toBeEnabled();
 	await confirm.click();

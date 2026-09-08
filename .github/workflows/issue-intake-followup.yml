@@ -1,0 +1,59 @@
+name: Issue intake follow-up
+
+# Closes the author-loop for the issue-intake harness. When the original author
+# replies to their own issue, clear the labels that were waiting on them and, if
+# the harness had asked for more info, re-trigger a fresh intake pass:
+#   - needs-info          → the harness asked for detail; the author answered, so
+#                           remove needs-info AND re-add ai-intake so the harness
+#                           re-runs on the now-fuller issue (closes the loop).
+#   - duplicate-candidate → the harness flagged a possible duplicate; a human reply
+#                           is an authoritative veto (see .harness/ISSUE_INTAKE_STANDARDS.md).
+#
+# Modeled on langchain's remove_waiting_on_author.yml (auto-clear on author reply)
+# and VS Code's last-commenter-aware needs-info loop. Uses the default GITHUB_TOKEN
+# so the label edits do not re-trigger label-driven workflows.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: issue-intake-followup-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  clear-waiting-labels:
+    # Only when a human (not a bot) who is the issue's author comments on an open issue.
+    if: >-
+      github.event.issue.state == 'open' &&
+      github.event.comment.user.type != 'Bot' &&
+      github.event.comment.user.login == github.event.issue.user.login
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove waiting-on-author labels and re-trigger intake if needed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ' ') }}
+        run: |
+          reinvoke=false
+          for lbl in needs-info duplicate-candidate; do
+            case " $LABELS " in
+              *" $lbl "*)
+                echo "Author replied — removing '$lbl'."
+                gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$lbl" || true
+                # The author answered a request for more info — re-run intake so
+                # the harness re-classifies on the fuller issue instead of leaving
+                # it stranded (needs-info cleared, but nothing re-triggering).
+                [ "$lbl" = "needs-info" ] && reinvoke=true
+                ;;
+            esac
+          done
+          if [ "$reinvoke" = true ]; then
+            echo "Re-adding ai-intake to re-run the harness on the updated issue."
+            gh issue edit "$NUMBER" --repo "$REPO" --add-label ai-intake || true
+          fi

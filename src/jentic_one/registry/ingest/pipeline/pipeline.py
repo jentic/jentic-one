@@ -9,6 +9,7 @@ from jentic_one.registry.ingest.exc import IngestPipelineError, IngestStageError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
 from jentic_one.registry.ingest.observability import tracer
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
+from jentic_one.registry.ingest.pipeline.stage_registry import registered_pipeline_stages
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.registry.ingest.stages.extract_api import CreateDraftRevisionStage, ResolveApiStage
 from jentic_one.registry.ingest.stages.extract_operations import ExtractOperationsStage
@@ -72,6 +73,10 @@ class PipelineFactory:
             ]
             if include_search_text:
                 stages.append(BuildSearchTextForOperationsStage())
+            # Extension stages (register_pipeline_stage) always run last, in
+            # registration order, so they can consume the built-ins' products
+            # (operation_ids, revision_id, ...) within the same transaction.
+            stages.extend(registered_pipeline_stages(spec.spec_type))
             return Pipeline(stages)
         msg = f"Unsupported spec type: {spec.spec_type}"
         raise ValueError(msg)

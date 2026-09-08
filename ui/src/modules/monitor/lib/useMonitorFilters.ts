@@ -9,12 +9,22 @@
  *   actor_id    selected actor id (absent = "All actors")
  *   actor_type  the selected actor's type (carried alongside actor_id so the
  *               Events/audit endpoints can filter by both)
+ *   toolkit_id  scope executions to one toolkit (absent = all). Only the
+ *               executions endpoint supports it, so it's an executions-tab
+ *               deep-link param (the toolkit detail's "Open in Monitor" link
+ *               writes it) and is dropped on lens switches, unlike the global
+ *               filters above.
+ *   origin      request origin surface (cli | dashboard | api | agent |
+ *               system | mcp — the backend `Origin` enum; absent = all).
+ *               Executions-only like toolkit_id (the executions endpoint is
+ *               the one list with an `origin` query param), so it's likewise
+ *               dropped on lens switches.
  *
  * `from` is derived from `days` as an ISO timestamp `days` before now; "All"
  * omits it. Tabs fold `{ from, actorId, actorType }` into their list params.
  */
 import { useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 
 export type WindowValue = 'all' | '1' | '7' | '30';
 
@@ -29,6 +39,21 @@ function isWindowValue(value: string | null): value is WindowValue {
 	return value === '1' || value === '7' || value === '30' || value === 'all';
 }
 
+/**
+ * The backend `Origin` enum's wire values (shared/models/actors.py) — how a
+ * request reached the platform. `mcp` landed with the local-MCP telemetry
+ * work (#1178); an unknown value in the URL is preserved and sent as-is (the
+ * backend validates), but the picker only offers the known set.
+ */
+export const ORIGIN_OPTIONS: { value: string; label: string }[] = [
+	{ value: 'cli', label: 'CLI' },
+	{ value: 'dashboard', label: 'Dashboard' },
+	{ value: 'api', label: 'API' },
+	{ value: 'agent', label: 'Agent' },
+	{ value: 'system', label: 'System' },
+	{ value: 'mcp', label: 'MCP' },
+];
+
 export interface MonitorFilters {
 	/** Raw window selection (defaults to "All"). */
 	window: WindowValue;
@@ -38,8 +63,14 @@ export interface MonitorFilters {
 	days: number | null;
 	actorId: string | null;
 	actorType: string | null;
+	/** Toolkit scope for the executions lens (deep-linked from toolkit detail). */
+	toolkitId: string | null;
+	/** Origin scope for the executions lens (null = all origins). */
+	origin: string | null;
 	setWindow: (value: WindowValue) => void;
 	setActor: (actorId: string | null, actorType: string | null) => void;
+	setToolkit: (toolkitId: string | null) => void;
+	setOrigin: (origin: string | null) => void;
 }
 
 export function useMonitorFilters(): MonitorFilters {
@@ -49,6 +80,8 @@ export function useMonitorFilters(): MonitorFilters {
 	const windowValue: WindowValue = isWindowValue(daysParam) ? daysParam : 'all';
 	const actorId = searchParams.get('actor_id');
 	const actorType = searchParams.get('actor_type');
+	const toolkitId = searchParams.get('toolkit_id');
+	const origin = searchParams.get('origin');
 
 	const { from, days } = useMemo(() => {
 		if (windowValue === 'all') return { from: null, days: null };
@@ -89,5 +122,47 @@ export function useMonitorFilters(): MonitorFilters {
 		[setSearchParams],
 	);
 
-	return { window: windowValue, from, days, actorId, actorType, setWindow, setActor };
+	const setToolkit = useCallback(
+		(nextToolkitId: string | null) => {
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					if (nextToolkitId) next.set('toolkit_id', nextToolkitId);
+					else next.delete('toolkit_id');
+					return next;
+				},
+				{ replace: true },
+			);
+		},
+		[setSearchParams],
+	);
+
+	const setOrigin = useCallback(
+		(nextOrigin: string | null) => {
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					if (nextOrigin) next.set('origin', nextOrigin);
+					else next.delete('origin');
+					return next;
+				},
+				{ replace: true },
+			);
+		},
+		[setSearchParams],
+	);
+
+	return {
+		window: windowValue,
+		from,
+		days,
+		actorId,
+		actorType,
+		toolkitId,
+		origin,
+		setWindow,
+		setActor,
+		setToolkit,
+		setOrigin,
+	};
 }

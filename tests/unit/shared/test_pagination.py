@@ -143,3 +143,14 @@ def test_catalog_cursor_non_numeric_score_raises_invalid_cursor() -> None:
     bad = base64.b64encode(json.dumps({"id": "x", "s": [1, 2]}).encode()).decode()
     with pytest.raises(InvalidCursorError):
         decode_catalog_cursor(bad)
+
+
+@pytest.mark.parametrize("raw_score", ["NaN", "Infinity", "-Infinity", '"nan"', '"inf"', "1e400"])
+def test_catalog_cursor_non_finite_score_raises_invalid_cursor(raw_score: str) -> None:
+    # We only ever mint finite scores; a non-finite "s" is a crafted cursor.
+    # NaN in particular compares False against everything, which would make the
+    # keyset comparator's behavior depend on non-obvious fallthrough — reject at
+    # the decode boundary instead (400, not a silently weird page).
+    bad = base64.b64encode(f'{{"id": "x", "s": {raw_score}}}'.encode()).decode()
+    with pytest.raises(InvalidCursorError):
+        decode_catalog_cursor(bad)

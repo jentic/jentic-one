@@ -8,6 +8,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 
 
@@ -41,6 +43,39 @@ class ToolkitPermissionRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def list_rules_for_vendor(
+        session: AsyncSession,
+        toolkit_id: str,
+        api_vendor: str,
+    ) -> list[ToolkitPermissionRule]:
+        """List rules for the ``(toolkit, api_vendor)`` pool the broker evaluates.
+
+        The broker's ``_RULES_QUERY`` joins ``toolkit_permission_rules``
+        through ``toolkit_credential_bindings`` and ``credentials`` and
+        filters by ``toolkit_id`` + ``api_vendor``, so rules attached to
+        *any* binding of a same-vendor credential are pooled into one
+        ordered list. A dry-run must evaluate this same pooled set — a
+        naive per-binding read would misrepresent what the broker actually
+        does (issue #751 review, dry-run parity).
+        """
+        stmt = (
+            select(ToolkitPermissionRule)
+            .join(
+                ToolkitCredentialBinding,
+                (ToolkitCredentialBinding.toolkit_id == ToolkitPermissionRule.toolkit_id)
+                & (ToolkitCredentialBinding.credential_id == ToolkitPermissionRule.credential_id),
+            )
+            .join(Credential, Credential.id == ToolkitCredentialBinding.credential_id)
+            .where(
+                ToolkitPermissionRule.toolkit_id == toolkit_id,
+                Credential.api_vendor == api_vendor,
+            )
+            .order_by(ToolkitPermissionRule.sequence.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def replace_user_rules(
         session: AsyncSession,
         toolkit_id: str,
@@ -65,6 +100,7 @@ class ToolkitPermissionRepository:
                 effect=str(rule_data.get("effect", "allow")),
                 methods=rule_data.get("methods"),
                 path=rule_data.get("path"),
+                match_mode=str(rule_data.get("match_mode", "regex")),
                 operations=rule_data.get("operations"),
                 is_system=False,
                 comment=rule_data.get("comment"),
@@ -106,6 +142,7 @@ class ToolkitPermissionRepository:
                     effect=str(rule_data.get("effect", "allow")),
                     methods=rule_data.get("methods"),
                     path=rule_data.get("path"),
+                    match_mode=str(rule_data.get("match_mode", "regex")),
                     operations=rule_data.get("operations"),
                     is_system=False,
                     comment=rule_data.get("comment"),

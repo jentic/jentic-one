@@ -1,30 +1,23 @@
-"""Broker execute request/response models."""
+"""Broker execute request/response models.
+
+``ExecuteRequestContext`` is defined in ``shared/broker/schemas.py`` (it is part of
+the :class:`~jentic_one.shared.broker.broker.Broker` seam contract) and re-exported
+here so existing broker-internal imports keep working unchanged. The
+``AsyncQueuedResponse*`` models are web-response bodies specific to the broker
+surface and stay here.
+"""
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.broker.schemas import ExecuteRequestContext
 
-class ExecuteRequestContext(BaseModel):
-    """Contextual metadata for a broker proxy request — discovery-driven.
-
-    ``toolkit_id`` is no longer a required inbound header: it is derived (§03) or
-    supplied as an inbound disambiguator. ``operation_id`` / ``api_*`` come from
-    in-process discovery, not inbound ``Jentic-Api-*`` headers.
-    """
-
-    upstream_url: str
-    method: str
-    trace_id: str
-    toolkit_id: str | None = None
-    operation_id: str | None = None
-    api_vendor: str | None = None
-    api_name: str | None = None
-    api_version: str | None = None
-    prefer: str | None = None
-    pinned_revisions: dict[str, Any] | None = None
+__all__ = [
+    "AsyncQueuedResponse",
+    "AsyncQueuedResponseLinks",
+    "ExecuteRequestContext",
+]
 
 
 class AsyncQueuedResponseLinks(BaseModel):

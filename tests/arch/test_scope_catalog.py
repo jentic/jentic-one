@@ -113,6 +113,24 @@ def test_catalog_import_family_and_implications() -> None:
 
 
 @pytest.mark.arch
+def test_overlays_confirm_family_and_implications() -> None:
+    """overlays:confirm forms its own family and implies apis:read."""
+    catalog = build_scope_catalog()
+    by_name = {s["name"]: s for s in catalog["scopes"]}
+    confirm = by_name["overlays:confirm"]
+    assert confirm["family"] == "overlays"
+    assert confirm["action"] == "confirm"
+    assert confirm["implies"] == ["apis:read"]
+    assert confirm["is_superuser"] is False
+
+    fam = next(f for f in catalog["families"] if f["name"] == "overlays")
+    assert fam["label"] == "Overlays"
+    # org:admin ⇒ overlays:confirm (so existing admins keep confirm), which ⇒ apis:read.
+    assert "overlays:confirm" in by_name["org:admin"]["implies_transitive"]
+    assert "apis:read" in confirm["implies_transitive"]
+
+
+@pytest.mark.arch
 def test_owner_shared_constants_are_catalogued() -> None:
     """Every OWNER_* shared scope constant must be a key in ALL_PERMISSIONS."""
     owner_constants = {

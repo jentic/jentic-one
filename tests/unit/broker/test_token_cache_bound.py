@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
@@ -43,7 +44,7 @@ async def test_negative_cache_is_bounded_by_max_entries() -> None:
     validator = CachedTokenValidator(resolver=resolver, cache_ttl_seconds=300.0, max_entries=10)
 
     for i in range(100):
-        with pytest.raises(ValueError, match="unknown_token"):
+        with pytest.raises(TokenValidationError, match="unknown_token"):
             await validator.validate(f"garbage_{i}")
 
     assert len(validator._cache) == 10
@@ -57,16 +58,16 @@ async def test_lru_evicts_oldest_first() -> None:
     validator = CachedTokenValidator(resolver=resolver, cache_ttl_seconds=300.0, max_entries=3)
 
     for tok in ("a", "b", "c"):
-        with pytest.raises(ValueError):
+        with pytest.raises(TokenValidationError):
             await validator.validate(tok)
 
     # Touch "a" so it becomes most-recently-used (served from cache, no new call).
-    with pytest.raises(ValueError):
+    with pytest.raises(TokenValidationError):
         await validator.validate("a")
     assert resolver.calls == 3
 
     # Insert "d": should evict "b" (now the LRU), not "a".
-    with pytest.raises(ValueError):
+    with pytest.raises(TokenValidationError):
         await validator.validate("d")
 
     assert _key("b") not in validator._cache
@@ -82,7 +83,7 @@ async def test_cache_key_is_sha256_digest() -> None:
     validator = CachedTokenValidator(resolver=resolver, cache_ttl_seconds=300.0)
 
     raw = "at_some_secret_token"
-    with pytest.raises(ValueError):
+    with pytest.raises(TokenValidationError):
         await validator.validate(raw)
 
     assert _key(raw) in validator._cache
@@ -110,7 +111,7 @@ async def test_negative_caching_preserved() -> None:
     validator = CachedTokenValidator(resolver=resolver, cache_ttl_seconds=300.0)
 
     for _ in range(5):
-        with pytest.raises(ValueError, match="unknown_token"):
+        with pytest.raises(TokenValidationError, match="unknown_token"):
             await validator.validate("at_bad")
 
     assert resolver.calls == 1
@@ -122,10 +123,10 @@ async def test_ttl_expiry_still_works_under_bound() -> None:
     resolver = _CountingResolver(resolved=None)
     validator = CachedTokenValidator(resolver=resolver, cache_ttl_seconds=0.01, max_entries=10)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(TokenValidationError):
         await validator.validate("at_x")
     time.sleep(0.02)
-    with pytest.raises(ValueError):
+    with pytest.raises(TokenValidationError):
         await validator.validate("at_x")
 
     assert resolver.calls == 2

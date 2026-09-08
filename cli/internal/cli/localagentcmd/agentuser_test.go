@@ -1,0 +1,161 @@
+package localagentcmd
+
+import (
+	"testing"
+
+	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
+	"github.com/jentic/jentic-one/cli/internal/skillgen"
+)
+
+func TestPortSelect(t *testing.T) {
+	// With sources present the default value is left as-is (the caller pre-sets it
+	// to Yes), so the affirmative option stays selected for the common case.
+	val := true
+	_ = portSelect("Copy config?", "why", []string{"/Users/alice/.claude", "/Users/alice/.claude.json"}, &val)
+	if !val {
+		t.Error("portSelect must not flip a Yes default when there is something to copy")
+	}
+
+	// With no sources the select forces the value to false (nothing to copy) so the
+	// operator is never offered a copy of an empty set.
+	val = true
+	portSelect("Copy config?", "why", nil, &val)
+	if val {
+		t.Error("portSelect must force the value to false when there is nothing to copy")
+	}
+}
+
+func TestProviderToggleTitle(t *testing.T) {
+	if got := providerToggleTitle("aws"); got != "Copy your aws provider config into the agent's home?" {
+		t.Errorf("named provider title = %q", got)
+	}
+	// The Anthropic default (no separate provider config) gets the generic title.
+	for _, name := range []string{"", "anthropic"} {
+		if got := providerToggleTitle(name); got != "Copy your LLM provider config into the agent's home?" {
+			t.Errorf("providerToggleTitle(%q) = %q, want generic", name, got)
+		}
+	}
+}
+
+// TestFollowRenamedHome guards the form's home/name coupling: the home field is
+// prefilled from the DEFAULT account name, so an operator who renames the account
+// but leaves the home untouched must get the home re-derived from the new name —
+// otherwise the new account is silently pointed at a directory derived from a
+// name they rejected (the existing default-named account's live home, when one
+// exists). A deliberately customised home is always kept.
+func TestFollowRenamedHome(t *testing.T) {
+	defaultName := "alice-local-agent"
+	staleDefault := localagent.DefaultHomeDir(defaultName)
+
+	// Renamed account + untouched prefill → home follows the name.
+	if home, changed := followRenamedHome("alice-2", defaultName, staleDefault); !changed || home != localagent.DefaultHomeDir("alice-2") {
+		t.Errorf("followRenamedHome(renamed, stale prefill) = (%q, %v), want re-derived home", home, changed)
+	}
+	// Default name kept → prefill kept.
+	if home, changed := followRenamedHome(defaultName, defaultName, staleDefault); changed || home != staleDefault {
+		t.Errorf("followRenamedHome(default name) = (%q, %v), want unchanged", home, changed)
+	}
+	// Renamed account + deliberately customised home → the operator's choice wins.
+	custom := localagent.AgentHomeRoot() + "/team/alice-2"
+	if home, changed := followRenamedHome("alice-2", defaultName, custom); changed || home != custom {
+		t.Errorf("followRenamedHome(custom home) = (%q, %v), want operator's home kept", home, changed)
+	}
+}
+
+func TestFirstKnownAgent(t *testing.T) {
+	// firstKnownAgent returns the FIRST selected operator that maps to a runnable
+	// local agent, skipping skill-only operators (generic).
+	id, desc, ok := firstKnownAgent([]string{"generic", "cursor", "claude"})
+	if !ok || id != "cursor" || desc.Binary != "cursor-agent" {
+		t.Fatalf("firstKnownAgent = (%q, %+v, %v), want cursor (first runnable)", id, desc, ok)
+	}
+	// Claude still resolves when it's the first runnable one.
+	if id, _, ok := firstKnownAgent([]string{"generic", "claude", "codex"}); !ok || id != "claude" {
+		t.Fatalf("firstKnownAgent first-runnable = %q (ok=%v), want claude", id, ok)
+	}
+	// A selection with only skill-only operators resolves to nothing.
+	if _, _, ok := firstKnownAgent([]string{"generic"}); ok {
+		t.Fatal("did not expect a runnable agent among skill-only operators")
+	}
+	if _, _, ok := firstKnownAgent(nil); ok {
+		t.Fatal("did not expect a known agent for an empty selection")
+	}
+}
+
+func TestOperatorNames(t *testing.T) {
+	reg := skillgen.DefaultRegistry()
+	adapters := reg.Adapters()
+	names := operatorNames(adapters)
+	if len(names) != len(adapters) {
+		t.Fatalf("operatorNames length = %d, want %d", len(names), len(adapters))
+	}
+	found := false
+	for _, n := range names {
+		if n == "claude" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected claude among operator names, got %v", names)
+	}
+	if got := operatorNames(nil); len(got) != 0 {
+		t.Errorf("operatorNames(nil) = %v, want empty", got)
+	}
+}
+
+// TestRecordAgentAccount checks the persisted booleans and that a re-record keeps
+// the original CreatedAt stamp while updating the create flag. The record lives
+// in the XDG agent state and never carries a config_dir (the legacy per-agent
+// ~/.jentic reference is dead for new accounts).
+func TestRecordAgentAccount(t *testing.T) {
+	app := testApp(t)
+
+	// Declined: recorded as not created, no home.
+	app.recordAgentAccount("alice-local-agent", "", false)
+	st, err := config.LoadAgentState(app.Paths)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	acct, ok := st.AgentAccount()
+	if !ok || acct.AccountCreated || acct.Enabled || acct.User != "alice-local-agent" {
+		t.Fatalf("declined account = %+v (ok=%v)", acct, ok)
+	}
+	if acct.ConfigDir != "" {
+		t.Errorf("account should have no config-dir reference, got %q", acct.ConfigDir)
+	}
+	if acct.CreatedAt == "" {
+		t.Fatal("expected CreatedAt to be stamped")
+	}
+	firstStamp := acct.CreatedAt
+
+	// The record must land in the XDG state, not the legacy ~/.jentic config.
+	legacy, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load legacy: %v", err)
+	}
+	if legacy.Agent != nil {
+		t.Error("record must not be written to the legacy config")
+	}
+
+	// Later opting in: create + enabled flags flip, home is set, stamp is
+	// preserved, and still no config_dir.
+	app.recordAgentAccount("alice-local-agent", "/Users/Shared/alice-local-agent", true)
+	st, err = config.LoadAgentState(app.Paths)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	acct, _ = st.AgentAccount()
+	if !acct.AccountCreated || !acct.Enabled {
+		t.Error("expected AccountCreated and Enabled to flip to true")
+	}
+	if acct.HomeDir != "/Users/Shared/alice-local-agent" {
+		t.Errorf("home = %q", acct.HomeDir)
+	}
+	if acct.ConfigDir != "" {
+		t.Errorf("config_dir must stay empty for new records, got %q", acct.ConfigDir)
+	}
+	if acct.CreatedAt != firstStamp {
+		t.Errorf("CreatedAt changed on re-record: %q → %q", firstStamp, acct.CreatedAt)
+	}
+}

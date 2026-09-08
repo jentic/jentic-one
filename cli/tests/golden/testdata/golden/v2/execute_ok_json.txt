@@ -1,0 +1,20 @@
+exit: 0
+--- stdout ---
+{
+  "body": [
+    {
+      "id": 1,
+      "name": "Fido"
+    }
+  ],
+  "execution_id": "exec-123",
+  "headers": {
+    "Content-Length": "24",
+    "Content-Type": "application/json",
+    "Jentic-Execution-Id": "exec-123"
+  },
+  "schema_version": "1",
+  "status": 200
+}
+--- stderr ---
+

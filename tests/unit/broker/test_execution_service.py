@@ -8,7 +8,7 @@ import pytest
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.services.execution.service import default_pipeline, run_execution
+from jentic_one.broker.services.execution.service import default_broker, run_execution
 
 
 class _StubRunner(UpstreamRunner):
@@ -53,7 +53,7 @@ def _session_mock() -> AsyncMock:
 async def test_actor_fields_forwarded_to_record_execution() -> None:
     """actor_id and actor_type passed to run_execution reach record_execution."""
     session = _session_mock()
-    pipeline = default_pipeline(_StubRunner())
+    broker = default_broker(_StubRunner())
 
     with patch(
         "jentic_one.broker.services.execution.service.record_execution", new_callable=AsyncMock
@@ -64,7 +64,7 @@ async def test_actor_fields_forwarded_to_record_execution() -> None:
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
         )
@@ -79,7 +79,7 @@ async def test_actor_fields_forwarded_to_record_execution() -> None:
 async def test_actor_fields_are_required() -> None:
     """actor_id and actor_type are required parameters for run_execution."""
     session = _session_mock()
-    pipeline = default_pipeline(_StubRunner())
+    broker = default_broker(_StubRunner())
 
     with patch(
         "jentic_one.broker.services.execution.service.record_execution", new_callable=AsyncMock
@@ -90,7 +90,7 @@ async def test_actor_fields_are_required() -> None:
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="usr_default",
             actor_type="user",
         )

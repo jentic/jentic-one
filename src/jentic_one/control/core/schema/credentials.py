@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
     from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
     from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+    from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
     from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
 
 
@@ -40,7 +41,14 @@ class Credential(AuditableMixin, ControlBase):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_vendor: Mapped[str] = mapped_column(String(100), nullable=False)
     api_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    api_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Match apis.version (String(100)); the registry does not length-cap versions
+    # and SNAPSHOT builds carry a commit suffix that overflows 50 chars (#690).
+    api_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Catalog identity slug of the target API (`domain[/sub-api]`), copied at
+    # create time when the client knows it. Display-only — resolution identity
+    # stays the (api_vendor, api_name, api_version) tuple. NULL for credentials
+    # created before this column or against manually-imported APIs.
+    catalog_api_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provider: Mapped[str] = mapped_column(
         String(50), nullable=False, default="static", server_default=text("'static'")
     )
@@ -77,6 +85,12 @@ class Credential(AuditableMixin, ControlBase):
         lazy="selectin",
     )
     oauth_token: Mapped[OAuthToken | None] = relationship(
+        back_populates="credential",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
+    sigv4_credential: Mapped[Sigv4Credential | None] = relationship(
         back_populates="credential",
         cascade="all, delete-orphan",
         uselist=False,

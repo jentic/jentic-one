@@ -19,7 +19,10 @@ import { STORAGE_STATE_PATH } from './e2e/docker/helpers';
  *     already-authenticated. Negative-path specs opt out per-test.
  *
  * Project ordering is expressed via `dependencies`, so Playwright runs
- * bootstrap → auth → e2e in order regardless of file discovery.
+ * bootstrap → auth → first-run → e2e in order regardless of file discovery.
+ * `first-run` exists because the suite shares ONE real DB: the dashboard's
+ * first-run swap can only be observed before the agent-registering specs in
+ * the main `e2e` project mutate the workspace.
  */
 export default defineConfig({
 	testDir: './e2e/docker',
@@ -57,9 +60,19 @@ export default defineConfig({
 			retries: 0,
 		},
 		{
+			// Specs that assert the pristine, never-touched workspace (the
+			// dashboard's first-run checklist). Must run before `e2e` specs
+			// register agents / run executions against the shared DB.
+			name: 'first-run',
+			testMatch: /first-run\.spec\.ts/,
+			dependencies: ['auth'],
+			use: { storageState: STORAGE_STATE_PATH },
+		},
+		{
 			name: 'e2e',
 			testMatch: /.*\.spec\.ts/,
-			dependencies: ['auth'],
+			testIgnore: /first-run\.spec\.ts/,
+			dependencies: ['first-run'],
 			use: { storageState: STORAGE_STATE_PATH },
 		},
 	],

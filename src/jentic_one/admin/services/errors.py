@@ -74,10 +74,14 @@ class InvalidInputError(AdminServiceError):
 
 
 class InvalidCredentialsError(AdminServiceError):
-    """Raised on authentication failure (uniform for all failure modes)."""
+    """Raised on authentication failure (uniform for all failure modes).
 
-    def __init__(self) -> None:
-        super().__init__("Invalid email or password")
+    The default message covers password login; refresh-path refusals (opaque
+    token, non-user actor…) pass their own so the detail is not misleading.
+    """
+
+    def __init__(self, message: str = "Invalid email or password") -> None:
+        super().__init__(message)
 
 
 class AccountLockedError(AdminServiceError):
@@ -86,6 +90,19 @@ class AccountLockedError(AdminServiceError):
     def __init__(self, user_id: str) -> None:
         super().__init__(f"Account '{user_id}' is temporarily locked")
         self.user_id = user_id
+
+
+class SessionExpiredError(AdminServiceError):
+    """Raised when a session refresh is refused because the absolute window elapsed.
+
+    A login JWT can be re-minted (sliding session) only while the original
+    authentication (``auth_time`` claim) is younger than
+    ``admin.auth.session_ttl_seconds``. Past that, the caller must
+    re-authenticate with credentials.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Session has expired")
 
 
 class EmailAlreadyExistsError(AdminServiceError):
@@ -200,3 +217,11 @@ class ServiceAccountNotFoundError(NotFoundError):
     def __init__(self, service_account_id: str) -> None:
         super().__init__(f"ServiceAccount '{service_account_id}' not found")
         self.service_account_id = service_account_id
+
+
+class OAuthClientNotFoundError(NotFoundError):
+    """Raised when an OAuth client does not exist."""
+
+    def __init__(self, id: str) -> None:
+        super().__init__(f"OAuth client '{id}' not found")
+        self.id = id

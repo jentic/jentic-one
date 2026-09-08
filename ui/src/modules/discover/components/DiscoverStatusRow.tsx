@@ -1,11 +1,13 @@
 /**
  * DiscoverStatusRow — whole-manifest counts + freshness for the Discover header.
  *
- * Reads `catalog_total` / `registered_count` / `manifest_age_seconds` off the
- * catalog response. These describe the WHOLE manifest (not the current page or
- * filtered set) and stay constant while paging, so the row doesn't flicker as
- * the user scrolls. `manifest_age_seconds === null` means the catalog has never
- * been fetched / has no snapshot yet.
+ * Reads `catalog_total` / `registered_count` / `outdated_count` /
+ * `manifest_age_seconds` off the catalog response. These describe the WHOLE
+ * manifest (not the current page or filtered set) and stay constant while
+ * paging, so the row doesn't flicker as the user scrolls.
+ * `manifest_age_seconds === null` means the catalog has never been fetched / has
+ * no snapshot yet. The "N update(s) available" segment renders only when
+ * `outdated_count > 0`.
  */
 import { Database } from 'lucide-react';
 import { Skeleton } from '@/shared/ui';
@@ -13,6 +15,7 @@ import { Skeleton } from '@/shared/ui';
 interface DiscoverStatusRowProps {
 	catalogTotal: number;
 	registeredCount: number;
+	outdatedCount: number;
 	manifestAgeSeconds: number | null;
 	loading: boolean;
 }
@@ -31,6 +34,7 @@ function formatAge(seconds: number | null): string {
 export function DiscoverStatusRow({
 	catalogTotal,
 	registeredCount,
+	outdatedCount,
 	manifestAgeSeconds,
 	loading,
 }: DiscoverStatusRowProps) {
@@ -57,6 +61,15 @@ export function DiscoverStatusRow({
 				</strong>{' '}
 				imported
 			</span>
+			{outdatedCount > 0 && (
+				<>
+					<span aria-hidden="true">·</span>
+					<span data-testid="discover-status-outdated" className="text-warning">
+						<strong className="font-medium">{outdatedCount.toLocaleString()}</strong>{' '}
+						update{outdatedCount === 1 ? '' : 's'} available
+					</span>
+				</>
+			)}
 			<span aria-hidden="true">·</span>
 			<span>{formatAge(manifestAgeSeconds)}</span>
 		</p>

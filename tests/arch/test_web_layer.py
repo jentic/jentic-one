@@ -195,6 +195,20 @@ def _check_router_has_auth(filepath: Path) -> list[str]:
     """
     if "health" in filepath.name or "discovery" in filepath.name or "authorize" in filepath.name:
         return []
+    # The anonymous OAuth-client DCR front door (RFC 7591):
+    # deliberately unauthenticated — flagship MCP clients register anonymously;
+    # the boundary is admin approval + consent. Gated by config + per-IP rate
+    # limiting instead of an identity dependency.
+    if filepath.name == "oauth_client_registration.py":
+        return []
+    # The local-account login form on the /authorize flow (#1276): the caller
+    # is a browser mid-authorization with no token yet — the credential IS the
+    # request body, verified by AuthService.authenticate. Gated by config
+    # (auth.local_login.enabled → 404), the signed authorize state, a
+    # single-use CSRF nonce, and the authorize rate limiter instead of an
+    # identity dependency.
+    if filepath.name == "local_login.py":
+        return []
 
     source = filepath.read_text(encoding="utf-8")
 

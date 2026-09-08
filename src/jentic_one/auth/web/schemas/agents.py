@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
+
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 ScopeStr = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_:./-]+$")]
 
@@ -40,6 +42,14 @@ class DenyRequest(BaseModel):
     """Request body for denying an agent."""
 
     reason: str = Field(min_length=1, max_length=1024)
+
+
+class ClaimRequest(BaseModel):
+    """Request body for claiming ownership of a self-registered agent."""
+
+    # The single-use claim capability, presented once to take ownership. Marked
+    # sensitive so the CLI's Layer-1 redactor masks it in output.
+    token: str = Field(min_length=1, max_length=512, json_schema_extra=SENSITIVE)
 
 
 class ToolkitBindingResponse(BaseModel):
@@ -121,3 +131,13 @@ class ToolkitBindRequest(BaseModel):
     """Request body for binding a toolkit."""
 
     toolkit_id: str = Field(min_length=1, max_length=255)
+
+
+class JwksUpdateRequest(BaseModel):
+    """Request body for updating an agent's JWKS (public keys).
+
+    The JWKS must contain at least one Ed25519 public key and must not
+    contain any private key material.
+    """
+
+    jwks: dict[str, Any] = Field(description="JWKS containing public keys")

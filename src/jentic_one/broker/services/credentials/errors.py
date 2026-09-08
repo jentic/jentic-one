@@ -2,6 +2,25 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class CredentialCandidate(BaseModel):
+    """A distinguishable ambiguity candidate for a 409 body (issue #643).
+
+    Bare names collide when two credentials share a name, so a candidate also
+    carries its stable ``id``, a ``last4`` display hint (last four chars of the
+    id — never the secret), and ``created_at`` so an operator/agent can tell the
+    two apart and pick which to remove.
+    """
+
+    id: str
+    name: str
+    last4: str
+    created_at: datetime | None = None
+
 
 class CredentialResolutionError(Exception):
     """Base for all credential resolution errors."""
@@ -26,7 +45,7 @@ class AmbiguousCredentialError(CredentialResolutionError):
         name: str,
         version: str,
         count: int,
-        candidates: list[str] | None = None,
+        candidates: list[CredentialCandidate] | None = None,
     ) -> None:
         super().__init__(
             f"Ambiguous: {count} active credentials match api ({vendor}, {name}, {version})"
@@ -35,18 +54,24 @@ class AmbiguousCredentialError(CredentialResolutionError):
         self.name = name
         self.version = version
         self.count = count
-        self.candidates: list[str] = candidates or []
+        self.candidates: list[CredentialCandidate] = candidates or []
 
 
 class CredentialNameNotFoundError(CredentialResolutionError):
     """The requested credential name does not match any active candidate."""
 
     def __init__(
-        self, vendor: str, name: str, version: str, requested_name: str, candidates: list[str]
+        self,
+        vendor: str,
+        name: str,
+        version: str,
+        requested_name: str,
+        candidates: list[CredentialCandidate],
     ) -> None:
+        candidate_names = [c.name for c in candidates]
         super().__init__(
             f"No credential named '{requested_name}' for api ({vendor}, {name}, {version}); "
-            f"available: {candidates}"
+            f"available: {candidate_names}"
         )
         self.vendor = vendor
         self.name = name

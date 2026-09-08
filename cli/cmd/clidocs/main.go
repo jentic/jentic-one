@@ -18,14 +18,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jentic/jentic-one/cli/internal/cmd"
+	"github.com/jentic/jentic-one/cli/pkg/clitree"
 )
 
 func main() {
 	out := flag.String("o", "", "write JSON to this file instead of stdout")
 	flag.Parse()
 
-	ref := cmd.BuildCLIReference()
+	ref := clitree.BuildCLIReference()
 	data, err := json.MarshalIndent(ref, "", "  ")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

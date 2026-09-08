@@ -70,3 +70,20 @@ def test_or_listed_owner_scope_allows() -> None:
     identity = _identity("owner:credentials:read")
     resp = _get(identity, required=["credentials:read", "owner:credentials:read"])
     assert resp.status_code == 200
+
+
+def test_overlays_confirm_scope_allows() -> None:
+    # The purpose-scoped operator grant satisfies the confirm gate on its own.
+    assert _get(_identity("overlays:confirm"), required=["overlays:confirm"]).status_code == 200
+
+
+def test_apis_write_does_not_imply_overlays_confirm() -> None:
+    # A contributor who can submit overlays (apis:write) must NOT be able to confirm
+    # them: apis:write does not imply overlays:confirm in the implication map.
+    assert _get(_identity("apis:write"), required=["overlays:confirm"]).status_code == 403
+
+
+def test_org_admin_satisfies_overlays_confirm() -> None:
+    # org:admin remains a superset (it implies overlays:confirm and short-circuits),
+    # so the downgrade never locks existing admins out of confirm.
+    assert _get(_identity("org:admin"), required=["overlays:confirm"]).status_code == 200

@@ -149,8 +149,8 @@ def test_oauth2_injection(
 ) -> None:
     """An oauth2 client-credentials grant is exchanged at the harness token stub.
 
-    The broker fetches a token from ``{incluster}/oauth/token`` (the Phase 1.2
-    stub) and injects it as a bearer; the harness ``/auth/oauth2`` op accepts any
+    The broker fetches a token from ``{incluster}/oauth/token`` (the harness
+    token stub) and injects it as a bearer; the harness ``/auth/oauth2`` op accepts any
     ``Bearer`` value. Skips if the broker can't complete the refresh (e.g. the
     stub unreachable from the broker) — the bearer/api-key/basic tests already
     cover injection mechanics.

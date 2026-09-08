@@ -9,8 +9,14 @@ import type { RuntimeConfig } from './RuntimeConfig';
  */
 export type ApiKeyUpdateRequest = {
     active?: (boolean | null);
+    /**
+     * Immutable after create. Accepted for backward compatibility; if provided it must equal the stored value, otherwise the request is rejected. Recreate the credential to change the parameter name.
+     */
     field_name?: (string | null);
     key?: (string | null);
+    /**
+     * Immutable after create. Accepted for backward compatibility; if provided it must equal the stored value, otherwise the request is rejected. Recreate the credential to change the injection binding.
+     */
     location?: (CredentialLocation | null);
     name?: (string | null);
     runtime_config?: (RuntimeConfig | null);

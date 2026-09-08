@@ -10,7 +10,7 @@
  * (which percent-encodes each segment); the page reads them back from
  * `useParams`.
  */
-import type { RouteObject } from 'react-router-dom';
+import type { RouteObject } from 'react-router';
 import WorkspacePage from '@/modules/workspace/pages/WorkspacePage';
 import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
 

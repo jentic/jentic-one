@@ -56,3 +56,12 @@ class Agent(AuditableMixin, AdminBase):
         String(64), nullable=True, index=True
     )
     rat_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Claim token (self-registered agent ownership). Minted at /register when a
+    # claim-token minter is installed (see auth/core/claim.py); the plaintext is
+    # returned once and only the sha256 hash is stored. The registering human
+    # presents the plaintext to POST /agents/{id}:claim to take ownership. Kept
+    # SEPARATE from the RAT columns above on purpose: the RAT backs the RFC 7592
+    # management flow and is nulled by set_approval, so reusing it would drop the
+    # claim token exactly when the agent is approved.
+    claim_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

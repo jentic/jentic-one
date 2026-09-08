@@ -1,0 +1,81 @@
+# Vendored rules facts
+
+This directory holds a **committed subset** of the machine-readable enforcement
+facts, plus vendored third-party schemas the arch tests need to run offline:
+
+- `orm.facts.yaml` — the ORM conventions (`valid_bases`, required columns,
+  tablename rules, KSUID-exempt tables) that `tests/arch/test_orm_conventions.py`
+  reads instead of hard-coding.
+- `problem-details/` — the RFC 9457 problem-details schemas
+  (`problem-details.yaml`, `error-item.yaml`) from
+  [`jentic/api-problem-details`](https://github.com/jentic/api-problem-details),
+  at the commit pinned by the broker spec's external `$ref`s. Used by
+  `tests/arch/test_openapi_conformance.py` to validate the OpenAPI specs
+  **without touching the network** — a GitHub outage must not fail CI. Two
+  guards keep the copies honest: a ref-pin guard (every external `$ref` must be
+  exactly a pinned, vendored URI) and a sha256 checksum guard (the vendored
+  bytes must be what was fetched at the pin).
+
+## Why it's vendored
+
+The arch tests resolve facts in priority order (see `tests/arch/_rules_facts.py`):
+
+1. `$JENTIC_RULES_DIR` — an explicitly-pointed rules directory.
+2. `.rules/` — an optional in-repo mount, auto-detected with no env var (gitignored).
+3. a sibling rules checkout (`$JENTIC_RULES_SIBLING_NAME`).
+4. **this vendored copy** — the fallback so a standalone clone with no external
+   rules source still self-enforces its architecture.
+
+## The no-leak contract
+
+This is a **public** repo. The vendored file may contain **only** facts that are
+meaningful in this repo. Concretely:
+
+- **OSS-applicable facts only.** No section, base, or table name that exists only
+  in a downstream (non-public) tier may be copied here.
+- This is **enforced**, not a promise: `test_vendored_orm_facts_is_oss_safe`
+  (in `tests/arch/test_rules_facts_vendored.py`, always run) fails if the file
+  gains an unexpected top-level key, a `valid_bases` entry not defined in
+  `src/jentic_one/shared/db/base.py`, or a `ksuid_exempt_tables` entry with no
+  matching `__tablename__` in this repo's models.
+
+## Re-vendoring (when upstream facts change)
+
+1. Make the fuller rules facts available locally: set
+   `JENTIC_RULES_DIR=/path/to/rules` (or mount them under a gitignored `.rules/`).
+2. Run the guards:
+   `uv run pytest tests/arch/test_rules_facts_vendored.py tests/arch/test_orm_conventions.py`.
+   The drift guard (`test_vendored_orm_facts_matches_mounted_source`) will fail
+   if the vendored copy is stale.
+3. Copy the upstream file over the vendored one:
+   `cp "$JENTIC_RULES_DIR/rules/backend/orm.facts.yaml" tests/arch/vendored/orm.facts.yaml`.
+4. Re-run the guards. `test_vendored_orm_facts_is_oss_safe` must still pass — if
+   it fails, the upstream file carries content that is not OSS-safe and must not
+   be vendored as-is.
+
+## Re-vendoring the problem-details schemas (when the spec pin changes)
+
+The broker spec's external `$ref`s pin an immutable commit of
+`jentic/api-problem-details`. If you bump that pin in
+`openapi/broker/broker.openapi.yaml`:
+
+1. Update `PROBLEM_DETAILS_PIN` in `tests/arch/test_openapi_conformance.py` to
+   the new commit SHA.
+2. Re-download the schemas at that SHA into `problem-details/`:
+
+   ```sh
+   base="https://raw.githubusercontent.com/jentic/api-problem-details/<sha>/schemas"
+   curl -sSf "$base/problem-details.yaml" -o tests/arch/vendored/problem-details/problem-details.yaml
+   curl -sSf "$base/error-item.yaml"      -o tests/arch/vendored/problem-details/error-item.yaml
+   ```
+
+3. Update the recorded checksums in `_VENDORED_SCHEMA_SHA256`
+   (`tests/arch/test_openapi_conformance.py`):
+
+   ```sh
+   shasum -a 256 tests/arch/vendored/problem-details/*.yaml
+   ```
+
+4. Run `uv run pytest tests/arch/test_openapi_conformance.py`. The guards fail
+   if the spec refs, `PROBLEM_DETAILS_PIN`, the vendored files, or the recorded
+   checksums are out of sync with each other.

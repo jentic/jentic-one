@@ -7,6 +7,13 @@ from typing import Any
 
 import jwt
 
+# Re-exported so callers can catch decode failures without importing pyjwt
+# themselves (the admin service layer bans direct jwt imports outside its
+# _support seam).
+from jwt import InvalidTokenError
+
+__all__ = ["InvalidTokenError", "decode_jwt", "issue_jwt"]
+
 
 def issue_jwt(claims: dict[str, Any], secret: str, ttl_seconds: int) -> str:
     """Sign a JWT with HS256 containing the given claims and expiry."""

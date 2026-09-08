@@ -8,3 +8,4 @@ export {
 export { usePendingAgentsCount, pendingAgentsCountKey } from '@/shared/hooks/usePendingAgentsCount';
 export { useActorDirectory, actorDirectoryKey } from '@/shared/hooks/useActorDirectory';
 export type { ActorDirectory } from '@/shared/hooks/useActorDirectory';
+export { useVersionInfo, versionInfoKey } from '@/shared/hooks/useVersionInfo';

@@ -24,12 +24,15 @@ from jentic_one.auth.web.schemas.agents import (
     ApiKeyHistoryResponse,
     ApiKeyInfoResponse,
     ApiKeyResponse,
+    ClaimRequest,
     DenyRequest,
+    JwksUpdateRequest,
     ToolkitBindingListResponse,
     ToolkitBindingResponse,
     ToolkitBindRequest,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.web import get_current_identity
 
 router = APIRouter()
@@ -131,6 +134,37 @@ async def approve_agent(
 ) -> AgentResponse:
     """Approve a pending agent."""
     view = await agent_svc.approve(agent_id, identity=identity)
+    return _agent_response(view)
+
+
+@router.post("/agents/{agent_id}:claim", status_code=200)
+async def claim_agent(
+    agent_id: str,
+    body: ClaimRequest,
+    identity: Identity = get_current_identity(
+        allow_expired_password=True, require_actor_type=ActorType.USER
+    ),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> AgentResponse:
+    """Claim ownership of a self-registered agent using its claim token.
+
+    Authenticated by the platform bearer token but requires **no** agent
+    permission — the single-use claim token minted at ``/register`` is the proof,
+    so the registering human (even a plain member) can take ownership. Sets
+    ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+
+    Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
+    only a human can own an agent. The ``require_actor_type`` gate rejects a
+    non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+    ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
+
+    ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
+    claiming is an onboarding step a brand-new user may hit before they have
+    rotated a temporary password, so a must-change-password state must not block
+    it. The claim only sets ownership — it grants no scopes and cannot act as the
+    agent — so allowing it under an expired password is low-risk.
+    """
+    view = await agent_svc.claim(agent_id, token=body.token, identity=identity)
     return _agent_response(view)
 
 
@@ -249,6 +283,23 @@ async def generate_agent_api_key(
     """Generate a new API key for an active agent. Rotates any existing key."""
     key = await auth_svc.register_api_key(agent_id, identity=identity)
     return ApiKeyResponse(key=key)
+
+
+@router.put("/agents/{agent_id}/jwks", status_code=200)
+async def update_agent_jwks(
+    agent_id: str,
+    body: JwksUpdateRequest,
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> AgentResponse:
+    """Update an agent's JWKS (public keys for JWT-bearer authentication).
+
+    The JWKS must contain at least one Ed25519 public key and must not contain
+    any private key material. This enables the agent to authenticate via
+    JWT-bearer assertions signed with the corresponding private key.
+    """
+    view = await agent_svc.update_jwks(agent_id, jwks=body.jwks, identity=identity)
+    return _agent_response(view)
 
 
 @router.post("/agents/{agent_id}:revoke-api-key", status_code=204)

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, checkA11y, renderWithProviders, screen } from '@/__tests__/test-utils';
 import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
-import { OAUTH_CONNECT_MESSAGE_TYPE } from '@/modules/credentials/api';
+import { OAUTH_CONNECT_MESSAGE_TYPE } from '@/shared/credentials/api';
 
 /**
  * The OAuth connect popup is redirected here by the backend callback with a

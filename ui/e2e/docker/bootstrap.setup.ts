@@ -22,8 +22,8 @@ import {
  *     password if we have it; otherwise the DB was provisioned out-of-band and we
  *     cannot know the password, so fail loudly with a clear remediation.
  * This decouples "is the gate cleared?" (backend truth) from "do we have the
- * password?" (local file) — the two were previously ANDed, which produced a
- * misleading hard-fail when the local file was missing against a provisioned DB.
+ * password?" (local file) — ANDing the two would produce a
+ * misleading hard-fail when the local file is missing against a provisioned DB.
  */
 test('bootstrap: ensure the first-run gate is cleared and the admin password is known', async ({
 	page,

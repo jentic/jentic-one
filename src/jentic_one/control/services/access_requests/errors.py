@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
 from jentic_one.shared.scopes import GRANTABLE_SCOPES
 
 
@@ -115,10 +116,7 @@ class ToolkitReferenceUnresolvedError(AccessRequestServiceError):
     """
 
     def __init__(self, reference: dict[str, object]) -> None:
-        super().__init__(
-            f"No toolkit serves API {_format_api_reference(reference)}; "
-            "provision and bind a credential for it first"
-        )
+        super().__init__(no_toolkit_serves_api_reason(_format_api_reference(reference)))
         self.reference = reference
 
 
@@ -194,9 +192,75 @@ class RulesNotSupportedForBindError(AccessRequestServiceError):
 
     def __init__(self, resource_type: str, action: str) -> None:
         super().__init__(
-            f"rules are not supported on {resource_type}:{action}; "
-            "attach rules to a credential:bind instead"
+            f"Permission rules are not supported on {resource_type}:{action} items. "
+            "Rules are enforced per (toolkit_id, credential_id) binding, so they "
+            "can only be attached to credential:bind items. To set rules, file an "
+            "access request with resource_type='credential', action='bind' and "
+            "include your rules there (toolkits:write scope is not needed)."
         )
+        self.resource_type = resource_type
+        self.action = action
+
+
+class RequiredFieldMissingError(AccessRequestServiceError):
+    """Raised when a required field is absent on an access request item."""
+
+    def __init__(self, field: str, *, context: str) -> None:
+        super().__init__(
+            f"Required field '{field}' is missing on the access request item; {context}"
+        )
+        self.field = field
+        self.context = context
+
+
+class ProvisioningPlanNotFulfilledError(AccessRequestServiceError):
+    """Raised when a provisioning plan's bind item is approved before fulfilment.
+
+    A provisioning plan carries inert ``toolkit:create`` / ``credential:provision``
+    intents that a human fulfils in the setup wizard — which creates the real
+    toolkit + credential and stamps their ids onto the ``credential:bind`` /
+    ``toolkit:bind`` items. Approving the plan through any other path (the plain
+    approve/deny surface, a raw ``:decide``) leaves those binds with no target,
+    so they can never succeed. We deny them with an actionable reason instead of
+    the cryptic "to_id missing" / "no toolkit serves API" a plain approval would
+    otherwise produce. This error is in ``_UNFULFILLABLE_BIND_TARGET`` so the
+    ``--wait`` loop closes with a legible message.
+
+    ``governing_intent_ids`` — populated by the caller from the ``PlanGovernance``
+    value ``decide()`` computed — names the specific fulfilment intents whose
+    approval the wizard is still waiting on. For a ``toolkit:bind``,
+    ``governing_api`` additionally names the canonical ``(vendor, name)`` slug
+    key that tied the plan to this bind. Both are ``None``/empty when the caller
+    doesn't have the richer context (older call-sites, tests that construct the
+    error directly), keeping the constructor backwards-compatible.
+    """
+
+    def __init__(
+        self,
+        resource_type: str,
+        action: str,
+        *,
+        governing_intent_ids: frozenset[str] | None = None,
+        governing_api: tuple[str, str | None] | None = None,
+    ) -> None:
+        base = (
+            f"{resource_type}:{action} is part of a provisioning plan that has not been "
+            "fulfilled yet. Approve this request from the setup wizard, which creates the "
+            "toolkit and credential and wires them before granting — a plain approval cannot "
+            "complete a plan."
+        )
+        details: list[str] = []
+        if governing_api is not None:
+            vendor, name = governing_api
+            api_label = f"{vendor}/{name}" if name else vendor
+            details.append(f"governing api: {api_label}")
+        if governing_intent_ids:
+            details.append("awaiting intent(s): " + ", ".join(sorted(governing_intent_ids)))
+        if details:
+            base = f"{base} ({'; '.join(details)})"
+        super().__init__(base)
+        self.governing_intent_ids: frozenset[str] = frozenset(governing_intent_ids or ())
+        self.governing_api: tuple[str, str | None] | None = governing_api
         self.resource_type = resource_type
         self.action = action
 
@@ -206,10 +270,10 @@ def assert_grantable_scope(scope: str | None) -> None:
 
     Single source of truth for the scope:grant allow-list check, shared by the
     file-time guard (AccessRequestService) and the decide-time guard
-    (EffectApplicator) so the two can never drift. A falsy scope (missing, None,
-    or empty string) is reported as ``"<missing>"``. See issue #672.
+    (EffectApplicator) so the two can never drift. A falsy scope is reported as
+    a missing-field error. See issue #672.
     """
     if not scope:
-        raise UnsupportedScopeGrantError("<missing>")
+        raise RequiredFieldMissingError("resource_id", context="scope:grant requires a scope value")
     if scope not in GRANTABLE_SCOPES:
         raise UnsupportedScopeGrantError(scope)

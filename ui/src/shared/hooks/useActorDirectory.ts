@@ -18,10 +18,15 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getToken, subscribeToken, type ActorSummaryResponse } from '@/shared/api';
+import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { fetchActorDirectory } from '@/shared/lib/actorDirectory';
 
-/** Stable key so every consumer shares one cached directory slice. */
-export const actorDirectoryKey = ['actor-directory'] as const;
+/**
+ * Stable key so every consumer shares one cached directory slice. Defined in
+ * the shared key registry because the live event stream (shared/lib) must
+ * invalidate it when an agent registers — see `actorDirectoryRoot`.
+ */
+export const actorDirectoryKey = sharedQueryKeys.actorDirectoryRoot;
 
 /** Reference data — refetch at most every 5 minutes. */
 const ACTOR_DIRECTORY_STALE_TIME = 5 * 60_000;

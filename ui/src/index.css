@@ -4,7 +4,6 @@
   THEME — Tailwind utility class mappings.
   @theme inline maps CSS vars to Tailwind classes without emitting extra variables.
   All values are wrapped in hsl() so Tailwind opacity modifiers work (bg-primary/50 etc.).
-  Ported from jentic-mini/ui/src/index.css.
 */
 @theme inline {
 	/* Surface colors */
@@ -21,6 +20,9 @@
 	/* Muted */
 	--color-muted: hsl(var(--muted));
 	--color-muted-foreground: hsl(var(--muted-foreground));
+
+	/* Form placeholder — a muted grey, clearly lighter than entered text */
+	--color-input-placeholder: hsl(var(--input-placeholder));
 
 	/* Card */
 	--color-card: hsl(var(--card));
@@ -165,6 +167,10 @@
 	--foreground-lighter: var(--primary-100); /* #E4EAEB */
 	--muted: var(--primary-850); /* #193238 */
 	--muted-foreground: var(--primary-100); /* #E4EAEB */
+
+	/* Placeholder text — deliberately a muted grey so empty fields read as
+	   empty and don't look identical to entered (near-white) text (#673). */
+	--input-placeholder: var(--primary-500); /* #689296 */
 
 	/* Brand */
 	--primary: var(--primary-300); /* #A3CACC */

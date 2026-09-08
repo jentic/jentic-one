@@ -42,6 +42,15 @@ class AccessRequestItemView(BaseModel):
     decided_by: str | None
     decided_at: dt.datetime | None
     decision_reason: str | None
+    # Tri-state satisfaction hint, stamped by ``AccessRequestService.get()`` only
+    # (single-request reads; list pages skip it): True when the item's outcome is
+    # already in effect (binding/grant exists), False when it determinately is
+    # not, None when not computed (decided items, indeterminate or ambiguous
+    # targets, list endpoints, fulfilment-only intents).
+    already_satisfied: bool | None = None
+    # For a satisfied toolkit:bind, the toolkit id that satisfies it — lets
+    # consumers point the operator at the exact object. None otherwise.
+    already_satisfied_by: str | None = None
 
 
 class EvaluationCheck(BaseModel):
@@ -59,6 +68,14 @@ class Evaluation(BaseModel):
     checks: list[EvaluationCheck]
 
 
+class FilerOwnerView(BaseModel):
+    """Display info for the filer's human owner, resolved cross-DB (labelling only)."""
+
+    id: str
+    email: str
+    display_name: str | None = None
+
+
 class AccessRequestView(BaseModel):
     """View model for an access request envelope."""
 
@@ -74,6 +91,7 @@ class AccessRequestView(BaseModel):
     expires_at: dt.datetime
     created_by: str
     filer_owner_id: str | None
+    filer_owner: FilerOwnerView | None = None
     items: list[AccessRequestItemView]
     evaluation: Evaluation | None = None
 

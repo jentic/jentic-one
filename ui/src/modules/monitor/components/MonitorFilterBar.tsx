@@ -12,11 +12,13 @@
  * server-side search yet (tracked in jentic-one#624). The bar leaves room for
  * it once the backend lands.
  */
-import { Select, type SegmentedToggleOption } from '@/shared/ui';
+import { X } from 'lucide-react';
+import { Button, Select, type SegmentedToggleOption } from '@/shared/ui';
 import { SegmentedToggle } from '@/shared/ui';
 import { useActors, type MonitorTab } from '@/modules/monitor/api';
 import {
 	useMonitorFilters,
+	ORIGIN_OPTIONS,
 	WINDOW_OPTIONS,
 	type WindowValue,
 } from '@/modules/monitor/lib/useMonitorFilters';
@@ -49,7 +51,7 @@ export function MonitorFilterBar({ tab }: MonitorFilterBarProps) {
 
 	return (
 		<div className="border-border/60 flex flex-wrap items-center gap-3 rounded-lg border border-dashed px-3 py-2">
-			{/* TODO(#624): mount a debounced free-text search input here once the
+			{/* TODO: mount a debounced free-text search input here once the
 			    Monitor list endpoints support a `search` query param. The list
 			    param interfaces in client.ts are ready to thread it through. */}
 			<div className="flex items-center gap-2">
@@ -82,6 +84,49 @@ export function MonitorFilterBar({ tab }: MonitorFilterBarProps) {
 					))}
 				</Select>
 			</div>
+
+			{/* Origin scope — executions-only (local-MCP 2-E2): the executions
+			    endpoint is the one list with an `origin` query param. A picker
+			    (not a chip): origins are a small closed set worth browsing —
+			    "show me everything that arrived over MCP" is the headline ask. */}
+			{tab === 'executions' && (
+				<div className="flex items-center gap-2">
+					<span className="text-muted-foreground text-xs font-medium">Origin</span>
+					<Select
+						aria-label="Filter by origin"
+						value={filters.origin ?? ''}
+						onChange={(e) => filters.setOrigin(e.target.value || null)}
+					>
+						<option value="">All origins</option>
+						{ORIGIN_OPTIONS.map((o) => (
+							<option key={o.value} value={o.value}>
+								{o.label}
+							</option>
+						))}
+					</Select>
+				</div>
+			)}
+
+			{/* Toolkit scope — an executions-only deep-link filter (written by the
+			    toolkit detail's "Open in Monitor" link). Rendered as a removable
+			    chip rather than a picker: there's no in-Monitor toolkit selector
+			    yet, so the chip's job is to make the active scope visible and
+			    dismissible. */}
+			{tab === 'executions' && filters.toolkitId && (
+				<span className="border-primary/30 bg-primary/5 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs">
+					<span className="text-muted-foreground">Toolkit</span>
+					<span className="text-foreground font-mono">{filters.toolkitId}</span>
+					<Button
+						variant="ghost"
+						size="sm"
+						aria-label="Clear toolkit filter"
+						className="h-4 w-4 p-0"
+						onClick={() => filters.setToolkit(null)}
+					>
+						<X className="h-3 w-3" aria-hidden="true" />
+					</Button>
+				</span>
+			)}
 		</div>
 	);
 }

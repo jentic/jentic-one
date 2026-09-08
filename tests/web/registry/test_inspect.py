@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,6 +44,7 @@ async def _seed_operation(
     server_url: str = "https://api.example.com",
     index_host: str = "api.example.com",
     spec_operation_id: str | None = None,
+    raw_operation: Mapping[str, object] | None = None,
 ) -> tuple[Api, ApiRevision, str]:
     """Seed an API, revision, operation, server, and URL index entry.
 
@@ -90,6 +91,7 @@ async def _seed_operation(
             summary="List pets",
             description="Returns all pets",
             tags=["pets"],
+            raw_operation=raw_operation,
         )
         session.add(operation)
         await session.flush()
@@ -277,3 +279,60 @@ async def test_inspect_accept_unsupported_returns_406(
 async def test_inspect_without_auth_returns_401(unauthed_client: TestClient) -> None:
     resp = unauthed_client.get("/inspect", params={"operation_id": "op_abc", "detail": "summary"})
     assert resp.status_code == 401
+
+
+async def test_inspect_surfaces_header_query_path_and_body_inputs(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """Regression for #768: imported operations must expose their header,
+    query, path, and body inputs — not only path params — so a client can
+    build a complete, callable request."""
+    raw_operation = {
+        "operation_id": "createPage",
+        "path": "/v1/pages/{page_id}",
+        "method": "POST",
+        "parameters": [
+            {"name": "page_id", "in": "path", "required": True},
+            {"name": "page_size", "in": "query", "schema": {"type": "integer"}},
+            {"name": "Notion-Version", "in": "header", "required": True},
+        ],
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {"type": "object", "properties": {"parent": {"type": "object"}}}
+                }
+            },
+        },
+    }
+    _, _, op_id = await _seed_operation(
+        web_context,
+        path="/v1/pages/{page_id}",
+        method="POST",
+        raw_operation=raw_operation,
+    )
+    resp = authed_client.get("/inspect", params={"operation_id": op_id, "detail": "summary"})
+    assert resp.status_code == 200
+    inputs = resp.json()["inputs"]
+
+    assert [p["name"] for p in inputs["path"]] == ["page_id"]
+    assert [p["name"] for p in inputs["query"]] == ["page_size"]
+    assert [p["name"] for p in inputs["header"]] == ["Notion-Version"]
+    assert inputs["body"]["required"] is True
+    assert inputs["body"]["content_type"] == "application/json"
+    assert inputs["body"]["schema"]["type"] == "object"
+
+
+async def test_inspect_no_raw_operation_yields_empty_inputs(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """An operation stored without a raw_operation blob still inspects cleanly
+    with empty input groups (backwards compatibility)."""
+    _, _, op_id = await _seed_operation(web_context, raw_operation=None)
+    resp = authed_client.get("/inspect", params={"operation_id": op_id, "detail": "summary"})
+    assert resp.status_code == 200
+    inputs = resp.json()["inputs"]
+    assert inputs["path"] == []
+    assert inputs["query"] == []
+    assert inputs["header"] == []
+    assert inputs["body"] is None

@@ -1,0 +1,231 @@
+# Publishes the umbrella Helm chart as an OCI artifact to the AWS Marketplace
+# ECR repo — the chart URI the listing's deployment template points at.
+#
+# Why a separate workflow instead of a release.yml job: GoReleaser creates the
+# GitHub Release with GITHUB_TOKEN, which never triggers downstream workflows,
+# and the chart must only publish AFTER the release run fully succeeded (the
+# template references the image tag that run publishes). `workflow_run` gives
+# exactly that ordering; `workflow_dispatch` backfills already-released tags
+# (e.g. the first listed version) and re-runs after transient failures — a
+# re-push of the same chart version is a no-op registry-side.
+#
+# Same publish policy as the images (release.yml publish-image /
+# marketplace-mirror.yml): validation gates BEFORE login/push, cosign signs
+# the pushed digest after. Dormant until the repo VARIABLES (not secrets —
+# none of these values are sensitive, see deploy/README.md "AWS Marketplace
+# publishing") are set, so forks and pre-listing releases skip cleanly:
+#   MARKETPLACE_ECR_ROLE_ARN — IAM role trusting GitHub's OIDC provider
+#   MARKETPLACE_ECR_CHART    — full chart repo URI from the Marketplace portal
+#                              (709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one).
+#                              The final path segment MUST equal the chart
+#                              name (`helm push` derives it from Chart.yaml).
+#
+# Tag contract: the chart publishes at its Chart.yaml version (release-please
+# stamps it equal to the git tag minus the `v`), e.g. tag v0.32.1 → chart
+# 0.32.1. The deployment template pins that exact version — OCI chart
+# "tags" are chart versions and never float.
+name: marketplace-chart
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish the chart from (e.g. v0.32.1)"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: marketplace-chart
+  cancel-in-progress: false
+
+jobs:
+  publish-chart:
+    name: Publish Helm chart to Marketplace ECR
+    # `if` on the job (not per-step) so unconfigured repos and failed release
+    # runs are a skip, not a red. workflow_run.head_branch carries the tag
+    # name for tag-triggered runs.
+    if: >-
+      vars.MARKETPLACE_ECR_ROLE_ARN != '' && vars.MARKETPLACE_ECR_CHART != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        startsWith(github.event.workflow_run.head_branch, 'v')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # configure-aws-credentials (OIDC) + cosign keyless
+    steps:
+      - name: Resolve the release tag
+        id: tag
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          TAG="${DISPATCH_TAG:-${RUN_TAG}}"
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::'${TAG}' is not a stable release tag (vX.Y.Z)"; exit 1; }
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      # Installers before any credential lands on disk — same posture as
+      # release.yml publish-image.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install helm
+        uses: azure/setup-helm@v5
+
+      - name: Chart version must equal the tag
+        id: chart
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          ECR_CHART: ${{ vars.MARKETPLACE_ECR_CHART }}
+        run: |
+          set -euo pipefail
+          NAME="$(awk '/^name:/{print $2; exit}' deploy/helm/jentic-one/Chart.yaml)"
+          VERSION="$(awk '/^version:/{print $2; exit}' deploy/helm/jentic-one/Chart.yaml)"
+          if [ "${VERSION}" != "${TAG#v}" ]; then
+            echo "::error::Chart.yaml version (${VERSION}) != tag (${TAG#v})"; exit 1
+          fi
+          # helm push appends the chart name to the OCI path — the configured
+          # repo must already end with it or the push lands in the wrong repo.
+          if [ "${ECR_CHART##*/}" != "${NAME}" ]; then
+            echo "::error::MARKETPLACE_ECR_CHART (${ECR_CHART}) must end in the chart name (${NAME})"; exit 1
+          fi
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build chart dependencies
+        run: helm dependency build deploy/helm/jentic-one
+
+      # AWS Marketplace requires image references to live in the chart's own
+      # values.yaml (their replication pipeline rewrites them per region and
+      # their validator extracts them from chart defaults, not from override
+      # parameters). Bake the Marketplace overlay + release tag into the
+      # packaged chart so it is self-contained: bare `helm install` pulls
+      # only from the listing's ECR.
+      - name: Bake Marketplace defaults into values.yaml
+        env:
+          VERSION: ${{ steps.chart.outputs.version }}
+        run: |
+          set -euo pipefail
+          yq eval-all '. as $item ireduce ({}; . * $item)' \
+            deploy/helm/jentic-one/values.yaml \
+            deploy/helm/values/aws-marketplace.yaml > /tmp/values-baked.yaml
+          # The tag is stamped BOTH umbrella-wide and per-service: the render
+          # only needs global.image.tag (common.image falls back to it), but
+          # AWS's validator reads image tags from values.yaml literally and
+          # does not follow the global indirection — a tag-less service image
+          # block fails validation with MISSING_IMAGE_TAG.
+          #
+          # NO `v` prefix: release.yml pushes the app image to Marketplace ECR
+          # tagged `${GITHUB_REF_NAME#v}` (e.g. 0.37.0), so the image tag here
+          # must match exactly — a v-prefixed tag references an image that does
+          # not exist and fails both portal validation and buyer installs.
+          yq -i ".global.image.tag = \"${VERSION}\"
+            | .app.image.tag = \"${VERSION}\"
+            | .broker.image.tag = \"${VERSION}\"" /tmp/values-baked.yaml
+          mv /tmp/values-baked.yaml deploy/helm/jentic-one/values.yaml
+
+      # Publish gate = exactly what AWS runs on submission: bare `helm lint`
+      # and bare `helm template` (no overrides, no cluster) must succeed
+      # (INVALID_HELM_LINT / INVALID_HELM_TEMPLATE), and every image the
+      # baked chart renders must come from the listing's ECR — the
+      # Marketplace disallows docker.io/ghcr.io pulls at install time.
+      - name: Validation gate — helm lint + bare template, all images from ECR
+        run: |
+          set -euo pipefail
+          helm lint deploy/helm/jentic-one
+          helm template jentic deploy/helm/jentic-one > /tmp/rendered.yaml
+          BAD="$(awk -F'image:' '/^[[:space:]]*image:/{gsub(/^[[:space:]"]+|["[:space:]]+$/, "", $2); print $2}' /tmp/rendered.yaml \
+            | grep -v '^709825985650\.dkr\.ecr\.' || true)"
+          if [ -n "${BAD}" ]; then
+            echo "::error::non-ECR image(s) rendered:"; echo "${BAD}"; exit 1
+          fi
+          grep -c 'image:' /tmp/rendered.yaml >/dev/null
+          # AWS's validator composes image refs from the values keys
+          # themselves: an image block with an empty registry (full path
+          # stuffed into repository) renders fine in Helm but breaks their
+          # parser (leading-/, missing tag) — reject it here first.
+          EMPTY_REG="$(yq '[.. | select(type == "!!map" and has("registry") and has("repository")) | select(.registry == "")] | length' deploy/helm/jentic-one/values.yaml)"
+          if [ "${EMPTY_REG}" != "0" ]; then
+            echo "::error::baked values.yaml has image block(s) with an empty registry — use AWS's registry/repository/tag split"; exit 1
+          fi
+          # Every ECR image block must carry an explicit non-empty tag: AWS
+          # reads tags from values.yaml literally (no global.image.tag
+          # indirection) and fails a tag-less block with MISSING_IMAGE_TAG.
+          UNTAGGED="$(yq '[.. | select(type == "!!map" and has("repository"))
+            | select((.repository | contains(".dkr.ecr.")) or ((.registry // "") | contains(".dkr.ecr.")))
+            | select((.tag // "") == "")] | length' deploy/helm/jentic-one/values.yaml)"
+          if [ "${UNTAGGED}" != "0" ]; then
+            echo "::error::baked values.yaml has ECR image block(s) without an explicit tag — stamp them in the bake step"; exit 1
+          fi
+          # The baked defaults must be fully self-contained: the app-secrets
+          # Secret (encryption keyset, admin JWT secret, invite pepper,
+          # connect state secret, DB passwords) is generated and every
+          # password reaches its pod as a secretKeyRef — so NO install-time
+          # placeholder may remain anywhere in the render (a zero-touch
+          # launch is the listing's contract: only the two AWSMP override
+          # parameters are supplied, both auto-substituted).
+          grep -q 'name: jentic-app-secrets' /tmp/rendered.yaml
+          grep -q 'key: db-password-postgres' /tmp/rendered.yaml
+          if grep -q 'REQUIRED-AT-INSTALL' /tmp/rendered.yaml; then
+            echo "::error::baked chart still renders REQUIRED-AT-INSTALL placeholder(s) — a password stopped resolving from the generated app-secrets Secret"; exit 1
+          fi
+
+      - name: Package the chart
+        env:
+          VERSION: ${{ steps.chart.outputs.version }}
+        run: |
+          set -euo pipefail
+          helm package deploy/helm/jentic-one -d /tmp/chart
+          test -f "/tmp/chart/jentic-one-${VERSION}.tgz"
+
+      # Credential-issuing steps after package + gate, directly before use.
+      - name: Configure AWS credentials (Marketplace ECR)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.MARKETPLACE_ECR_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Push the chart to Marketplace ECR and sign
+        env:
+          COSIGN_YES: "true"
+          ECR_CHART: ${{ vars.MARKETPLACE_ECR_CHART }}
+          VERSION: ${{ steps.chart.outputs.version }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${ECR_CHART%%/*}"
+          # Two logins from one token: helm push reads Helm's registry config;
+          # cosign reads Docker's. Without the docker login the sign step 401s.
+          PASSWORD="$(aws ecr get-login-password --region us-east-1)"
+          helm registry login --username AWS --password-stdin "${REGISTRY}" <<<"${PASSWORD}"
+          docker login --username AWS --password-stdin "${REGISTRY}" <<<"${PASSWORD}"
+          # helm push derives <repo>/<chart-name> from the chart, so the push
+          # target is the repo path MINUS the final segment (asserted above).
+          # Marketplace ECR tags are immutable: if this exact chart version is
+          # already present (a re-run after a partial failure), skip the push
+          # and re-derive the digest from the registry so signing still runs.
+          if helm push "/tmp/chart/jentic-one-${VERSION}.tgz" "oci://${ECR_CHART%/*}" 2>&1 | tee /tmp/push.log; then
+            DIGEST="$(grep -oE 'sha256:[0-9a-f]{64}' /tmp/push.log | head -n1)"
+          elif grep -qiE 'tag.*immutable|already exists' /tmp/push.log; then
+            echo "Chart ${VERSION} already in the registry — signing the existing digest"
+            DIGEST="$(aws ecr batch-get-image --region us-east-1 \
+              --registry-id "${REGISTRY%%.*}" \
+              --repository-name "${ECR_CHART#*/}" \
+              --image-ids imageTag="${VERSION}" \
+              --query 'images[0].imageId.imageDigest' --output text)"
+          else
+            exit 1
+          fi
+          test -n "${DIGEST}" && [ "${DIGEST}" != "None" ]
+          echo "Chart ${ECR_CHART}:${VERSION} @ ${DIGEST}"
+          cosign sign "${ECR_CHART}@${DIGEST}"

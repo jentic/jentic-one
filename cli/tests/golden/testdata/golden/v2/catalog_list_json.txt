@@ -1,0 +1,15 @@
+exit: 0
+--- stdout ---
+{
+  "data": [],
+  "has_more": false,
+  "meta": {
+    "catalog_total": 0,
+    "manifest_age_seconds": null,
+    "outdated_count": 0,
+    "registered_count": 0
+  },
+  "schema_version": "1"
+}
+--- stderr ---
+

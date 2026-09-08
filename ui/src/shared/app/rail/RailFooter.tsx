@@ -40,7 +40,10 @@ export function RailFooter({
 					<option value="all">All events</option>
 					<option value="warning">Warning &amp; up</option>
 					<option value="critical">Critical only</option>
-					<option value="off">Off</option>
+					{/* Failures (error/critical) always toast regardless of scope
+					    (#671) — say so, or "Off" is a lie the operator will file
+					    as a bug the first time a failure pops. */}
+					<option value="off">Off (failures still toast)</option>
 				</select>
 			</div>
 			<button

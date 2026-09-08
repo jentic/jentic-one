@@ -31,6 +31,7 @@ def _make_resolved(
 ) -> ResolvedCredential:
     return ResolvedCredential(
         credential_id="cred_test",
+        name="test",
         wire_type=CredentialType.OAUTH2,
         stored_type=StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         provider=provider,

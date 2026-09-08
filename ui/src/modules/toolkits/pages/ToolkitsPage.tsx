@@ -1,42 +1,54 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Boxes, Plus } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { Boxes, Compass, Plus } from 'lucide-react';
 import {
+	AppLink,
 	Button,
-	Dialog,
 	EmptyState,
 	ErrorAlert,
-	Input,
-	Label,
 	PageHeader,
 	PageHelp,
 	PageShell,
-	Textarea,
 } from '@/shared/ui';
-import { useCreateToolkit, useToolkits } from '@/modules/toolkits/api';
+import { useToolkits, useUsageByToolkit } from '@/modules/toolkits/api';
+import { CreateToolkitDialog } from '@/modules/toolkits/components/CreateToolkitDialog';
 import { ToolkitCard, ToolkitsListSkeleton } from '@/modules/toolkits/components/ToolkitCard';
 import {
 	ToolkitsToolbar,
 	type ToolkitStatusFilter,
 } from '@/modules/toolkits/components/ToolkitsToolbar';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
  * `/app/toolkits` — the toolkit list. Lists first-party toolkits (cursor
- * paginated), each card deep-linking to `/app/toolkits/:id`. The "New toolkit"
- * dialog creates a toolkit and surfaces the one-time plaintext key on the
- * resulting detail page.
+ * paginated behind "Load more"), each card deep-linking to `/app/toolkits/:id`
+ * and carrying a 7d usage sparkline when the admin-gated `group_by=toolkit`
+ * aggregation is readable. The "New toolkit" dialog (`CreateToolkitDialog`)
+ * creates a toolkit — with optional inline credential binds — and reveals the
+ * one-time plaintext key before handing off to the detail page. "Import an
+ * API" links to Discover so the no-credentials journey doesn't dead-end here.
  */
 export function ToolkitsPage() {
-	const { data, isLoading, isError, error, refetch, isFetching } = useToolkits();
-	const createToolkit = useCreateToolkit();
+	const {
+		data,
+		isLoading,
+		isError,
+		error,
+		refetch,
+		isFetching,
+		hasNextPage,
+		fetchNextPage,
+		isFetchingNextPage,
+	} = useToolkits();
+	const { data: usageByToolkit } = useUsageByToolkit();
+	const navigate = useNavigate();
 
 	const [search, setSearch] = useState('');
 	const [statusFilter, setStatusFilter] = useState<ToolkitStatusFilter>('all');
 	const [createOpen, setCreateOpen] = useState(false);
-	const [name, setName] = useState('');
-	const [description, setDescription] = useState('');
 
-	const toolkits = useMemo(() => data?.data ?? [], [data]);
+	const toolkits = useMemo(() => data?.pages.flatMap((page) => page.data) ?? [], [data]);
 
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
@@ -51,20 +63,6 @@ export function ToolkitsPage() {
 		});
 	}, [toolkits, search, statusFilter]);
 
-	const submit = () => {
-		if (!name.trim()) return;
-		createToolkit.mutate(
-			{ name: name.trim(), description: description.trim() || null },
-			{
-				onSuccess: () => {
-					setCreateOpen(false);
-					setName('');
-					setDescription('');
-				},
-			},
-		);
-	};
-
 	return (
 		<PageShell spacing="space-y-0">
 			<PageHeader
@@ -72,6 +70,9 @@ export function ToolkitsPage() {
 				subtitle="Group credentials and API keys into a scoped surface for your agents."
 				actions={
 					<div className="flex items-center gap-2">
+						<AppLink href={ROUTES.discover} variant="secondary" size="md">
+							<Compass className="h-4 w-4" /> Import an API
+						</AppLink>
 						<Button onClick={() => setCreateOpen(true)}>
 							<Plus className="h-4 w-4" /> New toolkit
 						</Button>
@@ -133,85 +134,41 @@ export function ToolkitsPage() {
 						description="No toolkits match your current filter. Try a different search term or status."
 					/>
 				) : (
-					<motion.div
-						className="grid grid-cols-1 gap-4 md:grid-cols-2"
-						initial="hidden"
-						animate="visible"
-						variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
-					>
-						{filtered.map((toolkit) => (
-							<ToolkitCard key={toolkit.toolkit_id} toolkit={toolkit} />
-						))}
-					</motion.div>
+					<>
+						<motion.div
+							className="grid grid-cols-1 gap-4 md:grid-cols-2"
+							initial="hidden"
+							animate="visible"
+							variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
+						>
+							{filtered.map((toolkit) => (
+								<ToolkitCard
+									key={toolkit.toolkit_id}
+									toolkit={toolkit}
+									usage={usageByToolkit?.[toolkit.toolkit_id] ?? null}
+								/>
+							))}
+						</motion.div>
+						{hasNextPage && (
+							<div className="mt-4 flex justify-center">
+								<Button
+									variant="secondary"
+									loading={isFetchingNextPage}
+									onClick={() => void fetchNextPage()}
+								>
+									Load more
+								</Button>
+							</div>
+						)}
+					</>
 				)}
 			</div>
 
-			<Dialog
+			<CreateToolkitDialog
 				open={createOpen}
 				onClose={() => setCreateOpen(false)}
-				title="New toolkit"
-				size="sm"
-				footer={
-					<>
-						<Button variant="secondary" onClick={() => setCreateOpen(false)}>
-							Cancel
-						</Button>
-						<Button
-							onClick={submit}
-							loading={createToolkit.isPending}
-							disabled={!name.trim()}
-						>
-							{createToolkit.isPending ? 'Creating...' : 'Create'}
-						</Button>
-					</>
-				}
-			>
-				<div className="space-y-4">
-					{createToolkit.isError && (
-						<ErrorAlert
-							message={
-								createToolkit.error instanceof Error
-									? createToolkit.error.message
-									: 'Failed to create toolkit.'
-							}
-						/>
-					)}
-					<div>
-						<Label
-							htmlFor="tk-create-name"
-							className="text-muted-foreground mb-1 block text-xs"
-						>
-							Name
-						</Label>
-						<Input
-							id="tk-create-name"
-							type="text"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							placeholder="My toolkit"
-							autoFocus
-							onKeyDown={(e) => {
-								if (e.key === 'Enter' && !createToolkit.isPending) submit();
-							}}
-						/>
-					</div>
-					<div>
-						<Label
-							htmlFor="tk-create-description"
-							className="text-muted-foreground mb-1 block text-xs"
-						>
-							Description
-						</Label>
-						<Textarea
-							id="tk-create-description"
-							value={description}
-							onChange={(e) => setDescription(e.target.value)}
-							rows={2}
-							placeholder="Optional"
-						/>
-					</div>
-				</div>
-			</Dialog>
+				onGoToToolkit={(toolkitId) => navigate(ROUTE_PATHS.toolkit(toolkitId))}
+			/>
 		</PageShell>
 	);
 }

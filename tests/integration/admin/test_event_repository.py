@@ -145,7 +145,12 @@ async def test_list_all_with_filters(admin_db: DatabaseSession, clean_events: No
         assert len(by_action) == 1
 
 
-async def test_list_since(admin_db: DatabaseSession, clean_events: None) -> None:
+async def test_list_after_cursor(admin_db: DatabaseSession, clean_events: None) -> None:
+    """The stream's paging query returns strictly-after rows in cursor order.
+
+    A strict ``created_at >`` repository method is deliberately absent: its
+    exclusive semantics were the root of the lost-event race.
+    """
     async with admin_db.session() as session:
         await EventRepository.create(
             session, type="old", severity="info", summary="old event", created_by="usr_test"
@@ -161,6 +166,6 @@ async def test_list_since(admin_db: DatabaseSession, clean_events: None) -> None
         await session.commit()
 
     async with admin_db.session() as session:
-        recent = await EventRepository.list_since(session, cutoff)
+        recent = await EventRepository.list_after_cursor(session, (cutoff, ""))
         assert len(recent) >= 1
         assert all(e.created_at > cutoff for e in recent)

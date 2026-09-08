@@ -25,12 +25,16 @@ class OpenAPIOperationParser:
             spec_path_count.record(len(paths))
             logger.debug("paths_found", count=len(paths))
             operations: list[dict[str, Any]] = []
+            document_security = self._sanitize_security(spec.get("security"))
 
             for path, path_item in paths.items():
                 if not isinstance(path_item, dict):
                     continue
 
                 path_servers: list[dict[str, Any]] = path_item.get("servers", [])
+                path_parameters: list[dict[str, Any]] = [
+                    p for p in path_item.get("parameters", []) if isinstance(p, dict)
+                ]
 
                 for method, operation in path_item.items():
                     if method not in HTTP_METHODS:
@@ -38,7 +42,9 @@ class OpenAPIOperationParser:
                     if not isinstance(operation, dict):
                         continue
 
-                    op = self._process_operation(path, method, operation, path_servers)
+                    op = self._process_operation(
+                        path, method, operation, path_servers, path_parameters, document_security
+                    )
                     operations.append(op)
 
         logger.debug("operations_extracted", count=len(operations))
@@ -50,12 +56,33 @@ class OpenAPIOperationParser:
         method: str,
         operation: dict[str, Any],
         path_servers: list[dict[str, Any]],
+        path_parameters: list[dict[str, Any]],
+        document_security: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
-        """Process a single operation into the canonical output shape."""
+        """Process a single operation into the canonical output shape.
+
+        Retains ``parameters`` (query/header/path) and ``requestBody`` so the
+        stored ``raw_operation`` records what inputs an operation accepts —
+        without these, imported operations expose only path params and every
+        write / header-bearing call is uncallable (issue #768).
+
+        Path-item-level ``parameters`` apply to every operation on the path;
+        they are merged in here with operation-level entries taking precedence
+        on the same ``(name, in)`` key, mirroring the OpenAPI merge semantics
+        already used by the catalogue preview projector.
+
+        Retains the operation's *effective* ``security`` — the operation-level
+        requirement when the key is present (including an explicit ``[]``
+        opt-out), else the document-level requirement (issue #772). Without
+        this, specs that declare auth globally (a very common pattern) import
+        with no per-operation security at all, so nothing downstream can tell
+        the operation requires auth. Same override-else-inherit semantics as
+        the catalogue preview projector (keep the two aligned).
+        """
         operation_servers: list[dict[str, Any]] = operation.get("servers", [])
         servers = operation_servers if operation_servers else path_servers
 
-        return {
+        result: dict[str, Any] = {
             "operation_id": operation.get("operationId"),
             "path": path,
             "method": method.upper(),
@@ -64,3 +91,56 @@ class OpenAPIOperationParser:
             "tags": operation.get("tags", []),
             "servers": servers,
         }
+
+        merged_parameters = self._merge_parameters(path_parameters, operation.get("parameters", []))
+        if merged_parameters:
+            result["parameters"] = merged_parameters
+
+        if "requestBody" in operation:
+            result["requestBody"] = operation["requestBody"]
+
+        operation_security = operation.get("security")
+        effective_security = (
+            self._sanitize_security(operation_security)
+            if operation_security is not None
+            else document_security
+        )
+        if effective_security:
+            result["security"] = effective_security
+
+        return result
+
+    @staticmethod
+    def _sanitize_security(security: Any) -> list[dict[str, Any]] | None:
+        """Coerce a ``security`` value into a clean requirement list.
+
+        Returns only the dict entries of a list value (each maps scheme name →
+        scopes); a malformed value (non-list, e.g. a bare string) yields
+        ``None`` so it neither pollutes ``raw_operation`` nor masks the
+        document-level requirement.
+        """
+        if not isinstance(security, list):
+            return None
+        return [req for req in security if isinstance(req, dict)]
+
+    @staticmethod
+    def _merge_parameters(
+        path_parameters: list[dict[str, Any]],
+        operation_parameters: Any,
+    ) -> list[dict[str, Any]]:
+        """Merge path-item and operation parameters.
+
+        Operation-level parameters override path-level ones on the same
+        ``(name, in)`` key. Non-dict entries (malformed specs) are skipped. A
+        ``$ref`` parameter has neither ``name`` nor ``in`` in scope here, so it
+        cannot participate in the override key — it is retained verbatim.
+        """
+        op_params = [p for p in operation_parameters if isinstance(p, dict)]
+        op_keys = {(p.get("name"), p.get("in")) for p in op_params if "name" in p and "in" in p}
+        merged: list[dict[str, Any]] = list(op_params)
+        for param in path_parameters:
+            key = (param.get("name"), param.get("in"))
+            if "name" in param and "in" in param and key in op_keys:
+                continue
+            merged.append(param)
+        return merged

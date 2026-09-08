@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { worker } from '@/mocks/browser';
 import {
 	renderWithProviders,
 	screen,
@@ -112,7 +113,6 @@ describe('ActorAccessRequestsCard', () => {
 	});
 
 	it('surfaces an error when the list fails to load', async () => {
-		const { worker } = await import('@/mocks/browser');
 		worker.use(createErrorHandler('get', '/access-requests', { status: 500 }));
 
 		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });

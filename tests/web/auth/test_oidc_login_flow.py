@@ -28,15 +28,29 @@ from cryptography.hazmat.primitives.serialization import (
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+
+# Starlette's TestClient rides httpx2 when it is installed (it is — the mcp
+# SDK depends on it): upstream-mock responses stay httpx.Response (the app's
+# own client), while TestClient calls answer httpx2 responses.
+from httpx2 import Response as ClientResponse
 from jwt.algorithms import ECAlgorithm
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserRepository
+from jentic_one.auth.core.idp import (
+    AdmissionDecision,
+    IdpClaims,
+    get_admission_policy,
+    get_default_idp_grants,
+    set_admission_policy,
+    set_default_idp_grants,
+)
 from jentic_one.auth.web.app import create_app
-from jentic_one.shared.config import IdpConfig, SigningKeyConfig
+from jentic_one.shared.config import IdpConfig, PlatformClientConfig, SigningKeyConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 from tests.web.conftest import noop_lifespan
@@ -86,6 +100,12 @@ def oidc_context(web_context: Context) -> Context:
     """web_context with the auth surface configured for the OIDC login flow."""
     auth = web_context.config.auth
     auth.canonical_base_url = CANONICAL_BASE
+    auth.platform_clients = [
+        PlatformClientConfig.model_construct(
+            client_id=CLIENT_ID,
+            redirect_uris=[CLIENT_REDIRECT],
+        ),
+    ]
     auth.id_signing = [
         SigningKeyConfig(kid=SIGNING_KID, private_key_pem=_gen_es256_pem())  # type: ignore[arg-type]
     ]
@@ -185,11 +205,11 @@ def _callback(client: TestClient, *, signed_state: str) -> str:
     return str(parse_qs(parsed.query)["code"][0])
 
 
-def _exchange(client: TestClient, *, code: str, code_verifier: str) -> Response:
+def _exchange(client: TestClient, *, code: str, code_verifier: str) -> ClientResponse:
     """Exchange the platform code + PKCE verifier at /oauth/token."""
-    resp: Response = client.post(
+    resp: ClientResponse = client.post(
         "/oauth/token",
-        data={
+        json={
             "grant_type": "authorization_code",
             "code": code,
             "code_verifier": code_verifier,
@@ -301,6 +321,102 @@ def test_authorization_code_is_single_use(client: TestClient, _cleanup: None) ->
 
     replay = _exchange(client, code=code, code_verifier=start.code_verifier)
     assert replay.status_code == 400, replay.text
+
+
+def test_auth_idp_descriptor_advertises_enabled(client: TestClient) -> None:
+    """WI-4 capability hint: the public descriptor reports enabled + provider."""
+    resp = client.get("/auth/idp")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["enabled"] is True
+    assert body["provider"] == FAKE_PROVIDER
+
+
+@respx.mock
+def test_admission_policy_reject_blocks_new_user(client: TestClient, _cleanup: None) -> None:
+    """WI-1: a reject-policy declines a brand-new email; no user is provisioned.
+
+    The already-linked / existing-account paths are unaffected — the seam only
+    gates never-seen emails. Here the policy rejects, so the callback redirects
+    to the internal error page instead of back to the client with a code.
+    """
+    _stub_idp(sub="google-sub-reject", email="blocked@example.com", email_verified=True)
+
+    original = get_admission_policy()
+
+    def _reject_all(claims: IdpClaims) -> AdmissionDecision:
+        return AdmissionDecision.REJECT
+
+    set_admission_policy(_reject_all)
+    try:
+        start = _begin_authorize(client, state="s", nonce="n")
+        resp = client.get(
+            "/oauth/callback",
+            params={"code": "fake-idp-code", "state": start.signed_state},
+        )
+    finally:
+        set_admission_policy(original)
+
+    assert resp.status_code == 302, resp.text
+    # Declined by policy → internal error page (access_denied), not a client code.
+    assert urlparse(resp.headers["location"]).path == "/error", resp.headers["location"]
+    assert "access_denied" in resp.headers["location"]
+
+
+async def _grants_for_email(ctx: Context, email: str) -> list[str]:
+    """Return the permission names written for the user with this email."""
+    async with ctx.admin_db.transaction() as session:
+        user = await UserRepository.get_by_email(session, email)
+        assert user is not None, f"expected a provisioned user for {email}"
+        result = await session.execute(
+            select(UserPermissionGrant.permission).where(UserPermissionGrant.user_id == user.id)
+        )
+        return sorted(result.scalars().all())
+
+
+@respx.mock
+async def test_new_user_gets_configured_default_grants(
+    client: TestClient, oidc_context: Context, _cleanup: None
+) -> None:
+    """A configured default-grants provider seeds a brand-new user's baseline grants.
+
+    An unknown scope in the configured list is dropped defensively rather than
+    failing the login.
+    """
+    _stub_idp(sub="google-sub-grants", email="reader@example.com", email_verified=True)
+
+    original = get_default_idp_grants()
+
+    def _read_only(claims: IdpClaims) -> list[str]:
+        return ["capabilities:read", "apis:read", "not:a:real:scope"]
+
+    set_default_idp_grants(_read_only)
+    try:
+        start = _begin_authorize(client, state="s", nonce="n")
+        code = _callback(client, signed_state=start.signed_state)
+        resp = _exchange(client, code=code, code_verifier=start.code_verifier)
+        assert resp.status_code == 200, resp.text
+    finally:
+        set_default_idp_grants(original)
+
+    grants = await _grants_for_email(oidc_context, "reader@example.com")
+    assert grants == ["apis:read", "capabilities:read"]
+
+
+@respx.mock
+async def test_new_user_defaults_to_no_grants(
+    client: TestClient, oidc_context: Context, _cleanup: None
+) -> None:
+    """With the default provider installed, a new user starts with zero grants."""
+    _stub_idp(sub="google-sub-nogrants", email="empty@example.com", email_verified=True)
+
+    start = _begin_authorize(client, state="s", nonce="n")
+    code = _callback(client, signed_state=start.signed_state)
+    resp = _exchange(client, code=code, code_verifier=start.code_verifier)
+    assert resp.status_code == 200, resp.text
+
+    grants = await _grants_for_email(oidc_context, "empty@example.com")
+    assert grants == []
 
 
 SHARED_EMAIL = "victim@example.com"

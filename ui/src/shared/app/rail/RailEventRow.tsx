@@ -26,10 +26,13 @@ import type React from 'react';
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
+import { Tooltip } from '@/shared/ui';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import { DenyReasonField } from '@/shared/app/rail/DenyReasonField';
 import {
 	formatStreamTime,
+	formatStreamDateTimeParts,
+	conflictHint,
 	inlineActionsFor,
 	primaryDestinationFor,
 	severityStripeClass,
@@ -50,6 +53,17 @@ export type RailEventRowProps = {
 };
 
 const KIND_LABEL = STREAM_KIND_LABEL;
+
+/** Two-line tooltip body: date on top, time below (issue #705 polish). */
+function TimeTooltipContent({ tsMs }: { tsMs: number }) {
+	const { date, time } = formatStreamDateTimeParts(tsMs);
+	return (
+		<span className="flex flex-col gap-0.5 text-center leading-tight">
+			<span className="text-muted-foreground text-[11px] font-medium">{date}</span>
+			<span className="text-foreground font-mono text-xs">{time}</span>
+		</span>
+	);
+}
 
 function isCompactSeverity(ev: StreamEvent): boolean {
 	if (ev.acknowledged) return true;
@@ -79,7 +93,11 @@ export function RailEventRow({
 	const [pendingReasonFor, setPendingReasonFor] = useState<InlineActionSpec | null>(null);
 	const [reason, setReason] = useState('');
 	const headline = KIND_LABEL[ev.kind];
-	const submeta = [ev.tokens.toolkit_id, ev.meta].filter(Boolean).join(' · ');
+	// The conflict "why" hint (if any) rides in the detail line alongside the
+	// event's own meta, so a `catalog.update_conflicts_overlay` row explains the
+	// digest drift without a new layout element.
+	const hint = conflictHint(ev);
+	const submeta = [ev.tokens.toolkit_id, ev.meta, hint].filter(Boolean).join(' · ');
 	const dest = onNavigate ? primaryDestinationFor(ev) : null;
 	const navProps = dest
 		? {
@@ -125,9 +143,11 @@ export function RailEventRow({
 						Acked
 					</span>
 				)}
-				<span className="text-muted-foreground shrink-0 font-mono text-[10px]">
-					{formatStreamTime(ev.tsMs)}
-				</span>
+				<Tooltip content={<TimeTooltipContent tsMs={ev.tsMs} />}>
+					<span className="text-muted-foreground shrink-0 font-mono text-[10px]">
+						{formatStreamTime(ev.tsMs)}
+					</span>
+				</Tooltip>
 			</div>
 		);
 	}
@@ -163,9 +183,14 @@ export function RailEventRow({
 							)}
 						</button>
 					)}
-					<span className="text-muted-foreground ml-auto shrink-0 font-mono text-[10px]">
-						{formatStreamTime(ev.tsMs)}
-					</span>
+					<Tooltip
+						content={<TimeTooltipContent tsMs={ev.tsMs} />}
+						className="ml-auto shrink-0"
+					>
+						<span className="text-muted-foreground font-mono text-[10px]">
+							{formatStreamTime(ev.tsMs)}
+						</span>
+					</Tooltip>
 				</div>
 				<div className="mt-0.5 flex items-center gap-1.5">
 					<span className="text-muted-foreground truncate text-[11px]">{ev.title}</span>
