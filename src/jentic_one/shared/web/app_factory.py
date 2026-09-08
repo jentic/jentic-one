@@ -477,8 +477,22 @@ def create_surface_app(
         app.state.broker_factory = lambda _runner: container.broker
     if container.unregistered_url_handler is not None:
         # Unregistered-URL hook (sync web edge only) — the router reads it via
-        # getattr, so leaving it unset preserves today's 404 exactly.
+        # getattr, so leaving it unset preserves today's 404 exactly. Only the
+        # broker catch-all reads it, so on any other surface the handler can
+        # never fire — say so instead of failing silent.
         app.state.unregistered_url_handler = container.unregistered_url_handler
+        handler_name = (
+            f"{type(container.unregistered_url_handler).__module__}."
+            f"{type(container.unregistered_url_handler).__qualname__}"
+        )
+        if "broker" in enabled_apps:
+            _logger.info("unregistered_url_handler_installed", handler=handler_name)
+        else:
+            _logger.warning(
+                "unregistered_url_handler_unreachable",
+                handler=handler_name,
+                reason="only the broker catch-all reads this hook and this app has no broker",
+            )
     # Public, schema-hidden agent-discovery documents (the skill set +
     # llms.txt). Mounted on every standalone surface so split deployments
     # (gateway proxying to per-surface backends) serve them too. Registered
@@ -565,8 +579,16 @@ def create_combined_app(
         root.state.broker_factory = lambda _runner: container.broker
     if container.unregistered_url_handler is not None:
         # Unregistered-URL hook (sync web edge only) — read via getattr in the
-        # broker router, so leaving it unset preserves today's 404 exactly.
+        # broker router, so leaving it unset preserves today's 404 exactly. The
+        # broker never rides the combined app (``__main__`` guards it), so a
+        # handler set here can never fire — warn instead of failing silent.
         root.state.unregistered_url_handler = container.unregistered_url_handler
+        _logger.warning(
+            "unregistered_url_handler_unreachable",
+            handler=f"{type(container.unregistered_url_handler).__module__}."
+            f"{type(container.unregistered_url_handler).__qualname__}",
+            reason="only the broker catch-all reads this hook and the combined app has no broker",
+        )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
 
     @root.get(

@@ -82,3 +82,4 @@ def test_noop_unregistered_url_handler_complies() -> None:
     compliance = _NoopHandlerCompliance()
     compliance.test_is_unregistered_url_handler()
     compliance.test_call_signature()
+    compliance.test_call_is_coroutine_function()

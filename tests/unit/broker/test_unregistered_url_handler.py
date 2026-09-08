@@ -17,6 +17,13 @@ Proves the contract points of the seam (see
   never invokes the handler (that miss is a caller pin error on a registered
   API, not an unregistered flow); and the handler receives the **validated**
   URL (the egress contract's ordering — hook after ``validate_upstream_url``).
+- **Failure isolation**: a raising handler falls through to the documented 404
+  (never a 500) and the failure is counted (``outcome="error"``) and logged; a
+  deliberate ``ProblemDetailException`` propagates; ``CancelledError``
+  propagates uncounted.
+- **Metrics**: the ``broker.unregistered_url.handled`` counter is
+  outcome-attributed (``handled``/``declined``/``error``) and silent on the
+  unwired default path.
 
 The spy is a compliant ``UnregisteredUrlHandler``
 (``jentic_one.testing.BaseUnregisteredUrlHandlerComplianceTest`` guards the
@@ -29,12 +36,15 @@ marker-returning fake precisely to prove the handler sees the validator's
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import StreamingResponse
+from jentic.problem_details import ProblemDetailException
 
 import jentic_one.broker.web.routers.execute as execute_mod
 from jentic_one.broker.core.exceptions import OperationNotFoundError
@@ -68,7 +78,14 @@ class _SpyHandler:
     async def __call__(
         self, *, method: str, upstream_url: str, identity: Identity, request: Request
     ) -> Response | None:
-        self.calls.append({"method": method, "upstream_url": upstream_url, "identity": identity})
+        self.calls.append(
+            {
+                "method": method,
+                "upstream_url": upstream_url,
+                "identity": identity,
+                "request": request,
+            }
+        )
         return self.reply
 
 
@@ -118,9 +135,12 @@ def test_container_stashes_handler_on_surface_app(ctx: Context) -> None:
 
 
 def test_default_container_leaves_handler_unset(ctx: Context) -> None:
-    """No injection → the attribute is absent, so the router 404s as today."""
+    """No injection → the attribute is *absent* (not merely ``None``), so the
+    router's ``getattr`` fallback 404s as today. ``hasattr`` (not
+    ``getattr(..., None)``) is the assertion that fails if the factory ever
+    stashes unconditionally."""
     app = create_combined_app(ctx, ["control"])
-    assert getattr(app.state, "unregistered_url_handler", None) is None
+    assert not hasattr(app.state, "unregistered_url_handler")
 
 
 @pytest.mark.asyncio
@@ -165,11 +185,13 @@ async def test_handler_response_is_returned_verbatim() -> None:
 
 @pytest.mark.asyncio
 async def test_handler_receives_arguments_verbatim() -> None:
-    """The handler sees exactly the URL, method, and resolved identity passed."""
+    """The handler sees exactly the URL, method, resolved identity, and the
+    raw inbound request object passed — no copies, no substitutes."""
     spy = _SpyHandler(None)
     identity = _identity()
+    request = _request_with_state(spy)
     await _handle_unregistered_url(
-        _request_with_state(spy),
+        request,
         method="DELETE",
         upstream_url=f"{_RAW_URL}/42?x=1",
         identity=identity,
@@ -179,14 +201,17 @@ async def test_handler_receives_arguments_verbatim() -> None:
             "method": "DELETE",
             "upstream_url": f"{_RAW_URL}/42?x=1",
             "identity": identity,
+            "request": request,
         }
     ]
+    assert spy.calls[0]["request"] is request
 
 
 @pytest.mark.asyncio
-async def test_short_circuit_increments_handled_counter(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A short-circuit bumps ``broker.unregistered_url.handled`` — the
-    core-side observability floor named in the seam contract."""
+async def test_short_circuit_counts_outcome_handled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A short-circuit bumps ``broker.unregistered_url.handled`` with
+    ``outcome="handled"`` — the core-side observability floor named in the
+    seam contract."""
     counter = MagicMock()
     monkeypatch.setattr(execute_mod, "_unregistered_url_handled", counter)
     spy = _SpyHandler(Response(content=b"handled"))
@@ -196,14 +221,13 @@ async def test_short_circuit_increments_handled_counter(monkeypatch: pytest.Monk
         upstream_url=_RAW_URL,
         identity=_identity(),
     )
-    counter.add.assert_called_once_with(1)
+    counter.add.assert_called_once_with(1, {"outcome": "handled"})
 
 
 @pytest.mark.asyncio
-async def test_decline_does_not_increment_handled_counter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A declining handler (→ 404) is not "handled" traffic — no count."""
+async def test_decline_counts_outcome_declined(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A declining handler (→ 404) is visible as ``outcome="declined"`` —
+    "is my handler declining or erroring?" must be answerable from metrics."""
     counter = MagicMock()
     monkeypatch.setattr(execute_mod, "_unregistered_url_handled", counter)
     spy = _SpyHandler(None)
@@ -213,7 +237,125 @@ async def test_decline_does_not_increment_handled_counter(
         upstream_url=_RAW_URL,
         identity=_identity(),
     )
+    counter.add.assert_called_once_with(1, {"outcome": "declined"})
+
+
+@pytest.mark.asyncio
+async def test_no_handler_emits_no_metric(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default (unwired) path stays byte-identical — no metric either."""
+    counter = MagicMock()
+    monkeypatch.setattr(execute_mod, "_unregistered_url_handled", counter)
+    await _handle_unregistered_url(
+        _request_with_state(None),
+        method="GET",
+        upstream_url=_RAW_URL,
+        identity=_identity(),
+    )
     counter.add.assert_not_called()
+
+
+class _RaisingHandler:
+    """A broken passive observer — its bug must not change the route contract."""
+
+    async def __call__(
+        self, *, method: str, upstream_url: str, identity: Identity, request: Request
+    ) -> Response | None:
+        raise RuntimeError("downstream sink is down")
+
+
+@pytest.mark.asyncio
+async def test_raising_handler_is_isolated_logged_and_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising handler falls through to the documented 404 — not a 500 —
+    and the failure is *not* silent: it is counted (``outcome="error"``) and
+    logged with the handler's qualified name."""
+    counter = MagicMock()
+    log = MagicMock()
+    monkeypatch.setattr(execute_mod, "_unregistered_url_handled", counter)
+    monkeypatch.setattr(execute_mod, "logger", log)
+    handled = await _handle_unregistered_url(
+        _request_with_state(_RaisingHandler()),
+        method="GET",
+        upstream_url=_RAW_URL,
+        identity=_identity(),
+    )
+    assert handled is None  # falls through to OperationNotFoundError in _handle
+    counter.add.assert_called_once_with(1, {"outcome": "error"})
+    log.exception.assert_called_once()
+    assert (
+        log.exception.call_args.kwargs["handler"]
+        == f"{_RaisingHandler.__module__}.{_RaisingHandler.__qualname__}"
+    )
+
+
+class _ProblemRaisingHandler:
+    """A handler that answers with a deliberate problem response."""
+
+    async def __call__(
+        self, *, method: str, upstream_url: str, identity: Identity, request: Request
+    ) -> Response | None:
+        raise ProblemDetailException(
+            status_code=451, detail="Blocked by monitor policy", type="monitor_blocked"
+        )
+
+
+@pytest.mark.asyncio
+async def test_problem_detail_exception_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ``ProblemDetailException`` is the handler's deliberate response — it
+    propagates to the surface handlers instead of degrading to the 404."""
+    counter = MagicMock()
+    monkeypatch.setattr(execute_mod, "_unregistered_url_handled", counter)
+    with pytest.raises(ProblemDetailException):
+        await _handle_unregistered_url(
+            _request_with_state(_ProblemRaisingHandler()),
+            method="GET",
+            upstream_url=_RAW_URL,
+            identity=_identity(),
+        )
+    counter.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates_uncounted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``CancelledError`` is not ``Exception`` — the isolation must never
+    swallow a cancellation (client disconnect) into a 404."""
+    counter = MagicMock()
+    monkeypatch.setattr(execute_mod, "_unregistered_url_handled", counter)
+
+    class _CancelledHandler:
+        async def __call__(
+            self, *, method: str, upstream_url: str, identity: Identity, request: Request
+        ) -> Response | None:
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await _handle_unregistered_url(
+            _request_with_state(_CancelledHandler()),
+            method="GET",
+            upstream_url=_RAW_URL,
+            identity=_identity(),
+        )
+    counter.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_streaming_handler_response_is_returned_verbatim() -> None:
+    """A ``StreamingResponse`` comes back as the *same instance* — nothing in
+    core buffers, inspects, or rewraps the body."""
+
+    async def _gen() -> Any:
+        yield b"chunk"
+
+    reply = StreamingResponse(_gen(), media_type="text/plain")
+    spy = _SpyHandler(reply)
+    handled = await _handle_unregistered_url(
+        _request_with_state(spy),
+        method="GET",
+        upstream_url=_RAW_URL,
+        identity=_identity(),
+    )
+    assert handled is reply
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +464,16 @@ async def test_route_no_handler_raises_operation_not_found() -> None:
     """Unregistered URL, no handler → today's 404, same type and detail."""
     with pytest.raises(OperationNotFoundError) as exc_info:
         await _run_handle(_asgi_request(_MissResolver(), None))
+    assert exc_info.value.type == "operation_not_found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_marker_validator")
+async def test_route_raising_handler_falls_through_to_404() -> None:
+    """A broken handler must not change the route's contract: the miss still
+    raises today's ``operation_not_found``, not a 500."""
+    with pytest.raises(OperationNotFoundError) as exc_info:
+        await _run_handle(_asgi_request(_MissResolver(), _RaisingHandler()))
     assert exc_info.value.type == "operation_not_found"
 
 

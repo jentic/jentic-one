@@ -20,7 +20,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
-from jentic.problem_details import Forbidden
+from jentic.problem_details import Forbidden, ProblemDetailException
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
@@ -128,7 +128,10 @@ _streaming_persist_failures = _meter.create_counter(
 )
 _unregistered_url_handled = _meter.create_counter(
     "broker.unregistered_url.handled",
-    description="Unregistered-URL requests short-circuited by an injected UnregisteredUrlHandler",
+    description=(
+        "Injected UnregisteredUrlHandler invocations, by outcome: "
+        "handled (short-circuit), declined (fell through to 404), error (handler raised)"
+    ),
 )
 
 router = APIRouter()
@@ -599,20 +602,37 @@ async def _handle_unregistered_url(
     never invokes it: the API is registered there, so that miss is a caller pin
     error, not an unregistered flow.
 
-    A short-circuit leaves no execution row and emits no event — the counter
-    metric is the core-side floor so operators see handled-traffic volume
-    without a downstream table.
+    A short-circuit leaves no execution row and emits no event — the
+    outcome-attributed counter is the core-side floor so operators see
+    handled/declined/error volumes without a downstream table.
+
+    A broken handler must not change the route's contract for callers: a raised
+    exception (other than a deliberate ``ProblemDetailException``) is logged and
+    counted here — inside the router, while ``request_id`` is still bound — and
+    falls through to the documented 404. Only ``Exception`` is caught, so
+    ``CancelledError`` propagates.
     """
     handler: UnregisteredUrlHandler | None = getattr(
         request.app.state, "unregistered_url_handler", None
     )
     if handler is None:
         return None
-    response = await handler(
-        method=method, upstream_url=upstream_url, identity=identity, request=request
-    )
-    if response is not None:
-        _unregistered_url_handled.add(1)
+    try:
+        response = await handler(
+            method=method, upstream_url=upstream_url, identity=identity, request=request
+        )
+    except ProblemDetailException:
+        # A deliberate downstream problem response — the handler owns it.
+        raise
+    except Exception:
+        _unregistered_url_handled.add(1, {"outcome": "error"})
+        logger.exception(
+            "unregistered_url_handler_failed",
+            handler=f"{type(handler).__module__}.{type(handler).__qualname__}",
+            method=method,
+        )
+        return None
+    _unregistered_url_handled.add(1, {"outcome": "handled" if response is not None else "declined"})
     return response
 
 
