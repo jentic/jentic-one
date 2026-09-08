@@ -122,10 +122,11 @@ class OAuthClientRepository:
         not proof (collision guard).
 
         Oldest first as a stable base ordering. The caller picks the dedupe
-        winner: the service prefers approved > pending > denied among exact
-        matches (a double-register race can leave several rows, and the admin
-        may have approved a newer one), falling back to the oldest row within
-        the same status.
+        winner: the service prefers the D7-gate-aware order — approved+active
+        > pending > denied > approved+inactive (a double-register race can
+        leave several rows, and the admin may have approved a newer one; a
+        kill-switched row only wins as the sole match, #1312) — falling back
+        to the oldest row within the same rank.
         """
         stmt = (
             select(OAuthClient)
