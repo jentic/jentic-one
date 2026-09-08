@@ -16,7 +16,9 @@ from jentic_one.admin.repos import (
     AgentRepository,
     OAuthClientRepository,
     UserRepository,
+    UserSecretRepository,
 )
+from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.context import Context
@@ -46,6 +48,25 @@ async def seed_user(ctx: Context, user_id: str) -> str:
         )
         await session.commit()
         return user.id
+
+
+#: Password used by every seeded local-login account (see seed_password_user).
+SEED_PASSWORD = "correct horse battery staple"
+
+
+async def seed_password_user(ctx: Context, user_id: str) -> tuple[str, str]:
+    """Seed a user with a password (SEED_PASSWORD); returns (user_id, email).
+
+    Shared by the local-login and session-continue web suites — both walk the
+    /authorize flow against a first-party password account.
+    """
+    uid = await seed_user(ctx, user_id)
+    async with ctx.admin_db.session() as session:
+        await UserSecretRepository.set_password_hash(
+            session, uid, password_hash=hash_password(SEED_PASSWORD), created_by=SEED_MARKER
+        )
+        await session.commit()
+    return uid, f"{uid}@grants.test"
 
 
 async def seed_agent(

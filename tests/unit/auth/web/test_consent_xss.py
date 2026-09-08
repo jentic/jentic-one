@@ -15,6 +15,7 @@ def _render_consent(
     app_name: str = "TestApp",
     app_description: str = "A test app",
     user_email: str = "user@example.com",
+    restart_url: str = "/authorize?response_type=code",
 ) -> str:
     return _CONSENT_PAGE_TEMPLATE.format(
         app_name=html_mod.escape(app_name),
@@ -22,6 +23,7 @@ def _render_consent(
         user_email=html_mod.escape(user_email),
         permission_items="<li>View your agents</li>",
         consent_token=html_mod.escape("token123"),
+        restart_url=html_mod.escape(restart_url, quote=True),
         fonts_url=FONTS_URL,
         check_svg=_CHECK_SVG,
     )
@@ -46,6 +48,15 @@ def test_user_email_xss_escaped() -> None:
     result = _render_consent(user_email=xss)
     assert "<script>steal" not in result
     assert "&lt;script&gt;" in result
+
+
+def test_restart_url_attribute_injection_escaped() -> None:
+    """The "Not you?" href cannot break out of its attribute (handle-derived
+    values include the client's redirect_uri)."""
+    xss = '/authorize?x="><script>alert(1)</script>'
+    result = _render_consent(restart_url=xss)
+    assert "<script>alert(1)</script>" not in result
+    assert '"><script>' not in result
 
 
 def test_safe_values_render_normally() -> None:
