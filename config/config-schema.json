@@ -239,6 +239,7 @@
         },
         "upstream_timeout_s": {
           "default": 30.0,
+          "description": "Timeout (seconds) handed to the execution runner for one upstream call on the buffered sync path and the async job worker. Distinct from the transport-level ``broker.resilience.upstream`` timeouts and the ``request_deadline_s`` envelope.",
           "title": "Upstream Timeout S",
           "type": "number"
         }
@@ -304,6 +305,7 @@
         },
         "manifest_url": {
           "default": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
+          "description": "Manifest source for the public API catalog. Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
           "title": "Manifest Url",
           "type": "string"
         },
@@ -791,7 +793,7 @@
         },
         "enabled": {
           "default": false,
-          "description": "Enable login via an external OIDC identity provider. When false no IdP adapter is built and the IdP login path is absent.",
+          "description": "Enable login via an external OIDC identity provider. When false no IdP adapter is built; /authorize stays routed and (unless auth.local_login.enabled provides the password form) ends in an OAuth server_error redirect because no sign-in path exists.",
           "title": "Enabled",
           "type": "boolean"
         },
@@ -1600,6 +1602,7 @@
         },
         "read_timeout_s": {
           "default": 30.0,
+          "description": "Per-read *between-bytes* gap timeout (seconds, httpx semantics) on upstream responses — not a whole-stream cap. Pairs with ``broker.resilience.request_deadline_s``, which must be sized above it so one healthy slow attempt isn't pre-empted by the envelope deadline.",
           "title": "Read Timeout S",
           "type": "number"
         },

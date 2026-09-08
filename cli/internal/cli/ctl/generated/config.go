@@ -278,7 +278,10 @@ type BrokerConfig struct {
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
 	ToolkitCacheTtlS float64 `json:"toolkit_cache_ttl_s,omitempty,omitzero" yaml:"toolkit_cache_ttl_s,omitempty" mapstructure:"toolkit_cache_ttl_s,omitempty"`
 
-	// UpstreamTimeoutS corresponds to the JSON schema field "upstream_timeout_s".
+	// Timeout (seconds) handed to the execution runner for one upstream call on the
+	// buffered sync path and the async job worker. Distinct from the transport-level
+	// ``broker.resilience.upstream`` timeouts and the ``request_deadline_s``
+	// envelope.
 	UpstreamTimeoutS float64 `json:"upstream_timeout_s,omitempty,omitzero" yaml:"upstream_timeout_s,omitempty" mapstructure:"upstream_timeout_s,omitempty"`
 }
 
@@ -398,7 +401,8 @@ type CatalogConfig struct {
 	// "manifest_max_age_seconds".
 	ManifestMaxAgeSeconds int `json:"manifest_max_age_seconds,omitempty,omitzero" yaml:"manifest_max_age_seconds,omitempty" mapstructure:"manifest_max_age_seconds,omitempty"`
 
-	// ManifestUrl corresponds to the JSON schema field "manifest_url".
+	// Manifest source for the public API catalog. Full default:
+	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
 	ManifestUrl string `json:"manifest_url,omitempty,omitzero" yaml:"manifest_url,omitempty" mapstructure:"manifest_url,omitempty"`
 
 	// UpdateCheckIntervalSeconds corresponds to the JSON schema field
@@ -1167,7 +1171,9 @@ type IdpConfig struct {
 	ClientSecret string `json:"client_secret,omitempty,omitzero" yaml:"client_secret,omitempty" mapstructure:"client_secret,omitempty"`
 
 	// Enable login via an external OIDC identity provider. When false no IdP adapter
-	// is built and the IdP login path is absent.
+	// is built; /authorize stays routed and (unless auth.local_login.enabled provides
+	// the password form) ends in an OAuth server_error redirect because no sign-in
+	// path exists.
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
 
 	// Explicit IdP token (code-exchange) endpoint URL; overrides the issuer-derived
@@ -2432,7 +2438,10 @@ type UpstreamClientConfig struct {
 	// PoolTimeoutS corresponds to the JSON schema field "pool_timeout_s".
 	PoolTimeoutS float64 `json:"pool_timeout_s,omitempty,omitzero" yaml:"pool_timeout_s,omitempty" mapstructure:"pool_timeout_s,omitempty"`
 
-	// ReadTimeoutS corresponds to the JSON schema field "read_timeout_s".
+	// Per-read *between-bytes* gap timeout (seconds, httpx semantics) on upstream
+	// responses — not a whole-stream cap. Pairs with
+	// ``broker.resilience.request_deadline_s``, which must be sized above it so one
+	// healthy slow attempt isn't pre-empted by the envelope deadline.
 	ReadTimeoutS float64 `json:"read_timeout_s,omitempty,omitzero" yaml:"read_timeout_s,omitempty" mapstructure:"read_timeout_s,omitempty"`
 
 	// StreamPassthroughEnabled corresponds to the JSON schema field

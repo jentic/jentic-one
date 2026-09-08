@@ -172,7 +172,7 @@ Platform-actors OAuth surface configuration.
 | `auth.id_signing` | list of SigningKeyConfig | — | `JENTIC__AUTH__ID_SIGNING` |  |
 | `auth.id_signing.<n>.kid` | string | *required* | `JENTIC__AUTH__ID_SIGNING__<N>__KID` |  |
 | `auth.id_signing.<n>.private_key_pem` | string (secret) | *required* | `JENTIC__AUTH__ID_SIGNING__<N>__PRIVATE_KEY_PEM` |  |
-| `auth.idp.enabled` | boolean | `false` | `JENTIC__AUTH__IDP__ENABLED` | Enable login via an external OIDC identity provider. When false no IdP adapter is built and the IdP login path is absent. |
+| `auth.idp.enabled` | boolean | `false` | `JENTIC__AUTH__IDP__ENABLED` | Enable login via an external OIDC identity provider. When false no IdP adapter is built; /authorize stays routed and (unless auth.local_login.enabled provides the password form) ends in an OAuth server_error redirect because no sign-in path exists. |
 | `auth.idp.provider` | string | `"oidc"` | `JENTIC__AUTH__IDP__PROVIDER` | Adapter selector: `google` supplies Google's well-known endpoints and `hd` claim handling; any other value uses the generic standards-compliant OIDC adapter. |
 | `auth.idp.issuer` | string | `""` | `JENTIC__AUTH__IDP__ISSUER` | OIDC issuer base URL. Default authorization/token/userinfo endpoints are derived from it when the explicit `*_endpoint` keys are unset. |
 | `auth.idp.client_id` | string | `""` | `JENTIC__AUTH__IDP__CLIENT_ID` | OAuth client ID registered with the identity provider. |
@@ -202,7 +202,7 @@ Broker surface configuration.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `broker.upstream_timeout_s` | number | `30.0` | `JENTIC__BROKER__UPSTREAM_TIMEOUT_S` |  |
+| `broker.upstream_timeout_s` | number | `30.0` | `JENTIC__BROKER__UPSTREAM_TIMEOUT_S` | Timeout (seconds) handed to the execution runner for one upstream call on the buffered sync path and the async job worker. Distinct from the transport-level `broker.resilience.upstream` timeouts and the `request_deadline_s` envelope. |
 | `broker.resolve_cache_ttl_seconds` | number | `3.0` | `JENTIC__BROKER__RESOLVE_CACHE_TTL_SECONDS` |  |
 | `broker.toolkit_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__TOOLKIT_CACHE_TTL_S` |  |
 | `broker.rule_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__RULE_CACHE_TTL_S` |  |
@@ -220,7 +220,7 @@ Broker surface configuration.
 | `broker.resilience.request_deadline_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__REQUEST_DEADLINE_S` | Overall wall-clock budget (seconds) for one upstream call, enforced by the always-on DeadlineRunner outside the circuit breaker — distinct from the per-attempt connect/read timeout on the transport client. Exceeding it returns 504 with a `wait` agent directive; 0 disables the budget. Size ABOVE upstream read timeouts so a single healthy slow attempt isn't pre-empted by the envelope deadline. |
 | `broker.resilience.readiness_saturation_threshold` | number (> 0.0, <= 1.0) | `0.9` | `JENTIC__BROKER__RESILIENCE__READINESS_SATURATION_THRESHOLD` | Fraction of `max_in_flight` at/above which `/ready` reports unready, so the LB drains this instance before it hits the hard admission shed wall. Kept < 1.0 for that headroom. |
 | `broker.resilience.upstream.connect_timeout_s` | number | `5.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__CONNECT_TIMEOUT_S` |  |
-| `broker.resilience.upstream.read_timeout_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__READ_TIMEOUT_S` |  |
+| `broker.resilience.upstream.read_timeout_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__READ_TIMEOUT_S` | Per-read *between-bytes* gap timeout (seconds, httpx semantics) on upstream responses — not a whole-stream cap. Pairs with `broker.resilience.request_deadline_s`, which must be sized above it so one healthy slow attempt isn't pre-empted by the envelope deadline. |
 | `broker.resilience.upstream.write_timeout_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__WRITE_TIMEOUT_S` |  |
 | `broker.resilience.upstream.pool_timeout_s` | number | `2.0` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__POOL_TIMEOUT_S` |  |
 | `broker.resilience.upstream.http2` | boolean | `true` | `JENTIC__BROKER__RESILIENCE__UPSTREAM__HTTP2` |  |
@@ -285,7 +285,7 @@ Public API catalog settings (manifest source + staleness).
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `catalog.manifest_url` | string | `"https://raw.githubusercontent.com/jentic/jentic-public-a…` | `JENTIC__CATALOG__MANIFEST_URL` |  |
+| `catalog.manifest_url` | string | `"https://raw.githubusercontent.com/jentic/jentic-public-a…` | `JENTIC__CATALOG__MANIFEST_URL` | Manifest source for the public API catalog. Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json |
 | `catalog.manifest_max_age_seconds` | integer | `86400` | `JENTIC__CATALOG__MANIFEST_MAX_AGE_SECONDS` |  |
 | `catalog.update_check_interval_seconds` | integer | `86400` | `JENTIC__CATALOG__UPDATE_CHECK_INTERVAL_SECONDS` |  |
 | `catalog.update_sweep_deadline_seconds` | integer | `300` | `JENTIC__CATALOG__UPDATE_SWEEP_DEADLINE_SECONDS` |  |

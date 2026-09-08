@@ -336,7 +336,9 @@ class IdpConfig(BaseModel):
         default=False,
         description=(
             "Enable login via an external OIDC identity provider. When false no "
-            "IdP adapter is built and the IdP login path is absent."
+            "IdP adapter is built; /authorize stays routed and (unless "
+            "auth.local_login.enabled provides the password form) ends in an "
+            "OAuth server_error redirect because no sign-in path exists."
         ),
     )
     provider: str = Field(
@@ -704,7 +706,16 @@ class UpstreamClientConfig(BaseModel):
     """
 
     connect_timeout_s: float = 5.0
-    read_timeout_s: float = 30.0
+    read_timeout_s: float = Field(
+        default=30.0,
+        description=(
+            "Per-read *between-bytes* gap timeout (seconds, httpx semantics) on "
+            "upstream responses — not a whole-stream cap. Pairs with "
+            "``broker.resilience.request_deadline_s``, which must be sized above "
+            "it so one healthy slow attempt isn't pre-empted by the envelope "
+            "deadline."
+        ),
+    )
     write_timeout_s: float = 30.0
     pool_timeout_s: float = 2.0
     # Negotiate HTTP/2 via ALPN, falling back to 1.1 when the upstream doesn't
@@ -1027,7 +1038,15 @@ class SecurityConfig(BaseModel):
 class BrokerConfig(BaseModel):
     """Broker surface configuration."""
 
-    upstream_timeout_s: float = 30.0
+    upstream_timeout_s: float = Field(
+        default=30.0,
+        description=(
+            "Timeout (seconds) handed to the execution runner for one upstream "
+            "call on the buffered sync path and the async job worker. Distinct "
+            "from the transport-level ``broker.resilience.upstream`` timeouts "
+            "and the ``request_deadline_s`` envelope."
+        ),
+    )
     resolve_cache_ttl_seconds: float = 3.0
     # Short TTL (seconds) for the per-instance toolkit-derivation cache.
     # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
@@ -1105,8 +1124,15 @@ class IngestConfig(BaseModel):
 class CatalogConfig(BaseModel):
     """Public API catalog settings (manifest source + staleness)."""
 
-    manifest_url: str = (
-        "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+    manifest_url: str = Field(
+        default=(
+            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+        ),
+        description=(
+            "Manifest source for the public API catalog. Full default: "
+            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/"
+            "apis/openapi/apis.json"
+        ),
     )
     # Lazy refresh-on-read: a manifest older than this is refreshed on the next
     # list()/get(). Zero disables auto-refresh (manual :refresh only).
