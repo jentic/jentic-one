@@ -72,6 +72,7 @@ from jentic_one.auth.web.flow import (
     write_local_consent_handle,
 )
 from jentic_one.auth.web.routers.authorize import get_authorize_service
+from jentic_one.auth.web.theme import AUTH_PAGE_CSS, LOGO_BLOCK_HTML
 from jentic_one.shared.auth.identity import LoginPayload
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
@@ -135,6 +136,9 @@ _GATED_404_RESPONSE: dict[int | str, dict[str, Any]] = {
     }
 }
 
+# Static page structure only — every dynamic value is HTML-escaped before it
+# is formatted in, and the visual theme ({page_css}/{logo_block}) is the
+# static, drift-guarded constant pair from ``auth.web.theme``.
 _LOGIN_PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -144,121 +148,24 @@ _LOGIN_PAGE_TEMPLATE = """<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="{fonts_url}" rel="stylesheet">
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #f5f7f7;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }}
-        .card {{
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
-            max-width: 400px;
-            width: 100%;
-            padding: 32px;
-        }}
-        .logo {{ text-align: center; margin-bottom: 24px; }}
-        .logo-text {{
-            font-family: 'Sora', sans-serif;
-            font-size: 22px;
-            font-weight: 700;
-            color: #0E1A1D;
-            letter-spacing: -0.5px;
-        }}
-        .logo-text span {{ color: #689296; }}
-        h1 {{
-            font-size: 17px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #0E1A1D;
-            text-align: center;
-            line-height: 1.4;
-        }}
-        .description {{
-            color: #689296;
-            font-size: 14px;
-            margin-bottom: 24px;
-            line-height: 1.5;
-            text-align: center;
-        }}
-        .error {{
-            background: #FCEBE5;
-            color: #A02D0B;
-            border-radius: 8px;
-            font-size: 14px;
-            padding: 10px 14px;
-            margin-bottom: 16px;
-            text-align: center;
-        }}
-        label {{
-            display: block;
-            font-size: 12px;
-            font-weight: 600;
-            color: #305256;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 6px;
-        }}
-        input[type="email"], input[type="password"] {{
-            width: 100%;
-            padding: 12px 14px;
-            border: 1px solid #E4EAEB;
-            border-radius: 8px;
-            font-family: 'Nunito Sans', sans-serif;
-            font-size: 14px;
-            color: #0E1A1D;
-            margin-bottom: 16px;
-        }}
-        input:focus {{
-            outline: none;
-            border-color: #305256;
-        }}
-        button {{
-            width: 100%;
-            padding: 12px 20px;
-            border-radius: 8px;
-            font-family: 'Nunito Sans', sans-serif;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            background: #305256;
-            color: white;
-            transition: all 0.2s;
-        }}
-        button:hover {{ background: #193238; }}
-        .footer {{
-            text-align: center;
-            margin-top: 20px;
-            font-size: 12px;
-            color: #689296;
-        }}
-    </style>
+    <style>{page_css}</style>
 </head>
 <body>
     <div class="card">
-        <div class="logo">
-            <div class="logo-text">Jentic<span>One</span></div>
-        </div>
+        {logo_block}
         <h1>Sign in to continue</h1>
         <p class="description">Use your Jentic One account to authorize the application.</p>
         {error_block}
         <form method="post" action="/login">
-            <label for="email">Email</label>
+            <label class="field-label" for="email">Email</label>
             <input type="email" id="email" name="email" value="{email}"
                    autocomplete="username" required autofocus>
-            <label for="password">Password</label>
+            <label class="field-label" for="password">Password</label>
             <input type="password" id="password" name="password"
                    autocomplete="current-password" required>
             <input type="hidden" name="ls" value="{ls}">
             <input type="hidden" name="csrf" value="{csrf}">
-            <button type="submit">Sign in</button>
+            <button type="submit" class="primary block">Sign in</button>
         </form>
         <div class="footer">
             You will review what the application can access before it connects.
@@ -347,6 +254,8 @@ def _render_login_page(
     error_block = f'<div class="error">{html_mod.escape(error)}</div>' if error else ""
     html = _LOGIN_PAGE_TEMPLATE.format(
         fonts_url=FONTS_URL,
+        page_css=AUTH_PAGE_CSS,
+        logo_block=LOGO_BLOCK_HTML,
         error_block=error_block,
         email=html_mod.escape(email),
         ls=html_mod.escape(ls),

@@ -67,6 +67,7 @@ from jentic_one.auth.web.schemas.authorize import (
     OAuthApprovalDecisionRequest,
     OAuthApprovalStatusResponse,
 )
+from jentic_one.auth.web.theme import AUTH_PAGE_CSS, LOGO_BLOCK_HTML
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
@@ -168,14 +169,10 @@ _SPA_TOKEN_STORAGE_KEY = "jentic-one.access_token"
 #: ``/app`` SPA mount (``shared/web/static.py``).
 _APPROVAL_QUEUE_SPA_PATH = "/app/settings?tab=queue"
 
-_CHECK_SVG = (
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'"
-    " viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule="
-    "'evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-"
-    "1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1"
-    " 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E"
-)
-
+# Static page structure only — every dynamic value is HTML-escaped before it
+# is formatted in, and the visual theme ({page_css}/{logo_block}) is the
+# static, drift-guarded constant pair from ``auth.web.theme``. The check-mark
+# bullet lives in auth.css.
 _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -185,166 +182,11 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="{fonts_url}" rel="stylesheet">
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #f5f7f7;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }}
-        .card {{
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
-            max-width: 400px;
-            width: 100%;
-            padding: 32px;
-        }}
-        .logo {{
-            text-align: center;
-            margin-bottom: 24px;
-        }}
-        .logo-text {{
-            font-family: 'Sora', sans-serif;
-            font-size: 22px;
-            font-weight: 700;
-            color: #0E1A1D;
-            letter-spacing: -0.5px;
-        }}
-        .logo-text span {{
-            color: #689296;
-        }}
-        h1 {{
-            font-size: 17px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #0E1A1D;
-            text-align: center;
-            line-height: 1.4;
-        }}
-        .app-name {{
-            color: #305256;
-            font-weight: 700;
-        }}
-        .description {{
-            color: #689296;
-            font-size: 14px;
-            margin-bottom: 24px;
-            line-height: 1.5;
-            text-align: center;
-        }}
-        .user-info {{
-            text-align: center;
-            margin-bottom: 20px;
-            padding: 12px;
-            background: #f5f7f7;
-            border-radius: 8px;
-        }}
-        .user-info .label {{
-            font-size: 11px;
-            color: #689296;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 4px;
-        }}
-        .user-info .email {{
-            font-size: 14px;
-            color: #0E1A1D;
-            font-weight: 600;
-        }}
-        .permissions {{
-            background: #f5f7f7;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 24px;
-        }}
-        .permissions h2 {{
-            font-size: 12px;
-            font-weight: 600;
-            color: #305256;
-            margin-bottom: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }}
-        .permissions ul {{
-            list-style: none;
-            font-size: 14px;
-            color: #305256;
-        }}
-        .permissions li {{
-            padding: 8px 0;
-            display: flex;
-            align-items: center;
-            border-bottom: 1px solid #E4EAEB;
-        }}
-        .permissions li:last-child {{
-            border-bottom: none;
-        }}
-        .permissions li::before {{
-            content: "";
-            width: 18px;
-            height: 18px;
-            background: #5EDEB9;
-            border-radius: 50%;
-            margin-right: 12px;
-            flex-shrink: 0;
-            background-image: url("{check_svg}");
-            background-size: 12px;
-            background-repeat: no-repeat;
-            background-position: center;
-        }}
-        .buttons {{
-            display: flex;
-            gap: 12px;
-        }}
-        button {{
-            flex: 1;
-            padding: 12px 20px;
-            border-radius: 8px;
-            font-family: 'Nunito Sans', sans-serif;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            transition: all 0.2s;
-        }}
-        .deny {{
-            background: #f5f7f7;
-            color: #305256;
-            border: 1px solid #E4EAEB;
-        }}
-        .deny:hover {{ background: #E4EAEB; }}
-        .approve {{
-            background: #305256;
-            color: white;
-        }}
-        .approve:hover {{
-            background: #193238;
-        }}
-        .footer {{
-            text-align: center;
-            margin-top: 20px;
-            font-size: 12px;
-            color: #689296;
-        }}
-        .footer a {{
-            color: #305256;
-            text-decoration: none;
-        }}
-        .footer a:hover {{
-            text-decoration: underline;
-        }}
-    </style>
+    <style>{page_css}</style>
 </head>
 <body>
     <div class="card">
-        <div class="logo">
-            <div class="logo-text">Jentic<span>One</span></div>
-        </div>
+        {logo_block}
         <div class="user-info">
             <div class="label">Signed in as</div>
             <div class="email">{user_email}</div>
@@ -358,12 +200,12 @@ _CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
             </ul>
         </div>
         <div class="buttons">
-            <form method="post" action="/oauth/consent" style="flex: 1; display: flex;">
+            <form method="post" action="/oauth/consent" class="form-slot">
                 <input type="hidden" name="consent_token" value="{consent_token}">
                 <input type="hidden" name="action" value="deny">
                 <button type="submit" class="deny">Deny</button>
             </form>
-            <form method="post" action="/oauth/consent" style="flex: 1; display: flex;">
+            <form method="post" action="/oauth/consent" class="form-slot">
                 <input type="hidden" name="consent_token" value="{consent_token}">
                 <input type="hidden" name="action" value="approve">
                 <button type="submit" class="approve">Authorize</button>
@@ -766,176 +608,11 @@ _AGENT_CONSENT_PAGE_TEMPLATE = """<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="{fonts_url}" rel="stylesheet">
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #f5f7f7;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }}
-        .card {{
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
-            max-width: 440px;
-            width: 100%;
-            padding: 32px;
-        }}
-        .logo {{ text-align: center; margin-bottom: 24px; }}
-        .logo-text {{
-            font-family: 'Sora', sans-serif;
-            font-size: 22px;
-            font-weight: 700;
-            color: #0E1A1D;
-            letter-spacing: -0.5px;
-        }}
-        .logo-text span {{ color: #689296; }}
-        h1 {{
-            font-size: 17px;
-            font-weight: 600;
-            margin-bottom: 4px;
-            color: #0E1A1D;
-            text-align: center;
-            line-height: 1.4;
-        }}
-        .app-name {{ color: #305256; font-weight: 700; }}
-        .origin {{
-            text-align: center;
-            font-size: 13px;
-            font-weight: 700;
-            color: #0E1A1D;
-            background: #EDF3F2;
-            border-radius: 6px;
-            padding: 6px 10px;
-            margin: 8px auto 12px;
-            display: table;
-            max-width: 100%;
-            word-break: break-all;
-        }}
-        .description {{
-            color: #689296;
-            font-size: 14px;
-            margin-bottom: 16px;
-            line-height: 1.5;
-            text-align: center;
-        }}
-        .user-info {{
-            text-align: center;
-            margin-bottom: 16px;
-            padding: 12px;
-            background: #f5f7f7;
-            border-radius: 8px;
-        }}
-        .user-info .label {{
-            font-size: 11px;
-            color: #689296;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 4px;
-        }}
-        .user-info .email {{
-            font-size: 14px;
-            color: #0E1A1D;
-            font-weight: 600;
-        }}
-        .agents {{ margin-bottom: 20px; }}
-        .agents h2 {{
-            font-size: 12px;
-            font-weight: 600;
-            color: #305256;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }}
-        .agent {{
-            display: block;
-            border: 1px solid #E4EAEB;
-            border-radius: 8px;
-            padding: 12px 14px;
-            margin-bottom: 10px;
-            cursor: pointer;
-        }}
-        .agent:has(input:checked) {{
-            border-color: #305256;
-            background: #f5f7f7;
-        }}
-        .agent-header {{ display: flex; align-items: center; gap: 10px; }}
-        .agent-name {{
-            font-size: 14px;
-            font-weight: 700;
-            color: #0E1A1D;
-        }}
-        .agent-scopes {{
-            list-style: none;
-            margin-top: 8px;
-            font-size: 13px;
-            color: #305256;
-        }}
-        .agent-scopes li {{ padding: 3px 0; }}
-        .agent-scopes li.granted::before {{
-            content: "";
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            background: #5EDEB9;
-            border-radius: 50%;
-            margin-right: 8px;
-            vertical-align: -2px;
-            background-image: url("{check_svg}");
-            background-size: 10px;
-            background-repeat: no-repeat;
-            background-position: center;
-        }}
-        .agent-scopes li.lacking {{
-            color: #A9BCBE;
-        }}
-        .agent-scopes li.lacking::before {{
-            content: "";
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            background: #E4EAEB;
-            border-radius: 50%;
-            margin-right: 8px;
-            vertical-align: -2px;
-        }}
-        .buttons {{ display: flex; gap: 12px; }}
-        button {{
-            flex: 1;
-            padding: 12px 20px;
-            border-radius: 8px;
-            font-family: 'Nunito Sans', sans-serif;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            transition: all 0.2s;
-        }}
-        .deny {{
-            background: #f5f7f7;
-            color: #305256;
-            border: 1px solid #E4EAEB;
-        }}
-        .deny:hover {{ background: #E4EAEB; }}
-        .approve {{ background: #305256; color: white; }}
-        .approve:hover {{ background: #193238; }}
-        .footer {{
-            text-align: center;
-            margin-top: 20px;
-            font-size: 12px;
-            color: #689296;
-        }}
-    </style>
+    <style>{page_css}</style>
 </head>
 <body>
-    <div class="card">
-        <div class="logo">
-            <div class="logo-text">Jentic<span>One</span></div>
-        </div>
+    <div class="card card--wide">
+        {logo_block}
         <div class="user-info">
             <div class="label">Signed in as</div>
             <div class="email">{user_email}</div>
@@ -985,56 +662,11 @@ _NO_AGENTS_PAGE_TEMPLATE = """<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="{fonts_url}" rel="stylesheet">
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #f5f7f7;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }}
-        .card {{
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
-            max-width: 400px;
-            width: 100%;
-            padding: 32px;
-        }}
-        .logo {{ text-align: center; margin-bottom: 24px; }}
-        .logo-text {{
-            font-family: 'Sora', sans-serif;
-            font-size: 22px;
-            font-weight: 700;
-            color: #0E1A1D;
-            letter-spacing: -0.5px;
-        }}
-        .logo-text span {{ color: #689296; }}
-        h1 {{
-            font-size: 17px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #0E1A1D;
-            text-align: center;
-            line-height: 1.4;
-        }}
-        .app-name {{ color: #305256; font-weight: 700; }}
-        .description {{
-            color: #689296;
-            font-size: 14px;
-            line-height: 1.5;
-            text-align: center;
-        }}
-    </style>
+    <style>{page_css}</style>
 </head>
 <body>
     <div class="card">
-        <div class="logo">
-            <div class="logo-text">Jentic<span>One</span></div>
-        </div>
+        {logo_block}
         <h1><span class="app-name">{app_name}</span> connects through an agent
             &mdash; you don't have one yet</h1>
         <p class="description">
@@ -1708,7 +1340,8 @@ async def consent_page(
         permission_items=permission_items,
         consent_token=html_mod.escape(ch),
         fonts_url=FONTS_URL,
-        check_svg=_CHECK_SVG,
+        page_css=AUTH_PAGE_CSS,
+        logo_block=LOGO_BLOCK_HTML,
     )
     return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
@@ -1747,6 +1380,8 @@ async def _render_agent_consent_page(
         html = _NO_AGENTS_PAGE_TEMPLATE.format(
             app_name=html_mod.escape(app_name),
             fonts_url=FONTS_URL,
+            page_css=AUTH_PAGE_CSS,
+            logo_block=LOGO_BLOCK_HTML,
         )
         return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
@@ -1769,7 +1404,8 @@ async def _render_agent_consent_page(
         agent_options=_render_agent_options(agents, candidates),
         consent_token=html_mod.escape(consent_token),
         fonts_url=FONTS_URL,
-        check_svg=_CHECK_SVG,
+        page_css=AUTH_PAGE_CSS,
+        logo_block=LOGO_BLOCK_HTML,
     )
     return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
