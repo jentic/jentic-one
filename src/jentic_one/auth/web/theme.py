@@ -34,6 +34,10 @@ from __future__ import annotations
 
 import importlib.resources
 
+import structlog
+
+_logger = structlog.get_logger(__name__)
+
 
 def _load_css() -> str:
     """Read the packaged stylesheet once at import time.
@@ -42,9 +46,25 @@ def _load_css() -> str:
     include (``packages = ["src/jentic_one"]``), so this works identically
     in a source checkout and a wheel install — unlike the SPA bundle, whose
     absence (API-only deployments) must not affect these pages.
+
+    A broken install (stylesheet missing or unreadable) degrades to an
+    empty style block — the auth pages render unstyled but every flow keeps
+    working. Raising here would fail this module's import and take the
+    whole auth surface (login, consent, token) down over a visual asset;
+    the same degrade-don't-fail posture as the SPA bundle in
+    ``shared/web/static.py``. The drift-guard tests assert the constant is
+    non-empty, so CI catches a packaging regression before it ships.
     """
     resource = importlib.resources.files("jentic_one.auth.web") / "assets" / "auth.css"
-    return resource.read_text(encoding="utf-8")
+    try:
+        return resource.read_text(encoding="utf-8")
+    except OSError:
+        _logger.error(
+            "auth_theme.css_missing",
+            resource=str(resource),
+            detail="packaged auth.css unreadable; auth pages will render unstyled",
+        )
+        return ""
 
 
 #: The shared stylesheet, inlined into every auth page's ``<style>`` block.

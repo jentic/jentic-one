@@ -17,8 +17,10 @@ vacuously) when the files are absent. CI always runs from the checkout.
 
 from __future__ import annotations
 
+import importlib.resources
 import re
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -79,11 +81,14 @@ def test_logo_geometry_matches_spa_component() -> None:
     assert len(tsx_paths) >= 9, "expected icon + wordmark paths in Logo.tsx"
 
     theme_paths = (*theme._LOGO_ICON_PATHS, *theme._LOGO_TEXT_PATHS)
-    for d in theme_paths:
-        assert d in tsx_paths, (
-            f"logo path drifted (starts '{d[:40]}…'): not found verbatim in "
-            "ui/src/shared/ui/Logo.tsx — Logo.tsx is the source of truth"
-        )
+    # Exact multiset equality, both directions: a path edited in Logo.tsx
+    # fails because the stale copy here no longer appears there, and a path
+    # ADDED to Logo.tsx fails because it is missing here — a subset check
+    # would let the logo gain an element the auth pages never render.
+    assert sorted(theme_paths) == sorted(tsx_paths), (
+        "logo geometry drifted between theme.py and ui/src/shared/ui/Logo.tsx "
+        "— Logo.tsx is the source of truth"
+    )
     for d in theme_paths:
         assert d in theme.JENTIC_LOGO_SVG
 
@@ -108,6 +113,30 @@ def test_css_is_inline_safe_and_fetch_free() -> None:
     for m in re.finditer(r"url\(\s*[\"']?([^\"')]+)", css):
         assert m.group(1).startswith("data:image/svg+xml"), f"external fetch in CSS: {m.group(0)}"
     assert css.count("{") == css.count("}")
+
+
+def test_missing_packaged_css_degrades_to_unstyled_not_import_error() -> None:
+    """A broken install must not take the auth surface down over styling.
+
+    ``_load_css`` runs at import time; if it raised on a missing/unreadable
+    ``assets/auth.css``, importing ``theme`` — and with it every auth
+    router — would fail, turning a lost visual asset into a platform-wide
+    startup failure. It must degrade to an empty stylesheet instead (the
+    pages render unstyled but every flow keeps working), mirroring the
+    missing-SPA-bundle posture of ``shared/web/static.py``.
+    """
+    real = importlib.resources.files
+    missing = MagicMock()
+    missing.__truediv__ = MagicMock(return_value=missing)
+    missing.read_text = MagicMock(side_effect=FileNotFoundError("auth.css gone"))
+
+    def _files(anchor: str) -> object:
+        if anchor == "jentic_one.auth.web":
+            return missing
+        return real(anchor)
+
+    with patch.object(importlib.resources, "files", side_effect=_files):
+        assert theme._load_css() == ""
 
 
 def test_theme_is_dark_only_like_the_spa() -> None:
