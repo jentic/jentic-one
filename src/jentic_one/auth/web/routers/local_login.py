@@ -251,7 +251,7 @@ def _render_login_page(
     ls: str, csrf: str, *, email: str = "", error: str | None = None
 ) -> HTMLResponse:
     """Render the login form with the consent page's security-header posture."""
-    error_block = f'<div class="error">{html_mod.escape(error)}</div>' if error else ""
+    error_block = f'<div class="error" role="alert">{html_mod.escape(error)}</div>' if error else ""
     html = _LOGIN_PAGE_TEMPLATE.format(
         fonts_url=FONTS_URL,
         page_css=AUTH_PAGE_CSS,
