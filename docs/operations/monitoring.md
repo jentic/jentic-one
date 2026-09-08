@@ -50,8 +50,10 @@ Two append-only records, both in the **admin database** (which is why
 
 - **Execution records** — one per brokered call: agent, operation, verdict,
   latency, and the credential used (by id — never the secret). In the UI
-  under **Monitor**; over the API via `GET /executions` (agents see their
-  own) and `GET /monitoring/executions` + `GET /monitoring/usage`
+  under **Monitor**; over the API via `GET /executions` — note this returns
+  records for the **whole instance** to any holder of `executions:read` (a
+  default agent scope); it is not scoped to the caller — and
+  `GET /monitoring/executions` + `GET /monitoring/usage`
   (operator aggregates); from the CLI via `jentic history`.
 - **Audit entries** — one per admin/control-plane mutation: actor (type, id,
   session), action, target, timestamp, and trace id. Append-only by
@@ -76,8 +78,18 @@ and scrape annotations, collector sidecars) is covered in the
 [chart docs](../../deploy/helm/README.md#metrics-exporter). The Prometheus
 exporter itself is not Helm-specific: setting
 `observability.metrics.exporter: prometheus` mounts `/metrics` on every
-surface on any install shape. Anonymous product telemetry is
+surface on any install shape — scrape it as **`/metrics/`** (with the
+trailing slash; the bare path answers with a 307 redirect some scrapers
+won't follow). Anonymous product telemetry is
 **off by default** (`telemetry.enabled: false`). The OTel exporters default
 to `otlp` targeting a local collector; without one, nothing is delivered
 anywhere — set `observability.metrics.exporter: none` to silence the export
 attempts.
+
+A few instruments are worth alerting on by name:
+`broker.streaming_execution.persist_failures` (an execution completed but
+its record was silently dropped — the only signal that happened),
+`broker.admission.in_flight` (the number the `/ready` shedding threshold is
+0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
+`broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
+`audit.events`.

@@ -5,7 +5,7 @@ What Jentic One is and how it works: [repository README](../README.md).
 ## Where do I go?
 
 - **Trying it out** → [README quickstart](../README.md#quickstart).
-- **Installing and running it** (admin) → [Install](#install), then
+- **Installing and running it** (operator) → [Install](#install), then
   [Secure](#secure) for the security posture.
 - **Keeping it healthy** (upgrades, backups, monitoring) → [Operate](#operate).
 - **Using it** (connecting agents, brokering calls) → [Use](#use).

@@ -29,7 +29,8 @@ From the terminal instead: `jenticctl setup` creates the account;
 
 ## 2. Register the agent *(agent machine)*
 
-Every step from here runs the `jentic` CLI, and every `jentic` command (even
+Nearly every step from here runs the `jentic` CLI — the exception is step 4,
+which happens in the dashboard — and every `jentic` command (even
 browsing the catalog) needs a registered agent. From the machine that will
 run the agent:
 
@@ -37,8 +38,8 @@ run the agent:
 jentic register
 ```
 
-On a local install, confirm the prompted `http://127.0.0.1:8000` and the broker
-is seeded automatically; a remote install needs `--url` and `--broker-url`
+On a local install, confirm the prompted `http://127.0.0.1:8000`; the broker
+URL is seeded automatically. A remote install needs `--url` and `--broker-url`
 ([CLI README](../../cli/README.md#usage)). `register` generates a keypair,
 files a dynamic client registration, then **waits for an operator to approve
 the agent** — approve it in the UI at `/app`. Re-running is idempotent.
@@ -111,7 +112,9 @@ jentic execute GET:https://httpbin.org/get --json
 `execute` takes the operation's full upstream URL (the form `search` and
 `inspect` report) or its operation_id — the broker is a forward proxy, not a
 path router. It checks the agent's permissions, attaches the stored credential
-after the check, forwards the request, and writes an audit record.
+after the check, forwards the request, and writes an execution record —
+visible under **Monitor → Executions** in the dashboard (the audit trail is
+for control-plane mutations, so your call appears in Executions, not Audit).
 
 ## Where to go next
 

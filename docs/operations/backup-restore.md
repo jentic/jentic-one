@@ -48,7 +48,7 @@ CLI-managed installs (`jenticctl install`): the volume is
 
 ## PostgreSQL (production installs)
 
-The three surfaces are schemas in your Postgres instance — back them up like
+The three databases are schemas in your Postgres instance — back them up like
 any Postgres database, live:
 
 ```bash

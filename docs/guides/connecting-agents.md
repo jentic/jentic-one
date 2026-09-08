@@ -5,12 +5,13 @@ are four supported paths, and they share one identity model: a per-agent
 Ed25519 keypair registered through dynamic client registration, **approval
 first** — an operator approves the agent before it gets tokens, and access to
 actual operations is a separate, also-approved step
-([first brokered call](first-call.md), steps 4–5).
+([first brokered call](first-call.md), steps 2 and 5).
 
 ## The four paths
 
-1. **CLI + skill** — the default. Your operator runs `jentic setup`: it
-   registers the agent identity, waits for human approval, and installs the
+1. **CLI + skill** — the default. `jentic setup` runs on the **agent's**
+   machine: it registers the agent identity, waits for your operator's
+   approval in the dashboard, and installs the
    onboarding skill into detected agent runtimes (Claude Code, Cursor, Codex,
    Hermes, or a generic `AGENTS.md`). The skill teaches the agent to drive
    `jentic search` → `jentic inspect` → `jentic execute`. Running the agent on
@@ -105,7 +106,11 @@ MCP entry so an agent can't answer from the wrong backend.
 
 ## Migrating from the cloud MCP to a self-hosted install
 
-1. Install the stack: `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh`, then `jenticctl install`.
+1. Install the stack: install the signed `jenticctl` binary
+   ([cli.md](../installation/cli.md), or
+   `brew install --cask jentic/tap/jentic`), then run `jenticctl install` —
+   the wizard brings up the server. Nothing is piped from a mutable branch
+   and nothing builds from source on the target host.
 2. Re-import the APIs you need (`jentic catalog import`, or the dashboard) —
    catalog state does not transfer from the cloud workspace.
 3. Re-enter credentials in your deployment's dashboard — secrets cannot be

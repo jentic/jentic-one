@@ -119,12 +119,21 @@ warrants:
    agents get short-lived, scoped tokens; the real credential stays in the
    Broker.
 5. **Ship a hardened container** — non-root, read-only root filesystem, dropped
-   Linux capabilities, `no-new-privileges`; prefer rootless Docker.
+   Linux capabilities, `no-new-privileges`; prefer rootless Docker. The
+   published image already runs as a non-root user; the rest is deployment
+   flags (`--read-only --cap-drop ALL --security-opt no-new-privileges` on
+   Docker). The Helm chart does not yet set a `securityContext` on the
+   application pods — on Kubernetes, apply your own via a mutating policy or
+   a chart patch until it does.
 6. **TLS everywhere**, terminated at a reverse proxy.
 7. **Network segmentation** between the agent and Jentic One/DB (host firewall,
    Kubernetes NetworkPolicy, or cloud security groups).
-8. **Keep the audit log.** Every credential access and authorization decision is
-   recorded — ship it somewhere durable.
+8. **Keep the audit log.** Every admin/control-plane **mutation** is recorded
+   (create/update/delete, approvals, grants); reads are not, and credential
+   *use* surfaces as execution records and `credential.accessed` events
+   rather than audit rows ([monitoring.md](../operations/monitoring.md)).
+   Export what you need somewhere durable — there is no built-in exporter or
+   retention control yet.
 9. **Rotate the encryption keyset** on a schedule (the keyset supports multiple
    versioned entries with an `active_id`; rotation is **additive** — add a new
    entry, flip `active_id`, and keep the retired keys, per the
@@ -204,11 +213,16 @@ Before pointing Jentic One at production credentials:
 - [ ] The **encryption keyset is injected via env/secret manager**, not committed;
       generate a real 32-byte key:
       `python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`.
-- [ ] `admin.auth.jwt_secret` and other placeholder secrets are set to real values
-      (with `JENTIC_ENV=production` the app refuses to boot on empty or
-      change-me values, so a missed one fails loudly).
+- [ ] `admin.auth.jwt_secret`, `admin.invite.pepper`, and
+      `credentials.connect.state_secret` are set to real values — with
+      `JENTIC_ENV=production` the app refuses to boot on empty or change-me
+      values **for those three only**. Database passwords have no such guard:
+      a `changeme` copied from an example boots fine and leaves your DB roles
+      on a password published in this repository, so check them by hand.
 - [ ] TLS is terminated in front of Jentic One.
-- [ ] The audit log is shipped to durable storage.
+- [ ] You have an export path for the audit trail (API pagination or DB-level
+      export — there is no built-in exporter or retention control yet, and
+      the tables grow unbounded).
 - [ ] Telemetry is set as you intend (it is **off by default**; see
       [`telemetry` in the configuration reference](../reference/config.md#telemetry)).
 

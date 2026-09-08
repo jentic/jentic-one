@@ -29,6 +29,8 @@ same for you. Jump straight to your symptom:
 | `jentic register` exits 3 (`TIMEOUT_PENDING`) | [`jentic register` times out](../agent/troubleshoot.md#jentic-register-times-out-exit-3-timeout_pending) |
 | `jentic execute` fail-closes against a remote install | [Fail-close against a remote install](../agent/troubleshoot.md#jentic-execute-fail-closes-against-a-remote-install) |
 | Nobody around to click through first-run setup | [No human at the first-admin gate](../agent/troubleshoot.md#no-human-available-at-the-first-admin-gate-ci-fleet-installs) |
+| Brokered calls fail `credential_undecryptable` (424) after a restore or config change | [`credential_undecryptable` (424) on execute](../agent/troubleshoot.md#credential_undecryptable-424-on-execute) — the data is intact, the keyset is wrong; restore the original `credentials.encryption` block, never regenerate it |
+| `pg_isready` fine but requests hang ~30 s then 500 | Likely connection-pool exhaustion, not an outage — see the [pool-sizing arithmetic](../installation/docker.md#2-write-the-config); `--force-recreate` only appears to fix it (it resets the pools) and guarantees a repeat |
 
 If your symptom isn't listed, gather `docker compose … logs` (or your install
 shape's equivalent) before asking for help — the structured log lines carry

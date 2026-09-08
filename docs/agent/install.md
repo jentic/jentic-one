@@ -463,7 +463,7 @@ Then verify, and optionally write the Jentic skill into your own runtime's
 native layout (Claude/Cursor/Codex/…):
 
 ```bash
-jentic doctor        # identity, token, broker reachability
+jentic doctor        # identity, token, control-plane reachability — it does NOT probe the broker, and warnings keep exit 0, so read its output rather than branching on the code
 jentic skill init    # optional: install the usage skill for your runtime
 ```
 
