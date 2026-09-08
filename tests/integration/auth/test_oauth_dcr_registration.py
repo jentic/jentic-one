@@ -1085,3 +1085,33 @@ async def test_requeue_cas_guard_never_touches_admin_created_rows(
         )
         assert admin_row.approval_status == OAuthClientApprovalStatus.APPROVED.value
         assert admin_row.active is False
+
+
+async def test_empty_string_software_id_requeues_killswitched_row_in_fallback_space(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """#1312 x F1: the ``software_id: ""`` normalization and the re-queue
+    compose. A client that registers with an empty/whitespace software_id
+    lands in the fallback (name) key space; after approve + deactivate, its
+    re-register — under any falsy software_id spelling — re-attaches to the
+    same row and re-queues it as pending, minting no duplicate."""
+    svc = OAuthDcrService(dcr_context)
+    client_svc = OAuthClientService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="")
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    assert row.software_id is None
+    await client_svc.approve(row.id, identity=_ADMIN)
+    await client_svc.deactivate(row.id, identity=_ADMIN)
+
+    second = await svc.register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="   "
+    )
+
+    assert second.created is False
+    assert second.client_id == first.client_id
+    refreshed = await _row_by_client_id(dcr_context, first.client_id)
+    assert refreshed.approval_status == OAuthClientApprovalStatus.PENDING.value
+    assert refreshed.active is False
+    async with dcr_context.admin_db.session() as session:
+        rows = (await session.execute(select(OAuthClient))).scalars().all()
+    assert len(rows) == 1
