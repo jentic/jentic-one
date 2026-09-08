@@ -6249,6 +6249,34 @@
         "title": "OAuthGrantResponse",
         "type": "object"
       },
+      "OAuthSessionContinueRequest": {
+        "description": "Front-channel session-continue exchange posted from the login page.\n\n``state`` is the signed ``login``-purpose carry-through token (``ls``)\nminted by rung 3 of ``flow.resolve_identity_gate`` for this exact\nauthorize request — the exchange never accepts bare flow parameters, so a\ncaller cannot probe arbitrary client ids through it.\n\n``state`` is deliberately NOT marked x-sensitive, for the same reason as\n``OAuthApprovalDecisionRequest.state``: the CLI's redaction backstop\nunions bare field names globally, and the blob is not a lasting bearer\ncredential (HMAC-signed, purpose-discriminated, TTL'd; the endpoint\nadditionally requires an authenticated platform user).",
+        "properties": {
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "OAuthSessionContinueRequest",
+        "type": "object"
+      },
+      "OAuthSessionContinueResponse": {
+        "description": "The resume leg for a successful session-continue exchange.\n\n``redirect_url`` is a same-origin, relative ``/authorize`` URL re-running\nthe ORIGINAL authorize request plus the short-TTL ``session``-purpose\ncontinuation blob (``sc``) pinning the platform user at exchange time.\nRelative by design (mirrors the approval-pending page's resume URL): the\npage script navigates within its own origin, never to a caller-influenced\nabsolute URL.",
+        "properties": {
+          "redirect_url": {
+            "title": "Redirect Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "redirect_url"
+        ],
+        "title": "OAuthSessionContinueResponse",
+        "type": "object"
+      },
       "OperationPreviewListResponse": {
         "description": "Capped, offset-paginated operation preview for a catalog entry.\n\nUnlike list endpoints (cursor-paginated), the preview uses simple\noffset/limit pagination deliberately: it reads a single, already-fetched spec\ndocument and is hard-capped at ``PREVIEW_MAX_OPERATIONS`` operations, so there\nis no large/mutating result set that would justify keyset cursors.",
         "examples": [
@@ -10146,7 +10174,7 @@
     },
     "summary": "HTTP surface of the Jentic platform's control plane — Core / Access (credentials, toolkits), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).",
     "title": "Jentic Control Plane API",
-    "version": "0.38.0"
+    "version": "0.39.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -21950,6 +21978,24 @@
               ],
               "title": "Nonce"
             }
+          },
+          {
+            "description": "Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.",
+            "in": "query",
+            "name": "sc",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.",
+              "title": "Sc"
+            }
           }
         ],
         "responses": {
@@ -28811,7 +28857,7 @@
     },
     "/oauth-clients": {
       "post": {
-        "description": "Register a public OAuth client anonymously (RFC 7591 subset).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact dedupe match (D8, extended per G13/#1251):\n(``software_id`` + redirect-URI set), falling back to (``client_name`` +\nredirect-URI set) for registrations without a ``software_id`` — so a\npending client's awaiting-approval retry loop re-attaches instead of\nminting duplicate rows. No client_secret is ever issued here and no\nregistration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
+        "description": "Register a public OAuth client anonymously (RFC 7591 subset).\n\nReturns 201 with the new ``client_id``, or 200 with the **existing** row's\n``client_id`` on an exact dedupe match (D8, extended per G13/#1251):\n(``software_id`` + redirect-URI set), falling back to (``client_name`` +\nredirect-URI set) for registrations without a ``software_id`` — so a\npending client's awaiting-approval retry loop re-attaches instead of\nminting duplicate rows. Re-registering a client an administrator has\ndeactivated re-enters the approval queue: the registration re-attaches\n(200) and the client awaits a fresh admin decision (#1312). No\nclient_secret is ever issued here and no registration_access_token\nis returned (D12). New rows await admin approval unless the deployment\nauto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate\nlives on the route class — a disabled door 404s before this handler,\nits body validation, or the rate limiter ever run.",
         "operationId": "registerOauthClientEndpoint",
         "requestBody": {
           "content": {
@@ -30056,6 +30102,140 @@
         },
         "security": [],
         "summary": "Revoke Endpoint",
+        "tags": [
+          "OAuth"
+        ]
+      }
+    },
+    "/oauth/session/continue": {
+      "post": {
+        "description": "Rung 1 of the /authorize identity ladder: reuse the platform session.\n\nThe login page's script posts the pending authorize state (the ``ls``\ncarry-through token) with the SPA's bearer token in the Authorization\nheader — no cookies, no ambient credentials, so a cross-site form cannot\ndrive it (same CSRF posture as the consent POST and the inline approval\ndecision). The platform token is validated by the standard auth\ndependency (users only), and the ``active`` / ``must_change_password``\nfences are re-checked with a LIVE user-row read — not the token's baked\nclaims — matching rung 3's ``password_rotation_required`` posture, so an\nadmin-forced reset fences the exchange immediately even while pre-reset\nSPA tokens are still in flight. The D7 client gate is re-checked, and on\nsuccess the response carries a relative ``/authorize`` resume URL bearing\na short-TTL, ``session``-purpose continuation blob that pins THIS\ncaller's ``user_id`` — the identity is fixed at exchange time, before the\nconsent page renders it with its \"Not you?\" escape.\n\nEvery failure after authentication is the same generic 400: an invalid\nblob must not let the caller learn anything about the client or the flow.",
+        "operationId": "sessionContinueEndpoint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthSessionContinueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthSessionContinueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Malformed, tampered, expired, or otherwise unusable authorize state — one generic rejection, never a reason."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Exchange a live platform session for an authorize continuation",
         "tags": [
           "OAuth"
         ]

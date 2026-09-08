@@ -184,6 +184,8 @@ func (OAuthGrantListResponse) RequiredFields() []string { return []string{"data"
 func (OAuthGrantResponse) RequiredFields() []string {
 	return []string{"agent_id", "can_revoke", "client_name", "client_origin", "created_at", "id", "last_used_at", "oauth_client_id", "revoked_at", "scopes", "status", "user_id"}
 }
+func (OAuthSessionContinueRequest) RequiredFields() []string  { return []string{"state"} }
+func (OAuthSessionContinueResponse) RequiredFields() []string { return []string{"redirect_url"} }
 func (OperationPreviewListResponse) RequiredFields() []string {
 	return []string{"data", "info", "offset", "security_schemes", "total", "truncated"}
 }

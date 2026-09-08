@@ -135,6 +135,8 @@ export type { OAuthGrantAdminListResponse } from './models/OAuthGrantAdminListRe
 export type { OAuthGrantAdminResponse } from './models/OAuthGrantAdminResponse';
 export type { OAuthGrantListResponse } from './models/OAuthGrantListResponse';
 export type { OAuthGrantResponse } from './models/OAuthGrantResponse';
+export type { OAuthSessionContinueRequest } from './models/OAuthSessionContinueRequest';
+export type { OAuthSessionContinueResponse } from './models/OAuthSessionContinueResponse';
 export type { OperationPreviewListResponse } from './models/OperationPreviewListResponse';
 export type { OperationResultResponse } from './models/OperationResultResponse';
 export type { OperationSummaryLinksResponse } from './models/OperationSummaryLinksResponse';

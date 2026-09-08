@@ -2458,6 +2458,34 @@ type OAuthGrantResponse struct {
 	UserId string `json:"user_id"`
 }
 
+// OAuthSessionContinueRequest Front-channel session-continue exchange posted from the login page.
+//
+// “state“ is the signed “login“-purpose carry-through token (“ls“)
+// minted by rung 3 of “flow.resolve_identity_gate“ for this exact
+// authorize request — the exchange never accepts bare flow parameters, so a
+// caller cannot probe arbitrary client ids through it.
+//
+// “state“ is deliberately NOT marked x-sensitive, for the same reason as
+// “OAuthApprovalDecisionRequest.state“: the CLI's redaction backstop
+// unions bare field names globally, and the blob is not a lasting bearer
+// credential (HMAC-signed, purpose-discriminated, TTL'd; the endpoint
+// additionally requires an authenticated platform user).
+type OAuthSessionContinueRequest struct {
+	State string `json:"state"`
+}
+
+// OAuthSessionContinueResponse The resume leg for a successful session-continue exchange.
+//
+// “redirect_url“ is a same-origin, relative “/authorize“ URL re-running
+// the ORIGINAL authorize request plus the short-TTL “session“-purpose
+// continuation blob (“sc“) pinning the platform user at exchange time.
+// Relative by design (mirrors the approval-pending page's resume URL): the
+// page script navigates within its own origin, never to a caller-influenced
+// absolute URL.
+type OAuthSessionContinueResponse struct {
+	RedirectUrl string `json:"redirect_url"`
+}
+
 // OperationPreviewListResponse Capped, offset-paginated operation preview for a catalog entry.
 //
 // Unlike list endpoints (cursor-paginated), the preview uses simple
@@ -3536,6 +3564,9 @@ type AuthorizeEndpointParams struct {
 	Scope               *string `form:"scope,omitempty" json:"scope,omitempty"`
 	State               *string `form:"state,omitempty" json:"state,omitempty"`
 	Nonce               *string `form:"nonce,omitempty" json:"nonce,omitempty"`
+
+	// Sc Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
+	Sc *string `form:"sc,omitempty" json:"sc,omitempty"`
 }
 
 // ListCatalogParams defines parameters for ListCatalog.
@@ -3911,6 +3942,9 @@ type RevokeEndpointJSONRequestBody = RevokeRequest
 
 // RevokeEndpointFormdataRequestBody defines body for RevokeEndpoint for application/x-www-form-urlencoded ContentType.
 type RevokeEndpointFormdataRequestBody = RevokeRequest
+
+// SessionContinueEndpointJSONRequestBody defines body for SessionContinueEndpoint for application/json ContentType.
+type SessionContinueEndpointJSONRequestBody = OAuthSessionContinueRequest
 
 // TokenEndpointJSONRequestBody defines body for TokenEndpoint for application/json ContentType.
 type TokenEndpointJSONRequestBody TokenEndpointJSONBody
@@ -6161,8 +6195,10 @@ type ClientInterface interface {
 	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
 	// redirect-URI set) for registrations without a ``software_id`` — so a
 	// pending client's awaiting-approval retry loop re-attaches instead of
-	// minting duplicate rows. No client_secret is ever issued here and no
-	// registration_access_token
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -6182,8 +6218,10 @@ type ClientInterface interface {
 	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
 	// redirect-URI set) for registrations without a ``software_id`` — so a
 	// pending client's awaiting-approval retry loop re-attaches instead of
-	// minting duplicate rows. No client_secret is ever issued here and no
-	// registration_access_token
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -6485,6 +6523,60 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SessionContinueEndpointWithBody Exchange a live platform session for an authorize continuation
+	//
+	// Rung 1 of the /authorize identity ladder: reuse the platform session.
+	//
+	// The login page's script posts the pending authorize state (the ``ls``
+	// carry-through token) with the SPA's bearer token in the Authorization
+	// header — no cookies, no ambient credentials, so a cross-site form cannot
+	// drive it (same CSRF posture as the consent POST and the inline approval
+	// decision). The platform token is validated by the standard auth
+	// dependency (users only), and the ``active`` / ``must_change_password``
+	// fences are re-checked with a LIVE user-row read — not the token's baked
+	// claims — matching rung 3's ``password_rotation_required`` posture, so an
+	// admin-forced reset fences the exchange immediately even while pre-reset
+	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+	// success the response carries a relative ``/authorize`` resume URL bearing
+	// a short-TTL, ``session``-purpose continuation blob that pins THIS
+	// caller's ``user_id`` — the identity is fixed at exchange time, before the
+	// consent page renders it with its "Not you?" escape.
+	//
+	// Every failure after authentication is the same generic 400: an invalid
+	// blob must not let the caller learn anything about the client or the flow.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+	SessionContinueEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SessionContinueEndpoint Exchange a live platform session for an authorize continuation
+	//
+	// Rung 1 of the /authorize identity ladder: reuse the platform session.
+	//
+	// The login page's script posts the pending authorize state (the ``ls``
+	// carry-through token) with the SPA's bearer token in the Authorization
+	// header — no cookies, no ambient credentials, so a cross-site form cannot
+	// drive it (same CSRF posture as the consent POST and the inline approval
+	// decision). The platform token is validated by the standard auth
+	// dependency (users only), and the ``active`` / ``must_change_password``
+	// fences are re-checked with a LIVE user-row read — not the token's baked
+	// claims — matching rung 3's ``password_rotation_required`` posture, so an
+	// admin-forced reset fences the exchange immediately even while pre-reset
+	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+	// success the response carries a relative ``/authorize`` resume URL bearing
+	// a short-TTL, ``session``-purpose continuation blob that pins THIS
+	// caller's ``user_id`` — the identity is fixed at exchange time, before the
+	// consent page renders it with its "Not you?" escape.
+	//
+	// Every failure after authentication is the same generic 400: an invalid
+	// blob must not let the caller learn anything about the client or the flow.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+	SessionContinueEndpoint(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TokenEndpointWithBody Token Endpoint
 	//
@@ -9988,8 +10080,10 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 // (“software_id“ + redirect-URI set), falling back to (“client_name“ +
 // redirect-URI set) for registrations without a “software_id“ — so a
 // pending client's awaiting-approval retry loop re-attaches instead of
-// minting duplicate rows. No client_secret is ever issued here and no
-// registration_access_token
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -10019,8 +10113,10 @@ func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, conten
 // (“software_id“ + redirect-URI set), falling back to (“client_name“ +
 // redirect-URI set) for registrations without a “software_id“ — so a
 // pending client's awaiting-approval retry loop re-attaches instead of
-// minting duplicate rows. No client_secret is ever issued here and no
-// registration_access_token
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -10483,6 +10579,80 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 // Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 func (c *Client) RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeEndpointRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SessionContinueEndpointWithBody Exchange a live platform session for an authorize continuation
+//
+// Rung 1 of the /authorize identity ladder: reuse the platform session.
+//
+// The login page's script posts the pending authorize state (the “ls“
+// carry-through token) with the SPA's bearer token in the Authorization
+// header — no cookies, no ambient credentials, so a cross-site form cannot
+// drive it (same CSRF posture as the consent POST and the inline approval
+// decision). The platform token is validated by the standard auth
+// dependency (users only), and the “active“ / “must_change_password“
+// fences are re-checked with a LIVE user-row read — not the token's baked
+// claims — matching rung 3's “password_rotation_required“ posture, so an
+// admin-forced reset fences the exchange immediately even while pre-reset
+// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+// success the response carries a relative “/authorize“ resume URL bearing
+// a short-TTL, “session“-purpose continuation blob that pins THIS
+// caller's “user_id“ — the identity is fixed at exchange time, before the
+// consent page renders it with its "Not you?" escape.
+//
+// Every failure after authentication is the same generic 400: an invalid
+// blob must not let the caller learn anything about the client or the flow.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+func (c *Client) SessionContinueEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSessionContinueEndpointRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SessionContinueEndpoint Exchange a live platform session for an authorize continuation
+//
+// Rung 1 of the /authorize identity ladder: reuse the platform session.
+//
+// The login page's script posts the pending authorize state (the “ls“
+// carry-through token) with the SPA's bearer token in the Authorization
+// header — no cookies, no ambient credentials, so a cross-site form cannot
+// drive it (same CSRF posture as the consent POST and the inline approval
+// decision). The platform token is validated by the standard auth
+// dependency (users only), and the “active“ / “must_change_password“
+// fences are re-checked with a LIVE user-row read — not the token's baked
+// claims — matching rung 3's “password_rotation_required“ posture, so an
+// admin-forced reset fences the exchange immediately even while pre-reset
+// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+// success the response carries a relative “/authorize“ resume URL bearing
+// a short-TTL, “session“-purpose continuation blob that pins THIS
+// caller's “user_id“ — the identity is fixed at exchange time, before the
+// consent page renders it with its "Not you?" escape.
+//
+// Every failure after authentication is the same generic 400: an invalid
+// blob must not let the caller learn anything about the client or the flow.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+func (c *Client) SessionContinueEndpoint(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSessionContinueEndpointRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15650,6 +15820,18 @@ func NewAuthorizeEndpointRequest(server string, params *AuthorizeEndpointParams)
 
 		}
 
+		if params.Sc != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sc", *params.Sc, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -18588,6 +18770,46 @@ func NewRevokeEndpointRequestWithBody(server string, contentType string, body io
 	}
 
 	operationPath := fmt.Sprintf("/oauth/revoke")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSessionContinueEndpointRequest calls the generic SessionContinueEndpoint builder with application/json body
+func NewSessionContinueEndpointRequest(server string, body SessionContinueEndpointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSessionContinueEndpointRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSessionContinueEndpointRequestWithBody constructs an http.Request for the SessionContinueEndpoint method, with any body, and a specified content type
+func NewSessionContinueEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/session/continue")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -22411,8 +22633,10 @@ type ClientWithResponsesInterface interface {
 	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
 	// redirect-URI set) for registrations without a ``software_id`` — so a
 	// pending client's awaiting-approval retry loop re-attaches instead of
-	// minting duplicate rows. No client_secret is ever issued here and no
-	// registration_access_token
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -22432,8 +22656,10 @@ type ClientWithResponsesInterface interface {
 	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
 	// redirect-URI set) for registrations without a ``software_id`` — so a
 	// pending client's awaiting-approval retry loop re-attaches instead of
-	// minting duplicate rows. No client_secret is ever issued here and no
-	// registration_access_token
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -22743,6 +22969,60 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithFormdataBodyWithResponse(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
+
+	// SessionContinueEndpointWithBodyWithResponse Exchange a live platform session for an authorize continuation
+	//
+	// Rung 1 of the /authorize identity ladder: reuse the platform session.
+	//
+	// The login page's script posts the pending authorize state (the ``ls``
+	// carry-through token) with the SPA's bearer token in the Authorization
+	// header — no cookies, no ambient credentials, so a cross-site form cannot
+	// drive it (same CSRF posture as the consent POST and the inline approval
+	// decision). The platform token is validated by the standard auth
+	// dependency (users only), and the ``active`` / ``must_change_password``
+	// fences are re-checked with a LIVE user-row read — not the token's baked
+	// claims — matching rung 3's ``password_rotation_required`` posture, so an
+	// admin-forced reset fences the exchange immediately even while pre-reset
+	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+	// success the response carries a relative ``/authorize`` resume URL bearing
+	// a short-TTL, ``session``-purpose continuation blob that pins THIS
+	// caller's ``user_id`` — the identity is fixed at exchange time, before the
+	// consent page renders it with its "Not you?" escape.
+	//
+	// Every failure after authentication is the same generic 400: an invalid
+	// blob must not let the caller learn anything about the client or the flow.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+	SessionContinueEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error)
+
+	// SessionContinueEndpointWithResponse Exchange a live platform session for an authorize continuation
+	//
+	// Rung 1 of the /authorize identity ladder: reuse the platform session.
+	//
+	// The login page's script posts the pending authorize state (the ``ls``
+	// carry-through token) with the SPA's bearer token in the Authorization
+	// header — no cookies, no ambient credentials, so a cross-site form cannot
+	// drive it (same CSRF posture as the consent POST and the inline approval
+	// decision). The platform token is validated by the standard auth
+	// dependency (users only), and the ``active`` / ``must_change_password``
+	// fences are re-checked with a LIVE user-row read — not the token's baked
+	// claims — matching rung 3's ``password_rotation_required`` posture, so an
+	// admin-forced reset fences the exchange immediately even while pre-reset
+	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+	// success the response carries a relative ``/authorize`` resume URL bearing
+	// a short-TTL, ``session``-purpose continuation blob that pins THIS
+	// caller's ``user_id`` — the identity is fixed at exchange time, before the
+	// consent page renders it with its "Not you?" escape.
+	//
+	// Every failure after authentication is the same generic 400: an invalid
+	// blob must not let the caller learn anything about the client or the flow.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+	SessionContinueEndpointWithResponse(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error)
 
 	// TokenEndpointWithBodyWithResponse Token Endpoint
 	//
@@ -33460,6 +33740,82 @@ func (r RevokeEndpointHTTPResp) ContentType() string {
 	return ""
 }
 
+type SessionContinueEndpointHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthSessionContinueResponse
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SessionContinueEndpointHTTPResp) GetJSON200() *OAuthSessionContinueResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SessionContinueEndpointHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SessionContinueEndpointHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SessionContinueEndpointHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SessionContinueEndpointHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type TokenEndpointHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -40011,8 +40367,10 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 // (“software_id“ + redirect-URI set), falling back to (“client_name“ +
 // redirect-URI set) for registrations without a “software_id“ — so a
 // pending client's awaiting-approval retry loop re-attaches instead of
-// minting duplicate rows. No client_secret is ever issued here and no
-// registration_access_token
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -40038,8 +40396,10 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ct
 // (“software_id“ + redirect-URI set), falling back to (“client_name“ +
 // redirect-URI set) for registrations without a “software_id“ — so a
 // pending client's awaiting-approval retry loop re-attaches instead of
-// minting duplicate rows. No client_secret is ever issued here and no
-// registration_access_token
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -40450,6 +40810,72 @@ func (c *ClientWithResponses) RevokeEndpointWithFormdataBodyWithResponse(ctx con
 		return nil, err
 	}
 	return ParseRevokeEndpointHTTPResp(rsp)
+}
+
+// SessionContinueEndpointWithBodyWithResponse Exchange a live platform session for an authorize continuation
+//
+// Rung 1 of the /authorize identity ladder: reuse the platform session.
+//
+// The login page's script posts the pending authorize state (the “ls“
+// carry-through token) with the SPA's bearer token in the Authorization
+// header — no cookies, no ambient credentials, so a cross-site form cannot
+// drive it (same CSRF posture as the consent POST and the inline approval
+// decision). The platform token is validated by the standard auth
+// dependency (users only), and the “active“ / “must_change_password“
+// fences are re-checked with a LIVE user-row read — not the token's baked
+// claims — matching rung 3's “password_rotation_required“ posture, so an
+// admin-forced reset fences the exchange immediately even while pre-reset
+// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+// success the response carries a relative “/authorize“ resume URL bearing
+// a short-TTL, “session“-purpose continuation blob that pins THIS
+// caller's “user_id“ — the identity is fixed at exchange time, before the
+// consent page renders it with its "Not you?" escape.
+//
+// Every failure after authentication is the same generic 400: an invalid
+// blob must not let the caller learn anything about the client or the flow.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+func (c *ClientWithResponses) SessionContinueEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error) {
+	rsp, err := c.SessionContinueEndpointWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSessionContinueEndpointHTTPResp(rsp)
+}
+
+// SessionContinueEndpointWithResponse Exchange a live platform session for an authorize continuation
+//
+// Rung 1 of the /authorize identity ladder: reuse the platform session.
+//
+// The login page's script posts the pending authorize state (the “ls“
+// carry-through token) with the SPA's bearer token in the Authorization
+// header — no cookies, no ambient credentials, so a cross-site form cannot
+// drive it (same CSRF posture as the consent POST and the inline approval
+// decision). The platform token is validated by the standard auth
+// dependency (users only), and the “active“ / “must_change_password“
+// fences are re-checked with a LIVE user-row read — not the token's baked
+// claims — matching rung 3's “password_rotation_required“ posture, so an
+// admin-forced reset fences the exchange immediately even while pre-reset
+// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+// success the response carries a relative “/authorize“ resume URL bearing
+// a short-TTL, “session“-purpose continuation blob that pins THIS
+// caller's “user_id“ — the identity is fixed at exchange time, before the
+// consent page renders it with its "Not you?" escape.
+//
+// Every failure after authentication is the same generic 400: an invalid
+// blob must not let the caller learn anything about the client or the flow.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+func (c *ClientWithResponses) SessionContinueEndpointWithResponse(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error) {
+	rsp, err := c.SessionContinueEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSessionContinueEndpointHTTPResp(rsp)
 }
 
 // TokenEndpointWithBodyWithResponse Token Endpoint
@@ -49755,6 +50181,73 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 
 	case rsp.StatusCode == 429:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSessionContinueEndpointHTTPResp parses an HTTP response from a SessionContinueEndpointWithResponse call
+func ParseSessionContinueEndpointHTTPResp(rsp *http.Response) (*SessionContinueEndpointHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SessionContinueEndpointHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthSessionContinueResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail
