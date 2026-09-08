@@ -1050,3 +1050,38 @@ async def test_requeue_cas_guard_never_downgrades_a_live_row(
         assert killed.active is False
         # Idempotence: a second attempt finds no approved row to flip.
         assert await OAuthClientRepository.requeue_pending_if_killswitched(session, killed) is False
+
+
+async def test_requeue_cas_guard_never_touches_admin_created_rows(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """#1312 defense in depth: the re-queue CAS is pinned to DCR-sourced rows.
+
+    Every caller reaches the CAS through the DCR-filtered dedupe candidate
+    lists, but the repo guard itself must also refuse to move an
+    admin-created client (approved + deactivated by an admin) back into the
+    anonymous approval queue — the flip is a DCR-door semantic, not a
+    general lifecycle transition."""
+    async with dcr_context.admin_db.transaction() as session:
+        row = await OAuthClientRepository.create(
+            session,
+            client_id=generate_client_id(),
+            name="Platform Dashboard",
+            redirect_uris=_REDIRECT_URIS,
+            client_secret_hash=None,
+            token_endpoint_auth_method="none",
+            registration_source="admin",
+            approval_status=OAuthClientApprovalStatus.APPROVED.value,
+            active=False,
+            created_by=_ADMIN.sub,
+        )
+        row_id = row.id
+
+    async with dcr_context.admin_db.transaction() as session:
+        admin_row = await OAuthClientRepository.get_by_id(session, row_id)
+        assert admin_row is not None
+        assert (
+            await OAuthClientRepository.requeue_pending_if_killswitched(session, admin_row) is False
+        )
+        assert admin_row.approval_status == OAuthClientApprovalStatus.APPROVED.value
+        assert admin_row.active is False

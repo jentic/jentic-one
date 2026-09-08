@@ -260,11 +260,18 @@ class OAuthClientRepository:
         way (post-flip it is pending; on a lost race it carries the newer
         admin-written state), so the caller's audit trail records reality.
         Returns True when the row was flipped.
+
+        Defense in depth: the guard also pins ``registration_source='dcr'``.
+        Every caller reaches this method through the DCR-filtered dedupe
+        candidate lists, but the anonymous re-queue must never be able to
+        move an admin-created client back into the approval queue even if a
+        future caller slips a non-DCR row in.
         """
         stmt = (
             update(OAuthClient)
             .where(
                 OAuthClient.id == client.id,
+                OAuthClient.registration_source == OAuthRegistrationSource.DCR.value,
                 OAuthClient.approval_status == OAuthClientApprovalStatus.APPROVED.value,
                 OAuthClient.active.is_(False),
             )
