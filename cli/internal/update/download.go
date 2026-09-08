@@ -131,9 +131,9 @@ func verifyCosign(ctx context.Context, tag string, checksums, sig, cert []byte, 
 	if err != nil {
 		return "", err
 	}
-	// The certificate identity embeds the release tag; the regexp is
-	// tag-agnostic (matches any refs/tags/...) to avoid brittleness, matching
-	// docs/development/releasing.md's runbook.
+	// The certificate identity embeds the release tag; the regexp pins the
+	// workflow path and requires a version tag (refs/tags/v...) without
+	// binding to one release, matching docs/development/releasing.md's runbook.
 	_ = tag
 	cmd := exec.CommandContext(ctx, "cosign", "verify-blob", //nolint:gosec // fixed argv; only file paths (under our stageDir) and pinned identity flags vary.
 		"--certificate", certPath,

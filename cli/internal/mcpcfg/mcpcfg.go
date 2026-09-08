@@ -111,7 +111,7 @@ func McpArgv(binPath, contextName string) []string {
 }
 
 // The container-isolation entry variant was deliberately DEMOTED to the
-// documented manual recipe (docs/security/mcp-same-host-hardening.md,
+// documented manual recipe (docs/security/same-host/mcp-same-host-hardening.md,
 // Recipe 3): no published CLI image exists yet (2-E4 owns publishing one),
 // and an automated rewrite would need volume provisioning + a smoke-spawn to
 // honour the invariant that a failed isolation keeps the working
