@@ -86,6 +86,7 @@ Agent runbook: [use](agent/use.md) — discover → request access → execute, 
 - [Releasing](development/releasing.md)
 - [Product scope](development/product-scope.md) — the product-fit rubric the issue-intake harness scores against
 - [deploy/README.md](../deploy/README.md) — build architecture: images, charts, Terraform, multi-arch
+- [tools/README.md](../tools/README.md) — the CLI source installer and the generators behind the generated references
 - [Helm charts & local cluster](../deploy/helm/README.md) — chart docs, kind workflow, smoke tests, observability stack
 - [AWS Marketplace publishing](development/marketplace-publishing.md) — the seller/maintainer side of the listing
 

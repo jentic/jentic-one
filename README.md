@@ -61,16 +61,16 @@ runs on Linux and macOS; on Windows, follow the
 ### Self-hosted (Docker)
 
 One image (`ghcr.io/jentic/jentic-one-app`) runs both the control plane and the
-broker. The trial shape below keeps everything in SQLite files on one volume
-and runs with development-mode secrets — don't point it at a real credential
-(the trial config also ships no encryption keyset, so storing one fails until
-you configure `credentials.encryption`):
+broker. The quickstart shape below keeps everything in SQLite files on one
+volume and runs with development-mode secrets — don't point it at a real
+credential (the quickstart config also ships no encryption keyset, so storing
+one fails until you configure `credentials.encryption`):
 
 ```bash
 docker pull ghcr.io/jentic/jentic-one-app:latest
 docker volume create jentic-data
 
-# Grab the trial config (SQLite on the volume; fetched from main, fine for the trial) — tweak it, or use as is
+# Grab the quickstart config (SQLite on the volume; fetched from main) — tweak it, or use as is
 curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
 
 # Migrate, then start the two roles
@@ -88,8 +88,8 @@ docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
 curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
 ```
 
-Something failed? [Troubleshooting](docs/operations/troubleshooting.md) keys
-recoveries by symptom.
+Something failed? [Troubleshooting](docs/operations/troubleshooting.md)
+indexes recoveries by symptom.
 
 The production shape — external Postgres, image pinned and verified by digest,
 real secrets, TLS — is in [docs/installation/docker.md](docs/installation/docker.md).
@@ -149,7 +149,7 @@ Admin and Auth surfaces. **Broker** is the data plane. Configuration happens thr
 talks only to the Broker.
 
 <p align="center">
-  <img src="docs/assets/architecture.png" alt="Two peer units above one database. App is the control plane, containing the Registry, Control and Admin surfaces, and is where the operator configures the instance. Broker is the data plane: a stateless credential-injecting HTTP proxy, and the only surface that touches a secret. Both sit above PostgreSQL or SQLite with registry, control and admin schemas." width="100%">
+  <img src="docs/assets/architecture.png" alt="Two peer units above one database. App is the control plane, containing the Registry, Control, Admin and Auth surfaces, and is where the operator configures the instance. Broker is the data plane: a stateless credential-injecting HTTP proxy, and the only surface that touches a secret. Both sit above PostgreSQL or SQLite with registry, control and admin schemas." width="100%">
 </p>
 
 On each call the Broker checks the agent's permissions, attaches the stored credential,
@@ -170,9 +170,8 @@ agent without rotating the key everywhere.
 
 We think the fix is structural, not better prompting: the agent should never hold the
 credential at all. In Jentic One the key is stored once, encrypted, on your
-infrastructure; the agent gets an identity instead. Every call goes through the Broker,
-which checks that agent's permissions, injects the credential after the check, and
-writes an execution record. A compromised agent can only make the calls it was allowed
+infrastructure; the agent gets an identity instead, and every call goes through the
+Broker's permission check. A compromised agent can only make the calls it was allowed
 to make anyway — and you can see every one of them, and cut that one agent off
 without touching the key. One boundary to know before you rely on that: the broker
 protects credentials from agents running as **other** OS users or on other machines —
@@ -212,5 +211,5 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 
 ## License
 
-Jentic One is licensed under [Apache 2.0](LICENSE). See [License](./LICENSE)
-and [NOTICE](NOTICE) for details.
+Jentic One is licensed under [Apache 2.0](LICENSE); see
+[NOTICE](NOTICE) for third-party attributions.

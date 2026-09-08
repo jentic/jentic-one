@@ -8,11 +8,10 @@ charts and Go CLI are stamped to match at release time).
 
 ## Pre-1.0 policy (public beta)
 
-While Jentic One is in the `0.x` line it is in **public beta**, as stated in the
-[README](README.md):
-
-> APIs, database schemas, and CLI commands are subject to breaking changes
-> without a major version bump.
+While Jentic One is in the `0.x` line it is in **public beta** (see the note
+in the [README](README.md)): schemas, APIs, and CLI commands can change
+between `0.x` releases without a major version bump — pin a version if you
+need stability.
 
 Concretely, on the `0.MINOR.PATCH` line:
 

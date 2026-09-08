@@ -41,8 +41,9 @@ There are two structurally different moves, and they are **not** equally powerfu
 - **Isolate the *agent*** (own OS user or container) — the agent can't reach
   `~/.jentic`, the DB, *or* the operator's browser profile. Closes AP-1
   through AP-3 outright; AP-4 (the agent's *own* token reused off-host) is
-  neutralized not by the uid boundary but by the token contract — short-lived,
-  loopback-audience tokens are worthless off the network (see the
+  neutralized not by the uid boundary but by the token contract — short-lived
+  opaque tokens, redeemable only at this loopback-bound instance, are
+  worthless off the network (see the
   [residual risks](local-agent-isolation.md#what-this-model-does-not-protect--residual-risks)). This is the
   real fix.
 - **Isolate *Jentic One*** (own user / separate host) — closes AP-1/AP-2, but the

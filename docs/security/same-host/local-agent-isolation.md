@@ -856,7 +856,7 @@ Account creation, provisioning, grants, launch, and teardown are one
 responsibility and live in **`jentic`** — the client-side package guaranteed to
 run in the same environment as the agent (the operator's machine, as the
 operator's user). `jenticctl` administers a Jentic One deployment and may run on a
-different host; it must not own agent-user lifecycle. `jentic doctor` warns
+different host; it must not own agent-user lifecycle. `jenticctl doctor` warns
 when the agent appears to run as the *same* uid as the operator (the
 tripwire); reconciling on-disk ACLs against the recorded grants is owned by
 `jentic reset`'s pre-flight survey, not doctor.

@@ -27,7 +27,7 @@ The fastest way to help is to tell us what broke, confused you, or is missing.
 4. **Redact secrets** — never paste API keys, tokens, OAuth secrets, or passwords.
    Replace them with `***`.
 5. **Security vulnerabilities do not go here** — follow
-   [SECURITY.md](https://github.com/jentic/jentic-one/blob/main/SECURITY.md) for
+   [SECURITY.md](SECURITY.md) for
    private disclosure.
 
 ### What happens next — automated intake, no manual triage
@@ -59,8 +59,7 @@ severity, it can mention that in the body; the assistant will confirm it.
 
 ## Contributing code
 
-The rest of this guide covers contributing code: local setup, the development
-workflow, and the checks a pull request has to pass.
+Everything from here down is for code contributions.
 
 ## Getting started
 

@@ -8,7 +8,7 @@ What an agent can do once an instance is running:
 - Reach private and internal APIs. Register your own OpenAPI description and the same credential custody, per-agent permissions and audit trail apply to services that exist only inside your network.
 - Hold its own identity. Each agent registers an Ed25519 keypair through dynamic client registration (RFC 7591/7592), so access is granted per agent rather than per machine.
 - Work inside a scope. An agent reaches only the operations it has been approved for, and asking for more is a reviewable request rather than a silent widening.
-- Leave a trail. Every call is recorded in an append-only audit log.
+- Leave a trail. Every brokered call is recorded as an execution record; control-plane actions land in an append-only audit log.
 
 What it does not do. Jentic One bounds what a mistaken or compromised agent can reach. It does not make an agent correct or reliable, and it does not remove the judgment call about which operations an agent should be allowed to touch at all.
 
@@ -41,7 +41,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 
 ## How it works
 
-- [README](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/README.md): the architecture diagram and component table. An App control plane (Registry, Control, Admin) and a stateless Broker data plane over PostgreSQL or SQLite; both are supported production backends.
+- [README](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/README.md): the architecture diagram. An App control plane (Registry, Control, Admin and Auth surfaces) and a stateless Broker data plane over PostgreSQL or SQLite.
 - [Architecture overview](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/architecture/README.md): the next level down — the five surfaces (including the auth surface), runtime process shapes, the broker's execution pipeline, the three-database data model, and identity/authorization. Start here to understand the codebase.
 - [Endpoint and authorization reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/reference/endpoints.md): every HTTP endpoint with the scopes it requires. This is the authoritative source for authorization, because the OpenAPI documents model authentication only.
 - [Configuration reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/reference/config.md): every configuration key with its type, default, and `JENTIC__*` environment variable, generated from the config model and drift-guarded in CI.
