@@ -1,8 +1,9 @@
 # Data model
 
 Jentic One persists into **three databases** — `registry`, `control`, and
-`admin` — that are Postgres schemas in production and separate SQLite files
-in a local install. Each ORM model inherits exactly one of three declarative
+`admin` — that are schemas in one Postgres instance, or three separate SQLite
+files on the single-host shape (both are supported backends). Each ORM model
+inherits exactly one of three declarative
 bases (`RegistryBase` / `ControlBase` / `AdminBase` in
 [`shared/db/base.py`](../../src/jentic_one/shared/db/base.py)), each database has its own Alembic version tree under
 [`src/jentic_one/migrations/`](../../src/jentic_one/migrations/), and each tree keeps a single head

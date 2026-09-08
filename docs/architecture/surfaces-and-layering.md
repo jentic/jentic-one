@@ -29,7 +29,8 @@ forbidden edges have a dedicated test in
 [`tests/arch/test_module_boundaries.py`](../../tests/arch/test_module_boundaries.py)
 (`test_broker_does_not_import_control`, `test_control_does_not_import_admin`,
 …, `test_shared_does_not_import_auth`). The first seam:
-[`broker/services/credentials/`](../../src/jentic_one/broker/services/credentials/) imports control's OAuth provider and token
+[`broker/services/credentials/`](../../src/jentic_one/broker/services/credentials/) imports control's credential ORM schema and
+repository to resolve stored credentials, and its OAuth provider and token
 repo to refresh expired tokens during injection
 ([`broker/services/credentials/refresh.py`](../../src/jentic_one/broker/services/credentials/refresh.py)), and
 `test_broker_does_not_import_control` excludes exactly that path. The second
@@ -77,7 +78,7 @@ and the test that enforces each:
 | Web never touches the DB or SQLAlchemy | `test_web_layer.py::test_web_no_direct_db_imports` |
 | Web never imports a repository | `test_web_layer.py::test_web_no_repository_imports` (and `test_web_handlers_use_services_not_repos`) |
 | Handlers get `Context` via `Depends(get_ctx)`, never construct it | `test_web_layer.py::test_web_no_direct_context_construction` |
-| Every non-health router declares an auth dependency | `test_web_layer.py::test_web_routers_require_auth` — a whole-file check that exempts routers whose filename contains `health`, `discovery`, or `authorize` (so auth's `/authorize` flow is out of its scope) |
+| Every non-health router declares an auth dependency | `test_web_layer.py::test_web_routers_require_auth` — a whole-file check that exempts routers whose filename contains `health`, `discovery`, or `authorize`, plus `oauth_client_registration.py` and `local_login.py` (the pre-auth flows are out of its scope) |
 | Errors are RFC 9457 problem details, not `HTTPException` | `test_web_layer.py::test_web_uses_problem_details_not_http_exception` |
 | Only `core/schema/` and `repos/` may import DB internals | `test_no_direct_db.py` — per-surface tests for broker/registry/control/admin (plus a `scoping/` exemption); the auth surface has no such test yet |
 | Repos are auth-agnostic (never import `Identity`) | `test_scoping_boundary.py::test_repos_do_not_import_identity` |

@@ -36,7 +36,7 @@ flowchart LR
     end
 
     subgraph broker [Broker process — JENTIC__APPS=broker]
-        BRK["broker/<br/>execution pipeline:<br/>resolve, authorize, inject,<br/>forward, audit"]
+        BRK["broker/<br/>execution pipeline:<br/>resolve, authorize, inject,<br/>forward, record"]
     end
 
     subgraph dbs ["Databases (Postgres schemas or SQLite files)"]
@@ -60,7 +60,7 @@ flowchart LR
     CON -.->|"MCP mount only"| RDB
     ADM --- ADB
     AUTH --- ADB
-    AUTH --- CDB
+    AUTH -.- CDB
     BRK --- RDB
     BRK --- CDB
     BRK --- ADB
@@ -71,15 +71,16 @@ Five things the diagram compresses:
 - **Five surfaces, one package.** `registry`, `control`, `admin`, `broker`,
   and `auth` each live in their own package under [`src/jentic_one/`](../../src/jentic_one/);
   cross-surface imports are forbidden, with two sanctioned seams (the
-  broker's credential services import control to refresh OAuth tokens, and
-  auth leans on admin throughout);
+  broker's credential services import control to resolve stored credentials
+  and refresh OAuth tokens, and auth leans on admin throughout);
   [`shared/`](../../src/jentic_one/shared/) holds what they have in common, and `wiring.py` is the
   composition point that sees across them
   ([surfaces and layering](surfaces-and-layering.md)). The dotted DB edges
   are real but narrower than the solid ones: control and registry read the
-  admin DB to verify callers (API keys, permissions), and a control process
+  admin DB to verify callers (API keys, permissions), a control process
   serving the `/mcp` mount reaches the registry DB for in-process
-  search/inspect.
+  search/inspect, and auth reads the control DB only to resolve
+  toolkit-binding names for the `/me` response.
 - **The surface set is chosen at runtime.** One container image runs either
   role; `JENTIC__APPS` picks the surfaces, and the entrypoint refuses to
   bundle the broker with anything else

@@ -46,7 +46,7 @@ neither re-implements any step.
 - **The sync router.** The catch-all route awaits `run_execution` and adapts
   the outcome to a FastAPI response. This is the buffered path — but note it
   is **not** what most sync requests take by default: with
-  `broker.upstream.stream_passthrough_enabled` (default `true`), a sync
+  `broker.resilience.upstream.stream_passthrough_enabled` (default `true`), a sync
   request without an idempotency key is routed to the **streaming fast
   path** instead, which performs the same permission check, URL validation,
   and credential injection but streams the upstream body straight through

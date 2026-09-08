@@ -78,7 +78,8 @@ Scopes shared across surfaces are canonical constants in
 - **`DEFAULT_AGENT_SCOPES`** is the safe agent baseline: execute, reads
   (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
   `capabilities:read`), `catalog:import`, and the `owner:*:read` delegation
-  set.
+  scopes for resources, toolkits, agents, credentials, and access requests
+  (not `owner:service-accounts:read`).
 - **Self-service elevation is bounded.** An agent may file a `scope:grant`
   access request only for `GRANTABLE_SCOPES` (the baseline plus
   `apis:write`). The privileged scopes — `org:admin`, `agents:write`,
