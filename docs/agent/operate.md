@@ -79,7 +79,7 @@ The block fails closed: the migration is forward-only, so it must never run
 unless the snapshot verifiably exists and is non-empty. On the Postgres
 variant the `jentic_jentic-data` volume does not exist — `docker run -v`
 would silently *create* an empty one and `tar` would write an empty archive
-— so the volume probe stops the block and the snapshot is `pg_dump` per
+— so the volume probe aborts the block; take the snapshot with `pg_dump` per
 backup-restore.md instead:
 
 ```bash
@@ -100,10 +100,10 @@ docker compose -p jentic -f ~/.jentic/docker-compose.yaml \
 docker compose -p jentic -f ~/.jentic/docker-compose.yaml up -d
 ```
 
-The snapshot lands in `~/jentic-backups/` (an absolute path — this block,
-like every block in this file, must not depend on the shell's working
-directory) with a UTC timestamp to the second, so a same-day retry can never
-overwrite the snapshot you would roll back to.
+The snapshot lands in `~/jentic-backups/` (an absolute path, so the block
+doesn't depend on the shell's working directory) with a UTC timestamp to the
+second, so a same-day retry can never overwrite the snapshot you would roll
+back to.
 
 Check the schema state without modifying anything by appending `--check` to
 the migration command (it prints an `OVERALL current|uninitialized|pending`
@@ -159,10 +159,13 @@ the removal step cannot delete it:
 ```bash
 docker compose -p jentic -f ~/.jentic/docker-compose.yaml down
 mkdir -p ~/jentic-backups
-docker volume inspect jentic_jentic-data >/dev/null 2>&1 \
-  && docker run --rm -v jentic_jentic-data:/data -v ~/jentic-backups:/backup alpine \
-       tar czf /backup/jentic-data-$(date -u +%Y%m%dT%H%M%SZ).tgz -C /data . \
-  || echo "no jentic_jentic-data volume — Postgres install: snapshot with pg_dump (backup-restore.md)" >&2
+if docker volume inspect jentic_jentic-data >/dev/null 2>&1; then
+  docker run --rm -v jentic_jentic-data:/data -v ~/jentic-backups:/backup alpine \
+    tar czf /backup/jentic-data-$(date -u +%Y%m%dT%H%M%SZ).tgz -C /data . \
+    || { echo "ERROR: snapshot failed — do NOT uninstall" >&2; exit 1; }
+else
+  echo "no jentic_jentic-data volume — Postgres install: snapshot with pg_dump (backup-restore.md)" >&2
+fi
 cp ~/.jentic/jentic-one.yaml ~/jentic-backups/   # the keyset half of the pair
 cp ~/.jentic/.env ~/jentic-backups/              # Postgres: holds the DB password the volume was initialised with
 ls -l ~/jentic-backups                           # verify both halves exist and are non-empty before proceeding

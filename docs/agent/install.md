@@ -79,10 +79,12 @@ one fails.
 ```bash
 docker info >/dev/null           # daemon is running (not just installed)
 docker compose version           # compose v2 is available
-curl --version >/dev/null && openssl version >/dev/null && command -v lsof >/dev/null
-# Ports 8000 (app) and 8100 (broker) must be free (the lsof check above is
-# what makes this fail closed — a missing lsof would otherwise false-pass):
-! lsof -iTCP:8000 -sTCP:LISTEN -n -P && ! lsof -iTCP:8100 -sTCP:LISTEN -n -P
+curl --version >/dev/null && openssl version >/dev/null
+# Ports 8000 (app) and 8100 (broker) must be free. lsof must exist or this
+# gate cannot decide — chain it so a missing lsof fails closed instead of
+# false-passing on lsof's own error exit:
+command -v lsof >/dev/null \
+  && ! lsof -iTCP:8000 -sTCP:LISTEN -n -P && ! lsof -iTCP:8100 -sTCP:LISTEN -n -P
 ```
 
 Create the state directory. `~/.jentic` must be owner-only (`0700`) — the

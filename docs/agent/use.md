@@ -99,16 +99,16 @@ recovery — follow its `suggested_command` instead of retrying the same call.
   automatically": `jentic register` persists `mode: human` in the context it
   creates, and an explicit mode short-circuits the TTY check, so piped
   output is prose on most installs. For a fully machine posture set
-  `JENTIC_MODE=agent` — knowing it also deadlines most commands at 60 s
+  `JENTIC_MODE=agent` — note it also deadlines most commands at 60 s
   (pass `--timeout` on long waits such as `register` and
   `access request --wait`).
 - Exit codes are a coarse contract: **0** ok, **1** transport/unexpected,
   **2** "cannot succeed as asked" (denial, resolve failure, missing context —
   do not blind-retry), **3** timed out still pending (retry later),
-  **4** partially approved. Two honesty notes. `execute` exits **0 for any
+  **4** partially approved. Two caveats: `execute` exits **0 for any
   non-denial broker response**, including 429 rate-limits, 503 shed/circuit
   responses and 504 timeouts — always check the HTTP status in the JSON
-  envelope, never the exit code alone. And exit 1 is broader than
+  envelope, never the exit code alone. Exit 1 is also broader than
   "transport": several deterministic, named-fix errors (e.g.
   `MIGRATION_REQUIRED`, `NOT_AUTHENTICATED`, `PENDING_APPROVAL`) also exit 1
   — read the envelope's `error.code` and `actionable_step` before treating 1
