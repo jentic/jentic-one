@@ -6,9 +6,9 @@ import html as html_mod
 
 from jentic_one.auth.web.flow import FONTS_URL
 from jentic_one.auth.web.routers.authorize import (
-    _CHECK_SVG,
     _CONSENT_PAGE_TEMPLATE,
 )
+from jentic_one.auth.web.theme import AUTH_PAGE_CSS, LOGO_BLOCK_HTML
 
 
 def _render_consent(
@@ -25,7 +25,8 @@ def _render_consent(
         consent_token=html_mod.escape("token123"),
         restart_url=html_mod.escape(restart_url, quote=True),
         fonts_url=FONTS_URL,
-        check_svg=_CHECK_SVG,
+        page_css=AUTH_PAGE_CSS,
+        logo_block=LOGO_BLOCK_HTML,
     )
 
 
