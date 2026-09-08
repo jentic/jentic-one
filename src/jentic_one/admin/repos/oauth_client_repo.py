@@ -122,10 +122,11 @@ class OAuthClientRepository:
         not proof (collision guard).
 
         Oldest first as a stable base ordering. The caller picks the dedupe
-        winner: the service prefers approved > pending > denied among exact
-        matches (a double-register race can leave several rows, and the admin
-        may have approved a newer one), falling back to the oldest row within
-        the same status.
+        winner: the service prefers the D7-gate-aware order — approved+active
+        > pending > denied > approved+inactive (a double-register race can
+        leave several rows, and the admin may have approved a newer one; a
+        kill-switched row only wins as the sole match, #1312) — falling back
+        to the oldest row within the same rank.
         """
         stmt = (
             select(OAuthClient)
@@ -242,6 +243,44 @@ class OAuthClientRepository:
 
         await session.flush()
         return client
+
+    @staticmethod
+    async def requeue_pending_if_killswitched(session: AsyncSession, client: OAuthClient) -> bool:
+        """Compare-and-set: ``approved`` + ``active=false`` → ``pending``.
+
+        The anonymous DCR re-queue (#1312): the guard re-checks the
+        kill-switched state at *write* time, so a concurrent admin
+        ``:approve`` (which re-arms ``active``) is never clobbered back to
+        pending by a re-register that read the row before the approve
+        committed — if the guard no longer matches, nothing is written.
+        ``active`` is left untouched (false, by the guard) — pending rows
+        are inactive by construction (D7).
+
+        The passed ORM instance is refreshed to the row's live state either
+        way (post-flip it is pending; on a lost race it carries the newer
+        admin-written state), so the caller's audit trail records reality.
+        Returns True when the row was flipped.
+
+        Defense in depth: the guard also pins ``registration_source='dcr'``.
+        Every caller reaches this method through the DCR-filtered dedupe
+        candidate lists, but the anonymous re-queue must never be able to
+        move an admin-created client back into the approval queue even if a
+        future caller slips a non-DCR row in.
+        """
+        stmt = (
+            update(OAuthClient)
+            .where(
+                OAuthClient.id == client.id,
+                OAuthClient.registration_source == OAuthRegistrationSource.DCR.value,
+                OAuthClient.approval_status == OAuthClientApprovalStatus.APPROVED.value,
+                OAuthClient.active.is_(False),
+            )
+            .values(approval_status=OAuthClientApprovalStatus.PENDING.value)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        await session.refresh(client)
+        return int(result.rowcount) > 0  # type: ignore[attr-defined]
 
     @staticmethod
     async def deactivate(session: AsyncSession, id: str) -> bool:

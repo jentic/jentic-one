@@ -6186,8 +6186,10 @@ type ClientInterface interface {
 	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
 	// redirect-URI set) for registrations without a ``software_id`` — so a
 	// pending client's awaiting-approval retry loop re-attaches instead of
-	// minting duplicate rows. No client_secret is ever issued here and no
-	// registration_access_token
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -6207,8 +6209,10 @@ type ClientInterface interface {
 	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
 	// redirect-URI set) for registrations without a ``software_id`` — so a
 	// pending client's awaiting-approval retry loop re-attaches instead of
-	// minting duplicate rows. No client_secret is ever issued here and no
-	// registration_access_token
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -10040,8 +10044,10 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 // (“software_id“ + redirect-URI set), falling back to (“client_name“ +
 // redirect-URI set) for registrations without a “software_id“ — so a
 // pending client's awaiting-approval retry loop re-attaches instead of
-// minting duplicate rows. No client_secret is ever issued here and no
-// registration_access_token
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -10071,8 +10077,10 @@ func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, conten
 // (“software_id“ + redirect-URI set), falling back to (“client_name“ +
 // redirect-URI set) for registrations without a “software_id“ — so a
 // pending client's awaiting-approval retry loop re-attaches instead of
-// minting duplicate rows. No client_secret is ever issued here and no
-// registration_access_token
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -22541,8 +22549,10 @@ type ClientWithResponsesInterface interface {
 	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
 	// redirect-URI set) for registrations without a ``software_id`` — so a
 	// pending client's awaiting-approval retry loop re-attaches instead of
-	// minting duplicate rows. No client_secret is ever issued here and no
-	// registration_access_token
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -22562,8 +22572,10 @@ type ClientWithResponsesInterface interface {
 	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
 	// redirect-URI set) for registrations without a ``software_id`` — so a
 	// pending client's awaiting-approval retry loop re-attaches instead of
-	// minting duplicate rows. No client_secret is ever issued here and no
-	// registration_access_token
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -40244,8 +40256,10 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 // (“software_id“ + redirect-URI set), falling back to (“client_name“ +
 // redirect-URI set) for registrations without a “software_id“ — so a
 // pending client's awaiting-approval retry loop re-attaches instead of
-// minting duplicate rows. No client_secret is ever issued here and no
-// registration_access_token
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -40271,8 +40285,10 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ct
 // (“software_id“ + redirect-URI set), falling back to (“client_name“ +
 // redirect-URI set) for registrations without a “software_id“ — so a
 // pending client's awaiting-approval retry loop re-attaches instead of
-// minting duplicate rows. No client_secret is ever issued here and no
-// registration_access_token
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
