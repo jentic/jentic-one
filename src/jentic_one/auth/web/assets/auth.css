@@ -202,6 +202,37 @@ h1 {
 	margin-bottom: 16px;
 	text-align: center;
 }
+/* Session-panel internals — pre-shipped for PR #1300's continue-as offer
+   (label / bold email / primary Continue button / "use a different
+   account" alt link) so its rebase onto this theme stays mechanical. */
+.session-panel .label {
+	font-size: 11px;
+	color: hsl(var(--fg-muted));
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 4px;
+}
+.session-panel .email {
+	font-size: 14px;
+	color: hsl(var(--fg));
+	font-weight: 600;
+	margin-bottom: 12px;
+	word-break: break-all;
+}
+.session-panel button {
+	width: 100%;
+	background: hsl(var(--btn-primary-bg));
+	color: hsl(var(--btn-primary-fg));
+}
+.session-panel button:hover { background: hsl(var(--btn-primary-bg-hover)); }
+.session-panel .alt {
+	display: block;
+	margin-top: 10px;
+	font-size: 12px;
+	color: hsl(var(--app-name-fg));
+	text-decoration: none;
+}
+.session-panel .alt:hover { text-decoration: underline; }
 .status-line { text-align: center; font-size: 13px; color: hsl(var(--fg-muted)); }
 
 /* ---- permissions list (user consent) ---- */
