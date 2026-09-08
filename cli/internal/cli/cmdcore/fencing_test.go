@@ -30,6 +30,16 @@ func newProbeRoot(t *testing.T, capture *func(ctx context.Context)) *cobra.Comma
 			return nil
 		},
 	})
+	// serve mirrors `jentic mcp`: a caller-owned long-running command that must
+	// be exempt from the agent-mode wall-clock deadline.
+	root.AddCommand(&cobra.Command{
+		Use:         "serve",
+		Annotations: map[string]string{LongRunningAnnotation: "true"},
+		RunE: func(c *cobra.Command, _ []string) error {
+			(*capture)(c.Context())
+			return nil
+		},
+	})
 	return root
 }
 
@@ -69,5 +79,26 @@ func TestInterceptor_HumanModeNoDeadline(t *testing.T) {
 	}
 	if _, ok := seen.Deadline(); ok {
 		t.Error("human-mode command context must NOT carry a deadline")
+	}
+}
+
+// TestInterceptor_LongRunningExemptFromAgentDeadline pins the
+// LongRunningAnnotation carve-out: a caller-owned server process (`jentic
+// mcp`) must NOT inherit the agent-mode 60s wall-clock deadline — the
+// interceptor would otherwise kill the stdio session mid-flight, silently,
+// and only under JENTIC_MODE=agent entries. (That the mcp command actually
+// carries the annotation is pinned in the api package's tests.)
+func TestInterceptor_LongRunningExemptFromAgentDeadline(t *testing.T) {
+	var seen context.Context
+	capture := func(ctx context.Context) { seen = ctx }
+	root := newProbeRoot(t, &capture)
+
+	t.Setenv("JENTIC_MODE", "agent")
+	root.SetArgs([]string{"serve"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if _, ok := seen.Deadline(); ok {
+		t.Error("a long-running command in agent mode must NOT carry the interceptor's wall-clock deadline")
 	}
 }

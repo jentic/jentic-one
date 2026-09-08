@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
@@ -131,3 +131,13 @@ class ToolkitBindRequest(BaseModel):
     """Request body for binding a toolkit."""
 
     toolkit_id: str = Field(min_length=1, max_length=255)
+
+
+class JwksUpdateRequest(BaseModel):
+    """Request body for updating an agent's JWKS (public keys).
+
+    The JWKS must contain at least one Ed25519 public key and must not
+    contain any private key material.
+    """
+
+    jwks: dict[str, Any] = Field(description="JWKS containing public keys")

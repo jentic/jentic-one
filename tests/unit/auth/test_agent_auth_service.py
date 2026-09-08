@@ -62,28 +62,6 @@ async def test_register_api_key_success(
 
 
 @pytest.mark.asyncio
-@patch("jentic_one.auth.services.agent_auth_service.record_audit", new_callable=AsyncMock)
-@patch("jentic_one.auth.services.agent_auth_service.AgentCredentialRepository")
-@patch("jentic_one.auth.services.agent_auth_service.AgentRepository")
-async def test_register_client_secret_success(
-    mock_agent_repo: MagicMock,
-    mock_cred_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
-    ctx = _make_ctx()
-    svc = AgentAuthService(ctx)
-
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_agent_row(status="active"))
-    mock_cred_repo.set_client_secret_hash = AsyncMock()
-
-    secret = await svc.register_client_secret("agnt_test123", identity=_admin_identity())
-
-    assert secret.startswith("jcs_")
-    mock_cred_repo.set_client_secret_hash.assert_called_once()
-    mock_audit.assert_called_once()
-
-
-@pytest.mark.asyncio
 @patch("jentic_one.auth.services.agent_auth_service.AgentRepository")
 async def test_register_api_key_agent_not_found(
     mock_agent_repo: MagicMock,

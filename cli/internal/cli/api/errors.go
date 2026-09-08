@@ -1,12 +1,11 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
+	"github.com/jentic/jentic-one/cli/internal/agentops"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -88,40 +87,16 @@ type httpResponse interface {
 	GetBody() []byte
 }
 
-// HTTPError is a non-2xx control-plane response. It mirrors the shape the
-// hand-written httpx.HTTPError offered — StatusCode plus the raw problem-details
-// body — so existing error-mapping logic ports unchanged. (Named HTTPError, not
-// APIError, so it does not stutter as api.APIError — revive `exported`.)
-type HTTPError struct {
-	StatusCode int
-	Body       string
-}
-
-func (e *HTTPError) Error() string {
-	return fmt.Sprintf("http %d: %s", e.StatusCode, e.Detail())
-}
-
-// Detail extracts an RFC 9457 problem-details message, preferring the most
-// specific key (matching the old httpx.HTTPError.Detail order exactly).
-func (e *HTTPError) Detail() string {
-	p := e.Fields()
-	for _, k := range []string{"detail", "title", "error_description", "error"} {
-		if v, ok := p[k].(string); ok && v != "" {
-			return v
-		}
-	}
-	return e.Body
-}
-
-// Fields decodes the problem-details body into a map so callers can read
-// extension members. Returns an empty map when the body is not a JSON object.
-func (e *HTTPError) Fields() map[string]any {
-	var p map[string]any
-	if json.Unmarshal([]byte(e.Body), &p) == nil {
-		return p
-	}
-	return map[string]any{}
-}
+// HTTPError is a non-2xx control-plane response. The type moved to the UX-free
+// core with the Inspector seam (plan 0.2) — agentops.ResolveOperation maps a
+// 404 from the same error type this package's per-command mappers read — and is
+// aliased here so every existing call site (apiErrorFor constructions, the
+// errors.As targets in apisListErr/apiActionErr/catalogListErr/…) is untouched.
+// It mirrors the shape the hand-written httpx.HTTPError offered — StatusCode
+// plus the raw problem-details body (Detail()/Fields()) — so error-mapping
+// logic ported unchanged. (Named HTTPError, not APIError, so it does not
+// stutter as api.APIError — revive `exported`.)
+type HTTPError = agentops.HTTPError
 
 // apiErrorFor is the single check every migrated call site makes after a
 // `...WithResponse` call. `transportErr` is the error the SDK method returned

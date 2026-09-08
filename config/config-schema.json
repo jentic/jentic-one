@@ -31,7 +31,7 @@
           "type": "integer"
         },
         "jwt_secret": {
-          "default": "**********",
+          "default": "",
           "format": "password",
           "title": "Jwt Secret",
           "type": "string",
@@ -70,7 +70,7 @@
       "description": "Admin invite token settings.",
       "properties": {
         "pepper": {
-          "default": "**********",
+          "default": "",
           "format": "password",
           "title": "Pepper",
           "type": "string",
@@ -123,6 +123,19 @@
         "idp": {
           "$ref": "#/$defs/IdpConfig"
         },
+        "local_login": {
+          "$ref": "#/$defs/LocalLoginConfig"
+        },
+        "oauth_rate_limit": {
+          "$ref": "#/$defs/OAuthRateLimitConfig"
+        },
+        "platform_clients": {
+          "items": {
+            "$ref": "#/$defs/PlatformClientConfig"
+          },
+          "title": "Platform Clients",
+          "type": "array"
+        },
         "rat_ttl_seconds": {
           "default": 900,
           "title": "Rat Ttl Seconds",
@@ -138,7 +151,7 @@
       "type": "object"
     },
     "BackendKind": {
-      "description": "Which shared-state implementation to build.\n\nDefined here as the single source of truth; later PRs (resilience §05)\nimport it from this package rather than defining a second enum.",
+      "description": "Which shared-state implementation to build.\n\nDefined here as the single source of truth; consumers import it from this\npackage rather than defining a second enum.",
       "enum": [
         "memory",
         "redis"
@@ -229,7 +242,7 @@
       "type": "object"
     },
     "BrokerResilienceConfig": {
-      "description": "Resilience envelope: admission (§04 R1) + rate limit / circuit (§05).\n\nThe shared-state ``backend`` selection drives *both* the rate limiter and\nthe circuit breaker (memory default; Redis is cluster-wide, §06). Queue\nbackpressure / async-credential / retention knobs land in a later §05 slice.",
+      "description": "Resilience envelope: admission + rate limit / circuit.\n\nThe shared-state ``backend`` selection drives *both* the rate limiter and\nthe circuit breaker (memory default; Redis is cluster-wide). Queue\nbackpressure / async-credential / retention knobs are future work.",
       "properties": {
         "backend": {
           "$ref": "#/$defs/StateBackendConfig"
@@ -312,7 +325,7 @@
       "type": "object"
     },
     "CircuitBreakerConfig": {
-      "description": "Per-upstream circuit breaker (§05 R5.1).\n\nCounts failures/totals per rolling ``window_s`` on the shared-state\nbackend's atomic counters; when the failure ratio crosses\n``failure_ratio`` the circuit opens (a ``set_if_absent`` latch) and\nfast-fails for ``cooldown_s``. ``observation`` mode tracks + emits\n``would_block`` but still calls the upstream (safe-rollout dry run).",
+      "description": "Per-upstream circuit breaker.\n\nCounts failures/totals per rolling ``window_s`` on the shared-state\nbackend's atomic counters; when the failure ratio crosses\n``failure_ratio`` the circuit opens (a ``set_if_absent`` latch) and\nfast-fails for ``cooldown_s``. ``observation`` mode tracks + emits\n``would_block`` but still calls the upstream (safe-rollout dry run).",
       "properties": {
         "cooldown_s": {
           "default": 15,
@@ -356,7 +369,7 @@
       "description": "Configuration for the OAuth connect flow.",
       "properties": {
         "state_secret": {
-          "default": "**********",
+          "default": "",
           "format": "password",
           "title": "State Secret",
           "type": "string",
@@ -552,7 +565,7 @@
       "type": "object"
     },
     "EgressConfig": {
-      "description": "Outbound SSRF/egress policy for upstream calls (§08 E2).\n\nDefaults are **strict** (both lists empty) — identical to the historical\nhard-coded behaviour: every private range and the cloud-metadata host are\nblocked. The two allowlists exist because the broker is frequently installed\n*inside* a corporate network to bridge to internal/legacy APIs, where the\ndefault block is a false positive. Both are opt-in, auditable operator\ndecisions; the cloud-metadata IP is a **hard, non-overridable** deny so a\ncredential-stealing SSRF can never be allowlisted by accident.",
+      "description": "Outbound SSRF/egress policy for upstream calls.\n\nDefaults are **strict** (both lists empty) — identical to the historical\nhard-coded behaviour: every private range and the cloud-metadata host are\nblocked. The two allowlists exist because the broker is frequently installed\n*inside* a corporate network to bridge to internal/legacy APIs, where the\ndefault block is a false positive. Both are opt-in, auditable operator\ndecisions; the cloud-metadata IP is a **hard, non-overridable** deny so a\ncredential-stealing SSRF can never be allowlisted by accident.",
       "properties": {
         "allowed_internal_domains": {
           "items": {
@@ -697,7 +710,7 @@
       "type": "object"
     },
     "IdempotencyConfig": {
-      "description": "``Idempotency-Key`` replay store (§07, PR-E/1 slim).\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory\ndefault; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are later §07 slices.",
+      "description": "``Idempotency-Key`` replay store.\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory\ndefault; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are future work.",
       "properties": {
         "enabled": {
           "default": true,
@@ -838,7 +851,7 @@
       "type": "object"
     },
     "JwtVerificationConfig": {
-      "description": "Hardened inbound-JWT verification for the broker edge (§08 E1).\n\nWhen ``trusted_issuers`` is non-empty the broker verifies self-contained JWTs\nagainst the issuers' published JWKS (asymmetric, key-rotation-aware) and\nenforces ``iss`` (trusted set), ``aud`` (``audience``), and ``exp``/``nbf``\nwith ``leeway_s`` clock-skew. Empty (the default) leaves the asymmetric path\noff — the legacy HS256 ``broker.jwt_secret`` path (dev/test) still applies.",
+      "description": "Hardened inbound-JWT verification for the broker edge.\n\nWhen ``trusted_issuers`` is non-empty the broker verifies self-contained JWTs\nagainst the issuers' published JWKS (asymmetric, key-rotation-aware) and\nenforces ``iss`` (trusted set), ``aud`` (``audience``), and ``exp``/``nbf``\nwith ``leeway_s`` clock-skew. Empty (the default) leaves the asymmetric path\noff — the legacy HS256 ``broker.jwt_secret`` path (dev/test) still applies.",
       "properties": {
         "audience": {
           "anyOf": [
@@ -866,6 +879,18 @@
         }
       },
       "title": "JwtVerificationConfig",
+      "type": "object"
+    },
+    "LocalLoginConfig": {
+      "description": "Local-account login form on the ``/authorize`` flow (no external IdP).\n\nDefault **off**: ``/authorize`` behaviour is byte-identical (including the\n``server_error`` redirect when no IdP is configured) and ``GET|POST /login``\nanswer the framework's plain 404. Enabling it makes the standards-track\nnative-app sign-in flow (RFC 8252: DCR + system browser + loopback redirect\n+ PKCE) work against the first-party password account store, without any\nclient ever handling a password. An external IdP always wins: when\n``auth.idp.enabled`` is true the login form is never offered (no mixed\nmode in v1).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "LocalLoginConfig",
       "type": "object"
     },
     "LoggingConfig": {
@@ -900,6 +925,48 @@
       "title": "LoggingConfig",
       "type": "object"
     },
+    "McpConfig": {
+      "description": "``server.mcp`` sub-config.",
+      "properties": {
+        "broker_url": {
+          "default": "http://127.0.0.1:8100",
+          "title": "Broker Url",
+          "type": "string"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "oauth": {
+          "$ref": "#/$defs/McpOAuthConfig"
+        }
+      },
+      "title": "McpConfig",
+      "type": "object"
+    },
+    "McpOAuthConfig": {
+      "description": "Interactive-OAuth settings for the MCP surface.\n\nMinimal seam: the full ``server.mcp`` sub-config (``server.mcp.enabled``\netc.) extends this model in place — fields here must keep their names and\ndefaults.",
+      "properties": {
+        "auto_approve_clients": {
+          "default": false,
+          "title": "Auto Approve Clients",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "registration_gc_days": {
+          "default": 90,
+          "title": "Registration Gc Days",
+          "type": "integer"
+        }
+      },
+      "title": "McpOAuthConfig",
+      "type": "object"
+    },
     "MetricsConfig": {
       "description": "Metrics exporter configuration.",
       "properties": {
@@ -920,6 +987,60 @@
         }
       },
       "title": "MetricsConfig",
+      "type": "object"
+    },
+    "OAuthRateLimitConfig": {
+      "description": "Pre-auth rate limit tunables for OAuth endpoints.",
+      "properties": {
+        "approval_status_burst": {
+          "default": 60,
+          "title": "Approval Status Burst",
+          "type": "integer"
+        },
+        "approval_status_rpm": {
+          "default": 120,
+          "title": "Approval Status Rpm",
+          "type": "integer"
+        },
+        "authorize_burst": {
+          "default": 30,
+          "title": "Authorize Burst",
+          "type": "integer"
+        },
+        "authorize_rpm": {
+          "default": 30,
+          "title": "Authorize Rpm",
+          "type": "integer"
+        },
+        "exchange_burst": {
+          "default": 60,
+          "title": "Exchange Burst",
+          "type": "integer"
+        },
+        "exchange_rpm": {
+          "default": 60,
+          "title": "Exchange Rpm",
+          "type": "integer"
+        },
+        "registration_burst": {
+          "default": 5,
+          "title": "Registration Burst",
+          "type": "integer"
+        },
+        "registration_rpm": {
+          "default": 10,
+          "title": "Registration Rpm",
+          "type": "integer"
+        },
+        "trusted_proxies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Trusted Proxies",
+          "type": "array"
+        }
+      },
+      "title": "OAuthRateLimitConfig",
       "type": "object"
     },
     "ObservabilityConfig": {
@@ -986,8 +1107,31 @@
       "title": "PipedreamProviderConfig",
       "type": "object"
     },
+    "PlatformClientConfig": {
+      "description": "A static first-party OAuth client (e.g. the operator SPA).\n\nPlatform clients authenticate via PKCE only — no client secret. They are\ndefined in config (not the oauth_clients DB table) because they are\ndeployment-time constants, not admin-managed dynamic registrations.",
+      "properties": {
+        "client_id": {
+          "title": "Client Id",
+          "type": "string"
+        },
+        "redirect_uris": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Redirect Uris",
+          "type": "array"
+        }
+      },
+      "required": [
+        "client_id",
+        "redirect_uris"
+      ],
+      "title": "PlatformClientConfig",
+      "type": "object"
+    },
     "RateLimitConfig": {
-      "description": "Per-caller token-bucket rate limit (§05 R2).\n\nKeyed on the resolved ``actor_id`` and enforced in a post-auth dependency\n(the actor isn't known at admission time, so this can't be a plain\npre-auth middleware). The token bucket itself lives on the shared-state\nbackend (``RateLimitStore``); with the memory backend the limit is\nper-instance, with Redis (§06) it is cluster-wide — no call-site change.",
+      "description": "Per-caller token-bucket rate limit.\n\nKeyed on the resolved ``actor_id`` and enforced in a post-auth dependency\n(the actor isn't known at admission time, so this can't be a plain\npre-auth middleware). The token bucket itself lives on the shared-state\nbackend (``RateLimitStore``); with the memory backend the limit is\nper-instance, with Redis it is cluster-wide — no call-site change.",
       "properties": {
         "burst": {
           "default": 100,
@@ -1031,7 +1175,7 @@
       "type": "object"
     },
     "RetryConfig": {
-      "description": "Idempotency-aware upstream retry (§09 E4.1).\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent methods or when an\n``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
+      "description": "Idempotency-aware upstream retry.\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent methods or when an\n``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
       "properties": {
         "base_backoff_s": {
           "default": 0.2,
@@ -1168,6 +1312,9 @@
           "title": "Host",
           "type": "string"
         },
+        "mcp": {
+          "$ref": "#/$defs/McpConfig"
+        },
         "port": {
           "default": 8000,
           "title": "Port",
@@ -1256,7 +1403,7 @@
       "type": "object"
     },
     "TelemetryConfig": {
-      "description": "Anonymous product-telemetry settings (issue #446).\n\nDefaults to **OFF**: an instance whose config omits this block (non-onboarded\nor hand-rolled) sends nothing. The onboarding CLI writes ``enabled``\nexplicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in\nthe prompt, not the code default. ``instance_id`` seeds the durable admin-DB\nidentity row on first startup for opted-in instances.",
+      "description": "Anonymous product-telemetry settings (issue #446).\n\nDefaults to **OFF**: an instance whose config omits this block (non-onboarded\nor hand-rolled) sends nothing. The onboarding CLI writes ``enabled``\nexplicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in\nthe prompt, not the code default. ``instance_id`` seeds the durable admin-DB\nidentity row on first startup for opted-in instances. ``host_os`` is the\noperator's OS family, stamped by the CLI at install time so a Docker-run\ninstance reports the host's OS rather than the container's; sent once per\nboot, on the ``instance_booted`` event.",
       "properties": {
         "enabled": {
           "default": false,
@@ -1272,6 +1419,18 @@
           "default": 30.0,
           "title": "Flush Interval S",
           "type": "number"
+        },
+        "host_os": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Host Os"
         },
         "instance_id": {
           "anyOf": [
@@ -1347,7 +1506,7 @@
       "type": "object"
     },
     "UpstreamClientConfig": {
-      "description": "Bounds for the single shared outbound ``httpx.AsyncClient`` (§04, PR-B).\n\nThe timeouts are httpx semantics: ``read_timeout_s`` is the *between-bytes*\ngap timeout (per read), **not** a whole-stream cap — a trickle that keeps\nsending under the limit can hold a pool slot open. The overall transfer\ndeadline is owned by the response-streaming guard (§08/E2.4), not here.",
+      "description": "Bounds for the single shared outbound ``httpx.AsyncClient``.\n\nThe timeouts are httpx semantics: ``read_timeout_s`` is the *between-bytes*\ngap timeout (per read), **not** a whole-stream cap — a trickle that keeps\nsending under the limit can hold a pool slot open. The overall transfer\ndeadline is owned by the response-streaming guard, not here.",
       "properties": {
         "connect_timeout_s": {
           "default": 5.0,
@@ -1421,7 +1580,7 @@
       "type": "object"
     },
     "WorkerConfig": {
-      "description": "Background job-worker durability knobs (§09 E4.2).\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.",
+      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.",
       "properties": {
         "drain_timeout_s": {
           "default": 25.0,

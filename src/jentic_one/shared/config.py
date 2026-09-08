@@ -5,8 +5,10 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+import secrets
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
+from urllib.parse import urlparse
 
 import structlog
 import yaml
@@ -25,29 +27,54 @@ from jentic_one.shared.state.factory import StateBackendConfig
 
 _logger = structlog.get_logger(__name__)
 
-# Sentinel value shipped in default configs; rejected as an actual secret in
-# production by the validators below. Defined once so the literal lives in a
-# single place (and the secrets scanner only has to allow it here).
-_DEFAULT_SECRET_PLACEHOLDER = "CHANGE-ME-IN-PRODUCTION"  # pragma: allowlist secret
+# Per-process cache of dev-generated secrets, keyed by dotted config path.
+# Keeps repeated config loads within one process (tests, re-reads) signing
+# with the same key, while never persisting a secret-shaped literal anywhere:
+# shipped images must not contain default credentials (AWS Marketplace
+# container policy — their scanner flags hardcoded defaults even when a
+# production guard would reject them at boot).
+_EPHEMERAL_DEV_SECRETS: dict[str, SecretStr] = {}
+
+# A configured value matching this is a forgotten placeholder (copied from an
+# old example or config), never a real secret — any such value is publicly
+# known, so signing with it is equivalent to signing with no key at all.
+# Expressed as a pattern, not a literal, so no secret-shaped string ships in
+# the image.
+_PLACEHOLDER_SECRET_RE = re.compile(r"change.?me", re.IGNORECASE)
 
 
-def _require_production_secret(value: SecretStr, *, field_path: str) -> None:
-    """Reject the shipped placeholder (or a blank value) as a real secret in prod.
+def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretStr:
+    """Return the configured secret, or mint a per-process one for dev.
 
-    A single guard for the admin ``jwt_secret`` / invite ``pepper``: both ship the
-    same ``_DEFAULT_SECRET_PLACEHOLDER`` in default configs and must be replaced
-    before running in production. Treats both the literal placeholder and an
-    empty/whitespace value as unsafe. Only fires when ``JENTIC_ENV=production`` so
-    development/test keep working with the default. ``field_path`` is the
-    dotted config key surfaced in the error (e.g. ``admin.auth.jwt_secret``).
+    A single guard for every scalar secret the app cannot safely default
+    (admin ``jwt_secret``, invite ``pepper``, connect ``state_secret``). The
+    shipped default for all of them is empty:
+
+    - ``JENTIC_ENV=production``: an empty/whitespace value — or a change-me
+      placeholder — is a hard ``ConfigError``. The install path (jenticctl
+      install, the Helm chart's generated Secret) provides real values, so an
+      unusable value reaching production means that step was skipped.
+    - development/test: generate a random per-process secret so the app still
+      boots with zero configuration. Cached per ``field_path`` so repeated
+      loads in one process agree; deliberately NOT persisted, so restarts
+      rotate it (dev sessions ending on restart beats shipping a known key).
+      Per-process means multi-process dev setups (standalone surfaces,
+      ``--workers > 1``) each mint their own value; each secret is consumed
+      only by its own surface, so a shared value is never assumed.
     """
     secret = value.get_secret_value()
-    is_unsafe = secret == _DEFAULT_SECRET_PLACEHOLDER or not secret.strip()
-    if is_unsafe and os.environ.get("JENTIC_ENV", "development") == "production":
+    if secret.strip() and not _PLACEHOLDER_SECRET_RE.search(secret):
+        return value
+    if os.environ.get("JENTIC_ENV", "development") == "production":
         raise ConfigError(
-            f"{field_path} must be explicitly configured in production "
+            f"{field_path} must be explicitly configured in production — "
+            "empty and placeholder values are rejected "
             "(jenticctl install generates one automatically)"
         )
+    if field_path not in _EPHEMERAL_DEV_SECRETS:
+        _EPHEMERAL_DEV_SECRETS[field_path] = SecretStr(secrets.token_urlsafe(32))
+        _logger.info("generated ephemeral dev secret", field_path=field_path)
+    return _EPHEMERAL_DEV_SECRETS[field_path]
 
 
 class ConfigError(Exception):
@@ -106,7 +133,7 @@ class ServicesConfig(BaseModel):
 
 
 class WorkerConfig(BaseModel):
-    """Background job-worker durability knobs (§09 E4.2).
+    """Background job-worker durability knobs.
 
     The worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``
     from claim), and processes it. A job left ``RUNNING`` past that deadline by a
@@ -124,7 +151,7 @@ class WorkerConfig(BaseModel):
     # Backoff before a failed job becomes claimable again: min(base * 2**(n-1), max).
     retry_backoff_base_s: float = 2.0
     retry_backoff_max_s: float = 60.0
-    # Bounded wait for in-flight jobs to finish on graceful drain (§09 E4.3); past
+    # Bounded wait for in-flight jobs to finish on graceful drain; past
     # this the worker stops claiming and lets the still-RUNNING job be reclaimed
     # via its visibility timeout after restart (no work dropped).
     drain_timeout_s: float = 25.0
@@ -185,7 +212,7 @@ class ObservabilityConfig(BaseModel):
 class AdminAuthConfig(BaseModel):
     """Admin authentication settings."""
 
-    jwt_secret: SecretStr = SecretStr(_DEFAULT_SECRET_PLACEHOLDER)
+    jwt_secret: SecretStr = SecretStr("")
     jwt_ttl_seconds: int = Field(default=3600, gt=0)
     # Absolute cap on a web session: `POST /auth/refresh` re-mints the login
     # JWT (sliding session) only while `now - auth_time` stays inside this
@@ -195,8 +222,10 @@ class AdminAuthConfig(BaseModel):
     failed_login_lockout_seconds: int = 900
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> AdminAuthConfig:
-        _require_production_secret(self.jwt_secret, field_path="admin.auth.jwt_secret")
+    def _require_or_generate_secret_in_dev(self) -> AdminAuthConfig:
+        self.jwt_secret = _require_or_generate_secret(
+            self.jwt_secret, field_path="admin.auth.jwt_secret"
+        )
         return self
 
     @model_validator(mode="after")
@@ -212,11 +241,11 @@ class AdminInviteConfig(BaseModel):
     """Admin invite token settings."""
 
     ttl_days: int = 7
-    pepper: SecretStr = SecretStr(_DEFAULT_SECRET_PLACEHOLDER)
+    pepper: SecretStr = SecretStr("")
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> AdminInviteConfig:
-        _require_production_secret(self.pepper, field_path="admin.invite.pepper")
+    def _require_or_generate_secret_in_dev(self) -> AdminInviteConfig:
+        self.pepper = _require_or_generate_secret(self.pepper, field_path="admin.invite.pepper")
         return self
 
 
@@ -260,9 +289,85 @@ class IdpConfig(BaseModel):
     hosted_domain: str | None = None
 
 
+class PlatformClientConfig(BaseModel):
+    """A static first-party OAuth client (e.g. the operator SPA).
+
+    Platform clients authenticate via PKCE only — no client secret. They are
+    defined in config (not the oauth_clients DB table) because they are
+    deployment-time constants, not admin-managed dynamic registrations.
+    """
+
+    client_id: str
+    redirect_uris: list[str] = Field(min_length=1)
+
+    @field_validator("redirect_uris", mode="after")
+    @classmethod
+    def _validate_redirect_uris(cls, uris: list[str]) -> list[str]:
+        for uri in uris:
+            parsed = urlparse(uri)
+            if not parsed.scheme or not parsed.netloc:
+                msg = f"invalid platform redirect_uri (must be an absolute URL): {uri}"
+                raise ValueError(msg)
+            if parsed.scheme not in ("https", "http"):
+                msg = f"platform redirect_uri must use https or http: {uri}"
+                raise ValueError(msg)
+            if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
+                msg = f"http redirect_uri only allowed for localhost: {uri}"
+                raise ValueError(msg)
+        return uris
+
+
+_SPA_CLIENT_ID = "jentic-one-spa"
+_SPA_CALLBACK_PATH = "/app/auth/callback"
+
+_LOCAL_DEV_KEY_FINGERPRINT = "d35355bfb727b96b885e0ff817efd947bc5d8a88f169cabfa764932b57b3f3db"
+_LOCAL_DEV_KEY_KID = "local-dev-key"
+
+
+class OAuthRateLimitConfig(BaseModel):
+    """Pre-auth rate limit tunables for OAuth endpoints."""
+
+    authorize_rpm: int = 30
+    authorize_burst: int = 30
+    exchange_rpm: int = 60
+    exchange_burst: int = 60
+    # Anonymous dynamic client registration (POST /oauth-clients).
+    registration_rpm: int = 10
+    registration_burst: int = 5
+    # Approval-pending status poll (GET /oauth/approval/status). One tab polls
+    # at 12 rpm, so 120/60 keeps ~10 concurrent pending tabs behind one NAT
+    # inside the bucket; the page also honors Retry-After with backoff, so
+    # saturation degrades to a slower cadence rather than a thundering retry.
+    # Lives in its own namespace so polling can never drain the /authorize
+    # (or registration) quota.
+    approval_status_rpm: int = 120
+    approval_status_burst: int = 60
+    trusted_proxies: list[str] = Field(default_factory=list)
+
+
+class LocalLoginConfig(BaseModel):
+    """Local-account login form on the ``/authorize`` flow (no external IdP).
+
+    Default **off**: ``/authorize`` behaviour is byte-identical (including the
+    ``server_error`` redirect when no IdP is configured) and ``GET|POST /login``
+    answer the framework's plain 404. Enabling it makes the standards-track
+    native-app sign-in flow (RFC 8252: DCR + system browser + loopback redirect
+    + PKCE) work against the first-party password account store, without any
+    client ever handling a password. An external IdP always wins: when
+    ``auth.idp.enabled`` is true the login form is never offered (no mixed
+    mode in v1).
+    """
+
+    enabled: bool = False
+
+
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
+    # Expected shape: scheme://host[:port] with NO path. Unvalidated — a
+    # path-bearing value (e.g. https://host/jentic) silently breaks the fixed
+    # RFC 8414/9728 well-known routes: path-insertion metadata URLs derived
+    # from a path-bearing issuer are not served (root and /mcp docs alike).
     canonical_base_url: str = ""
     access_ttl_seconds: int = 3600
     refresh_ttl_seconds: int = 604800
@@ -275,6 +380,41 @@ class AuthConfig(BaseModel):
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
+    local_login: LocalLoginConfig = Field(default_factory=LocalLoginConfig)
+    platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
+    oauth_rate_limit: OAuthRateLimitConfig = Field(default_factory=OAuthRateLimitConfig)
+
+    def model_post_init(self, __context: object) -> None:
+        """Ensure the SPA platform client is always registered.
+
+        If no platform_clients entry exists for the operator SPA and a
+        canonical_base_url is configured, synthesise one so existing
+        deployments continue to work without a config change on upgrade.
+        """
+        if os.environ.get("JENTIC_ENV", "development") == "production":
+            from jentic_one.shared.crypto.signing import signing_key_spki_fingerprint
+
+            for sk in self.id_signing:
+                if sk.kid == _LOCAL_DEV_KEY_KID:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] uses the local-dev key id "
+                        "which must not be used in production"
+                    )
+                fp = signing_key_spki_fingerprint(sk.private_key_pem.get_secret_value())
+                if fp == _LOCAL_DEV_KEY_FINGERPRINT:
+                    raise ConfigError(
+                        f"auth.id_signing[kid={sk.kid!r}] contains the local-dev "
+                        "signing key material which must not be used in production"
+                    )
+        spa_present = any(pc.client_id == _SPA_CLIENT_ID for pc in self.platform_clients)
+        if not spa_present and self.canonical_base_url:
+            base = self.canonical_base_url.rstrip("/")
+            self.platform_clients.append(
+                PlatformClientConfig(
+                    client_id=_SPA_CLIENT_ID,
+                    redirect_uris=[f"{base}{_SPA_CALLBACK_PATH}"],
+                )
+            )
 
 
 _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -354,17 +494,14 @@ ProviderConfig = Annotated[
 class ConnectConfig(BaseModel):
     """Configuration for the OAuth connect flow."""
 
-    state_secret: SecretStr = SecretStr("change-me-in-production")
+    state_secret: SecretStr = SecretStr("")
     state_ttl_seconds: int = 600
 
     @model_validator(mode="after")
-    def _reject_default_secret_in_production(self) -> ConnectConfig:
-        if self.state_secret.get_secret_value() == "change-me-in-production":
-            env = os.environ.get("JENTIC_ENV", "development")
-            if env == "production":
-                raise ConfigError(
-                    "credentials.connect.state_secret must be explicitly configured in production"
-                )
+    def _require_or_generate_secret_in_dev(self) -> ConnectConfig:
+        self.state_secret = _require_or_generate_secret(
+            self.state_secret, field_path="credentials.connect.state_secret"
+        )
         return self
 
 
@@ -390,12 +527,12 @@ class ControlSurfaceConfig(BaseModel):
 
 
 class UpstreamClientConfig(BaseModel):
-    """Bounds for the single shared outbound ``httpx.AsyncClient`` (§04, PR-B).
+    """Bounds for the single shared outbound ``httpx.AsyncClient``.
 
     The timeouts are httpx semantics: ``read_timeout_s`` is the *between-bytes*
     gap timeout (per read), **not** a whole-stream cap — a trickle that keeps
     sending under the limit can hold a pool slot open. The overall transfer
-    deadline is owned by the response-streaming guard (§08/E2.4), not here.
+    deadline is owned by the response-streaming guard, not here.
     """
 
     connect_timeout_s: float = 5.0
@@ -422,18 +559,18 @@ class UpstreamClientConfig(BaseModel):
             "multipart/form-data": 50 * 1024 * 1024,
         }
     )
-    # Response-side counterpart to the request-body cap (§08 E2.4). The runner
+    # Response-side counterpart to the request-body cap. The runner
     # enforces this *mid-stream* while reading the upstream body, aborting the
     # connection the moment it's exceeded so a hostile/large upstream can't OOM
     # the instance. 0 disables the cap (unbounded — not recommended).
     max_response_bytes: int = 10 * 1024 * 1024
     # Stream the upstream response straight through to the client instead of
-    # whole-buffering it (§08 E2.4). On by default; applies only to the sync
+    # whole-buffering it. On by default; applies only to the sync
     # proxy path with no Idempotency-Key (idempotent requests + the async worker
     # keep buffering, since replay/persistence need the full body). Disable to
     # force the buffered path everywhere.
     stream_passthrough_enabled: bool = True
-    # Whole-stream transfer deadline for a streamed response (§08 E2.4). Unlike
+    # Whole-stream transfer deadline for a streamed response. Unlike
     # ``read_timeout_s`` (a between-bytes gap), this bounds the *total* time the
     # body may take to transfer, so a steady trickle — or a slow client draining
     # the proxied body — can't pin the upstream connection/pool slot forever. The
@@ -443,13 +580,13 @@ class UpstreamClientConfig(BaseModel):
 
 
 class RateLimitConfig(BaseModel):
-    """Per-caller token-bucket rate limit (§05 R2).
+    """Per-caller token-bucket rate limit.
 
     Keyed on the resolved ``actor_id`` and enforced in a post-auth dependency
     (the actor isn't known at admission time, so this can't be a plain
     pre-auth middleware). The token bucket itself lives on the shared-state
     backend (``RateLimitStore``); with the memory backend the limit is
-    per-instance, with Redis (§06) it is cluster-wide — no call-site change.
+    per-instance, with Redis it is cluster-wide — no call-site change.
     """
 
     enabled: bool = True
@@ -460,7 +597,7 @@ class RateLimitConfig(BaseModel):
 
 
 class CircuitBreakerConfig(BaseModel):
-    """Per-upstream circuit breaker (§05 R5.1).
+    """Per-upstream circuit breaker.
 
     Counts failures/totals per rolling ``window_s`` on the shared-state
     backend's atomic counters; when the failure ratio crosses
@@ -480,7 +617,7 @@ class CircuitBreakerConfig(BaseModel):
 
 
 class RetryConfig(BaseModel):
-    """Idempotency-aware upstream retry (§09 E4.1).
+    """Idempotency-aware upstream retry.
 
     The ``RetryRunner`` decorator retries a failed attempt **only** when it is
     safe to do so: a connect-phase failure (no bytes on the wire) is retryable
@@ -513,7 +650,7 @@ def _csv_to_list(value: Any) -> list[str]:
 
 
 class EgressConfig(BaseModel):
-    """Outbound SSRF/egress policy for upstream calls (§08 E2).
+    """Outbound SSRF/egress policy for upstream calls.
 
     Defaults are **strict** (both lists empty) — identical to the historical
     hard-coded behaviour: every private range and the cloud-metadata host are
@@ -537,7 +674,7 @@ class EgressConfig(BaseModel):
     )
     # Pin the outbound connection to the IP validated at connect time, closing the
     # DNS-rebinding TOCTOU between pre-request validation and the runner's own
-    # resolution (§08 E2). On by default; disable only to debug egress issues.
+    # resolution. On by default; disable only to debug egress issues.
     dns_pinning_enabled: bool = True
 
     @field_validator("allowed_private_subnets")
@@ -552,11 +689,11 @@ class EgressConfig(BaseModel):
 
 
 class BrokerResilienceConfig(BaseModel):
-    """Resilience envelope: admission (§04 R1) + rate limit / circuit (§05).
+    """Resilience envelope: admission + rate limit / circuit.
 
     The shared-state ``backend`` selection drives *both* the rate limiter and
-    the circuit breaker (memory default; Redis is cluster-wide, §06). Queue
-    backpressure / async-credential / retention knobs land in a later §05 slice.
+    the circuit breaker (memory default; Redis is cluster-wide). Queue
+    backpressure / async-credential / retention knobs are future work.
     """
 
     max_in_flight: int = 200
@@ -569,8 +706,8 @@ class BrokerResilienceConfig(BaseModel):
     # a single healthy slow attempt isn't pre-empted by the envelope deadline.
     request_deadline_s: float = 30.0
     # Fraction of ``max_in_flight`` at/above which ``/ready`` reports unready so
-    # the LB drains this instance *before* it hits the hard admission shed wall
-    # (§05 R5.2). Kept < 1.0 for that headroom.
+    # the LB drains this instance *before* it hits the hard admission shed wall.
+    # Kept < 1.0 for that headroom.
     readiness_saturation_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
     upstream: UpstreamClientConfig = Field(default_factory=UpstreamClientConfig)
     backend: StateBackendConfig = Field(default_factory=StateBackendConfig)
@@ -580,7 +717,7 @@ class BrokerResilienceConfig(BaseModel):
 
 
 class IdempotencyConfig(BaseModel):
-    """``Idempotency-Key`` replay store (§07, PR-E/1 slim).
+    """``Idempotency-Key`` replay store.
 
     Sync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory
     default; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim
@@ -591,7 +728,7 @@ class IdempotencyConfig(BaseModel):
     a duplicate side-effect; only byte-for-byte body replay is dropped).
 
     Compliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,
-    async same-``job_id`` replay, and at-rest encryption are later §07 slices.
+    async same-``job_id`` replay, and at-rest encryption are future work.
     """
 
     enabled: bool = True
@@ -645,7 +782,7 @@ class TrustedIssuerConfig(BaseModel):
 
 
 class JwtVerificationConfig(BaseModel):
-    """Hardened inbound-JWT verification for the broker edge (§08 E1).
+    """Hardened inbound-JWT verification for the broker edge.
 
     When ``trusted_issuers`` is non-empty the broker verifies self-contained JWTs
     against the issuers' published JWKS (asymmetric, key-rotation-aware) and
@@ -689,7 +826,7 @@ class BrokerConfig(BaseModel):
 
     upstream_timeout_s: float = 30.0
     resolve_cache_ttl_seconds: float = 3.0
-    # Short TTL (seconds) for the per-instance toolkit-derivation cache (§05 R3).
+    # Short TTL (seconds) for the per-instance toolkit-derivation cache.
     # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
     # double hit is served from cache for header-less requests. Agent/credential
     # bindings change infrequently, so a short TTL bounds revocation staleness
@@ -698,7 +835,7 @@ class BrokerConfig(BaseModel):
     # Authorization correctness never depends on the cache — it is a latency
     # optimization over the authoritative DB lookup. 0 disables it.
     toolkit_cache_ttl_s: float = 3.0
-    # Short TTL (seconds) for the per-instance permission-rule cache (§05 R3).
+    # Short TTL (seconds) for the per-instance permission-rule cache.
     # Caches the ordered toolkit_permission_rules per toolkit_id. Same staleness
     # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
     rule_cache_ttl_s: float = 3.0
@@ -706,18 +843,18 @@ class BrokerConfig(BaseModel):
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
     jobs_api_base_url: str | None = None
-    # Shared secret for the self-contained-JWT path (PR-A2, §03). None disables
+    # Shared secret for the self-contained-JWT path. None disables
     # the JWT path entirely (opaque tokens only). The minimal verifier is HS256
-    # signature + exp; TODO(§08/E1) hardens (JWKS, iss/aud, alg allowlist) before
+    # signature + exp; TODO hardens (JWKS, iss/aud, alg allowlist) before
     # this is enabled in production.
     jwt_secret: SecretStr | None = None
-    # Hardened inbound-JWT verification (§08 E1): trusted-issuer JWKS, iss/aud/nbf
+    # Hardened inbound-JWT verification: trusted-issuer JWKS, iss/aud/nbf
     # + clock-skew, strict asymmetric alg allowlist. When trusted_issuers is set
     # it supersedes the HS256 jwt_secret path for self-contained JWTs.
     jwt_verification: JwtVerificationConfig = Field(default_factory=JwtVerificationConfig)
     # Public base URL of the account-linking/provisioning UI. When set, a 424
     # (credential not provisioned) carries a `prompt_human` directive with a
-    # `provisioning_url` the agent can relay to the user (§02b). None keeps the
+    # `provisioning_url` the agent can relay to the user. None keeps the
     # directive but omits the URL. The URL is non-secret (where to *go* to
     # provision, never the credential itself).
     account_linking_base_url: str | None = None
@@ -797,6 +934,52 @@ class CatalogConfig(BaseModel):
     update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
+class McpOAuthConfig(BaseModel):
+    """Interactive-OAuth settings for the MCP surface.
+
+    Minimal seam: the full ``server.mcp`` sub-config (``server.mcp.enabled``
+    etc.) extends this model in place — fields here must keep their names and
+    defaults.
+    """
+
+    enabled: bool = False
+    """Master switch for the interactive-OAuth surface. Off (the default) the
+    anonymous DCR front door ``POST /oauth-clients`` returns a plain 404,
+    indistinguishable from not-shipped."""
+    auto_approve_clients: bool = False
+    """D9 (amended): auto-approve DCR registrations (``approval_status='approved'``
+    + ``active=true`` at registration). Default **false** everywhere —
+    approval-first posture: new registrations land ``pending`` + inactive in
+    the admin queue until an operator approves them. Setting this ``true`` is
+    an explicit opt-in for deployments that accept self-registered clients
+    without review (e.g. self-hosted single-user installs)."""
+    registration_gc_days: int = 90
+    """Long-TTL GC policy for never-consented DCR rows: rows are
+    GC-eligible only after this many days, and rows with any grant history are
+    never GC'd. Policy knob only — no sweep runs yet."""
+
+
+class McpConfig(BaseModel):
+    """``server.mcp`` sub-config."""
+
+    enabled: bool = False
+    """Master switch for the daemon-native Streamable HTTP ``/mcp`` endpoint.
+    Off (the default) the mounted app answers the framework's
+    plain route-not-found 404 — unless ``oauth.enabled`` keeps the
+    discovery-challenge behaviour alive (401 + ``WWW-Authenticate``) so OAuth
+    clients can still walk the RFC 9728 chain ahead of the endpoint being
+    turned on. Flipping this on is an explicit operator choice."""
+    broker_url: str = "http://127.0.0.1:8100"
+    """Broker base URL for the MCP ``execute`` tools' server-side
+    control-plane→broker proxy hop (the broker stays MCP-free,
+    so the mounted app forwards execute calls to the broker exactly like the
+    CLI does). The default matches the local install topology (plain-HTTP
+    loopback broker on 8100); compose/split deployments set the broker
+    service's URL. Plaintext ``http://`` is refused for non-loopback hosts —
+    the caller's bearer rides this hop (SEC-1 posture)."""
+    oauth: McpOAuthConfig = Field(default_factory=McpOAuthConfig)
+
+
 class ServerConfig(BaseModel):
     """HTTP server settings."""
 
@@ -809,6 +992,7 @@ class ServerConfig(BaseModel):
     hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
     which backend they reached — not an authorization signal. Defaults to
     ``local``; the hosted platform sets ``remote`` in its own config."""
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
 
 class TelemetryConfig(BaseModel):
@@ -818,11 +1002,21 @@ class TelemetryConfig(BaseModel):
     or hand-rolled) sends nothing. The onboarding CLI writes ``enabled``
     explicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in
     the prompt, not the code default. ``instance_id`` seeds the durable admin-DB
-    identity row on first startup for opted-in instances.
+    identity row on first startup for opted-in instances. ``host_os`` is the
+    operator's OS family, stamped by the CLI at install time so a Docker-run
+    instance reports the host's OS rather than the container's; sent once per
+    boot, on the ``instance_booted`` event.
     """
 
     enabled: bool = False
     instance_id: str | None = None
+    host_os: str | None = None
+    """Host OS family stamped at install time by the onboarding CLI (from Go's
+    ``runtime.GOOS``): the recommended install runs the app in Docker, where
+    runtime detection would always report the container's Linux instead of the
+    operator's machine. ``None`` (hand-rolled config) falls back to runtime
+    detection. Consumed once per boot, on the ``instance_booted`` telemetry
+    event; values outside the closed ``HostOs`` enum degrade to ``other``."""
     endpoint: str = "https://api.jentic.com/api/v1"
     """Ingest endpoint for telemetry events. Not intended for operator override —
     this is a hardcoded Jentic service URL. Exposed in config only for internal

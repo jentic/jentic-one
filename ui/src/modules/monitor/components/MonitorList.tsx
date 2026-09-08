@@ -1,7 +1,7 @@
 /**
  * MonitorList / MonitorRow — the shared "feed" presentation for the Monitor
- * list tabs (Jobs, Events, Audit; Executions uses the columned ExecutionTable
- * ported from jentic-mini).
+ * list tabs (Jobs, Events, Audit; Executions uses the columned
+ * ExecutionTable).
  *
  * This replaces the flat <DataTable> grid for these surfaces with the richer
  * row vocabulary the Overview already uses (see UsageBreakdown): a colour-tinted

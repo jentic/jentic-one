@@ -311,7 +311,7 @@ export function ProvisioningRequestDialog({
 
 	// Directory miss fallback: the directory is cached reference data, and the
 	// normal CLI flow registers the agent SECONDS before this dialog opens — a
-	// cached-before-registration directory misses it, which used to leave the
+	// cached-before-registration directory misses it, which would leave the
 	// raw `agnt_…` id in the header and an API-slug toolkit name. Only once the
 	// directory has loaded AND missed, fetch the agent directly by id (keyed to
 	// the id so a stale name can never leak across requests).
@@ -359,7 +359,7 @@ export function ProvisioningRequestDialog({
 			if (!cs) return undefined;
 			// Backfill fields older drafts predate (adopt-existing support):
 			// their objects were all wizard-created, so `adopted: false` is the
-			// historically-accurate default, keeping them discardable. The
+			// accurate default for them, keeping them discardable. The
 			// stored JSON may genuinely lack these keys even though the type
 			// declares them, hence the runtime defaults.
 			aligned.push({
@@ -1924,8 +1924,8 @@ export function ProvisioningRequestDialog({
 				initialType={initialCredentialType}
 			/>
 
-			{/* Cancel-with-orphans confirmation — in-dialog, replacing the native
-			    browser confirm() this flow used to pop (jarring + unstyled). */}
+			{/* Cancel-with-orphans confirmation — a styled in-dialog step rather
+			    than a jarring, unstyled native browser confirm(). */}
 			<Dialog
 				open={confirmDiscard}
 				onClose={() => setConfirmDiscard(false)}

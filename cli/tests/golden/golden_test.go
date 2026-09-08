@@ -1,12 +1,9 @@
 // Package golden holds the characterization (golden) tests for the CLI's
 // agent-facing machine contract.
 //
-// HISTORY: this suite was introduced in Phase 0 to freeze the shipped V1
-// contract through the re-plumbing phases. The activation release then removed
-// the V1 surface outright (14 BC-1: context-only resolution, no legacy
-// ~/.jentic reads, no --profile/--base-url data-plane flags) — the authorized
-// breaking change that retired the V1 goldens. What remains frozen here is the
-// V2 contract the same commands now expose: the off-TTY JSON envelope shapes,
+// What is frozen here is the V2 contract (14 BC-1: context-only resolution, no
+// legacy ~/.jentic reads, no --profile/--base-url data-plane flags): the
+// off-TTY JSON envelope shapes,
 // exit codes, and stderr error form that agents parse.
 //
 // Drive model: each case builds the real `jentic` command tree via

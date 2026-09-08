@@ -77,6 +77,8 @@ export interface ListExecutionsParams {
 	traceId?: string | null;
 	toolkitId?: string | null;
 	actorId?: string | null;
+	/** Origin surface filter (backend `Origin` wire value, e.g. `mcp`). */
+	origin?: string | null;
 	status?: string[] | null;
 	from?: string | null;
 	to?: string | null;
@@ -92,6 +94,7 @@ export async function listExecutions(
 			traceId: params.traceId ?? null,
 			toolkitId: params.toolkitId ?? null,
 			actorId: params.actorId ?? null,
+			origin: params.origin ?? null,
 			status: params.status ?? null,
 			from: params.from ?? null,
 			to: params.to ?? null,

@@ -8,7 +8,7 @@ the instrumentation here means the **redaction hooks can't be forgotten** by a
 new call site (a compliance requirement — the broker proxies ``Authorization``,
 injected API keys, cookies, and arbitrary tenant bodies that may carry PII).
 
-It owns three concerns (§04 PR-B tracing slice):
+It owns three concerns:
 
 1. ``configure_tracing`` — the global ``TracerProvider`` (OTLP gRPC or no-op).
 2. ``instrument_outbound_client`` — W3C ``traceparent``/``tracestate`` propagation
@@ -167,7 +167,7 @@ def current_trace_id() -> str | None:
 
 
 def instrument_outbound_client(client: httpx.AsyncClient) -> None:
-    """Instrument the shared outbound ``httpx`` client for W3C propagation (§04).
+    """Instrument the shared outbound ``httpx`` client for W3C propagation.
 
     Distributed tracing must continue *into* the upstream: the outbound request
     carries the W3C ``traceparent``/``tracestate`` so a vendor running OTel can
@@ -202,7 +202,7 @@ _INBOUND_SANITIZE_FIELDS: list[str] = [
 
 
 def instrument_inbound_app(app: object) -> None:
-    """Instrument a FastAPI app for inbound (server-side) tracing (§04).
+    """Instrument a FastAPI app for inbound (server-side) tracing.
 
     Routed through the facade — not called inline with an ad-hoc
     ``opentelemetry`` import at the call site — so the redaction policy lives in

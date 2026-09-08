@@ -2,8 +2,8 @@
  * WorkspaceFilterBar — sticky, gutter-bleeding filter row for the Workspace
  * page.
  *
- * Mirrors jentic-mini's `WorkspaceSearch` intent (an in-memory filter, *not* a
- * catalog search — hence the funnel icon rather than a magnifying glass) using
+ * An in-memory filter, *not* a
+ * catalog search — hence the funnel icon rather than a magnifying glass — using
  * jentic-one's established sticky pattern (the same `sticky top-12` /
  * `-mx-page-gutter px-page-gutter` backdrop-blur bar the Discover toolbar uses,
  * with a sentinel + IntersectionObserver hairline shadow once it sticks).

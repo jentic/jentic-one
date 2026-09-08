@@ -1,13 +1,16 @@
-"""Agent authentication: API key and client secret generation."""
+"""Agent authentication: API key, client secret generation, and client_credentials grant."""
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.admin.repos import AgentCredentialRepository, AgentRepository, AuditRepository
+from jentic_one.admin.repos import (
+    AgentCredentialRepository,
+    AgentRepository,
+    AuditRepository,
+)
 from jentic_one.auth.services.crypto import (
     generate_agent_api_key,
-    generate_client_secret,
     hash_secret,
 )
 from jentic_one.auth.services.errors import (
@@ -16,17 +19,27 @@ from jentic_one.auth.services.errors import (
     NoApiKeyError,
 )
 from jentic_one.auth.services.schemas.api_key_info import ApiKeyHistoryEntry, ApiKeyInfo
-from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.auth.services.token_service import TokenService
+from jentic_one.shared.audit import (
+    AuditAction,
+    AuditTargetType,
+    record_audit,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, AuditReason
 
 
 class AgentAuthService:
-    """Handles credential generation for agents (API keys and client secrets)."""
+    """Handles credential generation and client_credentials auth for agents."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+        self._token_svc = TokenService(ctx)
+
+    @property
+    def access_ttl_seconds(self) -> int:
+        return self._token_svc.access_ttl_seconds
 
     async def register_api_key(self, agent_id: str, *, identity: Identity) -> str:
         """Generate and store a new API key. Returns the plaintext (shown once)."""
@@ -50,29 +63,6 @@ class AgentAuthService:
             )
 
         return key
-
-    async def register_client_secret(self, agent_id: str, *, identity: Identity) -> str:
-        """Generate and store a new client secret. Returns the plaintext (shown once)."""
-        secret = generate_client_secret()
-        secret_hash = hash_secret(secret)
-
-        async with self._ctx.admin_db.transaction() as session:
-            await self._ensure_active_and_owned(session, agent_id, identity)
-            await AgentCredentialRepository.set_client_secret_hash(
-                session, agent_id, client_secret_hash=secret_hash, created_by=identity.sub
-            )
-            await record_audit(
-                session,
-                action=AuditAction.ROTATE,
-                target_type=AuditTargetType.AGENT,
-                target_id=agent_id,
-                actor_type=identity.actor_type,
-                actor_id=identity.sub,
-                reason=AuditReason.CLIENT_SECRET_ROTATED,
-                origin=identity.origin.value,
-            )
-
-        return secret
 
     async def revoke_api_key(self, agent_id: str, *, identity: Identity) -> None:
         """Revoke (nullify) the agent's API key without generating a new one."""

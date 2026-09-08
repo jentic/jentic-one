@@ -186,7 +186,7 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 	}
 
 	if opts.dryRun {
-		return a.setupDryRun(st, targets, env, opts)
+		return a.setupDryRun(ctx, st, targets, env, opts)
 	}
 
 	// After the operator is chosen, offer to isolate it behind a dedicated Unix
@@ -251,6 +251,14 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 			// reported but not fatal — the agent can re-run `jentic skill init`.
 			fmt.Fprintln(a.Out, theme.Warnf("skill generation failed: %v", err))
 		}
+
+		// Step 4: write the MCP server entry per detected runtime (2-E3) —
+		// absolute stable binary path, --context pinned — then offer the
+		// optional isolation step (container / sudo-shim). Both best-effort:
+		// registration failures are reported per runtime and isolation never
+		// blocks the non-isolated flow.
+		outcomes := a.registerMCPEntries(ctx, targets, false)
+		a.offerMCPIsolation(ctx, outcomes, !opts.yes && term.IsTerminal(os.Stdin.Fd()))
 	}
 
 	fmt.Fprintln(a.Out)
@@ -277,7 +285,7 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 
 // setupDryRun describes the steps without registering or writing. st is
 // the active context (nil for the fresh-machine setup arm).
-func (a *Cmd) setupDryRun(st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *setupOptions) error {
+func (a *Cmd) setupDryRun(ctx context.Context, st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *setupOptions) error {
 	if st != nil {
 		fmt.Fprintln(a.Out, theme.Infof("would register identity %q with environment %q (%s), or reuse an existing registration",
 			st.IdentityName, st.EnvironmentName, st.BaseURL))
@@ -293,7 +301,11 @@ func (a *Cmd) setupDryRun(st *clictx.ActiveState, targets []skillTarget, env ski
 	fmt.Fprintln(a.Out)
 	dry := opts.skillOptions()
 	dry.dryRun = true
-	return a.writeSkill(targets, env, dry)
+	if err := a.writeSkill(targets, env, dry); err != nil {
+		return err
+	}
+	a.registerMCPEntries(ctx, targets, true)
+	return nil
 }
 
 func valueOrPlaceholder(s, placeholder string) string {

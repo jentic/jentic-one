@@ -19,7 +19,7 @@ import {
  * Self-contained: owns its own input state, debounce, autofocus, and data
  * fetching. Parents only handle `onSelect` and the "Enter manually" escape.
  *
- * Two-endpoint merge (unlike jentic-mini's single `/apis?q=`):
+ * Two-endpoint merge:
  *  - `GET /apis` is unfiltered (no `q`); we client-filter by the same query
  *    so users see their workspace matches first.
  *  - `GET /catalog?q=` is the search-driven side; only fires once the user

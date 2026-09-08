@@ -2,7 +2,7 @@
  * DiscoveryCard — one API row in the Discover grid.
  *
  * Every row is a public-catalog entry; its `registered` flag drives two visual
- * modes, mirroring jentic-mini's API card:
+ * modes:
  *
  *   imported (registered)  — emerald left rail; the surface is a button that
  *                            opens the detail sheet (trailing chevron), plus a

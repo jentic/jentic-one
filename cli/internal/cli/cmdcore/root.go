@@ -51,7 +51,7 @@ func NewBaseRoot(app *App, binary string) *cobra.Command {
 
 	// Audience-aware interceptor (impl/3.2 §2): resolves mode/theme, constructs the
 	// Audience, enforces fencing, and injects both into the context. It also carries
-	// the shipped banner + update-nudge side effects (previously PersistentPreRun).
+	// the shipped banner + update-nudge side effects.
 	installInterceptor(app, root)
 
 	// AGT-20: flag-parse failures (unknown flag, missing required flag, bad flag

@@ -100,7 +100,7 @@ export function OverviewTab({
 
 	return (
 		<div className="space-y-6">
-			{/* Provenance line — created_by finally rendered (phase-4 gap #10). */}
+			{/* Provenance line — created_by. */}
 			{toolkit && (
 				<p
 					className="text-muted-foreground flex items-center gap-1.5 text-xs"

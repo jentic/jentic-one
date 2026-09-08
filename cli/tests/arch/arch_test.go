@@ -2,12 +2,8 @@
 // themes/cli-v2/impl/0.0 §1). They do not test business logic; they parse the
 // module's own source and fail the build when a structural boundary is crossed.
 //
-// Scoping note (Phase 0): several boundaries in impl/0.0 name packages that the
-// V2 refactor introduces later — client/... (Phase 1), internal/cli/api and
-// internal/cli/ux (Phases 2–3). These tests are written to enforce the rule
-// against whatever matching packages exist *today* and to light up
-// automatically as those packages land, rather than hard-coding a path that
-// does not yet compile. Where a target package is absent, the test logs that it
+// Scoping note: these tests enforce each rule against whatever matching
+// packages exist. Where a target package is absent, the test logs that it
 // is dormant instead of vacuously passing, so the guardrail is visible.
 package arch
 

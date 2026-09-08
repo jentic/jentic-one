@@ -1,11 +1,10 @@
 """Integration tests for the worker's expired-token retention sweep (#610 audit).
 
-Expired ``access_tokens`` / ``refresh_tokens`` rows previously accumulated
-forever — the repos' ``delete_expired`` had no production caller. The worker's
-retention sweep now purges rows expired for more than the grace window, while
-keeping recently-expired rows (introspection / refresh-reuse forensics) and
-live rows untouched. Per the repo's no-DB-mocking rule these run against the
-real admin DB.
+The worker's retention sweep purges ``access_tokens`` / ``refresh_tokens`` rows
+expired for more than the grace window, while keeping recently-expired rows
+(introspection / refresh-reuse forensics) and live rows untouched — without it,
+expired rows would accumulate forever. Per the repo's no-DB-mocking rule these
+run against the real admin DB.
 """
 
 from __future__ import annotations

@@ -26,10 +26,10 @@ func nakedPrintAllowed(pkgPath, file string) bool {
 // Test1B_NakedPrint fails on direct fmt.Print*/println/os.Stdout writes and
 // log.Fatal* in command packages, which would corrupt strict agent JSON.
 //
-// Phase-8 reality (impl/0.0 §1B, F8-37): the shipped command tree (formerly the
-// flat internal/cmd package) was decomposed into internal/cli/{cmdcore,api,ctlcmd}
-// and already routes all output through App.Out/App.Err. The recorded baseline is
-// 0, so these packages are now STRICT roots: any naked print fails outright (the
+// Phase-8 reality (impl/0.0 §1B, F8-37): the shipped command tree
+// (internal/cli/{cmdcore,api,ctlcmd})
+// routes all output through App.Out/App.Err. The recorded baseline is
+// 0, so these packages are STRICT roots: any naked print fails outright (the
 // intended §1B behavior), not merely a growth ratchet against a non-zero legacy
 // count. The legacy ratchet is retained only as an inert backstop (empty root set)
 // documenting that no grandfathered violations remain.

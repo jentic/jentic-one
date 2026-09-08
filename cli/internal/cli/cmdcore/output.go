@@ -40,8 +40,8 @@ func StdoutIsTerminal() bool {
 //
 // The explicit-human rung (UX-5) is the inverse: --mode human (or
 // JENTIC_MODE=human / a persisted human context) says "render for a person",
-// so piping to `less`/`tee` keeps the pretty report — previously there was no
-// way to force it in a pipe. Only DEFAULT human (nothing set anywhere) falls
+// so piping to `less`/`tee` keeps the pretty report. Only DEFAULT human
+// (nothing set anywhere) falls
 // through to the TTY heuristic.
 func JSONOrPretty(cmd *cobra.Command, jsonFlag bool) bool {
 	if jsonFlag {

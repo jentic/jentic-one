@@ -1,7 +1,7 @@
 /**
  * Executions tab — the execution trace log.
  *
- * Lists `GET /executions` newest-first in the jentic-mini columned execution
+ * Lists `GET /executions` newest-first in the columned execution
  * table (see ExecutionTable), filterable by lifecycle status. Status renders
  * off the UI status union (mapped from the bare wire string), never the raw
  * value, so an unknown server status degrades to a neutral pill rather than a
@@ -94,6 +94,7 @@ export function ExecutionsTab() {
 		from: filters.from,
 		actorId: filters.actorId,
 		toolkitId: filters.toolkitId,
+		origin: filters.origin,
 	});
 	const pager = useCursorStack(filterKey);
 	const query = useExecutions({
@@ -101,6 +102,7 @@ export function ExecutionsTab() {
 		from: filters.from,
 		actorId: filters.actorId,
 		toolkitId: filters.toolkitId,
+		origin: filters.origin,
 		cursor: pager.cursor,
 	});
 	const rows = query.data?.data ?? [];

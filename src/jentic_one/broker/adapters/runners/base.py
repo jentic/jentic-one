@@ -1,6 +1,6 @@
-"""The ``UpstreamRunner`` seam (RN-0) and runner request/result value objects.
+"""The ``UpstreamRunner`` seam and runner request/result value objects.
 
-The execution path is *runner-shaped from day one* (plan.md RN-0): the base
+The execution path is *runner-shaped from day one*: the base
 transport is an ``UpstreamRunner``, and every later resilience capability
 (idempotency / retry / circuit / deadline) lands as a **composable decorator**
 around it rather than an inline branch in the request handler. This is the
@@ -60,7 +60,7 @@ class CapabilityAwareRunner(UpstreamRunner, Protocol):
 
     The composition root (``build_runner``) consults this to gate the
     capability-dependent envelope layers (retry, idempotency) so a runner that
-    can't safely support a layer is never wrapped in it (§11 RN-0.3 "envelope
+    can't safely support a layer is never wrapped in it ("envelope
     split by capability"). A runner that does **not** implement this is treated
     by :func:`capabilities_of` as the conservative default (no gated layers).
     """

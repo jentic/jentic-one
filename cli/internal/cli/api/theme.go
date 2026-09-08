@@ -10,8 +10,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
-// newThemeCmd persists the global human-mode color theme (plan Phase 3 item 4 —
-// the registry lands in Phase 2; this is the persistence half). It writes the
+// newThemeCmd persists the global human-mode color theme. It writes the
 // top-level `theme` in ~/.config/jentic/config.yaml, which the resolver reads as
 // the config rung of the ladder (--theme > JENTIC_THEME > NO_COLOR > config >
 // dark, impl/1.4 §3).

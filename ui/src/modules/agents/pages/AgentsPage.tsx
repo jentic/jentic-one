@@ -40,10 +40,12 @@ import {
 	useEnableServiceAccount,
 	useArchiveServiceAccount,
 	useActorsUsage,
+	useMcpLastSeen,
 	ACTOR_STATUSES,
 	STATUS_LABELS,
 	type ActorStatus,
 	type AgentAction,
+	type McpLastSeen,
 } from '@/modules/agents/api';
 import { ActorTable, type ActorRow } from '@/modules/agents/components/ActorTable';
 import { ApprovalQueue } from '@/modules/agents/components/ApprovalQueue';
@@ -195,6 +197,12 @@ interface ActorsSectionProps<T extends ActorRow> {
 	emptyAction?: React.ReactNode;
 	/** Extra first-run content below the empty state (e.g. DCR quickstart). */
 	emptyExtra?: React.ReactNode;
+	/**
+	 * "Last seen via MCP" enrichment (agents tab only — MCP is an agent
+	 * transport; service accounts never appear in the session events).
+	 * Omitted/`null` renders the roster without the column.
+	 */
+	mcpLastSeen?: Map<string, McpLastSeen> | null;
 	detailHref: (item: T) => string;
 }
 
@@ -211,6 +219,7 @@ function ActorsSection<T extends ActorRow>({
 	emptyBody,
 	emptyAction,
 	emptyExtra,
+	mcpLastSeen,
 	detailHref,
 }: ActorsSectionProps<T>) {
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
@@ -331,6 +340,7 @@ function ActorsSection<T extends ActorRow>({
 					emptyMessage={`No ${nounPlural} match your filter.`}
 					pendingId={pendingId}
 					usage={usage.data}
+					mcpLastSeen={mcpLastSeen}
 					onAction={handleAction}
 					detailHref={detailHref}
 				/>
@@ -376,6 +386,9 @@ function AgentsSection({
 		() => query.data?.pages.flatMap((p) => p.entities) ?? [],
 		[query.data],
 	);
+	// "Last seen via MCP" enrichment (local-MCP 2-E2): one events-page read for
+	// the fleet, `null` for viewers without `events:read` (column hidden).
+	const mcpLastSeen = useMcpLastSeen();
 
 	const mutations: LifecycleMutations = {
 		approve: useApproveAgent(),
@@ -405,6 +418,7 @@ function AgentsSection({
 					</Button>
 				}
 				emptyExtra={<DcrQuickstart />}
+				mcpLastSeen={mcpLastSeen.data}
 				detailHref={(a) => ROUTE_PATHS.agent(a.id)}
 			/>
 			<AgentCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />

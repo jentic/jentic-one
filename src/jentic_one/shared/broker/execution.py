@@ -125,7 +125,7 @@ class UpstreamRunner(Protocol):
 
 @runtime_checkable
 class StreamingUpstreamRunner(UpstreamRunner, Protocol):
-    """An ``UpstreamRunner`` that can also stream the body without buffering (§08 E2.4).
+    """An ``UpstreamRunner`` that can also stream the body without buffering.
 
     ``stream`` is an **async context manager**: it dispatches the request, yields
     a :class:`StreamingResult` once the status/headers are in, and — critically —

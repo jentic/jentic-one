@@ -1,6 +1,6 @@
 [project]
 name = "jentic-one"
-version = "0.31.1"
+version = "0.38.0"
 description = "Jentic One"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,7 +18,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",
     "opentelemetry-exporter-prometheus>=0.44b0",
     "opentelemetry-instrumentation-asyncpg>=0.44b0",
-    "opentelemetry-instrumentation-fastapi>=0.44b0",
+    "opentelemetry-instrumentation-fastapi>=0.65b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.44b0",
     "opentelemetry-sdk>=1.20",
     "prometheus-client>=0.20.0",
@@ -32,6 +32,8 @@ dependencies = [
     "cryptography>=50.0.0",
     "h2>=4.4.1",
     "opentelemetry-instrumentation-httpx>=0.44b0",
+    "python-multipart>=0.0.32",
+    "mcp>=2.1.1",
 ]
 
 [project.optional-dependencies]
@@ -87,7 +89,6 @@ dev = [
     # the dev env always installs it so the state-backend unit tests (which build
     # the redis backend) run without needing the extra enabled explicitly.
     "redis>=8.0.0",
-    "python-multipart>=0.0.32",
 ]
 
 # Conventional-commit enforcement (pure Python — no Node needed). Fires for

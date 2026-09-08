@@ -107,9 +107,10 @@ func MissingPrereqs() []Prereq {
 
 // ConfinementAvailable reports whether this machine can run a locked-down agent
 // session, and if not, a short human-readable reason. It is the launch-time gate
-// (see run.go): confinement is REQUIRED, so an unsatisfied prerequisite here means
-// the launch is refused. It shares AgentUserPrereqs with the setup-time gate so
-// the two can never disagree about what this machine can do.
+// (see localagentcmd/run.go): confinement is REQUIRED, so an unsatisfied
+// prerequisite here means the launch is refused. It shares AgentUserPrereqs
+// with the setup-time gate so the two can never disagree about what this
+// machine can do.
 func ConfinementAvailable() (bool, string) {
 	for _, p := range MissingPrereqs() {
 		return false, p.Reason

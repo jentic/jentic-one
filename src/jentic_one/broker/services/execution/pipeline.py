@@ -7,8 +7,8 @@ root — one pipeline, two callers").
 
 The path is an **ordered chain of small stages**, not a god-method, so every
 deferred capability slots in as a new stage / runner decorator at a defined
-extension point without rewriting the core (plan.md "the execution path is an
-ordered interceptor chain"):
+extension point without rewriting the core (the execution path is an
+ordered interceptor chain):
 
 - request/transport envelope → the ``UpstreamRunner`` (+ future
   idempotency/retry/circuit/deadline decorators wrapping it);
@@ -16,9 +16,8 @@ ordered interceptor chain"):
   the immutable ``ExecutionOutcome`` (error-origin/agent_directive enrichment,
   opt-in normalize_errors, opt-in rewrite_navigation).
 
-PR-A1 ships the base ``HttpRunner`` and the error-origin enrichment stage; later
-PRs add decorators/stages additively. An arch test asserts the router/worker hold
-no inline envelope/post-processing logic.
+Decorators/stages are added additively. An arch test asserts the router/worker
+hold no inline envelope/post-processing logic.
 """
 
 from __future__ import annotations
@@ -64,7 +63,7 @@ def enrich_error_origin(outcome: ExecutionOutcome) -> ExecutionOutcome:
 
     Header-only enrichment (the ``Jentic-Error-Origin`` header is added at
     response assembly); the body is left verbatim in default passthrough mode
-    (B-002). The opt-in ``normalize_errors`` post-processor (§6b) is what rewrites
+    (B-002). The opt-in ``normalize_errors`` post-processor is what rewrites
     the body — added in a later PR as another stage.
     """
     if outcome.error_origin is not None:
@@ -83,17 +82,17 @@ def build_runner(
 ) -> UpstreamRunner:
     """Compose the always-on + capability-gated execution-envelope decorators.
 
-    The §11 composition root (the "build_pipeline" sketch). ``base`` is the
+    The composition root (the "build_pipeline" sketch). ``base`` is the
     transport runner with any already-applied always-on layers (today: the
     optional :class:`CircuitBreakerRunner`, applied in the app lifespan). This
-    adds the capability-gated **retry** loop (§09 E4.1) and then the **overall
+    adds the capability-gated **retry** loop and then the **overall
     deadline** as the *outermost* always-on layer, so the wall-clock budget
     bounds the entire envelope — outside the retry loop, which is itself outside
     the breaker:
 
         DeadlineRunner( RetryRunner( CircuitBreakerRunner( HttpRunner ) ) )
 
-    **Capability gating (§11 RN-0.3 "envelope split by capability").** The retry
+    **Capability gating ("envelope split by capability").** The retry
     layer is added only when the runner *can* safely retry **and** the operator
     has it enabled — ``caps.supports_retries and retry.enabled``. ``caps`` is the
     capability profile of the underlying transport runner; when omitted it is

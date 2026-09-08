@@ -8,13 +8,18 @@ this facade.
 from __future__ import annotations
 
 import base64
+import hashlib
 
 from cryptography.hazmat.primitives.asymmetric.ec import (
     SECP256R1,
     EllipticCurvePrivateKey,
     EllipticCurvePublicKey,
 )
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    PublicFormat,
+    load_pem_private_key,
+)
 
 from jentic_one.shared.config import SigningKeyConfig
 
@@ -28,6 +33,13 @@ def load_es256_private_key(key_config: SigningKeyConfig) -> EllipticCurvePrivate
     if not isinstance(key.curve, SECP256R1):
         raise ValueError(f"Key '{key_config.kid}' must use P-256 curve for ES256")
     return key
+
+
+def signing_key_spki_fingerprint(pem: str) -> str:
+    """SHA-256 fingerprint of the public-key SPKI, stable across PEM encodings."""
+    key = load_pem_private_key(pem.encode(), password=None)
+    spki = key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    return hashlib.sha256(spki).hexdigest()
 
 
 def ec_public_key_to_jwk(pub: EllipticCurvePublicKey, kid: str) -> dict[str, str]:

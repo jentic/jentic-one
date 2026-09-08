@@ -1,6 +1,6 @@
-"""Arch test: the async worker holds no inline upstream dispatch (RN-0).
+"""Arch test: the async worker holds no inline upstream dispatch.
 
-"One pipeline, two callers" (§00 / §05 / §11 RN-0.3) requires the async worker
+"One pipeline, two callers": the design requires the async worker
 to run upstream calls through the **shared** ``BrokerExecutionPipeline`` (via the
 injected ``UpstreamExecutor``), not a second raw-``httpx`` path. This test fails
 if ``shared/jobs/execution_handler.py`` ever reintroduces ``httpx`` (or any

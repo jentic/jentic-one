@@ -1,6 +1,7 @@
 package install
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -252,6 +253,9 @@ func TestRenderTelemetryDefaultsOff(t *testing.T) {
 	if _, ok := tel["instance_id"]; ok {
 		t.Errorf("did not expect instance_id when telemetry is off, got %v", tel["instance_id"])
 	}
+	if _, ok := tel["host_os"]; ok {
+		t.Errorf("did not expect host_os when telemetry is off, got %v", tel["host_os"])
+	}
 }
 
 func TestRenderTelemetryOptedIn(t *testing.T) {
@@ -267,6 +271,12 @@ func TestRenderTelemetryOptedIn(t *testing.T) {
 	}
 	if tel["instance_id"] != "inst-abc-123" {
 		t.Errorf("telemetry.instance_id = %v, want inst-abc-123", tel["instance_id"])
+	}
+	// The CLI runs on the operator's machine, so runtime.GOOS here IS the host
+	// OS — stamping it is what keeps the backend's per-boot OS report accurate
+	// when the app itself runs inside Docker (where it would detect linux).
+	if tel["host_os"] != runtime.GOOS {
+		t.Errorf("telemetry.host_os = %v, want %v", tel["host_os"], runtime.GOOS)
 	}
 }
 

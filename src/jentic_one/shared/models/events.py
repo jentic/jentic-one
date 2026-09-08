@@ -1,6 +1,9 @@
 """Event-related enums shared across modules."""
 
+import platform
 from enum import StrEnum
+
+from jentic_one.shared.models.actors import Origin
 
 
 class EventSeverity(StrEnum):
@@ -90,6 +93,41 @@ class EventType:
     # ``AccessRequestService._advise_unserved_bind_references``).
     TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
 
+    # --- Local-MCP transport events (issue #1177) -------------------------
+    # Emitted once per MCP session UUID on the first authenticated request
+    # that carries both the X-Jentic-Session-Id header and a `jentic-mcp/`
+    # User-Agent (the UA — not the header — marks the session as MCP: plain
+    # CLI calls carry the header too). The internal event's `data` holds the
+    # full clientInfo name/version, the transport, and the session UUID (the
+    # dedupe key); the telemetry wire carries at most the closed McpClient tag.
+    MCP_SESSION_STARTED = "mcp.session_started"
+    # Emitted when an MCP config entry is written for an agent runtime
+    # (`jentic setup` / `jentic skill init`). Runtime rides as the closed
+    # McpConfigRuntime tag. The emit path is landed separately (see the
+    # lane-D plan): this constant + the tag enum land first.
+    MCP_CONFIG_REGISTERED = "mcp.config_registered"
+
+    # --- Interactive OAuth for MCP clients --------
+    # Emitted by the anonymous DCR front door (POST /oauth-clients) when a new
+    # client row lands in the registry. requires_action=True when the row lands
+    # `pending` (an admin must approve/deny it); auto-approved rows (D9) emit
+    # with requires_action=False. Internal-only: not on the telemetry allowlist.
+    OAUTH_CLIENT_REGISTERED = "oauth_client.registered"
+    # Emitted by the admin `:approve` verb (D7) — including re-approval of a
+    # previously denied client. Internal-only, like OAUTH_CLIENT_REGISTERED.
+    OAUTH_CLIENT_APPROVED = "oauth_client.approved"
+    # Emitted at consent-approve for a `consent_model='agent'` client: a
+    # fresh `oauth_client_grants` row binds the client to one of the
+    # consenting user's agents. Grant creation is deliberately LOUD (the
+    # loud-attachment posture) — it surfaces as a user-visible
+    # notification, not just an audit row. requires_action=False: consent WAS
+    # the decision. Internal-only: not on the telemetry allowlist.
+    OAUTH_GRANT_CREATED = "oauth_grant.created"
+    # Emitted by grant `:revoke` — the per-grant kill switch. The
+    # sweep of `oauth_grant_id`-stamped token rows rides in the same
+    # transaction. Internal-only, like OAUTH_GRANT_CREATED.
+    OAUTH_GRANT_REVOKED = "oauth_grant.revoked"
+
     ALL: frozenset[str] = frozenset(
         {
             IMPORT_COMPLETED,
@@ -131,6 +169,12 @@ class EventType:
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
             TOOLKIT_BINDING_UNSERVED,
+            MCP_SESSION_STARTED,
+            MCP_CONFIG_REGISTERED,
+            OAUTH_CLIENT_REGISTERED,
+            OAUTH_CLIENT_APPROVED,
+            OAUTH_GRANT_CREATED,
+            OAUTH_GRANT_REVOKED,
         }
     )
 
@@ -186,18 +230,128 @@ class ImportFailReason(StrEnum):
     FETCH = "fetch"
 
 
+class HostOs(StrEnum):
+    """Closed-enum tag naming the host OS family, sent once per boot.
+
+    Attached only to ``instance_booted`` — the lifecycle event emitted on every
+    startup — so the OS rides on one request per boot under the same opaque
+    instance id, and on no other event. Per-boot (rather than once-ever)
+    matches how comparable products report environment facts (n8n's "Instance
+    started", GitLab's Service Ping, Grafana's usage report) and lets the
+    dimension self-heal: a lost request or a config moved to another machine
+    is corrected on the next boot.
+
+    Detection order matters because the recommended install runs the backend in
+    Docker, where ``platform.system()`` reports the *container's* kernel
+    (always Linux), not the operator's machine. The onboarding CLI runs on the
+    host, so it stamps ``telemetry.host_os`` (from Go's ``runtime.GOOS``) into
+    the generated config; ``resolve`` prefers that and only falls back to
+    runtime detection for hand-rolled configs. Anything unrecognised collapses
+    to ``OTHER``, so no free-form platform string can reach the wire.
+    """
+
+    LINUX = "linux"
+    DARWIN = "darwin"
+    WINDOWS = "windows"
+    OTHER = "other"
+
+    @classmethod
+    def current(cls) -> "HostOs":
+        """Classify the running platform into the closed set."""
+        system = platform.system().lower()
+        try:
+            return cls(system)
+        except ValueError:
+            return cls.OTHER
+
+    @classmethod
+    def resolve(cls, configured: str | None) -> "HostOs":
+        """Prefer the install-time config value, else detect at runtime.
+
+        ``configured`` is the raw ``telemetry.host_os`` string; surrounding
+        whitespace is forgiven (a quoted hand-edit like ``" darwin "``), but a
+        value outside the closed set degrades to OTHER rather than falling back
+        to runtime detection — a stamped-but-garbled value must not silently
+        become the container's OS.
+        """
+        if configured is None or not configured.strip():
+            return cls.current()
+        try:
+            return cls(configured.strip().lower())
+        except ValueError:
+            return cls.OTHER
+
+
+class McpClient(StrEnum):
+    """Closed-enum tag naming the MCP client runtime behind a session.
+
+    Attached only to ``mcp_session_started``. Classified from the clientInfo
+    name the MCP server relays in its User-Agent
+    (``jentic-mcp/<version> (<client>/<clientversion>)``) — the raw string
+    never reaches the telemetry wire: anything outside the closed set (or an
+    absent clientInfo — it is a SHOULD in the MCP spec) collapses to ``OTHER``.
+    The full name/version still lands in the internal event's ``data`` for the
+    UI (two-plane pattern).
+    """
+
+    CLAUDE = "claude"
+    CURSOR = "cursor"
+    CODEX = "codex"
+    OTHER = "other"
+
+    @classmethod
+    def from_client_name(cls, name: str | None) -> "McpClient":
+        """Classify a raw clientInfo name into the closed set.
+
+        Substring matching (lowercased) so vendor variants ("Claude Desktop",
+        "claude-code", "Cursor IDE") map to their family without an ever-growing
+        alias table; unknowns collapse to ``OTHER``.
+        """
+        if not name:
+            return cls.OTHER
+        lowered = name.strip().lower()
+        for member in (cls.CLAUDE, cls.CURSOR, cls.CODEX):
+            if member.value in lowered:
+                return member
+        return cls.OTHER
+
+
+class McpConfigRuntime(StrEnum):
+    """Closed-enum tag naming the agent runtime an MCP config entry targets.
+
+    Attached only to ``mcp_config_registered`` — one event per runtime whose
+    config file/entry ``jentic setup``/``jentic skill init`` writes. A closed
+    set (never the raw runtime string) so the config-written → first-session →
+    first-execute funnel stays property-free on the wire.
+    """
+
+    CLAUDE_DESKTOP = "claude_desktop"
+    CLAUDE_CODE = "claude_code"
+    CURSOR = "cursor"
+    CODEX = "codex"
+    OTHER = "other"
+
+
 #: Union of every closed-enum tag type. A tag on the wire is always a member of
 #: one of these — there is deliberately no free-form variant.
-EventTag = ErrorSource | SpecSource | ImportFailReason
+EventTag = (
+    ErrorSource | SpecSource | ImportFailReason | HostOs | Origin | McpClient | McpConfigRuntime
+)
 
 
-#: Which closed-enum tag type each event may carry. ``emit_event`` validates
-#: supplied tags against this map: a tag whose type is not allowed for the event
+#: Which closed-enum tag types each event may carry. ``emit_event`` validates
+#: supplied tags against this map: a tag whose type is not in the event's tuple
 #: is dropped (with a logged warning) and the event still emits. An event absent
-#: from this map accepts no tags.
-EVENT_TAGS: dict[str, type[StrEnum]] = {
-    EventType.EXECUTION_FAILED: ErrorSource,
-    EventType.CREDENTIAL_REFRESH_FAILED: ErrorSource,
-    EventType.IMPORT_COMPLETED: SpecSource,
-    EventType.IMPORT_FAILED: ImportFailReason,
+#: from this map accepts no tags. Values are tuples so an event can carry tags
+#: from more than one closed enum (e.g. ``EXECUTION_FAILED`` splits by both
+#: error source and request origin); ``isinstance`` accepts the tuple directly.
+EVENT_TAGS: dict[str, tuple[type[StrEnum], ...]] = {
+    EventType.EXECUTION_COMPLETED: (Origin,),
+    EventType.EXECUTION_FAILED: (ErrorSource, Origin),
+    EventType.CREDENTIAL_REFRESH_FAILED: (ErrorSource,),
+    EventType.IMPORT_COMPLETED: (SpecSource,),
+    EventType.IMPORT_FAILED: (ImportFailReason,),
+    EventType.INSTANCE_BOOTED: (HostOs,),
+    EventType.MCP_SESSION_STARTED: (McpClient,),
+    EventType.MCP_CONFIG_REGISTERED: (McpConfigRuntime,),
 }

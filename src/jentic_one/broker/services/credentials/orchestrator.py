@@ -1,4 +1,4 @@
-"""Credential orchestration — the broker-side ``CredentialInjector`` (§02b).
+"""Credential orchestration — the broker-side ``CredentialInjector``.
 
 Extracts the resolve → refresh → inject sequence out of the web edge so the
 **same** path is shared by the sync router and the async worker (via the shared
@@ -6,7 +6,7 @@ Extracts the resolve → refresh → inject sequence out of the web edge so the
 
 The service is transport-neutral in shape (it returns a shared ``InjectedAuth``)
 but owns the credential-error → broker-domain-exception mapping so both
-call-sites get identical problem+json semantics (plan.md §7.3 home).
+call-sites get identical problem+json semantics.
 """
 
 from __future__ import annotations
@@ -206,7 +206,7 @@ class CredentialService:
             # indistinguishable from two concurrent requests and permanently skew
             # the funnel (see #446 review, item 3). The upstream-rejected
             # (auth_thirdparty) half is not observable here — inject() prepares
-            # auth but never makes the upstream call (see plan §446 item 14b).
+            # auth but never makes the upstream call.
             await self._emit_credential_failure(
                 type=EventType.CREDENTIAL_REFRESH_FAILED,
                 summary=f"Credential refresh failed for '{api.vendor}'",

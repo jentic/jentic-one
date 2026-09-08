@@ -190,8 +190,8 @@ async def test_resolve_oauth2_credential_eager_loads_token(
 ) -> None:
     """OAuth2 credential resolution eagerly loads oauth_token (no MissingGreenlet).
 
-    Regression test for #549: Credential.oauth_token previously used the default
-    lazy='select' strategy which raises MissingGreenlet under AsyncSession.
+    Regression test for #549: the default
+    lazy='select' strategy would raise MissingGreenlet under AsyncSession.
     """
     encrypted_access = integration_context.encryption.encrypt("access-tok-123")
     encrypted_refresh = integration_context.encryption.encrypt("refresh-tok-456")

@@ -1,4 +1,4 @@
-"""Pure parsing of the multi-valued ``Jentic-Revision`` pin header (§10).
+"""Pure parsing of the multi-valued ``Jentic-Revision`` pin header.
 
 Domain layer (00-overview): no FastAPI/httpx/DB imports. The header is parsed at
 the web edge *before* any registry lookup so a malformed value is rejected with a

@@ -94,7 +94,7 @@ jobs:
               # installer config bindings FROM these backend-owned sources — a
               # PR that changes only a spec/schema (without touching cli/)
               # would otherwise merge with a stale generated client and break
-              # the post-merge main run (the exact #1013 incident; GEN-3).
+              # the post-merge main run (the exact #1013 incident).
               - 'openapi/control/**'
               - 'openapi/broker/**'
               - 'config/config-schema.json'
@@ -102,7 +102,7 @@ jobs:
               - 'tools/install.sh'
               - 'tests/tools/**'
             e2e-install:
-              # CLI-V2 Phase 9 (impl/9.0 §9.4): the cross-OS install + smoke
+              # The cross-OS install + smoke
               # matrix. The Linux leg does a real Docker install; macOS/Windows
               # build + offline-smoke the binaries. Any input that changes the
               # binaries, the installer, or the smoke contract must re-run it.
@@ -705,7 +705,7 @@ jobs:
       - name: Test (race)
         run: go test -race ./...
 
-      # CLI-V2 Phase 1 (themes/cli-v2/impl/2.1): the typed OpenAPI clients and
+      # The typed OpenAPI clients and
       # their spec companions under client/generated/ are generated from the two
       # committed specs (openapi/{control,broker}). This regenerates them and
       # fails on any diff, so `client/generated == codegen(committed specs)` — a
@@ -715,7 +715,7 @@ jobs:
       - name: Generated CLI client up to date
         run: make check-cli-gen
 
-      # CLI-V2 Phase 6 (themes/cli-v2/impl/6.0): jenticctl's installer flags,
+      # jenticctl's installer flags,
       # wizard, and doctor are generated from the backend config schema
       # (config/config-schema.json, itself drift-gated in the backend job).
       # This re-vendors the schema and regenerates the Go struct, failing on any
@@ -724,7 +724,7 @@ jobs:
       - name: Generated installer config up to date
         run: make check-ctl-gen
 
-      # Phase 0 CLI-V2 guardrails (themes/cli-v2/impl/0.0): architectural
+      # CLI guardrails: architectural
       # boundary tests and the V1 characterization (golden) contract. Both are
       # already covered by `go test -race ./...` above, but naming them as an
       # explicit step surfaces guardrail failures distinctly in the CI log
@@ -734,7 +734,7 @@ jobs:
           make test-arch
           make test-golden
 
-      # External-consumer contract (themes/cli-v2/impl/1.1 §1, impl/7.0 §1): a
+      # External-consumer contract: a
       # throwaway out-of-tree module `go get`s the SDK, imports client/..., and
       # must build with a dependency graph free of cobra/charmbracelet/internal.
       # This is the concrete "usable from outside easily" guarantee — stronger
@@ -798,7 +798,7 @@ jobs:
             go-cli-smoke-${{ runner.os }}-${{ hashFiles('cli/go.sum') }}-
             go-cli-smoke-${{ runner.os }}-
 
-      # CLI-V2 Phase 9 (impl/9.0 §9.1 W2): the CLI must build for every OS we ship
+      # The CLI must build for every OS we ship
       # binaries for. macOS + Linux already cross-compile; Windows regressed once
       # on a Unix-only syscall (config.lockConfig), so gate it here — a future
       # unguarded syscall can never silently break the Windows/macOS binary again.
@@ -878,7 +878,7 @@ jobs:
       - name: Run installer tests
         run: bash tests/tools/install_test.sh
 
-  # CLI-V2 Phase 9 (impl/9.0 §9.4): cross-platform install + smoke matrix.
+  # Cross-platform install + smoke matrix.
   #   - ubuntu-24.04:  full headless Docker install + live-stack smoke (deep).
   #   - macos-latest:  build via install.sh (no chain-install) + offline smoke.
   #   - windows-latest: build the binaries + offline smoke (install.sh is
@@ -946,8 +946,8 @@ jobs:
 
       # ---- Linux: full headless Docker install, then live-stack smoke ----
       # This leg is hard-gating: it exercises the real `jenticctl install` deep
-      # Docker path end to end. It relies on the install-hardening now owned by
-      # this branch (ported from the deleted old-CLI #998): schema bootstrap runs
+      # Docker path end to end. It relies on the install hardening (#998):
+      # schema bootstrap runs
       # idempotently inside the Alembic migration runner (no fragile run-once
       # docker-entrypoint-initdb.d script, so a half-init volume can heal), the
       # managed Postgres is NOT published to the host by default, and every

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { page, cdp } from '@vitest/browser/context';
-import type { ReactElement } from 'react';
+import { page, cdp } from 'vitest/browser';
+import { act, type ReactElement } from 'react';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -23,6 +23,7 @@ import {
 	severityForWire,
 	streamDayKey,
 	unacknowledgedFailureCount,
+	useAgentStream,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
 	type StreamEvent,
@@ -594,12 +595,13 @@ describe('AgentRail — shell-mounted live surface', () => {
 	});
 
 	it('does not hold the feed empty when the cursor rests on the rail during mount', async () => {
-		// Regression: `mouseenter` before the backlog fetch resolves used to
-		// snapshot ZERO visible ids, so every seeded event was held back and the
-		// feed sat at "Holding · 4" with no rows. This is exactly what happens in
-		// browser-mode CI, where the shared pointer can be parked over the rail
-		// when the iframe mounts (and in prod when a user's cursor rests there
-		// during page load). An empty feed must never freeze.
+		// Regression pin: `mouseenter` before the backlog fetch resolves must
+		// not snapshot ZERO visible ids — that would hold back every seeded
+		// event, leaving the feed at "Holding · 4" with no rows. This is exactly
+		// what happens in browser-mode CI, where the shared pointer can be
+		// parked over the rail when the iframe mounts (and in prod when a
+		// user's cursor rests there during page load). An empty feed must
+		// never freeze.
 		renderRail(<AgentRail />);
 		const aside = await screen.findByRole('complementary', { name: 'Agent rail' });
 		fireEvent.mouseEnter(aside);
@@ -1135,6 +1137,164 @@ describe('AgentRail — shell-mounted live surface', () => {
 	});
 });
 
+describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
+	const OAUTH_CLIENT_ID = 'oc_dcr_app';
+
+	function registeredWire(over: Partial<EventResponse> = {}): EventResponse {
+		return wireEvent({
+			event_id: 'evt_oauth_registered',
+			type: 'oauth_client.registered',
+			severity: 'info' as EventResponse['severity'],
+			summary: 'OAuth client registered: MCP App',
+			requires_action: true,
+			data: { oauth_client_id: OAUTH_CLIENT_ID },
+			...over,
+		});
+	}
+
+	it('kindForType buckets the oauth_client.* / oauth_grant.* namespaces into oauth', () => {
+		expect(kindForType('oauth_client.registered')).toBe('oauth');
+		expect(kindForType('oauth_client.approved')).toBe('oauth');
+		expect(kindForType('oauth_grant.created')).toBe('oauth');
+		expect(kindForType('oauth_grant.revoked')).toBe('oauth');
+	});
+
+	it('inlineActionsFor offers Review (→ Settings queue) + Acknowledge for a DCR registration', () => {
+		const ev = makeEvent({
+			type: 'oauth_client.registered',
+			kind: 'oauth',
+			requiresAction: true,
+			tokens: { oauth_client_id: OAUTH_CLIENT_ID },
+			groupKey: `oauth:oauth_client.registered:${OAUTH_CLIENT_ID}`,
+		});
+		const actions = inlineActionsFor(ev);
+		const review = actions.find((a) => a.kind === 'view_oauth_queue');
+		expect(review?.label).toBe('Review');
+		// The D7 approve/deny verbs live on the Settings approval queue tab.
+		expect(review?.href?.(ev)).toBe('/settings?tab=queue');
+		expect(actions.map((a) => a.kind)).toContain('acknowledge');
+		// Once settled the actionable slot goes passive.
+		expect(inlineActionsFor({ ...ev, acknowledged: true }).map((a) => a.kind)).not.toContain(
+			'view_oauth_queue',
+		);
+	});
+
+	it('primaryDestinationFor deep-links grant events to the agent, client events to the queue', () => {
+		// A grant row names the bound agent — its Connected-clients panel is the
+		// §4.8 surface that lists (and can revoke) the grant.
+		const grant = makeEvent({
+			type: 'oauth_grant.created',
+			kind: 'oauth',
+			tokens: { grant_id: 'ocg_1', agent_id: 'agt_42' },
+		});
+		expect(primaryDestinationFor(grant)).toBe('/agents/agt_42');
+		// A client lifecycle row has no agent — it goes to the approval queue.
+		const registered = makeEvent({
+			type: 'oauth_client.registered',
+			kind: 'oauth',
+			tokens: { oauth_client_id: OAUTH_CLIENT_ID },
+		});
+		expect(primaryDestinationFor(registered)).toBe('/settings?tab=queue');
+	});
+
+	it('settles the actionable registration row when the APPROVE event arrives over SSE', async () => {
+		// Backlog: the actionable registration alone. SSE then delivers the
+		// approve decision — the live mirror must settle the registered row
+		// (drop its Review prompt) without waiting for a backlog refetch.
+		const registered = registeredWire();
+		const approved = wireEvent({
+			event_id: 'evt_oauth_approved',
+			type: 'oauth_client.approved',
+			summary: 'OAuth client approved: MCP App',
+			data: { oauth_client_id: OAUTH_CLIENT_ID },
+		});
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({ data: [registered], has_more: false, next_cursor: null }),
+			),
+			http.get('/events/stream', () => {
+				const frames = [registered, approved]
+					.map(
+						(e) =>
+							`event: ${e.type}\nid: ${e.event_id}\ndata: ${JSON.stringify(e)}\n\n`,
+					)
+					.join('');
+				const encoder = new TextEncoder();
+				const stream = new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode(frames));
+					},
+				});
+				return new HttpResponse(stream, {
+					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+				});
+			}),
+		);
+		render(
+			<QueryClientProvider
+				client={
+					new QueryClient({
+						defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+					})
+				}
+			>
+				<MemoryRouter initialEntries={['/dashboard']}>
+					<AgentStreamProvider live={true}>
+						<Routes>
+							<Route path="/*" element={<AgentRail />} />
+						</Routes>
+					</AgentStreamProvider>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		// Both rows land in the feed…
+		await screen.findByText(/OAuth client registered: MCP App/i);
+		await screen.findByText(/OAuth client approved: MCP App/i);
+		// …and the registration's actionable Review prompt is gone (settled).
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument(),
+		);
+	});
+
+	it('settles the actionable registration row on DENY via the context (no SSE event exists)', async () => {
+		// A deny emits no oauth_client.* event (§4.8/D7) — the deny mutation
+		// calls `settleOAuthClientRegistration` itself. Drive the context handle
+		// exactly like `useDenyOAuthClient` does and watch the row settle.
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({
+					data: [registeredWire()],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		let settle: ((oauthClientId: string) => void) | undefined;
+		function SettleProbe() {
+			settle = useAgentStream().settleOAuthClientRegistration;
+			return null;
+		}
+		renderRail(
+			<>
+				<AgentRail />
+				<SettleProbe />
+			</>,
+		);
+		await screen.findByRole('button', { name: 'Review' });
+
+		// A settle for a DIFFERENT client must not touch the row.
+		act(() => settle?.('oc_other_client'));
+		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
+
+		act(() => settle?.(OAUTH_CLIENT_ID));
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument(),
+		);
+		// The row itself stays in the feed — only its actionable slot settled.
+		expect(screen.getByText(/OAuth client registered: MCP App/i)).toBeInTheDocument();
+	});
+});
+
 describe('ToastHost — scoped transient notifications', () => {
 	it('does not render any toast on mount with a backlog-only stream', async () => {
 		renderRail(<ToastHost />);
@@ -1155,7 +1315,7 @@ describe('access-request repository — real contract against the mock', () => {
 		expect(ar.actor_id).toBeTruthy();
 		expect(ar.requested_by).toBeTruthy();
 		expect(ar.actor_id).not.toBe(ar.requested_by);
-		// Required AccessRequestResponse fields the mock previously omitted.
+		// Required AccessRequestResponse fields the mock must include.
 		expect(ar.filed_at).toBeTruthy();
 		expect(ar.expires_at).toBeTruthy();
 		expect((ar as unknown as { approve_url?: string }).approve_url).toMatch(/access-requests/);

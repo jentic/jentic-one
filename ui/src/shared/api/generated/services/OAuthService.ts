@@ -2,17 +2,81 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { Body_consentSubmit } from '../models/Body_consentSubmit';
+import type { Body_loginSubmit } from '../models/Body_loginSubmit';
 import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
+import type { OAuthApprovalDecisionRequest } from '../models/OAuthApprovalDecisionRequest';
+import type { OAuthApprovalStatusResponse } from '../models/OAuthApprovalStatusResponse';
+import type { OAuthGrantAdminListResponse } from '../models/OAuthGrantAdminListResponse';
 import type { RevokeRequest } from '../models/RevokeRequest';
-import type { TokenRequest } from '../models/TokenRequest';
 import type { TokenResponse } from '../models/TokenResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class OAuthService {
+    /**
+     * List OAuth grants
+     * List consent→agent grants across all clients and agents.
+     *
+     * The admin cross-view over the grant registry: filter by client, agent,
+     * consenting user, or status. Each item carries the client's display name
+     * and redirect-URI origin plus the consenting ``user_id`` — after an agent
+     * ownership transfer the grant stays with the original consenter, so this
+     * column is how an admin spots stranded grants.
+     * @returns OAuthGrantAdminListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listOauthGrants({
+        clientId,
+        agentId,
+        userId,
+        status,
+        limit = 50,
+        cursor,
+    }: {
+        /**
+         * Filter by the client's public client_id.
+         */
+        clientId?: (string | null),
+        /**
+         * Filter by bound agent.
+         */
+        agentId?: (string | null),
+        /**
+         * Filter by consenting user.
+         */
+        userId?: (string | null),
+        /**
+         * Filter by grant lifecycle state.
+         */
+        status?: ('active' | 'revoked' | null),
+        limit?: number,
+        cursor?: (string | null),
+    }): CancelablePromise<OAuthGrantAdminListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/oauth-grants',
+            query: {
+                'client_id': clientId,
+                'agent_id': agentId,
+                'user_id': userId,
+                'status': status,
+                'limit': limit,
+                'cursor': cursor,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
     /**
      * Authorize Endpoint
      * RFC 6749 Authorization endpoint with PKCE (S256 only).
@@ -88,6 +152,183 @@ export class OAuthService {
         });
     }
     /**
+     * Local-account login form (authorization flow)
+     * Render the local-account login form for an in-flight ``/authorize`` request.
+     *
+     * Verifies the ``ls`` signature/TTL/purpose **before** rendering — an
+     * expired, forged, or wrong-purpose token never gets a form — re-checks the
+     * D7 client gate (a client denied or deactivated while the user holds the
+     * ``ls`` must not be asked for a password), rejects an already-spent ``ls``,
+     * and embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static loginPage({
+        ls,
+    }: {
+        /**
+         * Signed authorization-flow state (carry-through token)
+         */
+        ls: string,
+    }): CancelablePromise<string> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/login',
+            query: {
+                'ls': ls,
+            },
+            errors: {
+                400: `Bad Request`,
+                404: `Local-account login is unavailable (\`auth.local_login.enabled=false\`, or an external IdP is configured — \`auth.idp.enabled=true\` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable.`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Local-account login submit (authorization flow)
+     * Authenticate the local account and rejoin the authorization flow.
+     *
+     * Success never mints a JWT — it flows straight into code issuance (platform
+     * client) or the consent handle (registered third-party client), exactly
+     * where the IdP callback rejoins, and burns the single-use ``ls``.
+     * Credential failures re-render the form with one generic message: lockout
+     * state, unknown email, and wrong password are indistinguishable (no
+     * user-enumeration response oracle), while the shared
+     * ``AuthService.authenticate`` core still increments the failed-login count
+     * and applies the lockout threshold. An account flagged
+     * ``must_change_password`` authenticates but is told to rotate via the UI
+     * first — the OAuth plane must not hand a fully-scoped token to a
+     * temporary-password principal the UI would have boxed into
+     * change-password-only.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static loginSubmit({
+        formData,
+    }: {
+        formData: Body_loginSubmit,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/login',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
+            errors: {
+                400: `Bad Request`,
+                404: `Local-account login is unavailable (\`auth.local_login.enabled=false\`, or an external IdP is configured — \`auth.idp.enabled=true\` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable.`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Revoke OAuth grant
+     * Revoke a consent→agent grant — one of the three revocation kill radii.
+     *
+     * Allowed for the grant's owner (the consenting user) or an admin. Marks
+     * the grant ``revoked`` and revokes every outstanding access/refresh token
+     * minted under it in the same transaction; the live resolvers also re-check
+     * grant status on every verdict (belt + braces). The client's next token
+     * use or refresh fails closed. Idempotent on an already-revoked grant.
+     * @returns void
+     * @throws ApiError
+     */
+    public static revokeOauthGrant({
+        grantId,
+    }: {
+        grantId: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth-grants/{grant_id}:revoke',
+            path: {
+                'grant_id': grantId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Approve or deny a pending client inline (approval-pending page)
+     * Thin wrapper over the admin approval path for the approval-pending page.
+     *
+     * Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+     * / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+     * decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+     * same audit records, same D7 active/approval_status coupling; this endpoint
+     * only translates the signed state blob into the client row. CSRF posture
+     * matches the consent POST: no ambient credential is honored — the browser
+     * must explicitly present the SPA bearer token, which a cross-site form
+     * cannot do.
+     * @returns OAuthApprovalStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static approvalDecisionEndpoint({
+        requestBody,
+    }: {
+        requestBody: OAuthApprovalDecisionRequest,
+    }): CancelablePromise<OAuthApprovalStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/approval/decision',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Malformed, tampered, or expired approval-state blob.`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Poll client approval status (approval-pending page)
+     * Minimal tri-state poll for the approval-pending page.
+     *
+     * Anonymous but keyed by the signed approval-state blob — never a bare
+     * client_id, so the endpoint cannot be used to enumerate registrations. Any
+     * verification failure (bad signature, wrong purpose, expired ``iat``,
+     * malformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by
+     * re-running /authorize, which mints a fresh blob. The response carries ONLY
+     * the tri-state — no names, redirect URIs, or metadata.
+     * @returns OAuthApprovalStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static approvalStatusEndpoint({
+        st,
+    }: {
+        /**
+         * Signed approval-state blob minted by /authorize
+         */
+        st: string,
+    }): CancelablePromise<OAuthApprovalStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/oauth/approval/status',
+            query: {
+                'st': st,
+            },
+            errors: {
+                400: `Malformed, tampered, or expired approval-state blob.`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Authorize Oauth Callback
      * External IdP callback — exchanges upstream code and issues platform auth code.
      * @returns any Successful Response
@@ -107,6 +348,68 @@ export class OAuthService {
                 'code': code,
                 'state': state,
             },
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Consent Page
+     * Display the OAuth consent screen.
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static consentPage({
+        ch,
+    }: {
+        /**
+         * Opaque consent-flow handle
+         */
+        ch: string,
+    }): CancelablePromise<string> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/oauth/consent',
+            query: {
+                'ch': ch,
+            },
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Consent Submit
+     * Process the consent form submission. Mints the auth code only on approval.
+     *
+     * ``consent_token`` is the opaque handle emitted by the callback. It never
+     * leaves the state backend as anything more than an ID — the actual consent
+     * parameters (user_id, email, scopes, redirect_uri) live server-side and
+     * can't be tampered with or captured from browser history/proxy logs.
+     *
+     * ``agent_id`` is posted only by the agent-picker variant
+     * (``consent_model='agent'`` clients); it is validated and the scope math
+     * recomputed entirely server-side — the browser's selection is never
+     * trusted.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static consentSubmit({
+        formData,
+    }: {
+        formData: Body_consentSubmit,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/consent',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,
@@ -172,7 +475,34 @@ export class OAuthService {
     }
     /**
      * Revoke Endpoint
-     * Revoke a token (RFC 7009). Always returns 200.
+     * Revoke a token (RFC 7009). Always returns 200 for valid requests.
+     *
+     * Two client-authentication arms, negotiated on the request content type by
+     * ``_RevocationRoute`` (this function body IS the JSON arm — form-encoded
+     * requests never reach it):
+     *
+     * - **Form-encoded** (`application/x-www-form-urlencoded`, RFC 7009 §2.1 —
+     * the shape MCP OAuth clients send, G11): `token` + optional
+     * `token_type_hint` + `client_id`. Public (secret-less) clients
+     * authenticate by client_id **lineage binding** — the call revokes
+     * anything only when the token exists and was issued to that `client_id`;
+     * everything else is a 200 no-op (no token-validity oracle). Revoking an
+     * access token kills that token only; revoking a **refresh token is a full
+     * disconnect** — every token of the consent grant AND the grant row itself
+     * die, so reconnecting requires fresh consent (deliberately beyond the
+     * RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
+     * is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
+     * 64 KiB declared body length, and per-IP rate limited; its errors speak
+     * the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+     * - **JSON** (any other content type — the pre-G11 contract, byte-identical
+     * including 422 shapes): requires a platform bearer identity; revokes the
+     * caller's own token (access → that token, refresh → its family). Used by
+     * `jentic logout`.
+     *
+     * Revocation residual: a revoked **access** token dies on the control-plane
+     * resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
+     * may honour an already-cached verdict for up to 30 s — the same residual as
+     * the UI `:revoke` kill switch and the G10 transfer sweep.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -187,10 +517,12 @@ export class OAuthService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad Request`,
+                400: `Form-encoded (RFC 7009) requests only: missing \`token\` (RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): \`{"error": "invalid_request", "error_description": "..."}\`.`,
                 401: `Unauthorized`,
-                403: `Forbidden`,
+                404: `Form-encoded (RFC 7009) requests only: interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`), so the RFC 7009 arm answers the framework's plain route-not-found 404 (gate state unobservable — same posture as the anonymous DCR door). The bearer-authenticated JSON arm is not gated.`,
+                413: `Form-encoded (RFC 7009) requests only: declared Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect).`,
                 422: `Unprocessable Entity`,
+                429: `Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
@@ -205,7 +537,16 @@ export class OAuthService {
     public static tokenEndpoint({
         requestBody,
     }: {
-        requestBody: TokenRequest,
+        requestBody: {
+            assertion?: (string | null);
+            client_id?: (string | null);
+            client_secret?: (string | null);
+            code?: (string | null);
+            code_verifier?: (string | null);
+            grant_type: string;
+            redirect_uri?: (string | null);
+            refresh_token?: (string | null);
+        },
     }): CancelablePromise<TokenResponse> {
         return __request(OpenAPI, {
             method: 'POST',

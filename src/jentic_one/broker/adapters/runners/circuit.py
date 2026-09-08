@@ -1,6 +1,6 @@
 """``CircuitBreakerRunner`` — the per-upstream breaker as a runner decorator.
 
-Part of the always-on, transport-agnostic envelope (plan.md RN-0 / §11): the
+Part of the always-on, transport-agnostic envelope: the
 breaker wraps *any* ``UpstreamRunner`` rather than living as an inline branch in
 the handler, so the pipeline composes it without the edge knowing it is active.
 It keys on the upstream **host** (parsed from the request URL), reads the latch
@@ -98,7 +98,7 @@ class CircuitBreakerRunner:
 
     @asynccontextmanager
     async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
-        """Stream variant of :meth:`run` (§08 E2.4).
+        """Stream variant of :meth:`run`.
 
         Same breaker admission as the buffered path. Recording happens on
         **headers** (the status is known when the upstream stream opens), not on

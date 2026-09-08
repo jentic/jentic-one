@@ -55,7 +55,7 @@ from jentic_one.broker.core.headers import JenticHeader
 
 _PROBLEM_JSON = "application/problem+json"
 
-# Domain exception → HTTP status (plan.md §7.3 / 02-core-proxy error map).
+# Domain exception → HTTP status error map.
 STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     ActionDeniedError: 403,
     CredentialIdentityMismatchError: 403,

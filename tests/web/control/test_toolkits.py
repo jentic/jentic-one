@@ -133,8 +133,8 @@ def test_delete_toolkit(tk_admin_client: TestClient) -> None:
 def test_orphaned_agent_reads_bound_toolkit(bound_orphan_client: TestClient) -> None:
     """A bound agent that owns nothing gets 200 (not 404) on its bound toolkit.
 
-    Reproduces #665/#682: previously owner-only scoping returned 404 for an
-    orphaned agent even though it is actively bound to the toolkit.
+    Pins #665/#682: owner-only scoping must not return 404 for an
+    orphaned agent that is actively bound to the toolkit.
     """
     resp = bound_orphan_client.get("/toolkits/tk_target")
     assert resp.status_code == 200, resp.text

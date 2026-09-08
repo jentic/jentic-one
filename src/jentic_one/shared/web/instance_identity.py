@@ -74,6 +74,16 @@ class InstanceIdentityResponse(BaseModel):
             "resolved an id (e.g. telemetry disabled)."
         ),
     )
+    mcp_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether this instance serves the daemon-native Streamable HTTP MCP "
+            "endpoint at /mcp (server.mcp.enabled). Lets clients (notably the UI's "
+            "agent MCP card) advertise the HTTP transport only when it exists. Not "
+            "sensitive: the endpoint's enabled state is observable by probing /mcp "
+            "anyway."
+        ),
+    )
 
 
 def _public_instance_id(instance_id: str | None) -> str | None:
@@ -113,6 +123,7 @@ def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
         canonical_base_url=canonical_base_url,
         host=host,
         instance_id=_public_instance_id(ctx.instance_id),
+        mcp_enabled=ctx.config.server.mcp.enabled,
     )
 
 

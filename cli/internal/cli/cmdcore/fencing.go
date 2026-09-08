@@ -13,16 +13,23 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
+// LongRunningAnnotation marks a command whose lifetime is owned by its caller
+// (e.g. `jentic mcp`, a stdio server the MCP client spawns and keeps for the
+// whole session). The interceptor's non-interactive wall-clock deadline (see
+// installInterceptor) is skipped for these commands: it exists to bound a
+// SINGLE control-plane call, and applying it to a server process would kill
+// the session after 60s. Long-running commands own their per-call deadlines.
+const LongRunningAnnotation = "long-running"
+
 // installInterceptor wires the audience-aware root PersistentPreRunE (impl/3.2 §2)
 // onto a root command: resolve state -> resolve theme (Stage-0 mode gate) ->
 // construct the Audience -> ENFORCE FENCING -> inject Audience + ActiveState into
 // the context. It preserves the existing banner/nudge side effects.
 //
-// SCOPE (Phase 2): this enforces fencing and makes the Audience/ActiveState
-// available in the context; the shipped commands still render through the legacy
-// output path (the strangler-fig cutover to aud.Render is Phase 3). Resolution
-// failures are non-fatal for everything except an explicit fenced-in-agent-mode
-// block, so V1 behavior is preserved on un-migrated machines.
+// SCOPE: this enforces fencing and makes the Audience/ActiveState available in
+// the context. Resolution failures are non-fatal for everything except an
+// explicit fenced-in-agent-mode block, so machines with no XDG config still
+// work and config-creating commands stay bootstrap-safe.
 func installInterceptor(app *App, root *cobra.Command) {
 	// agentTimeout bounds a single control-plane call in non-interactive mode so a
 	// wedged server can't hang an agent forever (F3, review round-3 #7 /
@@ -44,15 +51,15 @@ func installInterceptor(app *App, root *cobra.Command) {
 	}
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Preserve the shipped banner + update nudge (previously PersistentPreRun).
+		// Preserve the shipped banner + update nudge.
 		app.banner(cmd)
 		app.maybeNudgeUpdate(cmd)
 
 		// 1. Resolve active state (SDK + legacy adapter). On failure, degrade to a
-		// default state rather than aborting — Phase 2 must not regress V1 for users
-		// with no XDG config, and config-creating commands are bootstrap-safe. The
-		// --context/--mode/--theme root flags land in Phase 3; the env fallbacks
-		// ($JENTIC_CONTEXT here, $JENTIC_MODE inside resolveMode) keep working when
+		// default state rather than aborting — users with no XDG config must not be
+		// blocked, and config-creating commands are bootstrap-safe. The
+		// --context/--mode/--theme root flags take precedence; the env fallbacks
+		// ($JENTIC_CONTEXT here, $JENTIC_MODE inside resolveMode) apply when
 		// the flags are unset.
 		contextOverride := flagValue(cmd, "context")
 		if contextOverride == "" {
@@ -142,9 +149,12 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// Control Plane would otherwise hang forever (the shared control client
 		// leaves http.Client.Timeout zero, deferring to per-call contexts that
 		// today carry no deadline). Human mode stays undeadlined so interactive
-		// prompts/paginators aren't cut off. The cancel is released in
-		// PersistentPostRunE above.
-		if state.Mode == clictx.ModeAgent || state.Mode == clictx.ModeServiceAccount {
+		// prompts/paginators aren't cut off. Long-running commands (annotation
+		// above) are exempt: their lifetime is caller-owned and they bound their
+		// own per-call contexts. The cancel is released in PersistentPostRunE
+		// above.
+		if (state.Mode == clictx.ModeAgent || state.Mode == clictx.ModeServiceAccount) &&
+			cmd.Annotations[LongRunningAnnotation] != "true" {
 			//nolint:gosec // G118: the cancel is stored in cancelTimeout and invoked in the root PersistentPostRunE above (one invocation runs one command to completion); a leaked timer would in any case be reclaimed at process exit.
 			ctx, cancelTimeout = context.WithTimeout(ctx, agentTimeout)
 		}

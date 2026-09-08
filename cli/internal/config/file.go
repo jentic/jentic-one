@@ -28,7 +28,9 @@ type FileConfig struct {
 	// BaseURL is the Jentic control-plane (auth surface) base URL used for agent
 	// registration and token minting.
 	BaseURL string `yaml:"base_url"`
-	// Broker is the would-be forward target (logged only in this POC).
+	// Broker is the broker (data-plane) target. Scheme and host are stored
+	// separately and assembled by ResolvedBrokerScheme/Host; the installer
+	// writes it to point the CLI at the local broker.
 	Broker BrokerConfig `yaml:"broker"`
 	// Telemetry holds the user's telemetry consent decision. HasConsented
 	// records whether the user has been asked; Enabled records their answer.

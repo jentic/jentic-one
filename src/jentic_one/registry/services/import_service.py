@@ -456,7 +456,7 @@ class ImportHandler:
         if overlay is None:
             # Could not safely re-resolve (no backing overlay, or an ambiguous lazy-link
             # set). Do NOT silently trust the enqueue-time id — a concurrent confirm may have
-            # made it stale. Fall back to it (no worse than pre-#940), but warn so the
+            # made it stale. Fall back to it (#940), but warn so the
             # wrong-overlay risk in this narrow window is observable rather than silent.
             logger.warning(
                 "overlay_supersede_target_unresolved",

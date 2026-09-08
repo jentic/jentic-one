@@ -180,9 +180,9 @@ func (h *HumanUX) renderResultLine(res Result) string {
 }
 
 // renderResultFields prints Result.Fields as indented themed field lines under
-// the status line (UX-3): previously humans got ONLY the one-liner while agent
-// mode carried the full envelope — e.g. `context view` dropped the
-// environment/identity/mode map that is the whole point of the command. Keys
+// the status line (UX-3): humans must get the full field map, not only the
+// one-liner — e.g. `context view`'s
+// environment/identity/mode map is the whole point of the command. Keys
 // are sorted for stable output; every value passes the same redaction layers as
 // the JSON path (key heuristics + string scrub), and non-scalar values render
 // as compact redacted JSON.

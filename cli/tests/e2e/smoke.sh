@@ -21,7 +21,7 @@ JENTICCTL="$BIN_DIR/jenticctl"
 # --live <base-url> enables the success-path assertions that only hold against a
 # running control plane (QA-2). Without it, only the offline binary/agent-surface
 # contract is checked — the same script therefore serves both the offline matrix
-# legs and the Linux live-stack leg, and the two no longer silently diverge.
+# legs and the Linux live-stack leg, so the two cannot silently diverge.
 LIVE_URL=""
 if [ "${2:-}" = "--live" ]; then
   LIVE_URL="${3:?--live requires a base URL}"
@@ -69,9 +69,9 @@ pass "jentic doctor --json parses and exits 0"
 
 # 3. jentic access whoami --json on a FRESH scratch home has no active context, so
 #    the contract is a RESOLVE_FAILED error envelope AND a non-zero exit (QA-1: we
-#    now assert BOTH the exact error_code and the exit code, not merely "some
-#    well-formed envelope" — a silently-succeeding empty result would previously
-#    have passed). `context list` is a management command fenced in agent mode, so
+#    assert BOTH the exact error_code and the exit code, not merely "some
+#    well-formed envelope" — a silently-succeeding empty result must fail).
+#    `context list` is a management command fenced in agent mode, so
 #    it is deliberately NOT used here.
 set +e
 "$JENTIC" access whoami --json > "$SCRATCH/whoami.json" 2>&1

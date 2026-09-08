@@ -127,7 +127,7 @@ class OverlayRollbackTargetMissingError(RegistryServiceError):
 
     Rollback (A5b) promotes the overlay's ``superseded_revision_id`` back to current.
     This is raised when that target is unknown (a first-ever materialize superseded
-    nothing, or a pre-A5a overlay never recorded it) or the target revision is no longer
+    nothing, or an older overlay never recorded it) or the target revision is no longer
     restorable (deleted / not archived) — there is no deterministic revision to serve, so
     the caller must resolve manually (e.g. re-import upstream) rather than the rollback
     silently doing nothing.

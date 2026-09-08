@@ -134,7 +134,7 @@ class WorkerLoop:
         A job is claimable when it is ``QUEUED`` with no future ``visible_at``
         (respecting exponential-backoff delay on requeued jobs), **or** it is
         ``RUNNING`` but its ``visible_at`` deadline has passed (orphaned by a
-        dead worker — recover it, §09 E4.2). The claim atomically flips it to
+        dead worker — recover it). The claim atomically flips it to
         ``RUNNING``, stamps a fresh visibility deadline, and increments
         ``attempts`` so a poison job's retry budget is enforced.
         ``SKIP LOCKED`` keeps concurrent workers from contending on the same row.
@@ -329,7 +329,7 @@ class WorkerLoop:
         self._running = False
 
     async def drain(self, timeout_s: float | None = None) -> bool:
-        """Stop claiming new jobs and wait for the in-flight job to finish (§09 E4.3).
+        """Stop claiming new jobs and wait for the in-flight job to finish.
 
         Flips into draining mode so ``_tick`` stops claiming immediately, then
         waits (bounded by ``timeout_s``, default ``WorkerConfig.drain_timeout_s``)

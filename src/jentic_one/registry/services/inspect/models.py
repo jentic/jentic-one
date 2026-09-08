@@ -80,9 +80,9 @@ class RequestBodySchema(BaseModel):
 class OperationInputs(BaseModel):
     """Declared inputs for an operation, grouped by where they belong.
 
-    Restores the query / header / path parameters and request body that spec
-    import used to drop, so a client can construct a complete request rather
-    than only supplying path parameters (issue #768).
+    Declares the query / header / path parameters and request body so a client
+    can construct a complete request rather than only supplying path parameters
+    (issue #768).
     """
 
     path: list[OperationParameter] = []

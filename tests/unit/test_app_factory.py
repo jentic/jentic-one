@@ -123,14 +123,14 @@ def test_auth_standalone_app(ctx: Context) -> None:
 
 
 def test_auth_surface_gets_admin_db_access(app_config: AppConfig) -> None:
-    allowed = _expand_allowed_dbs(["auth"])
+    allowed = _expand_allowed_dbs(["auth"], app_config)
     assert "admin" in allowed
     ctx = Context(app_config, allowed_dbs=allowed)
     _ = ctx.admin_db
 
 
 def test_broker_surface_gets_admin_db_access(app_config: AppConfig) -> None:
-    allowed = _expand_allowed_dbs(["broker"])
+    allowed = _expand_allowed_dbs(["broker"], app_config)
     assert "admin" in allowed
     ctx = Context(app_config, allowed_dbs=allowed)
     _ = ctx.admin_db

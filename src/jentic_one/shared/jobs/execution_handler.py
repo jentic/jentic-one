@@ -1,7 +1,7 @@
 """Execution job handler — runs async upstream calls through the shared pipeline.
 
-The handler is the async half of "one pipeline, two callers" (§00 / §05 / §11
-RN-0.3): it does **not** issue its own ``httpx`` calls. It resolves credentials
+The handler is the async half of "one pipeline, two callers": it does **not**
+issue its own ``httpx`` calls. It resolves credentials
 (via the injected ``CredentialInjector``), applies them to the outbound
 URL/headers exactly like the sync router's ``_apply_injection`` (headers **and**
 query **and** cookies — an ``apiKey in: query``/``cookie`` credential is never
@@ -38,7 +38,8 @@ from jentic_one.shared.jobs.protocols import (
 )
 from jentic_one.shared.models import ActorType as ActorTypeEnum
 from jentic_one.shared.models import ExecutionStatus
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.actors import origin_or_none
+from jentic_one.shared.models.events import EventSeverity, EventTag, EventType
 from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -196,6 +197,7 @@ class ExecutionHandler:
             actor_type=actor_type,
             toolkit_id=payload.get("toolkit_id"),
             operation_id=payload.get("operation_id"),
+            origin=origin,
         )
 
         result_body: dict[str, Any] = {
@@ -222,7 +224,13 @@ class ExecutionHandler:
         actor_type: str,
         toolkit_id: str | None = None,
         operation_id: str | None = None,
+        origin: str | None = None,
     ) -> None:
+        # The enqueue path persisted the request-derived Origin string in the
+        # job payload; it rides the lifecycle events as a closed-enum tag so
+        # the async path splits telemetry by surface like the sync path does.
+        origin_tag = origin_or_none(origin)
+        origin_tags: set[EventTag] | None = {origin_tag} if origin_tag is not None else None
         event_trace_id = valid_trace_id_or_none(trace_id)
         try:
             if status == ExecutionStatus.COMPLETED:
@@ -237,6 +245,7 @@ class ExecutionHandler:
                     created_by=created_by,
                     actor_id=created_by,
                     actor_type=actor_type,
+                    tags=origin_tags,
                 )
             else:
                 sanitized = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
@@ -252,6 +261,7 @@ class ExecutionHandler:
                     created_by=created_by,
                     actor_id=created_by,
                     actor_type=actor_type,
+                    tags=origin_tags,
                 )
         except Exception:
             logger.warning("emit_event_failed", job_id=job_id, execution_id=execution_id)
@@ -303,7 +313,7 @@ def _apply_injection(upstream_url: str, injection: InjectedAuth) -> AppliedAuth:
     are substituted into the URL template, query-param credentials are merged
     into the URL query, and cookie credentials into a ``Cookie`` header, so an
     ``apiKey in: query`` / ``apiKey in: cookie`` credential is applied rather
-    than silently dropped (the pre-RN-0 worker applied none of these).
+    than silently dropped.
     """
     if injection.server_variables:
         upstream_url = apply_server_variables(upstream_url, injection.server_variables)

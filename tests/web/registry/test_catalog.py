@@ -177,12 +177,12 @@ async def _seed_snapshot(web_context: Context, api_ids: list[str]) -> None:
         await session.commit()
 
 
-def _walk_catalog(client: TestClient, **params: object) -> list[str]:
+def _walk_catalog(client: TestClient, **params: str | int) -> list[str]:
     """Page through /catalog via next_cursor and return the flat api_id list."""
     out: list[str] = []
     cursor: str | None = None
     for _ in range(1000):
-        query = {**params}
+        query: dict[str, str | int] = {**params}
         if cursor is not None:
             query["cursor"] = cursor
         body = client.get("/catalog", params=query).json()
@@ -215,10 +215,10 @@ async def test_browse_pagination_walks_all_entries_once(
     assert len(walked) == 25
 
 
-def _last_page(client: TestClient, **params: object) -> dict[str, Any]:
+def _last_page(client: TestClient, **params: str | int | bool) -> dict[str, Any]:
     cursor: str | None = None
     for _ in range(1000):
-        query = {**params}
+        query: dict[str, str | int | bool] = {**params}
         if cursor is not None:
             query["cursor"] = cursor
         body: dict[str, Any] = client.get("/catalog", params=query).json()
@@ -288,7 +288,7 @@ async def test_filtered_walk_exact_set_and_count_stability(
         counts: list[tuple[int, int]] = []
         cursor: str | None = None
         for _ in range(1000):
-            query: dict[str, object] = {"unregistered_only": True, "limit": 2}
+            query: dict[str, str | int | bool] = {"unregistered_only": True, "limit": 2}
             if cursor is not None:
                 query["cursor"] = cursor
             body = admin_client.get("/catalog", params=query).json()

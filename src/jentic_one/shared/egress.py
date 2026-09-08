@@ -1,4 +1,4 @@
-"""Shared egress safety: connection-time DNS-rebinding guard + pin (§08 E2).
+"""Shared egress safety: connection-time DNS-rebinding guard + pin.
 
 ``validate_upstream_url`` (the pre-request check in ``shared/url_validation``)
 resolves the host and rejects a name that resolves into a blocked range. But that

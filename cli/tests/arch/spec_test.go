@@ -38,21 +38,20 @@ func specsPresent() (paths []string, ok bool) {
 	return paths, len(paths) > 0
 }
 
-// curatedRegistryPresent reports whether the Phase-2 curated-command registry
-// exists yet. 1G reflects over that registry (command -> generated struct ->
-// notExposed), so its real dependency is the registry itself, NOT merely the
-// presence of the internal/cli/api tree. Phase 8 relocated the shipped command
-// tree into internal/cli/api (the binary split) WITHOUT introducing the curated
-// registry, so a bare directory probe would trip 1G spuriously. We therefore
-// probe for the registry artifact — a non-test `curated.go` in the api package
-// that declares the command->struct->notExposed table — which is what impl/7.0
-// §2 actually lands. Until that file appears, 1G has nothing to reflect over.
+// curatedRegistryPresent reports whether the curated-command registry exists.
+// 1G reflects over that registry (command -> generated struct -> notExposed),
+// so its real dependency is the registry itself, NOT merely the presence of
+// the internal/cli/api tree: the binary split relocated the shipped command
+// tree into internal/cli/api WITHOUT the curated registry, so a bare directory
+// probe would trip 1G spuriously. We therefore probe for the registry artifact
+// — a non-test `curated.go` in the api package that declares the
+// command->struct->notExposed table (impl/7.0 §2). Absent the artifact, 1G has
+// nothing to reflect over and skips as dormant.
 func curatedRegistryPresent() bool {
-	// The curated-command registry lands as internal/cli/api/curated.go
-	// (impl/7.0 §2, Phase 2). Its presence is the signal that there are curated
-	// structs to reflect over. Until then 1G has nothing to check — note the
-	// mere existence of the internal/cli/api package (Phase 8 binary split) is
-	// NOT the signal.
+	// The curated-command registry is internal/cli/api/curated.go (impl/7.0
+	// §2). Its presence is the signal that there are curated structs to
+	// reflect over — the mere existence of the internal/cli/api package (the
+	// binary split) is NOT the signal.
 	if _, err := os.Stat(filepath.Join("..", "..", "internal", "cli", "api", "curated.go")); err == nil {
 		return true
 	}

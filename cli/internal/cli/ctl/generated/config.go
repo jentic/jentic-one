@@ -75,7 +75,7 @@ func (j *AdminAuthConfig) UnmarshalJSON(value []byte) error {
 		plain.FailedLoginLockoutThreshold = 5
 	}
 	if v, ok := raw["jwt_secret"]; !ok || v == nil {
-		plain.JwtSecret = "**********"
+		plain.JwtSecret = ""
 	}
 	if v, ok := raw["jwt_ttl_seconds"]; !ok || v == nil {
 		plain.JwtTtlSeconds = 3600
@@ -123,7 +123,7 @@ func (j *AdminInviteConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["pepper"]; !ok || v == nil {
-		plain.Pepper = "**********"
+		plain.Pepper = ""
 	}
 	if v, ok := raw["ttl_days"]; !ok || v == nil {
 		plain.TtlDays = 7
@@ -156,6 +156,15 @@ type AuthConfig struct {
 
 	// Idp corresponds to the JSON schema field "idp".
 	Idp *IdpConfig `json:"idp,omitempty,omitzero" yaml:"idp,omitempty" mapstructure:"idp,omitempty"`
+
+	// LocalLogin corresponds to the JSON schema field "local_login".
+	LocalLogin *LocalLoginConfig `json:"local_login,omitempty,omitzero" yaml:"local_login,omitempty" mapstructure:"local_login,omitempty"`
+
+	// OauthRateLimit corresponds to the JSON schema field "oauth_rate_limit".
+	OauthRateLimit *OAuthRateLimitConfig `json:"oauth_rate_limit,omitempty,omitzero" yaml:"oauth_rate_limit,omitempty" mapstructure:"oauth_rate_limit,omitempty"`
+
+	// PlatformClients corresponds to the JSON schema field "platform_clients".
+	PlatformClients []PlatformClientConfig `json:"platform_clients,omitempty,omitzero" yaml:"platform_clients,omitempty" mapstructure:"platform_clients,omitempty"`
 
 	// RatTtlSeconds corresponds to the JSON schema field "rat_ttl_seconds".
 	RatTtlSeconds int `json:"rat_ttl_seconds,omitempty,omitzero" yaml:"rat_ttl_seconds,omitempty" mapstructure:"rat_ttl_seconds,omitempty"`
@@ -303,11 +312,11 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Resilience envelope: admission (§04 R1) + rate limit / circuit (§05).
+// Resilience envelope: admission + rate limit / circuit.
 //
 // The shared-state “backend“ selection drives *both* the rate limiter and
-// the circuit breaker (memory default; Redis is cluster-wide, §06). Queue
-// backpressure / async-credential / retention knobs land in a later §05 slice.
+// the circuit breaker (memory default; Redis is cluster-wide). Queue
+// backpressure / async-credential / retention knobs are future work.
 type BrokerResilienceConfig struct {
 	// Backend corresponds to the JSON schema field "backend".
 	Backend *StateBackendConfig `json:"backend,omitempty,omitzero" yaml:"backend,omitempty" mapstructure:"backend,omitempty"`
@@ -436,7 +445,7 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Per-upstream circuit breaker (§05 R5.1).
+// Per-upstream circuit breaker.
 //
 // Counts failures/totals per rolling “window_s“ on the shared-state
 // backend's atomic counters; when the failure ratio crosses
@@ -628,7 +637,7 @@ func (j *ConnectConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["state_secret"]; !ok || v == nil {
-		plain.StateSecret = "**********"
+		plain.StateSecret = ""
 	}
 	if v, ok := raw["state_ttl_seconds"]; !ok || v == nil {
 		plain.StateTtlSeconds = 600
@@ -863,7 +872,7 @@ func (j *DirectOAuth2ProviderConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Outbound SSRF/egress policy for upstream calls (§08 E2).
+// Outbound SSRF/egress policy for upstream calls.
 //
 // Defaults are **strict** (both lists empty) — identical to the historical
 // hard-coded behaviour: every private range and the cloud-metadata host are
@@ -1069,7 +1078,7 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// “Idempotency-Key“ replay store (§07, PR-E/1 slim).
+// “Idempotency-Key“ replay store.
 //
 // Sync “FULL“-mode replay over the shared-state “AtomicStore“ (memory
 // default; Redis ⇒ cross-instance). Two TTLs: a *short* “pending_ttl_s“ claim
@@ -1080,7 +1089,7 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 // a duplicate side-effect; only byte-for-byte body replay is dropped).
 //
 // Compliance modes (“metadata_only“ / kill-switch), “require_for_mutations“,
-// async same-“job_id“ replay, and at-rest encryption are later §07 slices.
+// async same-“job_id“ replay, and at-rest encryption are future work.
 type IdempotencyConfig struct {
 	// Enabled corresponds to the JSON schema field "enabled".
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
@@ -1233,7 +1242,7 @@ func (j *IngestConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Hardened inbound-JWT verification for the broker edge (§08 E1).
+// Hardened inbound-JWT verification for the broker edge.
 //
 // When “trusted_issuers“ is non-empty the broker verifies self-contained JWTs
 // against the issuers' published JWKS (asymmetric, key-rotation-aware) and
@@ -1268,6 +1277,39 @@ func (j *JwtVerificationConfig) UnmarshalJSON(value []byte) error {
 		plain.LeewayS = 60.0
 	}
 	*j = JwtVerificationConfig(plain)
+	return nil
+}
+
+// Local-account login form on the “/authorize“ flow (no external IdP).
+//
+// Default **off**: “/authorize“ behaviour is byte-identical (including the
+// “server_error“ redirect when no IdP is configured) and “GET|POST /login“
+// answer the framework's plain 404. Enabling it makes the standards-track
+// native-app sign-in flow (RFC 8252: DCR + system browser + loopback redirect
+// + PKCE) work against the first-party password account store, without any
+// client ever handling a password. An external IdP always wins: when
+// “auth.idp.enabled“ is true the login form is never offered (no mixed
+// mode in v1).
+type LocalLoginConfig struct {
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *LocalLoginConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain LocalLoginConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	*j = LocalLoginConfig(plain)
 	return nil
 }
 
@@ -1316,6 +1358,79 @@ func (j *LoggingConfig) UnmarshalJSON(value []byte) error {
 		plain.FileName = "app.log"
 	}
 	*j = LoggingConfig(plain)
+	return nil
+}
+
+// “server.mcp“ sub-config.
+type McpConfig struct {
+	// BrokerUrl corresponds to the JSON schema field "broker_url".
+	BrokerUrl string `json:"broker_url,omitempty,omitzero" yaml:"broker_url,omitempty" mapstructure:"broker_url,omitempty"`
+
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// Oauth corresponds to the JSON schema field "oauth".
+	Oauth *McpOAuthConfig `json:"oauth,omitempty,omitzero" yaml:"oauth,omitempty" mapstructure:"oauth,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *McpConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain McpConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["broker_url"]; !ok || v == nil {
+		plain.BrokerUrl = "http://127.0.0.1:8100"
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	*j = McpConfig(plain)
+	return nil
+}
+
+// Interactive-OAuth settings for the MCP surface.
+//
+// Minimal seam: the full “server.mcp“ sub-config (“server.mcp.enabled“
+// etc.) extends this model in place — fields here must keep their names and
+// defaults.
+type McpOAuthConfig struct {
+	// AutoApproveClients corresponds to the JSON schema field "auto_approve_clients".
+	AutoApproveClients bool `json:"auto_approve_clients,omitempty,omitzero" yaml:"auto_approve_clients,omitempty" mapstructure:"auto_approve_clients,omitempty"`
+
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// RegistrationGcDays corresponds to the JSON schema field "registration_gc_days".
+	RegistrationGcDays int `json:"registration_gc_days,omitempty,omitzero" yaml:"registration_gc_days,omitempty" mapstructure:"registration_gc_days,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain McpOAuthConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["auto_approve_clients"]; !ok || v == nil {
+		plain.AutoApproveClients = false
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["registration_gc_days"]; !ok || v == nil {
+		plain.RegistrationGcDays = 90
+	}
+	*j = McpOAuthConfig(plain)
 	return nil
 }
 
@@ -1379,6 +1494,76 @@ func (j *MetricsConfig) UnmarshalJSON(value []byte) error {
 		plain.Exporter = "otlp"
 	}
 	*j = MetricsConfig(plain)
+	return nil
+}
+
+// Pre-auth rate limit tunables for OAuth endpoints.
+type OAuthRateLimitConfig struct {
+	// ApprovalStatusBurst corresponds to the JSON schema field
+	// "approval_status_burst".
+	ApprovalStatusBurst int `json:"approval_status_burst,omitempty,omitzero" yaml:"approval_status_burst,omitempty" mapstructure:"approval_status_burst,omitempty"`
+
+	// ApprovalStatusRpm corresponds to the JSON schema field "approval_status_rpm".
+	ApprovalStatusRpm int `json:"approval_status_rpm,omitempty,omitzero" yaml:"approval_status_rpm,omitempty" mapstructure:"approval_status_rpm,omitempty"`
+
+	// AuthorizeBurst corresponds to the JSON schema field "authorize_burst".
+	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
+
+	// AuthorizeRpm corresponds to the JSON schema field "authorize_rpm".
+	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
+
+	// ExchangeBurst corresponds to the JSON schema field "exchange_burst".
+	ExchangeBurst int `json:"exchange_burst,omitempty,omitzero" yaml:"exchange_burst,omitempty" mapstructure:"exchange_burst,omitempty"`
+
+	// ExchangeRpm corresponds to the JSON schema field "exchange_rpm".
+	ExchangeRpm int `json:"exchange_rpm,omitempty,omitzero" yaml:"exchange_rpm,omitempty" mapstructure:"exchange_rpm,omitempty"`
+
+	// RegistrationBurst corresponds to the JSON schema field "registration_burst".
+	RegistrationBurst int `json:"registration_burst,omitempty,omitzero" yaml:"registration_burst,omitempty" mapstructure:"registration_burst,omitempty"`
+
+	// RegistrationRpm corresponds to the JSON schema field "registration_rpm".
+	RegistrationRpm int `json:"registration_rpm,omitempty,omitzero" yaml:"registration_rpm,omitempty" mapstructure:"registration_rpm,omitempty"`
+
+	// TrustedProxies corresponds to the JSON schema field "trusted_proxies".
+	TrustedProxies []string `json:"trusted_proxies,omitempty,omitzero" yaml:"trusted_proxies,omitempty" mapstructure:"trusted_proxies,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *OAuthRateLimitConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain OAuthRateLimitConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["approval_status_burst"]; !ok || v == nil {
+		plain.ApprovalStatusBurst = 60
+	}
+	if v, ok := raw["approval_status_rpm"]; !ok || v == nil {
+		plain.ApprovalStatusRpm = 120
+	}
+	if v, ok := raw["authorize_burst"]; !ok || v == nil {
+		plain.AuthorizeBurst = 30
+	}
+	if v, ok := raw["authorize_rpm"]; !ok || v == nil {
+		plain.AuthorizeRpm = 30
+	}
+	if v, ok := raw["exchange_burst"]; !ok || v == nil {
+		plain.ExchangeBurst = 60
+	}
+	if v, ok := raw["exchange_rpm"]; !ok || v == nil {
+		plain.ExchangeRpm = 60
+	}
+	if v, ok := raw["registration_burst"]; !ok || v == nil {
+		plain.RegistrationBurst = 5
+	}
+	if v, ok := raw["registration_rpm"]; !ok || v == nil {
+		plain.RegistrationRpm = 10
+	}
+	*j = OAuthRateLimitConfig(plain)
 	return nil
 }
 
@@ -1484,13 +1669,50 @@ func (j *PipedreamProviderConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Per-caller token-bucket rate limit (§05 R2).
+// A static first-party OAuth client (e.g. the operator SPA).
+//
+// Platform clients authenticate via PKCE only — no client secret. They are
+// defined in config (not the oauth_clients DB table) because they are
+// deployment-time constants, not admin-managed dynamic registrations.
+type PlatformClientConfig struct {
+	// ClientId corresponds to the JSON schema field "client_id".
+	ClientId string `json:"client_id" yaml:"client_id" mapstructure:"client_id"`
+
+	// RedirectUris corresponds to the JSON schema field "redirect_uris".
+	RedirectUris []string `json:"redirect_uris" yaml:"redirect_uris" mapstructure:"redirect_uris"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *PlatformClientConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["client_id"]; raw != nil && !ok {
+		return fmt.Errorf("field client_id in PlatformClientConfig: required")
+	}
+	if _, ok := raw["redirect_uris"]; raw != nil && !ok {
+		return fmt.Errorf("field redirect_uris in PlatformClientConfig: required")
+	}
+	type Plain PlatformClientConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if plain.RedirectUris != nil && len(plain.RedirectUris) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "redirect_uris", 1)
+	}
+	*j = PlatformClientConfig(plain)
+	return nil
+}
+
+// Per-caller token-bucket rate limit.
 //
 // Keyed on the resolved “actor_id“ and enforced in a post-auth dependency
 // (the actor isn't known at admission time, so this can't be a plain
 // pre-auth middleware). The token bucket itself lives on the shared-state
 // backend (“RateLimitStore“); with the memory backend the limit is
-// per-instance, with Redis (§06) it is cluster-wide — no call-site change.
+// per-instance, with Redis it is cluster-wide — no call-site change.
 type RateLimitConfig struct {
 	// Burst corresponds to the JSON schema field "burst".
 	Burst int `json:"burst,omitempty,omitzero" yaml:"burst,omitempty" mapstructure:"burst,omitempty"`
@@ -1575,7 +1797,7 @@ func (j *ReleaseCheckConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Idempotency-aware upstream retry (§09 E4.1).
+// Idempotency-aware upstream retry.
 //
 // The “RetryRunner“ decorator retries a failed attempt **only** when it is
 // safe to do so: a connect-phase failure (no bytes on the wire) is retryable
@@ -1793,6 +2015,9 @@ type ServerConfig struct {
 	// Host corresponds to the JSON schema field "host".
 	Host string `json:"host,omitempty,omitzero" yaml:"host,omitempty" mapstructure:"host,omitempty"`
 
+	// Mcp corresponds to the JSON schema field "mcp".
+	Mcp *McpConfig `json:"mcp,omitempty,omitzero" yaml:"mcp,omitempty" mapstructure:"mcp,omitempty"`
+
 	// Port corresponds to the JSON schema field "port".
 	Port int `json:"port,omitempty,omitzero" yaml:"port,omitempty" mapstructure:"port,omitempty"`
 
@@ -1964,7 +2189,10 @@ func (j *StateBackendConfig) UnmarshalJSON(value []byte) error {
 // or hand-rolled) sends nothing. The onboarding CLI writes “enabled“
 // explicitly (a yes-default “[Y]/n“ prompt) so the on-by-default UX lives in
 // the prompt, not the code default. “instance_id“ seeds the durable admin-DB
-// identity row on first startup for opted-in instances.
+// identity row on first startup for opted-in instances. “host_os“ is the
+// operator's OS family, stamped by the CLI at install time so a Docker-run
+// instance reports the host's OS rather than the container's; sent once per
+// boot, on the “instance_booted“ event.
 type TelemetryConfig struct {
 	// Enabled corresponds to the JSON schema field "enabled".
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
@@ -1974,6 +2202,9 @@ type TelemetryConfig struct {
 
 	// FlushIntervalS corresponds to the JSON schema field "flush_interval_s".
 	FlushIntervalS float64 `json:"flush_interval_s,omitempty,omitzero" yaml:"flush_interval_s,omitempty" mapstructure:"flush_interval_s,omitempty"`
+
+	// HostOs corresponds to the JSON schema field "host_os".
+	HostOs interface{} `json:"host_os,omitempty,omitzero" yaml:"host_os,omitempty" mapstructure:"host_os,omitempty"`
 
 	// InstanceId corresponds to the JSON schema field "instance_id".
 	InstanceId interface{} `json:"instance_id,omitempty,omitzero" yaml:"instance_id,omitempty" mapstructure:"instance_id,omitempty"`
@@ -1987,6 +2218,8 @@ type TelemetryConfig struct {
 	// RequestTimeoutS corresponds to the JSON schema field "request_timeout_s".
 	RequestTimeoutS float64 `json:"request_timeout_s,omitempty,omitzero" yaml:"request_timeout_s,omitempty" mapstructure:"request_timeout_s,omitempty"`
 }
+
+type TelemetryConfigHostOs_0 *string
 
 type TelemetryConfigInstanceId_0 *string
 
@@ -2115,12 +2348,12 @@ func (j *TrustedIssuerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Bounds for the single shared outbound “httpx.AsyncClient“ (§04, PR-B).
+// Bounds for the single shared outbound “httpx.AsyncClient“.
 //
 // The timeouts are httpx semantics: “read_timeout_s“ is the *between-bytes*
 // gap timeout (per read), **not** a whole-stream cap — a trickle that keeps
 // sending under the limit can hold a pool slot open. The overall transfer
-// deadline is owned by the response-streaming guard (§08/E2.4), not here.
+// deadline is owned by the response-streaming guard, not here.
 type UpstreamClientConfig struct {
 	// ConnectTimeoutS corresponds to the JSON schema field "connect_timeout_s".
 	ConnectTimeoutS float64 `json:"connect_timeout_s,omitempty,omitzero" yaml:"connect_timeout_s,omitempty" mapstructure:"connect_timeout_s,omitempty"`
@@ -2217,7 +2450,7 @@ func (j *UpstreamClientConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Background job-worker durability knobs (§09 E4.2).
+// Background job-worker durability knobs.
 //
 // The worker claims a job, sets a **visibility deadline**
 // (“visibility_timeout_s“

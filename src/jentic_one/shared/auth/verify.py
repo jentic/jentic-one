@@ -24,7 +24,8 @@ async def resolve_permissions_for_actor(
         tuple[list[str], list[str]]: (permissions, parent_permissions)
     """
     # NOTE: Moving this to module-level would cause a circular dependency (shared -> admin).
-    # A test-arch exception will handle this lazy import until Phase 2 extracts resolution.
+    # A test-arch exception will handle this lazy import until permission
+    # resolution is extracted out of the admin surface.
     from jentic_one.admin.services.permission_service import PermissionService
 
     svc = PermissionService(ctx)
@@ -35,7 +36,7 @@ async def resolve_permissions_for_actor(
         view = await svc.get_effective_for_user(actor_id)
         permissions = view.effective
     elif actor_type == ActorType.AGENT:
-        # TODO (Phase 3): Fetch Agent's direct permissions via svc.get_effective_for_agent
+        # TODO: fetch the agent's direct permissions via svc.get_effective_for_agent
         if parent_actor_id:
             view = await svc.get_effective_for_user(parent_actor_id)
             parent_permissions = view.effective

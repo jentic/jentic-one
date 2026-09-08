@@ -514,7 +514,7 @@ class AccessRequestService:
         """Stamp ``filer_owner`` display info onto views (cross-DB, best-effort).
 
         ``filer_owner_id`` is a bare string (no cross-DB FK to the admin
-        ``users`` table), so consumers historically had to join it against a
+        ``users`` table), so without this consumers would have to join it against a
         separately-fetched roster client-side — which requires ``users:read``
         just to label a row. Resolving here (one batched admin-DB lookup per
         page, mirroring ``_resolve_names``) lets any viewer see the owner

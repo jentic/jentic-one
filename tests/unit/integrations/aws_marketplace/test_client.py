@@ -99,11 +99,113 @@ async def test_checkout_license_request_shape(monkeypatch: pytest.MonkeyPatch) -
     body = json.loads(request.content)
     assert body["CheckoutType"] == "PROVISIONAL"
     assert body["ProductSKU"] == "prod-id-1"
+    # Counted dimensions: Unit "None" is rejected by live License Manager
+    # (NoEntitlementsAllowedException) — the shape must be Count + Value.
     assert body["Entitlements"] == [
-        {"Name": "users", "Unit": "None"},
-        {"Name": "executions", "Unit": "None"},
+        {"Name": "users", "Unit": "Count", "Value": "1"},
+        {"Name": "executions", "Unit": "Count", "Value": "1"},
     ]
     assert body["ClientToken"]
+
+
+@pytest.mark.asyncio
+async def test_checkout_success_checks_the_seat_back_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful checkout consumes a MaxCount seat — it must be released.
+
+    Without the check-in, a 1-seat contract plus two pods re-checking hourly
+    locks the buyer out of their own license (observed live 2026-08-28).
+    """
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.headers["x-amz-target"] == "AWSLicenseManager.CheckoutLicense":
+            return httpx.Response(200, json={"LicenseConsumptionToken": "tok-123"})
+        return httpx.Response(200, json={})
+
+    config = _config(
+        pricing_model="contract", license_sku="prod-id-1", license_dimensions=["users"]
+    )
+    client, _ = _client_pair(httpx.MockTransport(handler), config, monkeypatch)
+
+    verdict = await client.check()
+
+    assert verdict is LicenseVerdict.ENTITLED
+    targets = [r.headers["x-amz-target"] for r in seen]
+    assert targets == [
+        "AWSLicenseManager.CheckoutLicense",
+        "AWSLicenseManager.CheckInLicense",
+    ]
+    checkin_body = json.loads(seen[1].content)
+    assert checkin_body == {"LicenseConsumptionToken": "tok-123"}
+
+
+@pytest.mark.asyncio
+async def test_checkin_failure_does_not_change_the_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The seat auto-expires; a failed check-in is degraded, not NOT_ENTITLED."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["x-amz-target"] == "AWSLicenseManager.CheckoutLicense":
+            return httpx.Response(200, json={"LicenseConsumptionToken": "tok-123"})
+        return httpx.Response(500, json={"__type": "InternalServerException"})
+
+    config = _config(
+        pricing_model="contract", license_sku="prod-id-1", license_dimensions=["users"]
+    )
+    client, _ = _client_pair(httpx.MockTransport(handler), config, monkeypatch)
+
+    assert await client.check() is LicenseVerdict.ENTITLED
+
+
+@pytest.mark.asyncio
+async def test_seat_contention_retry_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """First checkout loses a seat race, the retry wins → ENTITLED.
+
+    Seat contention and a missing license return the same
+    NoEntitlementsAllowedException, so one short-delay retry disambiguates.
+    """
+    monkeypatch.setattr(
+        "jentic_one.integrations.aws_marketplace.client._SEAT_CONTENTION_RETRY_DELAY_S", 0
+    )
+    checkouts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal checkouts
+        if request.headers["x-amz-target"] == "AWSLicenseManager.CheckoutLicense":
+            checkouts += 1
+            if checkouts == 1:
+                return httpx.Response(400, json={"__type": "x#NoEntitlementsAllowedException"})
+            return httpx.Response(200, json={"LicenseConsumptionToken": "tok-123"})
+        return httpx.Response(200, json={})
+
+    config = _config(
+        pricing_model="contract", license_sku="prod-id-1", license_dimensions=["users"]
+    )
+    client, _ = _client_pair(httpx.MockTransport(handler), config, monkeypatch)
+
+    assert await client.check() is LicenseVerdict.ENTITLED
+    assert checkouts == 2
+
+
+@pytest.mark.asyncio
+async def test_persistent_not_entitled_retries_once_then_locks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jentic_one.integrations.aws_marketplace.client._SEAT_CONTENTION_RETRY_DELAY_S", 0
+    )
+    transport, seen = _capture(400, {"__type": "x#NoEntitlementsAllowedException", "message": "no"})
+    config = _config(
+        pricing_model="contract", license_sku="prod-id-1", license_dimensions=["users"]
+    )
+    client, _ = _client_pair(transport, config, monkeypatch)
+
+    assert await client.check() is LicenseVerdict.NOT_ENTITLED
+    assert len(seen) == 2  # exactly one retry, no infinite loop
 
 
 @pytest.mark.asyncio
@@ -136,6 +238,9 @@ async def test_error_type_verdict_mapping(
     error_type: str,
     expected: LicenseVerdict,
 ) -> None:
+    monkeypatch.setattr(
+        "jentic_one.integrations.aws_marketplace.client._SEAT_CONTENTION_RETRY_DELAY_S", 0
+    )
     transport, _ = _capture(
         400, {"__type": f"com.amazonaws.services#{error_type}", "message": "no"}
     )

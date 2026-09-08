@@ -119,9 +119,9 @@ my_router = APIRouter()  # your extra routes
 def build_app(ctx: Context):
     container = AppContainer(
         ctx=ctx,
-        broker=MyBroker(...),                      # injected data-plane broker
+        broker=MyBroker(...),  # injected data-plane broker
         extra_routers=[(my_router, "/my-ext", ["my-ext"])],
-        extra_installers=[lambda app, ctx: ...],   # runs against the root app last
+        extra_installers=[lambda app, ctx: ...],  # runs against the root app last
     )
     return create_combined_app(ctx, ctx.config.apps, container=container)
 ```

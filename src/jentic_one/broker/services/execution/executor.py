@@ -1,7 +1,7 @@
 """``PipelineExecutor`` — the broker-side adapter that unifies the async worker.
 
-This is the broker half of the "one pipeline, two callers" seam (§00 / §05 /
-§11 RN-0.3). The async worker (``shared/jobs/execution_handler.py``) cannot
+This is the broker half of the "one pipeline, two callers" seam. The async
+worker (``shared/jobs/execution_handler.py``) cannot
 import ``broker/`` (``tests/arch/test_module_boundaries.py``), so it depends on
 the ``UpstreamExecutor`` protocol in ``shared/jobs/protocols.py``; this adapter
 implements that protocol on the broker side and is dependency-injected into the

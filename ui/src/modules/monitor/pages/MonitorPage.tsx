@@ -84,6 +84,8 @@ export default function MonitorPage() {
 					// Executions-only scope (deep-linked from toolkit detail);
 					// no other lens supports it, so it doesn't survive a switch.
 					'toolkit_id',
+					// Executions-only origin scope (local-MCP 2-E2) — same rule.
+					'origin',
 				]) {
 					next.delete(k);
 				}

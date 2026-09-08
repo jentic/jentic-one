@@ -3,7 +3,7 @@
  * account at `/agents/service-accounts/:serviceAccountId` (router `basename`
  * adds `/app`).
  *
- * Phase 5 of the agents-rebuild plan: adopts the SAME console shell as the
+ * Adopts the SAME console shell as the
  * agent detail page (PageHeader-as-identity + KPI strip + `?tab=` panels) so
  * the two actor kinds read identically, minus what jentic-one doesn't serve
  * for SAs:

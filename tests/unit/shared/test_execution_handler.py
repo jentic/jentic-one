@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -23,6 +24,8 @@ from jentic_one.shared.jobs.protocols import (
     UpstreamExecRequest,
     UpstreamExecResult,
 )
+from jentic_one.shared.models.actors import Origin
+from jentic_one.shared.models.events import EventType
 
 
 class _FakeSession:
@@ -313,3 +316,58 @@ async def test_handler_rejects_missing_actor_fields() -> None:
 
     with pytest.raises(ValueError, match="created_by and actor_type are required"):
         await handler.execute("job7", _FakeSession(), payload=_payload())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "expected_type"),
+    [(200, EventType.EXECUTION_COMPLETED), (503, EventType.EXECUTION_FAILED)],
+)
+async def test_handler_tags_lifecycle_events_with_payload_origin(
+    status_code: int, expected_type: str
+) -> None:
+    """The origin persisted in the job payload rides both lifecycle events as a
+    closed-enum tag, so async executions split telemetry by surface like the
+    sync path (lane D, #1177)."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=status_code, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+
+    with patch(
+        "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+    ) as mock_emit:
+        await handler.execute(
+            "job10",
+            _FakeSession(),
+            payload=_payload(origin="mcp"),
+            created_by="agt_abc123",
+            actor_type="agent",
+        )
+
+    mock_emit.assert_awaited_once()
+    kwargs = mock_emit.call_args.kwargs
+    assert kwargs["type"] == expected_type
+    assert kwargs["tags"] == {Origin.MCP}
+
+
+@pytest.mark.asyncio
+async def test_handler_missing_origin_emits_untagged_event() -> None:
+    """Payloads without an origin (or with garbage) emit untagged, never raise."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+
+    with patch(
+        "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+    ) as mock_emit:
+        await handler.execute(
+            "job11",
+            _FakeSession(),
+            payload=_payload(),
+            created_by="agt_abc123",
+            actor_type="agent",
+        )
+
+    assert mock_emit.call_args.kwargs["tags"] is None

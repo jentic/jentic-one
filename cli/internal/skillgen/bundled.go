@@ -68,6 +68,47 @@ func contentFor(name string) (string, error) {
 	return string(data), nil
 }
 
+// RawBundled returns the exact embedded bytes of one bundled skill — the same
+// bytes the backend serves at `GET /skills/<name>.md` (#651, drift-pinned by
+// tests/arch/test_skill_drift.py). It exists for consumers that serve the
+// document VERBATIM (the `jentic mcp` skill:// resources) rather than
+// rendering it into an operator layout: no BaseURL interpolation, no managed
+// block, byte-identical to the backend's copy at the same commit.
+func RawBundled(name string) ([]byte, error) {
+	data, err := bundledContent.ReadFile(bundledDir + "/" + name + ".md")
+	if err != nil {
+		return nil, fmt.Errorf("read bundled skill %q: %w", name, err)
+	}
+	return data, nil
+}
+
+// DocMeta is the frontmatter identity of one raw skill document, read without
+// the full structural parse so it works on bundled and hosted bytes alike
+// (a hosted document from a newer backend may carry sections parseSkill does
+// not know).
+type DocMeta struct {
+	Name        string
+	Description string
+	Version     string
+}
+
+// ParseDocMeta reads the identity frontmatter off a raw skill document.
+// Missing keys degrade to zero values except Version, which defaults to "1"
+// like parseSkill — a document with no version stamp is still versioned
+// content, just at the original revision.
+func ParseDocMeta(raw []byte) DocMeta {
+	_, fm := splitFrontmatter(string(raw))
+	m := DocMeta{
+		Name:        fm["name"],
+		Description: fm["description"],
+		Version:     fm["version"],
+	}
+	if m.Version == "" {
+		m.Version = "1"
+	}
+	return m
+}
+
 // Bundled parses the named embedded skill into a Canonical, stamping the
 // resolved control-plane base URL and bundled provenance into it. A malformed
 // embed is a build-time programming error (the content is compiled into the

@@ -18,6 +18,7 @@ import { SegmentedToggle } from '@/shared/ui';
 import { useActors, type MonitorTab } from '@/modules/monitor/api';
 import {
 	useMonitorFilters,
+	ORIGIN_OPTIONS,
 	WINDOW_OPTIONS,
 	type WindowValue,
 } from '@/modules/monitor/lib/useMonitorFilters';
@@ -50,7 +51,7 @@ export function MonitorFilterBar({ tab }: MonitorFilterBarProps) {
 
 	return (
 		<div className="border-border/60 flex flex-wrap items-center gap-3 rounded-lg border border-dashed px-3 py-2">
-			{/* TODO(#624): mount a debounced free-text search input here once the
+			{/* TODO: mount a debounced free-text search input here once the
 			    Monitor list endpoints support a `search` query param. The list
 			    param interfaces in client.ts are ready to thread it through. */}
 			<div className="flex items-center gap-2">
@@ -83,6 +84,28 @@ export function MonitorFilterBar({ tab }: MonitorFilterBarProps) {
 					))}
 				</Select>
 			</div>
+
+			{/* Origin scope — executions-only (local-MCP 2-E2): the executions
+			    endpoint is the one list with an `origin` query param. A picker
+			    (not a chip): origins are a small closed set worth browsing —
+			    "show me everything that arrived over MCP" is the headline ask. */}
+			{tab === 'executions' && (
+				<div className="flex items-center gap-2">
+					<span className="text-muted-foreground text-xs font-medium">Origin</span>
+					<Select
+						aria-label="Filter by origin"
+						value={filters.origin ?? ''}
+						onChange={(e) => filters.setOrigin(e.target.value || null)}
+					>
+						<option value="">All origins</option>
+						{ORIGIN_OPTIONS.map((o) => (
+							<option key={o.value} value={o.value}>
+								{o.label}
+							</option>
+						))}
+					</Select>
+				</div>
+			)}
 
 			{/* Toolkit scope — an executions-only deep-link filter (written by the
 			    toolkit detail's "Open in Monitor" link). Rendered as a removable

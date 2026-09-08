@@ -37,13 +37,21 @@ export {
 	useServiceAccountScopes,
 	useReplaceServiceAccountScopes,
 	useActorAccessRequests,
+	useAgentOauthGrants,
+	useRevokeOauthGrant,
 	useActorsUsage,
 	useActorUsageDetail,
 	useActorExecutions,
 	useActorAudit,
 	useUpdateAgent,
+	useMcpSessions,
+	useMcpLastSeen,
+	useLatestMcpActivity,
+	useInstanceIdentity,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
+	agentOauthGrantsKey,
+	agentOauthGrantsRootKey,
 } from '@/modules/agents/api/hooks';
 
 export { AgentsApiError } from '@/modules/agents/api/client';
@@ -75,11 +83,17 @@ export type {
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
+	InstanceIdentityEntity,
 	LinkableToolkit,
+	McpLastSeen,
+	McpSessionEntity,
+	OAuthGrantEntity,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
 	Attribution,
 } from '@/modules/agents/api/types';
+
+export { mcpClientLabel } from '@/modules/agents/api/types';
 
 export type { AccessRequest } from '@/shared/lib';

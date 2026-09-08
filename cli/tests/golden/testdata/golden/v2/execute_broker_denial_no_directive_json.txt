@@ -1,0 +1,23 @@
+exit: 2
+--- stdout ---
+{
+  "body": {
+    "error_origin": "broker",
+    "status": 424,
+    "title": "No credential provisioned",
+    "type": "credential_not_provisioned"
+  },
+  "headers": {
+    "Content-Length": "133",
+    "Content-Type": "application/problem+json",
+    "Jentic-Error-Origin": "broker"
+  },
+  "schema_version": "1",
+  "status": 424
+}
+--- stderr ---
+Denied — recovery required:
+  No credential is provisioned for this call. Provision one, then retry.
+  run: jentic access request --toolkit <vendor/name> --provision --wait
+  stuck? jentic doctor
+{"details":{"http_status":424},"error":"the broker denied this call before it reached the upstream API","error_code":"BROKER_DENIED","schema_version":"1"}

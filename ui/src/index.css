@@ -4,7 +4,6 @@
   THEME — Tailwind utility class mappings.
   @theme inline maps CSS vars to Tailwind classes without emitting extra variables.
   All values are wrapped in hsl() so Tailwind opacity modifiers work (bg-primary/50 etc.).
-  Ported from jentic-mini/ui/src/index.css.
 */
 @theme inline {
 	/* Surface colors */

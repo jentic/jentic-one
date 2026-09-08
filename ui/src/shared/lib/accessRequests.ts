@@ -334,8 +334,8 @@ export function scopeLabel(item: AccessRequestItem): string {
 
 /**
  * One-line queue-row summary of a request's items: "toolkit · bind +2 more".
- * The single copy of the presentation the OSS queue surfaces (dashboard queue
- * page, per-actor card) previously hand-rolled. Richer consumers that resolve
+ * The single copy of this presentation for the OSS queue surfaces (dashboard
+ * queue page, per-actor card). Richer consumers that resolve
  * target names client-side (e.g. the enterprise console) extend rather than
  * replace this.
  */

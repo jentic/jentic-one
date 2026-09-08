@@ -1,4 +1,4 @@
-"""Async request-coalescing helper (single-flight, §05 R3.1).
+"""Async request-coalescing helper (single-flight).
 
 A plain TTL cache only helps on a *hit*. On a miss — TTL expiry, a hot key on a
 cold instance, or startup — N concurrent callers for the same key all miss

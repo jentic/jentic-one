@@ -1,10 +1,10 @@
 /**
  * ApiDetailPage — a single workspace API's detail view.
  *
- * Ported from jentic-mini's `ApiDetailPage`, narrowed to the API-only surface
+ * Covers the API-only surface
  * jentic-one's registry exposes: overview, operations (current revision), and
  * revision history with promote/archive. Credentials, toolkits, and workflows
- * — present on mini's detail page — belong to other modules and are out of
+ * belong to other modules and are out of
  * scope here.
  *
  * The route carries the `(vendor, name, version)` triple as three path

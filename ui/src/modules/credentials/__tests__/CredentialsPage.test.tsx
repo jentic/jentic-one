@@ -23,9 +23,8 @@ import {
 } from '@/shared/credentials/mocks/handlers';
 
 /**
- * The success toast that previously lived as a one-time-secret dialog is now
- * mounted at the app shell. Page-level tests need an explicit `<Toaster />`
- * sibling to observe it.
+ * The success toast is mounted at the app shell. Page-level tests need an
+ * explicit `<Toaster />` sibling to observe it.
  */
 function renderPage() {
 	return renderWithProviders(
@@ -127,9 +126,8 @@ describe('CredentialsPage', () => {
 		await user.click(screen.getByRole('button', { name: 'Create credential' }));
 
 		// Success is signalled by the toast + the new credential appearing in
-		// the list. The raw secret is no longer surfaced post-creation —
-		// echoing back a value the user just typed adds friction without a
-		// security benefit.
+		// the list. The raw secret isn't surfaced post-creation — echoing back
+		// a value the user just typed adds friction without a security benefit.
 		await expectCredentialCreatedToast();
 		const toast = screen
 			.getAllByTestId('toast')

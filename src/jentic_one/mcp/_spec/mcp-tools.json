@@ -1,0 +1,272 @@
+{
+  "$comment": "Generated from the Go stdio server's toolSpecs() — the phase-1 tool-surface source of truth (master §3.2). Regenerate with UPDATE_MCP_SPEC=1 go test ./internal/cli/api -run TestMCPToolSurfaceSpec. Consumed by the phase-3 /mcp mount (src/jentic_one/mcp) and its drift tests.",
+  "schema_version": "1",
+  "tools": [
+    {
+      "name": "get_started",
+      "title": "Diagnose Jentic setup",
+      "description": "Diagnose this machine's Jentic setup state, pre-auth. Reports one of: no_config (no configuration or active context), not_registered, pending_approval (registered, awaiting a human operator), instance_unreachable (identity fine, control plane down), or ready — each with the exact operator instruction to relay. Call this first on a new machine and whenever another tool returns an auth or connectivity error. Registration and approval block on a human and cannot be completed autonomously; this server never starts or stops the instance.",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
+    },
+    {
+      "name": "whoami",
+      "title": "Show agent identity",
+      "description": "Show the calling agent's identity as the Jentic control plane sees it: id, status, scopes, and toolkit bindings with the APIs each one serves. Call after get_started reports ready, and before requesting access or executing operations — never execute an operation just to probe whether you have access. On an auth error, call get_started for the fix.",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
+    },
+    {
+      "name": "search_apis",
+      "title": "Search API operations",
+      "description": "Search the connected Jentic One registry for API operations by natural-language query. This is the first step of the discovery flow (whoami → search_apis → inspect_operation → execute): call it whenever you need an operation you don't already have the id of. Example: {\"query\": \"create github issue\", \"limit\": 5}. Returns one page as {data, has_more, next_cursor}; each hit carries the operation_id to pass to inspect_operation. When has_more is true, pass next_cursor back as cursor for the next page. Optionally restrict to specific APIs with apis (vendor/name/version slugs from earlier hits), e.g. {\"query\": \"list pets\", \"apis\": [\"acme/pets/v1\"]}. An empty data array means nothing matching is imported into this instance's registry yet.",
+      "input_schema": {
+        "properties": {
+          "apis": {
+            "description": "Restrict to these APIs, as vendor/name/version slugs from earlier hits (a single string is also accepted).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cursor": {
+            "description": "next_cursor from the previous page, to fetch the next one.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max results per page (1-100, server default 10).",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Natural-language description of the operation you need, e.g. \"create github issue\".",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
+    },
+    {
+      "name": "inspect_operation",
+      "title": "Inspect an operation's contract",
+      "description": "Fetch one operation's full contract before executing it: HTTP method, URL, parameters, request/response schemas, and security requirements. This is the read-contract step of the flow (whoami → search_apis → inspect_operation → execute) — always inspect before you execute. Example: {\"operation_id\": \"op_abc123\"} with an id from a search_apis hit, or a METHOD:url pair like {\"operation_id\": \"GET:https://rest.coincap.io/v3/markets\"}. Optionally pin a revision for reproducibility. If the operation is not found, call search_apis to rediscover the right id.",
+      "input_schema": {
+        "properties": {
+          "operation_id": {
+            "description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a registry operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Pin a specific revision ID for reproducibility (defaults to the current revision).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
+    },
+    {
+      "name": "execute",
+      "title": "Execute an API operation",
+      "description": "Execute an operation through the Jentic broker: the broker authenticates this agent and injects the stored upstream credential server-side — credentials never pass through this session. This is the final step of the flow (whoami → search_apis → inspect_operation → execute): always inspect the contract first, and never execute just to probe whether you have access (call whoami). Example: {\"operation_id\": \"op_abc123\", \"inputs\": {\"petId\": \"42\", \"limit\": 10}, \"body\": {\"name\": \"Bob\"}}. Returns {status, headers, body, execution_id}: any HTTP status, including upstream 4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an error result with recovery directions instead. A 202 response with a directive means the call is HELD for human approval: poll it with get_execution_result using the job id it carries — never re-send the execute. Large bodies are truncated ({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see the rest. Prefer execute_read for pure reads — it is approved more readily.",
+      "input_schema": {
+        "properties": {
+          "body": {
+            "description": "The request body as a JSON value (object, array, or string; \"data\" is an accepted alias). Omit it for bodyless calls — the body is ALWAYS this argument, never read from anywhere else. A string whose content parses as JSON is deliberately treated as a stringified body and sent as that JSON value, not as a quoted string."
+          },
+          "headers": {
+            "description": "Extra request headers as a string-valued object.",
+            "type": "object"
+          },
+          "idempotency_key": {
+            "description": "Optional Idempotency-Key so a retried POST/PUT is de-duplicated by the broker instead of running twice.",
+            "type": "string"
+          },
+          "inputs": {
+            "description": "Operation parameters as one flat object (\"params\"/\"parameters\" are accepted aliases): keys matching a {placeholder} in the operation's path fill it; every other key is sent as a query parameter.",
+            "type": "object"
+          },
+          "operation_id": {
+            "description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a registry operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Pin a specific revision ID for reproducibility (defaults to the current revision).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "destructive_hint": true,
+        "open_world_hint": true
+      }
+    },
+    {
+      "name": "execute_read",
+      "title": "Execute a read-only API operation",
+      "description": "Execute a GET or HEAD operation through the Jentic broker — the read-only variant of execute (same envelope, same flow, no request body). Use it for every pure read: clients approve read-only tools more readily. If the operation resolves to any other HTTP method, the call is rejected — use execute. Example: {\"operation_id\": \"GET:https://rest.coincap.io/v3/markets\", \"inputs\": {\"limit\": 5}}.",
+      "input_schema": {
+        "properties": {
+          "headers": {
+            "description": "Extra request headers as a string-valued object.",
+            "type": "object"
+          },
+          "inputs": {
+            "description": "Operation parameters as one flat object (\"params\"/\"parameters\" are accepted aliases): keys matching a {placeholder} in the operation's path fill it; every other key is sent as a query parameter.",
+            "type": "object"
+          },
+          "operation_id": {
+            "description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a registry operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Pin a specific revision ID for reproducibility (defaults to the current revision).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "open_world_hint": true,
+        "read_only_hint": true
+      }
+    },
+    {
+      "name": "get_execution_result",
+      "title": "Poll a held or asynchronous execution",
+      "description": "Poll a job by id: returns {job_id, kind, status, ...} and, once status is \"completed\", the result document. Use it when execute returns a 202 HELD response (human approval required): poll with the job id it carries until the status is terminal (completed, failed, cancelled, dead_letter) — NEVER re-send the execute while a job is pending; approval happens out-of-band and re-sending duplicates the call. Example: {\"job_id\": \"job_abc123\"}. While pending/running, wait briefly and poll again.",
+      "input_schema": {
+        "properties": {
+          "job_id": {
+            "description": "The job to poll (required; \"id\" and \"job\" are accepted aliases), from a held (202) execute response.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
+    },
+    {
+      "name": "search_catalog",
+      "title": "Search the public API catalog",
+      "description": "Search the public API catalog for importable APIs by keyword. The registry that search_apis reads only sees IMPORTED APIs — when search_apis returns an empty data array, the API probably isn't imported yet: find it here, import it with import_api, then search_apis again (reading the registry and importing need no access request). Example: {\"query\": \"spreadsheets\", \"limit\": 10}. Returns one page as {data, catalog_total, registered_count, has_more, next_cursor}; each entry carries the api_id to pass to import_api and `registered` (true = already imported — skip the import). When has_more is true, pass next_cursor back as cursor.",
+      "input_schema": {
+        "properties": {
+          "cursor": {
+            "description": "next_cursor from the previous page, to fetch the next one.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max entries per page (1-200, server default 50).",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Keyword to search the catalog for, e.g. \"spreadsheets\". Omit to list the catalog.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
+    },
+    {
+      "name": "import_api",
+      "title": "Import a catalog API into the registry",
+      "description": "Import a catalog API into this instance's registry so its operations become searchable and executable. Example: {\"api_id\": \"googleapis.com/sheets\"} with an api_id from a search_catalog hit. The import runs as a job: this call tracks it briefly and, on completion, promotes the imported revisions live, returning {job_id, status, revisions, promoted}. If it returns a non-terminal status, call import_api again with the same api_id — re-importing converges (idempotent) and finishes the promotion. Requires the catalog:import scope (agents hold it by default); on a denial, request it via request_access — do not guess other scopes. Importing makes an API discoverable but does NOT grant access to call it: check whoami for a toolkit binding serving it — never execute just to probe — and use request_access if nothing serves it.",
+      "input_schema": {
+        "properties": {
+          "api_id": {
+            "description": "The catalog entry to import (required; \"id\" and \"api\" are accepted aliases): an api_id from a search_catalog hit, e.g. \"googleapis.com/sheets\".",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "idempotent_hint": true
+      }
+    },
+    {
+      "name": "request_access",
+      "title": "Request access from a human operator",
+      "description": "File one access request for the access you are missing, or poll a filed one by id. Decide from whoami FIRST — never execute an operation just to probe whether you have access. If a whoami binding already serves the API, you have access; if NOTHING serves it, file a provisioning plan: {\"provision\": [\"vendor/name\"], \"auth\": [\"bearer\"], \"rules_json\": [{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}], \"reason\": \"…\"} — it describes the whole path to first execution (create toolkit, provision + bind a credential with your proposed rules, bind you), which a human fulfils in the dashboard (they enter the secret; it never rides in your request). A bare toolkit bind ({\"toolkits\": [\"vendor/name\"]}) is only the last mile when a toolkit already serves the API; for an unserved API it auto-denies — use provision. ALWAYS include reason. File once, richly: combine every target this task needs into ONE composite request instead of filing piecemeal. The result carries approve_url: relay it to your human operator — granting is always a human action and this tool NEVER approves. Poll the decision with {\"request_id\": \"\u003cid\u003e\"}; never re-file while a request is pending. Once approved, bindings are live immediately — retry the execute that was denied.",
+      "input_schema": {
+        "properties": {
+          "auth": {
+            "description": "Credential auth type for a provision plan, read from the API's security schemes: bearer, api_key, basic, oauth2, or none (default bearer). With several provisions, key each value by API: \"vendor/name=bearer\".",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "provision": {
+            "description": "APIs to file full provisioning plans for, as vendor/name[/version] references (e.g. \"stripe.com/api\"). Use when NOTHING you're bound to serves the API yet: the plan describes the whole path to first execution (create toolkit, provision + bind a credential with your proposed rules, bind you), which a human fulfils and approves.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "description": "Why you need this — ALWAYS include it: the human who approves reads it, and a clear one-liner is what gets you approved faster.",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Poll an existing request instead of filing a new one: the id from an earlier request_access result. Mutually exclusive with the target parameters.",
+            "type": "string"
+          },
+          "rules_json": {
+            "description": "Proposed permission rules for a provision plan, as a JSON array of rules, e.g. [{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]. A human reviews and edits them before approving. With several provisions, pass a list of keyed strings: \"vendor/name=\u003cjson\u003e\"."
+          },
+          "scopes": {
+            "description": "Token scopes to request, e.g. \"catalog:import\".",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "toolkit_ids": {
+            "description": "Toolkits to be bound to, by id (tk_…).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "toolkits": {
+            "description": "Toolkits to be bound to, as vendor/name[/version] API references. The LAST MILE only: use when a toolkit already serves the API and you just aren't bound to it — for an unserved API this auto-denies; use provision instead.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {}
+    }
+  ]
+}

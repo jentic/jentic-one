@@ -32,6 +32,14 @@ registry:
     # specs from in-cluster ClusterIPs (kind service CIDR is in 10/8).
     JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS: .svc.cluster.local
     JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS: 10.0.0.0/8
+    # Shared with admin/control below: parts mode splits the issuer and the
+    # verifiers across pods, and the app no longer ships a jwt_secret default
+    # (a per-process random is generated instead — see
+    # config._require_or_generate_secret), so cross-pod verification needs an
+    # explicit shared value. LOCAL/SMOKE-ONLY throwaway, like the passwords
+    # under global.databases. Production parts installs use
+    # global.appSecrets (one generated Secret mounted on every surface).
+    JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
 
 admin:
   enabled: true
@@ -45,12 +53,17 @@ admin:
     # the gateway on kind host port 8000 — or every token exchange fails
     # 400 invalid_grant. See the longer note in local-combined.yaml.
     JENTIC__AUTH__CANONICAL_BASE_URL: http://localhost:8000
+    # See the note on registry.extraEnv — this pod is the JWT issuer.
+    JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
 
 control:
   enabled: true
   service:
     type: NodePort
     nodePort: 30083
+  extraEnv:
+    # See the note on registry.extraEnv — this pod verifies the same JWTs.
+    JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
   # Credential-at-rest encryption keyset (+ the platform OAuth2 provider) —
   # same contract as combined mode (see local-combined.yaml): `entries` is a
   # list, which the flat JENTIC__* env-var convention cannot express, and

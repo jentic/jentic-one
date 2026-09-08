@@ -1,7 +1,7 @@
 """Execution service — runs the shared pipeline and persists the result.
 
 Services layer (00-overview): orchestrates the runner + persistence. The
-transport is the RN-0 ``HttpRunner`` (folded in); both the sync router and the
+transport is the ``HttpRunner`` (folded in); both the sync router and the
 async worker call ``run_execution`` so they share one execution path, one
 runner, and one persistence step. Status mirroring / header passthrough is the
 caller's concern (the runner returns the verbatim upstream result).
@@ -35,6 +35,7 @@ from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failur
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
+from jentic_one.shared.models.actors import origin_or_none
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
 from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.tracing import jentic_tracestate, pack_jentic_tracestate
@@ -83,10 +84,10 @@ def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
 
 
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
-    """Build the Phase-1 pipeline around the given runner + default post stages.
+    """Build the default pipeline around the given runner + default post stages.
 
-    The runner is **required** (no implicit per-request ``HttpRunner()``): §04
-    (PR-B) made the upstream client a single shared, lifespan-owned instance, so
+    The runner is **required** (no implicit per-request ``HttpRunner()``): the
+    upstream client is a single shared, lifespan-owned instance, so
     the caller builds an ``HttpRunner`` over the injected client and passes it in.
     """
     return BrokerExecutionPipeline(runner)
@@ -133,7 +134,7 @@ async def run_execution(
     On a transport-level failure the broker's pipeline raises a ``BrokerError``;
     we persist a FAILED record before re-raising so the central handler can map
     it to problem+json. The ``broker`` (and thus the shared upstream client it
-    wraps) is supplied by the caller (§04 — one client per process); the default
+    wraps) is supplied by the caller (one client per process); the default
     builds a :class:`DefaultBroker` per request, a caller may inject its own.
 
     ``execution_id`` lets the async worker reuse the id already handed to the
@@ -210,6 +211,7 @@ async def run_execution(
             toolkit_id=ctx_req.toolkit_id,
             operation_id=ctx_req.operation_id,
             security_config=security_config,
+            origin=origin,
         )
         if isinstance(exc, CircuitOpenError):
             host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
@@ -290,6 +292,7 @@ async def run_execution(
         operation_id=ctx_req.operation_id,
         security_config=security_config,
         error_tags=error_tags,
+        origin=origin,
     )
 
     return outcome
@@ -402,6 +405,7 @@ async def persist_streaming_execution(
         operation_id=ctx_req.operation_id,
         security_config=security_config,
         error_tags=error_tags,
+        origin=origin,
     )
 
 
@@ -455,6 +459,7 @@ async def _emit_execution_lifecycle(
     operation_id: str | None = None,
     security_config: SecurityConfig | None = None,
     error_tags: set[EventTag] | None = None,
+    origin: str | None = None,
 ) -> None:
     """Emit EXECUTION_COMPLETED/EXECUTION_FAILED events for the sync and streaming paths.
 
@@ -467,8 +472,14 @@ async def _emit_execution_lifecycle(
     so ``broker_execution_failed`` telemetry carries the auth split *without* a
     separate ``auth_failure`` event that the flat, correlation-id-free payload
     could never dedupe downstream.
+
+    ``origin`` (the request-derived ``Origin`` string the callers already thread
+    for the execution record) rides both events as a closed-enum ``Origin`` tag,
+    so telemetry can split executions by surface (the MCP adoption metric)
+    without any free-form property; an unrecognised value is simply not tagged.
     """
     event_trace_id = valid_trace_id_or_none(trace_id)
+    origin_tag = origin_or_none(origin)
     try:
         if status == ExecutionStatus.COMPLETED:
             await emit_event(
@@ -481,9 +492,13 @@ async def _emit_execution_lifecycle(
                 created_by=actor_id,
                 actor_id=actor_id,
                 actor_type=actor_type,
+                tags={origin_tag} if origin_tag is not None else None,
             )
         else:
             sanitized = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
+            failed_tags: set[EventTag] = set(error_tags or ())
+            if origin_tag is not None:
+                failed_tags.add(origin_tag)
             await emit_event(
                 session,
                 type=EventType.EXECUTION_FAILED,
@@ -495,7 +510,7 @@ async def _emit_execution_lifecycle(
                 created_by=actor_id,
                 actor_id=actor_id,
                 actor_type=actor_type,
-                tags=error_tags or None,
+                tags=failed_tags or None,
             )
     except Exception:
         logger.warning("emit_execution_event_failed", execution_id=execution_id)

@@ -15,9 +15,9 @@ import type { ToolkitKey } from '@/modules/toolkits/api/types';
  * same visual flow; the plaintext is wiped the moment the user confirms
  * (sensitive-data rule — it never persists across a dismissal).
  *
- * Keys also carry two long-supported-but-previously-hidden PATCH fields:
+ * Keys also carry two PATCH fields:
  * label rename (inline pencil) and `allowed_ips` (set at create, shown as a
- * chip) — see the phase-4 plan.
+ * chip) — set from the create dialog.
  */
 
 /** Parse a comma/space separated IP list into the wire array (null = no restriction). */

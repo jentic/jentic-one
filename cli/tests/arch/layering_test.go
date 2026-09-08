@@ -1,6 +1,7 @@
 package arch
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -139,5 +140,55 @@ func TestCommandTreesDoNotImportEachOther(t *testing.T) {
 	if seenAPI == 0 || seenCtl == 0 {
 		t.Fatalf("leaf-layering: expected both command trees present (api=%d, ctl=%d) — a rename moved one; "+
 			"this gate must not pass vacuously (ARCH-2)", seenAPI, seenCtl)
+	}
+}
+
+// agentopsForbiddenImports are the direct imports internal/agentops must never
+// grow (phase-0 §0.2 purity constraints): no cobra (command wiring), no os
+// (stdin/TTY/env/exit-code logic stays caller-side — under stdio MCP, stdin is
+// the JSON-RPC wire), no terminal detection. Prefix-matched so subpackages
+// (e.g. os/exec) are fenced too.
+var agentopsForbiddenImports = []string{
+	"github.com/spf13/cobra",
+	"github.com/charmbracelet/x/term",
+	"os",
+}
+
+// TestAgentopsStaysUXFree fences the extracted execute/inspect core
+// (internal/agentops): it must not import cobra, os, or the terminal detector
+// (agentopsForbiddenImports), and the ONLY internal/cli sibling it may use is
+// ux — the sanctioned CodedError/envelope/directive types (plan 0.2). This
+// turns the package doc's prose dependency rules into an enforced gate: an
+// agentops → cmdcore/api/ctl(cmd) import would re-fuse the UX-free core to a
+// command tree, and an os/term import would smuggle the stdin/TTY logic back
+// in. (agentops → ux → theme is deliberate and stays allowed.)
+func TestAgentopsStaysUXFree(t *testing.T) {
+	pkgs := loadCLI(t)
+
+	var seen int
+	for _, p := range pkgs {
+		if !underPrefixes(p.PkgPath, "internal/agentops") {
+			continue
+		}
+		seen++
+		for imp := range p.Imports {
+			for _, forbidden := range agentopsForbiddenImports {
+				if imp == forbidden || strings.HasPrefix(imp, forbidden+"/") {
+					t.Errorf("agentops fence: %s imports %q — the UX-free core must not depend on "+
+						"cobra/os/term (phase-0 §0.2); keep flag/stdin/TTY/exit logic caller-side",
+						rel(p.PkgPath), imp)
+				}
+			}
+			if underPrefixes(imp, "internal/cli") && !underPrefixes(imp, "internal/cli/ux") {
+				t.Errorf("agentops fence: %s imports %q — the only internal/cli package the core may "+
+					"use is ux (the CodedError/envelope contract types); anything more re-fuses the "+
+					"core to the command layer (phase-0 §0.2)",
+					rel(p.PkgPath), rel(imp))
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("agentops fence found no internal/agentops packages — the core moved; " +
+			"this gate must not pass vacuously (phase-0 §0.2)")
 	}
 }

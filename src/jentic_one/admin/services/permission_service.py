@@ -61,7 +61,7 @@ class PermissionService:
 
     async def get_effective_for_service_account(self, service_account_id: str) -> PermissionsView:
         # Right now, ServiceAccounts might be using ActorScopeGrantRepository
-        # or a similar mechanism, but for Phase 1 they don't have explicit grants
+        # or a similar mechanism, but for now they don't have explicit grants
         # configured through this service yet. We return an empty view.
         # In the future, we will fetch directly from a ServiceAccountPermissionGrant table
         # or use ActorScopeGrant as permissions for SAs.

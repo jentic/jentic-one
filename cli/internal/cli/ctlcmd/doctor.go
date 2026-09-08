@@ -110,6 +110,7 @@ func (a *app) doctorE(ctx context.Context, opts *doctorOptions) error {
 	d.checkConfigValidity()
 	d.checkServer()
 	d.checkAgent()
+	d.checkMCP()
 	d.checkLocalAgent()
 
 	if opts.json || !cmdcore.StdoutIsTerminal() {

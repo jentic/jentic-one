@@ -103,6 +103,9 @@ export type { ToastEntry, ToastInput, ToastVariant } from '@/shared/ui/toastStor
 
 export { CopyButton } from '@/shared/ui/CopyButton';
 
+export { CodeSnippet } from '@/shared/ui/CodeSnippet';
+export type { CodeSnippetProps } from '@/shared/ui/CodeSnippet';
+
 export { BackButton } from '@/shared/ui/BackButton';
 
 export { RefreshButton } from '@/shared/ui/RefreshButton';

@@ -77,7 +77,7 @@ def test_compile_none_returns_none() -> None:
 
 
 def test_regex_matches_full_path_only() -> None:
-    # This is the anchoring migration: ``.match()`` used to accept
+    # The #751 anchoring migration: ``.match()`` accepted
     # ``/v1/users/1/extra`` for the pattern ``/v1/users/\d+``; ``.fullmatch()``
     # (via the new matcher) rejects it.
     matcher = compile_matcher(r"/v1/users/\d+", "regex")

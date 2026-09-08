@@ -125,7 +125,7 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 	} else if opts.purge || opts.keepData {
 		// --purge/--keep-data primarily govern the Docker named volume. On a
 		// local (non-Docker) install the database lives under ~/.jentic/data,
-		// which the Phase 2 wipe deletes. --keep-data now ACTUALLY preserves it
+		// which the Phase 2 wipe deletes. --keep-data preserves it
 		// (see the preserved set below); only --purge on a local install has no
 		// extra effect (the wipe already removes everything), so warn just for
 		// that case rather than mislead a --keep-data operator (P2-F).

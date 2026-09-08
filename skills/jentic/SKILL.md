@@ -10,6 +10,13 @@ Jentic is an API broker: you discover operations across many APIs, then execute
 them through a single authenticated gateway without managing each API's
 credentials yourself. The `jentic` CLI is the agent-facing entrypoint.
 
+The same loop is also exposed over **MCP** by the local `jentic mcp` stdio
+server — available in the `jentic` CLI from the next release; check
+`jentic mcp --help`. If your session has `jentic` MCP tools, prefer them; use
+the CLI for `setup`/`access` recovery and anything not exposed over MCP. Both
+surfaces talk to the same instance — check `backend`/`host` in the identity
+stamp on MCP tool results if in doubt.
+
 ## When to Use
 
 - You need to call a third-party API (Stripe, GitHub, Slack, …) but don't have
@@ -506,17 +513,20 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   "catalog read" scopes; they're rejected.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials.** If your session also has Jentic **MCP tools**
-  (`search_apis`, `list_credentials`, `execute`, …), they may be bound to a
-  **different backend** than this CLI — typically the hosted cloud workspace
-  vs the local install — and nothing in their responses says which one
-  replied. The symptom is *silent wrong answers*, not errors: an API the user
-  just imported "doesn't exist", credentials "disappeared", or operation ids
-  from one surface don't resolve on the other. Before concluding anything is
-  missing or broken, check where each surface points — `jentic context view`
-  shows this CLI's active environment/`base_url`, and `jentic api GET /instance`
-  reports which backend serves it (see "confirm which backend you're on" in step 3);
-  ask your operator which backend the MCP server was configured against —
-  and stick to one surface for the whole task.
+  (`search_apis`, `list_credentials`, `execute`, …), check which backend they
+  answer from. Tools served by the local `jentic mcp` server stamp
+  `backend`/`host` on every result — compare that against this CLI's backend.
+  Tools without the stamp (e.g. the hosted Jentic cloud platform's MCP server)
+  may be bound to a **different backend** than this CLI — typically the hosted
+  cloud workspace vs the local install. The symptom of a mismatch is *silent
+  wrong answers*, not errors: an API the user just imported "doesn't exist",
+  credentials "disappeared", or operation ids from one surface don't resolve
+  on the other. Before concluding anything is missing or broken, check where
+  each surface points — `jentic context view` shows this CLI's active
+  environment/`base_url`, and `jentic api GET /instance` reports which backend
+  serves it (see "confirm which backend you're on" in step 3); for MCP tools,
+  read the identity stamp or ask your operator which backend the MCP server
+  was configured against — and stick to one surface for the whole task.
 - An `execute` failure is not always an access problem. A DNS or TLS error
   means the **broker target** is misconfigured (see step 5); connection
   refused on a **local** target usually means the instance is **stopped** —

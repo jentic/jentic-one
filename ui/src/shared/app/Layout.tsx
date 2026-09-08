@@ -9,7 +9,7 @@ import { Toaster } from '@/shared/ui/Toaster';
 import { AgentStreamProvider } from '@/shared/lib/agentStream';
 
 /**
- * Authenticated app shell. Ported from jentic-mini's `Layout`:
+ * Authenticated app shell:
  *
  *  - a fixed `h-12` `TopNavbar` (logo + desktop nav tabs + user menu),
  *  - a fixed mobile `BottomNavbar` (`md:hidden`),

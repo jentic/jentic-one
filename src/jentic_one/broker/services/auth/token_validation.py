@@ -1,6 +1,6 @@
 """Dual-token validation for the broker edge — opaque tokens **and** signed JWTs.
 
-Auth **service** layer (§00 layering): the web ``deps.py`` dependency calls a
+Auth **service** layer: the web ``deps.py`` dependency calls a
 single ``DualTokenValidator`` stored on ``app.state.broker_token_validator``; the
 dispatcher routes self-contained JWTs (verified by signature, no DB lookup) to
 ``JwtTokenValidator`` and opaque tokens to the existing
@@ -9,7 +9,7 @@ dispatcher routes self-contained JWTs (verified by signature, no DB lookup) to
 The JWT path routes self-contained JWTs to the configured ``TokenVerifier``: the
 dev HS256 :class:`JwtVerifier` (shared-secret) or the hardened asymmetric
 ``TrustedIssuerVerifier`` (JWKS rotation, ``iss``/``aud``/``nbf``, strict alg
-allowlist, RS↔HS confusion defence — ``shared/auth/jwt_verification``, §08 E1),
+allowlist, RS↔HS confusion defence — ``shared/auth/jwt_verification``),
 selected by ``install_broker_auth`` from config. Opaque tokens go to the
 existing ``CachedTokenValidator`` (DB-backed, short-TTL cached).
 
@@ -45,7 +45,7 @@ from jentic_one.shared.models import ActorType
 logger = structlog.get_logger(__name__)
 
 # Algorithms we accept for the self-contained-JWT path. HS256 only for the
-# minimal PR-A2 verifier; §08 widens/locks this down (and adds asymmetric/JWKS).
+# minimal dev verifier; the hardened path widens/locks this down (asymmetric/JWKS).
 _ALLOWED_ALGS: frozenset[str] = frozenset({"HS256"})
 
 # The self-contained-JWT path may only assert these actor types (jentic-one#868).
@@ -65,7 +65,7 @@ class TokenVerifier(Protocol):
 
     Both the dev HS256 :class:`JwtVerifier` and the hardened asymmetric
     ``TrustedIssuerVerifier`` (``shared/auth/jwt_verification``) satisfy this, so
-    the dispatcher is agnostic to which is wired (§08 E1).
+    the dispatcher is agnostic to which is wired.
     """
 
     def verify(self, token: str) -> dict[str, object]: ...
@@ -93,7 +93,7 @@ def looks_like_jwt(token: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class JwtVerifier:
-    """Minimal HS256 verifier (signature + ``exp``). TODO(§08): harden."""
+    """Minimal HS256 verifier (signature + ``exp``) — the dev path; prefer the hardened verifier."""
 
     secret: str
 

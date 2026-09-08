@@ -7,6 +7,7 @@ from fastapi import Depends
 from jentic_one.control.services.access_requests.service import AccessRequestService
 from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.mcp.service import McpService
 from jentic_one.control.services.toolkits.service import ToolkitService
 from jentic_one.shared.context import Context
 from jentic_one.shared.web import get_ctx
@@ -30,3 +31,8 @@ def get_toolkit_service(ctx: Context = Depends(get_ctx)) -> ToolkitService:
 def get_access_request_service(ctx: Context = Depends(get_ctx)) -> AccessRequestService:
     """Resolve an AccessRequestService from the request context."""
     return AccessRequestService(ctx)
+
+
+def get_mcp_service(ctx: Context = Depends(get_ctx)) -> McpService:
+    """Resolve a McpService from the request context."""
+    return McpService(ctx)

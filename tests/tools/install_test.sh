@@ -10,7 +10,7 @@
 #              run) and asserts on pure helper functions.
 #   2. Contract — invokes install.sh through the shells the README promises
 #              (`sh`, `dash`, `bash`) to prove the re-exec guard works and the
-#              script no longer dies on bash-only syntax. Kept hermetic with a
+#              script doesn't die on bash-only syntax. Kept hermetic with a
 #              minimal PATH so it fails fast at the prereq check — no network,
 #              no build, no writes to the real ~/.jentic.
 #
@@ -366,11 +366,15 @@ assert_eq "asset_name: jentic linux/amd64 strips the v" "jentic_0.31.0_linux_amd
 out="$(OS=darwin ARCH=arm64 JENTIC_REF=0.31.0 asset_name jenticctl)"
 assert_eq "asset_name: jenticctl darwin/arm64 (no v prefix)" "jenticctl_0.31.0_darwin_arm64.tar.gz" "$out"
 
-# --- download mode: selected binaries (jentic-only default, both opt-in) -----
-out="$(JENTIC_INSTALL_BINARIES=jentic download_selected_binaries | tr '\n' ' ')"
-assert_eq "download_selected_binaries: default is jentic-only" "jentic " "$out"
+# --- download mode: selected binaries (both default, jentic-only opt-in) -----
+# The sourced installer already resolved JENTIC_INSTALL_BINARIES to its default,
+# so calling the helper with no override exercises the shipped default (both).
+out="$(download_selected_binaries | tr '\n' ' ')"
+assert_eq "download_selected_binaries: default is both" "jentic jenticctl " "$out"
 out="$(JENTIC_INSTALL_BINARIES=both download_selected_binaries | tr '\n' ' ')"
-assert_eq "download_selected_binaries: both adds jenticctl" "jentic jenticctl " "$out"
+assert_eq "download_selected_binaries: both fetches jentic + jenticctl" "jentic jenticctl " "$out"
+out="$(JENTIC_INSTALL_BINARIES=jentic download_selected_binaries | tr '\n' ' ')"
+assert_eq "download_selected_binaries: jentic narrows to the agent CLI" "jentic " "$out"
 
 # --- download mode: verify_checksum is FAIL-CLOSED (P1) ----------------------
 # The whole download phase is sold as fail-closed. A checksums.txt with no row

@@ -69,9 +69,10 @@ Most tools in this category are hosted: the credentials live in the vendor's inf
 Jentic One runs on infrastructure you control. Credentials are encrypted at rest in your own
 database and are decrypted only inside the Broker, at execution time.
 
-Jentic One exposes no MCP endpoint. An MCP server running beside an agent gives that agent a
-credential-bearing surface to call, which is what the Broker exists to avoid. Agents integrate
-through the `jentic` CLI, a generated skill, or plain HTTP.
+Agents integrate through the `jentic` CLI, a generated skill, the local `jentic mcp` server
+(available in the `jentic` CLI from the next release — check `jentic mcp --help`), or plain
+HTTP. Every path terminates at the credential-injecting Broker: the MCP server runs beside the
+agent as a thin client and holds no upstream credentials — those never leave your Broker.
 
 ## Quickstart
 
@@ -117,7 +118,7 @@ Six steps from a running instance to a response from a real API.
    (e.g. `httpbin.org`, used in step 6), or upload your own specification.
 3. **Store a credential** for that API. It is encrypted at rest and is never returned to a
    caller.
-4. **Register the agent:** `jentic register` (add `--base-url <URL>` when the agent runs on a
+4. **Register the agent:** `jentic register` (add `--url <URL>` when the agent runs on a
    different machine). Registration waits for an operator to approve the
    agent. On a single-operator install, approve it in the UI and the command completes.
 5. **Grant access** by binding the agent to a toolkit. A rule-less binding blocks everything;
@@ -204,7 +205,8 @@ Full reference: [`cli/README.md`](cli/README.md).
 | [Security hardening](docs/security/hardening.md) | Deployment-tier ladder and production checklist. Read before using real credentials. |
 | [Build & deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, kind, observability |
 | [Self-hosted containers + external Postgres](deploy/README.md#self-hosted-containers--external-postgres) | Production-shaped deployment without Kubernetes |
-| [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, why there is no MCP endpoint, and how to run both (or migrate) without silent cross-talk |
+| [AWS Marketplace install](docs/installation/aws-marketplace.md) | Buying and running the listed product on EKS — prerequisites, zero-touch install, license-check behaviour |
+| [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, how MCP works against each, and how to run both (or migrate) without silent cross-talk |
 
 **Reference**
 
@@ -232,7 +234,9 @@ Full reference: [`cli/README.md`](cli/README.md).
   the telemetry block stays silent. When enabled, it sends a small, fixed set of anonymous
   events. Each event is a closed schema — `{id, version, event, actor_type?, tags?, ts}` —
   where `event` and `actor_type` are fixed enums and `tags` are fixed labels, never free text,
-  so the payload has no room for credentials, request data, or PII. This is enforced in CI by
+  so the payload has no room for credentials, request data, or PII. The OS family
+  (`linux`/`darwin`/`windows`/`other`) is sent once per boot, as a tag on the
+  `instance_booted` event. This is enforced in CI by
   [`tests/arch/test_telemetry_no_pii.py`](tests/arch/test_telemetry_no_pii.py).
 - **Observability is self-hosted.** Metrics and tracing exporters emit to an
   OpenTelemetry/Prometheus endpoint you configure.

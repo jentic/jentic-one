@@ -8,7 +8,7 @@ rule's effect; an exhausted rule list defaults to DENY (secure-by-default).
 Path matching (``regex``/``prefix``/``exact``) is delegated to the shared
 ``shared.permissions.matching`` seam so authoring surfaces and this enforcer
 cannot disagree; a stored pattern that fails to compile at load time is
-fail-closed (never matches) rather than the pre-#751 silent-wildcard.
+fail-closed (never matches) rather than a silent wildcard (#751).
 
 Performance: the rule list per (toolkit, credential) pair is short-TTL cached
 (LRU + single-flight) so the hot-path DB hit is amortised across requests.
@@ -61,8 +61,8 @@ def _compile_path_for_rule(raw: str | None, mode: str, *, toolkit_id: str) -> Pa
 
     Delegates to the shared seam and warns when a stored pattern was
     unparseable (a legacy row that predates save-time validation). The
-    resulting matcher never matches — the opposite of the pre-#751 silent
-    wildcard — and the warning identifies the misconfigured toolkit so an
+    resulting matcher never matches — fail-closed, never a silent
+    wildcard (#751) — and the warning identifies the misconfigured toolkit so an
     operator can fix the offending row.
     """
     matcher = compile_matcher(raw, mode)

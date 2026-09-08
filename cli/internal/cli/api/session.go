@@ -37,7 +37,7 @@ func (a *app) agentSession(ctx context.Context) (baseURL, token string, err erro
 	if err != nil {
 		return "", "", err
 	}
-	return a.contextSession(st)
+	return a.contextSession(ctx, st)
 }
 
 // requireState returns the active state or the canonical "no active
@@ -63,7 +63,7 @@ func (a *app) controlClient(ctx context.Context) (*control.ClientWithResponses, 
 	if err != nil {
 		return nil, err
 	}
-	if _, _, err := a.contextSession(st); err != nil {
+	if _, _, err := a.contextSession(ctx, st); err != nil {
 		return nil, err
 	}
 	return clictx.GetControlClient(ctx)
@@ -82,7 +82,7 @@ func noContextErr() *ux.CodedError {
 // SDK's credential-resolution order (injected token > jak_* API key > cached/
 // exchanged token) — byte-for-byte the credential the SDK request editor would
 // attach, so hand-rolled clients and generated clients can never disagree.
-func (a *app) contextSession(st *clictx.ActiveState) (baseURL, token string, err error) {
+func (a *app) contextSession(ctx context.Context, st *clictx.ActiveState) (baseURL, token string, err error) {
 	if st.BaseURL == "" {
 		return "", "", &ux.CodedError{
 			Code:       ux.CodeResolveFailed,
@@ -90,7 +90,11 @@ func (a *app) contextSession(st *clictx.ActiveState) (baseURL, token string, err
 			Actionable: "Set it with `jentic env add` / edit the environment.",
 		}
 	}
-	tok, err := auth.BearerToken(credsFromState(st))
+	creds, err := credsFromState(ctx, st)
+	if err != nil {
+		return "", "", err
+	}
+	tok, err := auth.BearerToken(creds)
 	if err != nil {
 		return "", "", contextAuthErr(err, st)
 	}
@@ -98,14 +102,24 @@ func (a *app) contextSession(st *clictx.ActiveState) (baseURL, token string, err
 }
 
 // credsFromState maps the resolved context onto the SDK's UX-free credential
-// input — the same mapping the SDK constructors apply to client.Config.
-func credsFromState(st *clictx.ActiveState) auth.Credentials {
+// input — the same mapping the SDK constructors apply to client.Config —
+// including the transport a mint must ride: the SEC-20 CA-pinned client when
+// the environment declares ca_cert_path (fail closed on a broken bundle), with
+// the context's attribution TransportHook composed over it (#1205). Without
+// that client the token exchange would fall back to the auth package's
+// unpinned, unattributed default.
+func credsFromState(ctx context.Context, st *clictx.ActiveState) (auth.Credentials, error) {
+	hc, err := clictx.AuthHTTPClient(ctx, st.CACertPath)
+	if err != nil {
+		return auth.Credentials{}, err
+	}
 	return auth.Credentials{
 		BaseURL:             st.BaseURL,
 		IdentityName:        st.IdentityName,
 		EnvironmentName:     st.EnvironmentName,
 		InjectedBearerToken: st.InjectedBearerToken,
-	}
+		HTTPClient:          hc,
+	}, nil
 }
 
 // contextAuthErr turns a credential-resolution failure into an actionable,

@@ -111,8 +111,8 @@ class UpstreamExecutor(Protocol):
     The async worker depends on this protocol — never on ``broker/`` — so the
     concrete broker adapter (``PipelineExecutor``, wrapping
     ``run_execution(broker=default_broker(runner))``) can be dependency-
-    injected at worker startup. This is the "one pipeline, two callers" seam
-    (§00 / §05 / §11 RN-0.3): the worker goes through the **same** composed
+    injected at worker startup. This is the "one pipeline, two callers" seam:
+    the worker goes through the **same** composed
     runner (circuit breaker + per-host bulkhead + post-response enrichment) and
     the **same** ``executions``-row persistence as the sync router, instead of a
     second raw-``httpx`` path.

@@ -1,9 +1,9 @@
 """Integration tests for the search ``apis`` filter identifier format (#1080).
 
 The CLI (and every other surface) references APIs by the canonical
-``vendor[/name[/version]]`` slug, but ``_resolve_api_filters`` historically
-parsed only a colon-separated form — so every documented ``--api`` invocation
-failed with 422 ``Unknown API filter``. These tests ingest two real specs and
+``vendor[/name[/version]]`` slug; ``_resolve_api_filters`` must accept it as
+well as the legacy colon-separated form — a slug-form ``--api`` invocation
+must not fail with 422 ``Unknown API filter``. These tests ingest two real specs and
 assert both separator forms resolve, raw (unslugified) spellings normalize the
 way ingest does, filters actually restrict results, ``revision_pins`` keys
 accept the same identifier forms, and an unknown filter still fails with a

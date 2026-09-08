@@ -1,5 +1,5 @@
 /**
- * UsageBubbleChart — ported from jentic-mini's `ApiBubbleChart`.
+ * UsageBubbleChart.
  *
  * One bubble per api / toolkit / agent: bubble area encodes execution volume,
  * the partial ring around it encodes success rate, and hovering surfaces a
@@ -55,7 +55,7 @@ const LENS_NOUNS: Record<UsageLens, string> = {
 };
 
 /**
- * Greedy circle packing (verbatim from jentic-mini): place biggest first at
+ * Greedy circle packing: place biggest first at
  * the centre, then spiral each next bubble outward to the closest free spot.
  */
 function packCircles(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from jentic_one.admin.services.errors import (
     AccountLockedError,
     AuditEntryNotFoundError,
+    ConflictError,
     EmailAlreadyExistsError,
     EventNotFoundError,
     ExecutionNotFoundError,
@@ -46,6 +47,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     InviteTokenAlreadyRedeemedError: (409, "invite_already_redeemed"),
     JobNotCancellableError: (409, "job_not_cancellable"),
     JobNotCompletedError: (409, "job_not_completed"),
+    ConflictError: (409, "conflict"),
     InviteTokenExpiredError: (410, "invite_token_expired"),
     JobResultExpiredError: (410, "job_result_expired"),
     SetupAlreadyCompleteError: (410, "setup_already_complete"),

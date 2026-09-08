@@ -15,13 +15,17 @@ from jentic_one.shared.config import (
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
+    AuthConfig,
     CatalogConfig,
     ConfigError,
+    ConnectConfig,
     CredentialsConfig,
     EgressConfig,
     EncryptionConfig,
     EntitlementConfig,
     RuntimeConfig,
+    SigningKeyConfig,
+    TelemetryConfig,
     _csv_to_list,
     _deep_merge,
     _env_overrides,
@@ -152,11 +156,34 @@ def test_numeric_password_preserved_as_string(config_file: Path):
     assert config.databases.registry.password.get_secret_value() == "123456"
 
 
-def test_default_jwt_secret_allowed_in_development():
-    """The placeholder jwt_secret is fine for local dev (the common case)."""
+def test_default_jwt_secret_generated_in_development():
+    """With no jwt_secret configured, dev mints a random per-process secret.
+
+    The shipped default is empty — images must not contain a secret-shaped
+    literal (AWS Marketplace container policy) — so zero-config local dev
+    relies on this generation. It must be non-empty and stable across repeated
+    config loads in one process, or every re-read would invalidate sessions.
+    """
     with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
-        cfg = AdminAuthConfig()
-    assert cfg.jwt_secret.get_secret_value() == "CHANGE-ME-IN-PRODUCTION"
+        first = AdminAuthConfig()
+        second = AdminAuthConfig()
+    generated = first.jwt_secret.get_secret_value()
+    assert generated.strip()
+    assert generated == second.jwt_secret.get_secret_value()
+
+
+def test_generated_dev_secrets_differ_per_field():
+    """The dev generator must not reuse one value across different secrets.
+
+    jwt_secret / pepper / state_secret have different blast radii; a shared
+    value would let one surface forge another's artifacts (e.g. sign an admin
+    JWT with the connect state secret).
+    """
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        jwt = AdminAuthConfig().jwt_secret.get_secret_value()
+        pepper = AdminInviteConfig().pepper.get_secret_value()
+        state = ConnectConfig().state_secret.get_secret_value()
+    assert len({jwt, pepper, state}) == 3
 
 
 def test_default_jwt_secret_rejected_in_production():
@@ -192,6 +219,34 @@ def test_empty_jwt_secret_rejected_in_production(blank: str):
         pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
     ):
         AdminAuthConfig(jwt_secret=SecretStr(blank))
+
+
+@pytest.mark.parametrize("placeholder", ["change-me-in-production", "ChangeMe-2026"])
+def test_placeholder_jwt_secret_rejected_in_production(placeholder: str):
+    """A change-me placeholder in production is as unsafe as an empty value.
+
+    Placeholder values come from published examples and configs, so they are
+    publicly known — signing tokens with one means anyone can forge admin
+    JWTs. Boot must fail closed, exactly as it does for a blank.
+    """
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
+    ):
+        AdminAuthConfig(jwt_secret=SecretStr(placeholder))
+
+
+def test_placeholder_jwt_secret_replaced_in_development():
+    """A change-me placeholder in dev is treated as unset, never signed with.
+
+    The generated per-process secret takes its place, so a copied example
+    config still boots locally without ever using the publicly-known value.
+    """
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        cfg = AdminAuthConfig(jwt_secret=SecretStr("change-me-in-production"))
+    generated = cfg.jwt_secret.get_secret_value()
+    assert generated.strip()
+    assert generated != "change-me-in-production"
 
 
 def test_session_lifetime_defaults():
@@ -274,6 +329,80 @@ def test_explicit_invite_pepper_accepted_in_production():
     with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
         cfg = AdminInviteConfig(pepper=SecretStr("a-real-generated-pepper"))
     assert cfg.pepper.get_secret_value() == "a-real-generated-pepper"
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_connect_state_secret_rejected_in_production(blank: str):
+    """The connect state_secret gets the same fail-closed posture as the rest.
+
+    It signs the OAuth connect state; running production with a generated
+    per-process value would break multi-replica deployments silently, so a
+    missing value must be a boot error, not a fallback.
+    """
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match=r"credentials\.connect\.state_secret"),
+    ):
+        ConnectConfig(state_secret=SecretStr(blank))
+
+
+def test_explicit_connect_state_secret_accepted_in_production():
+    with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
+        cfg = ConnectConfig(state_secret=SecretStr("a-real-generated-state-secret"))
+    assert cfg.state_secret.get_secret_value() == "a-real-generated-state-secret"
+
+
+_LOCAL_DEV_KEY_SEC1 = """\
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIBG7o+PPPIdPqMK4RwNWnj+UaW8fZFzxw7oZD5XFqW5CoAoGCCqGSM49
+AwEHoUQDQgAElriD/rpklmqTXbUOa9uLHAB2l+qr+DoeDmmykYLGblbxs+a1qvxB
+369JIs2Ej4zMfkjBTGES38wMDs1J+PJG6g==
+-----END EC PRIVATE KEY-----"""
+
+_LOCAL_DEV_KEY_PKCS8 = """\
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgEbuj4888h0+owrhH
+A1aeP5Rpbx9kXPHDuhkPlcWpbkKhRANCAASWuIP+umSWapNdtQ5r24scAHaX6qv4
+Oh4OabKRgsZuVvGz5rWq/EHfr0kizYSPjMx+SMFMYRLfzAwOzUn48kbq
+-----END PRIVATE KEY-----"""
+
+
+def test_local_dev_signing_key_rejected_in_production_sec1():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1))
+            ]
+        )
+
+
+def test_local_dev_signing_key_rejected_in_production_pkcs8():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_PKCS8))
+            ]
+        )
+
+
+def test_local_dev_signing_kid_rejected_in_production():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev key id"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(
+                    kid="local-dev-key", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1)
+                )
+            ]
+        )
 
 
 def test_boolean_like_password_preserved_as_string(config_file: Path):
@@ -401,6 +530,59 @@ def test_apps_env_comma_separated_with_spaces(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.apps == ["registry", "admin", "control"]
+
+
+def test_mcp_oauth_config_defaults(config_file: Path):
+    """MCP OAuth seam, D9 as amended: off by default, and approval-first —
+    auto-approve is an explicit opt-in, false by default."""
+    config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is False
+    assert config.server.mcp.oauth.auto_approve_clients is False
+    assert config.server.mcp.oauth.registration_gc_days == 90
+
+
+def test_mcp_oauth_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__SERVER__MCP__OAUTH__ENABLED": "true",
+        "JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS": "true",
+        "JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS": "30",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is True
+    assert config.server.mcp.oauth.auto_approve_clients is True
+    assert config.server.mcp.oauth.registration_gc_days == 30
+
+
+def test_oauth_registration_rate_limit_knobs(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM": "3",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST": "2",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.registration_rpm == 3
+    assert config.auth.oauth_rate_limit.registration_burst == 2
+
+
+def test_oauth_approval_status_rate_limit_defaults(config_file: Path):
+    """The approval-status poll bucket: generous defaults (one tab polls at
+    12 rpm; 120/60 holds ~10 NAT'd tabs), independently tunable from
+    /authorize."""
+    config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 120
+    assert config.auth.oauth_rate_limit.approval_status_burst == 60
+
+
+def test_oauth_approval_status_rate_limit_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_RPM": "6",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_BURST": "3",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 6
+    assert config.auth.oauth_rate_limit.approval_status_burst == 3
 
 
 def test_encryption_config_defaults():
@@ -564,6 +746,32 @@ def test_egress_empty_string_produces_empty_list():
 def test_csv_to_list_rejects_non_string_non_list():
     with pytest.raises(TypeError, match="expected list or comma-separated string"):
         _csv_to_list(123)
+
+
+def test_telemetry_host_os_defaults_to_none():
+    """Hand-rolled configs (no CLI stamp) leave host_os unset → runtime fallback."""
+    assert TelemetryConfig().host_os is None
+
+
+def test_telemetry_host_os_from_yaml(tmp_path: Path):
+    minimal = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "telemetry": {"enabled": True, "host_os": "darwin"},
+    }
+    path = tmp_path / "telemetry.yaml"
+    path.write_text(yaml.dump(minimal))
+    config = load_config(path)
+    assert config.telemetry.host_os == "darwin"
+
+
+def test_telemetry_host_os_env_override(config_file: Path):
+    with patch.dict(os.environ, {"JENTIC__TELEMETRY__HOST_OS": "windows"}):
+        config = load_config(config_file)
+    assert config.telemetry.host_os == "windows"
 
 
 # --- EntitlementConfig (AWS Marketplace license gate) -------------------------

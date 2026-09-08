@@ -26,6 +26,7 @@ from jentic_one.auth.web.schemas.agents import (
     ApiKeyResponse,
     ClaimRequest,
     DenyRequest,
+    JwksUpdateRequest,
     ToolkitBindingListResponse,
     ToolkitBindingResponse,
     ToolkitBindRequest,
@@ -282,6 +283,23 @@ async def generate_agent_api_key(
     """Generate a new API key for an active agent. Rotates any existing key."""
     key = await auth_svc.register_api_key(agent_id, identity=identity)
     return ApiKeyResponse(key=key)
+
+
+@router.put("/agents/{agent_id}/jwks", status_code=200)
+async def update_agent_jwks(
+    agent_id: str,
+    body: JwksUpdateRequest,
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> AgentResponse:
+    """Update an agent's JWKS (public keys for JWT-bearer authentication).
+
+    The JWKS must contain at least one Ed25519 public key and must not contain
+    any private key material. This enables the agent to authenticate via
+    JWT-bearer assertions signed with the corresponding private key.
+    """
+    view = await agent_svc.update_jwks(agent_id, jwks=body.jwks, identity=identity)
+    return _agent_response(view)
 
 
 @router.post("/agents/{agent_id}:revoke-api-key", status_code=204)

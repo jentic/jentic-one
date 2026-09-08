@@ -1,10 +1,10 @@
 """Arch guard: the telemetry wire payload can carry no PII by construction.
 
 The whole privacy posture rests on the request being *exactly*
-``{id, version, event, tags?, ts}`` — there is structurally nowhere for an
-identity, URL, error string, or entity id to ride along. These tests assert that
-invariant at the type/serialisation level so a future change that adds a
-free-form field fails loudly here.
+``{id, version, event, actor_type?, tags?, ts}`` — there is structurally nowhere
+for an identity, URL, error string, or entity id to ride along. These tests
+assert that invariant at the type/serialisation level so a future change that
+adds a free-form field fails loudly here.
 """
 
 from __future__ import annotations

@@ -32,8 +32,8 @@ func configFromState(state *ActiveState) (client.Config, error) {
 	}
 	// SEC-3/SEC-20: a per-environment custom CA bundle is honored by building an
 	// HTTPClient whose transport verifies against that pool. When ca_cert_path is
-	// set but cannot be loaded, we FAIL CLOSED (SEC-20) — previously this silently
-	// fell back to system roots, downgrading the operator's explicit trust
+	// set but cannot be loaded, we FAIL CLOSED (SEC-20) — silently falling back
+	// to system roots would downgrade the operator's explicit trust
 	// decision without a word. A corrupted/deleted bundle is a hard error the
 	// operator must fix, not a silent trust widening.
 	hc, err := caCertHTTPClient(state.CACertPath)
@@ -97,6 +97,78 @@ func stateForClient(state *ActiveState) (*ActiveState, error) {
 	return state, nil
 }
 
+// BrokerHTTPClient builds the base *http.Client for the broker leg of an
+// execute from the active context. Local-MCP §3.7.2: both `execute`'s broker
+// leg and the MCP path route through
+// this constructor so broker calls honor the same trust decision as every
+// other backend call. Callers pass the result to client.BrokerTransport, which
+// decorates the retry/backoff policy on the outside.
+func BrokerHTTPClient(ctx context.Context) (*http.Client, error) {
+	return hookedPlaneHTTPClient(ctx)
+}
+
+// ControlHTTPClient builds the base *http.Client for RAW control-plane
+// requests that have no generated route — the schema-hidden agent-discovery
+// documents (`GET /skills/<name>.md` / `/skills/index.json`, #651) the
+// `jentic mcp` skill:// resources fetch. Those routes are public (no auth
+// editors needed — they must be fetchable while a registration is still
+// pending), but the transport posture is identical to every other plane call:
+// the SEC-20 CA-pinned client when the environment declares ca_cert_path,
+// with the context's TransportHook composed over it.
+func ControlHTTPClient(ctx context.Context) (*http.Client, error) {
+	return hookedPlaneHTTPClient(ctx)
+}
+
+// AuthHTTPClient builds the *http.Client backend auth calls made OUTSIDE a
+// generated plane client — the RFC 7523 token mint (auth.Credentials.HTTPClient)
+// — must ride for an environment whose custom CA bundle is caCertPath: the
+// SEC-20 CA-pinned transport when set (fail closed on a broken bundle, exactly
+// like the generated clients), the default transport otherwise, with the
+// context's TransportHook composed over it (wrap, never displace). This is the
+// same construction path every plane client goes through, extracted so the
+// direct BearerToken/RefreshBearerToken call sites (the session bridge, access
+// refresh, the register wait loop) mint through the identical transport
+// posture instead of the auth package's unpinned default (#1205).
+func AuthHTTPClient(ctx context.Context, caCertPath string) (*http.Client, error) {
+	hc, err := caCertHTTPClient(caCertPath)
+	if err != nil {
+		return nil, err
+	}
+	if hc == nil {
+		hc = &http.Client{}
+	}
+	// #1207: raw plane calls never follow redirects. Every consumer of this
+	// constructor — the token mint, the broker leg (BrokerHTTPClient), the raw
+	// control fetches (ControlHTTPClient) — talks to an endpoint that answers
+	// directly, so a 3xx is only ever a misconfigured/hostile middlebox trying
+	// to point the CLI (headers attached) somewhere else. Surface it as the
+	// final response; each call site classifies it (the mint's classifier, the
+	// broker leg's coded error, the skills fetch's bundled fallback).
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	if hook := transportHookFrom(ctx); hook != nil {
+		base := hc.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		hc.Transport = hook(base)
+	}
+	return hc, nil
+}
+
+// hookedPlaneHTTPClient is the shared constructor behind the raw plane
+// clients: the SEC-20 CA-pinned transport when the environment declares
+// ca_cert_path (fail closed on a broken bundle, exactly like the generated
+// clients), the default transport otherwise, with the context's TransportHook
+// composed over it (wrap, never displace — the pinning decision stays the
+// inner RoundTripper).
+func hookedPlaneHTTPClient(ctx context.Context) (*http.Client, error) {
+	state, err := stateForClient(FromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return AuthHTTPClient(ctx, state.CACertPath)
+}
+
 // GetControlClient is the single constructor every Control Plane command uses. It
 // pulls the ActiveState the root interceptor injected and delegates to the SDK, so
 // token state, API-key credentials, and the file-less override are all handled
@@ -110,6 +182,7 @@ func GetControlClient(ctx context.Context) (*control.ClientWithResponses, error)
 	if err != nil {
 		return nil, err
 	}
+	applyTransportHook(ctx, &cfg)
 	return client.NewControl(cfg)
 }
 
@@ -126,5 +199,6 @@ func GetControlRawClient(ctx context.Context) (*control.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	applyTransportHook(ctx, &cfg)
 	return client.NewControlRaw(cfg)
 }

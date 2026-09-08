@@ -36,8 +36,7 @@ func Ctl() core.TreeBuilder { return ctlcmd.TreeBuilder() }
 // environments, identities, local-agent lifecycle), or (b) reveals/switches to
 // contexts other than the active one.
 //
-// Phase 2 ships the enforcing machinery against the commands that EXIST today —
-// context/env/identity management surface. Deliberate carve-outs, NOT fenced:
+// Deliberate carve-outs, NOT fenced:
 // the read-only verbs (`context view`, `env list`, `identity list`),
 // `identity register` (DCR of the agent's own identity — required by the agent
 // workflow), `migrate` (BC-1 directs agents to run it), and `theme` (a local

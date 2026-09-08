@@ -27,8 +27,8 @@ func renderHelp(t *testing.T, cmd *cobra.Command) string {
 }
 
 // TestHelpRendersExamples pins UX-1: a command with cmd.Example must show an
-// EXAMPLES section listing each example line. The custom renderer previously
-// dropped Example entirely.
+// EXAMPLES section listing each example line. The custom renderer must not
+// drop Example.
 func TestHelpRendersExamples(t *testing.T) {
 	cmd := &cobra.Command{
 		Use:     "widget",

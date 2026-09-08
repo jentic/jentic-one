@@ -73,7 +73,7 @@ test('open the agent detail page and approve from it', async ({ page }) => {
 });
 
 /**
- * Phase-3 identity console: the detail page's Activity tab shows THIS agent's
+ * Identity console: the detail page's Activity tab shows THIS agent's
  * execution feed and deep-links into Monitor pre-filtered by actor.
  */
 test('the Activity tab feeds per-agent executions and deep-links to Monitor', async ({ page }) => {
@@ -108,7 +108,7 @@ test('the Activity tab feeds per-agent executions and deep-links to Monitor', as
 });
 
 /**
- * Phase-4 editability: rename an agent from the Settings tab (PATCH
+ * Editability: rename an agent from the Settings tab (PATCH
  * /agents/:id) and verify the round trip — header, toast, and the fleet
  * table row all pick up the new name from the same session store.
  */

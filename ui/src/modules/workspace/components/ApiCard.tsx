@@ -1,7 +1,7 @@
 /**
  * ApiCard — one workspace API as a clickable tile.
  *
- * Visually aligned with jentic-mini's `WorkspaceTile`: a larger vendor icon, a
+ * A larger vendor icon, a
  * single content column with a hover ChevronRight, a description, and a bottom
  * meta row of icon-led stats (operations · revisions · security schemes). The
  * whole card is a router link to the API's detail page, with a subtle hover

@@ -8,7 +8,7 @@
  * per-entry `registered` boolean is the source of truth for the Imported/Available
  * badge, so the grid is fed entirely from `/catalog`.
  *
- * Scope note: unlike jentic-mini's Discover, this slice has no `workflow` /
+ * Scope note: this slice has no `workflow` /
  * `endpoint` entity types — the catalog backend exposes only API-level discovery.
  */
 

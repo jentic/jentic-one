@@ -90,7 +90,7 @@ describe('RailFeed — day separators (#705)', () => {
 		// the DOM and readable on explicit SR navigation.
 		const separators = container.querySelectorAll('[role="presentation"]');
 		expect(separators.length).toBeGreaterThanOrEqual(2);
-		// The rows are no longer exposed with the `separator` role.
+		// Day rows must not carry the `separator` role (they're `presentation`).
 		expect(screen.queryByRole('separator')).toBeNull();
 		for (const sep of separators) {
 			expect(sep).toHaveAttribute('role', 'presentation');

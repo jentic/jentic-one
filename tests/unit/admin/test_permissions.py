@@ -20,6 +20,8 @@ from jentic_one.admin.core.permissions import (
     EXECUTIONS_READ,
     JOBS_READ,
     JOBS_WRITE,
+    OAUTH_CLIENTS_READ,
+    OAUTH_CLIENTS_WRITE,
     ORG_ADMIN,
     OVERLAYS_CONFIRM,
     SERVICE_ACCOUNTS_READ,
@@ -94,6 +96,8 @@ def test_compute_effective_org_admin_expands_all() -> None:
         SERVICE_ACCOUNTS_READ,
         CONFIG_WRITE,
         CONFIG_READ,
+        OAUTH_CLIENTS_WRITE,
+        OAUTH_CLIENTS_READ,
     }
     assert result == expected
 

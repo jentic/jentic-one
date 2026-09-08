@@ -106,7 +106,7 @@ describe('ServiceAccountDetailPage', () => {
 		expect(screen.getByText('approve')).toBeInTheDocument();
 	});
 
-	// --- Phase 5: SA adopts the identity-console shell ----------------------
+	// --- SA adopts the identity-console shell -------------------------------
 
 	it('renders the KPI strip from the per-actor usage aggregate', async () => {
 		renderDetail('sva_active_1');

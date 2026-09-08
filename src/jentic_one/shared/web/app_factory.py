@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
-import opentelemetry.instrumentation.fastapi as otel_fastapi
 import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -28,7 +27,7 @@ from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
@@ -87,37 +86,6 @@ SURFACE_MODULES = {
 }
 
 _db_instrumented = False
-_otel_route_guard_installed = False
-
-
-def _install_otel_route_detail_guard() -> None:
-    """Stop OTel FastAPI instrumentation 500ing on partial route matches.
-
-    ``opentelemetry.instrumentation.fastapi._get_route_details`` walks
-    ``app.routes`` and reads ``route.path``. FastAPI now wraps ``include_router``
-    results in an opaque ``_IncludedRouter`` that has no ``path`` (the same quirk
-    handled in ``shared/web/static.py``). Upstream guards the ``Match.FULL``
-    branch with ``try/except AttributeError`` but not the ``Match.PARTIAL`` one,
-    so any request that path-matches an included router without matching a method
-    — a CORS ``OPTIONS`` preflight, a ``405`` — raises ``AttributeError`` and the
-    span-name extraction turns it into a ``500`` (verified on
-    ``opentelemetry-instrumentation-fastapi==0.63b1``). We wrap the function to
-    fall back to the request path. Idempotent; the global guard is process-wide.
-    """
-    global _otel_route_guard_installed
-    if _otel_route_guard_installed:
-        return
-
-    original: Any = otel_fastapi._get_route_details
-
-    def _safe_get_route_details(scope: dict[str, Any]) -> Any:
-        try:
-            return original(scope)
-        except AttributeError:
-            return scope.get("path")
-
-    otel_fastapi._get_route_details = _safe_get_route_details
-    _otel_route_guard_installed = True
 
 
 def attach_http_observability(app: FastAPI) -> None:
@@ -132,7 +100,6 @@ def attach_http_observability(app: FastAPI) -> None:
     `local-prom-app.yaml` overlay therefore sets `prometheus.io/path` to
     "/metrics/" with the trailing slash — keep them in sync.
     """
-    _install_otel_route_detail_guard()
     instrument_inbound_app(app)
 
     metrics_app = make_metrics_asgi_app()
@@ -182,7 +149,7 @@ def _start_worker(
     service's config.
 
     ``upstream_executor`` is the broker-side ``UpstreamExecutor`` (the
-    ``PipelineExecutor`` over the shared composed runner, §11 RN-0.3) and
+    ``PipelineExecutor`` over the shared composed runner) and
     ``credential_injector`` is the broker ``CredentialService``; both are built
     by the broker's surface lifespan and stashed on ``app.state`` (so this
     ``shared/`` factory never imports ``broker/``). When the executor is
@@ -194,7 +161,7 @@ def _start_worker(
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
-    client/runners down — see ``_stop_worker`` (§09 E4.3).
+    client/runners down — see ``_stop_worker``.
     """
     if not ctx.has_db("admin"):
         return None
@@ -305,7 +272,7 @@ async def _stop_catalog_update_scanner(
 
 
 async def _stop_worker(handle: tuple[WorkerLoop, asyncio.Task[None]] | None) -> None:
-    """Gracefully drain then stop the worker (§09 E4.3 teardown step 2).
+    """Gracefully drain then stop the worker (teardown step 2).
 
     Drains first (so the in-flight job finishes or is safely reclaimable) **before**
     the surface lifespan closes the shared ``httpx`` client/runners — otherwise a
@@ -373,12 +340,19 @@ async def _start_telemetry(
                 summary="Instance initialized",
                 created_by=None,
             )
+        # The OS family rides on every boot event (see HostOs) so the
+        # dimension self-heals: a lost POST or a config moved to another
+        # machine is corrected on the next startup, matching how comparable
+        # products (n8n, GitLab, Grafana) report environment facts. Prefer
+        # the install-time value the CLI stamped on the host; in Docker,
+        # runtime detection would report the container's Linux.
         await emit_event_best_effort(
             session,
             type=EventType.INSTANCE_BOOTED,
             severity=EventSeverity.INFO,
             summary="Instance booted",
             created_by=None,
+            tags={HostOs.resolve(cfg.host_os)},
         )
 
     return loop, task, client
@@ -433,7 +407,7 @@ def create_surface_app(
 
     ``extra_lifespan`` is an optional surface-owned async context manager entered
     after ``ctx.startup()`` and exited before ``ctx.shutdown()`` — the broker
-    uses it to open/close its shared outbound ``httpx.AsyncClient`` (§04).
+    uses it to open/close its shared outbound ``httpx.AsyncClient``.
 
     ``container`` is the DI seam: when omitted the default is used and behavior is
     unchanged. A caller passes its own container to inject a ``Broker`` (stashed on
@@ -464,7 +438,7 @@ def create_surface_app(
             # Worker starts *inside* the surface lifespan so it can share any
             # surface-owned resource (e.g. the broker's shared upstream
             # executor + credential injector stashed on app.state by
-            # extra_lifespan) — §04 / §11 RN-0.3.
+            # extra_lifespan).
             worker_task = _start_worker(
                 ctx,
                 enabled_apps,
@@ -476,7 +450,7 @@ def create_surface_app(
             try:
                 yield
             finally:
-                # §09 E4.3 drain step 1: signal the admission gate (if any) to
+                # Drain step 1: signal the admission gate (if any) to
                 # report unready + stamp Connection: close, so the LB deregisters
                 # this instance *before* we drain in-flight work and tear down the
                 # worker (step 2) and — in extra_lifespan's exit — the shared

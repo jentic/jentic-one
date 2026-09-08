@@ -50,6 +50,16 @@ server:
   # "local" (default) for a self-hosted install on your own machine/network,
   # "remote" for a hosted install run elsewhere.
   # backend: local
+  # Daemon-native MCP over Streamable HTTP (/mcp) and its interactive-OAuth
+  # surface. Both are off by default. OAuth-client self-registrations (DCR)
+  # land in the admin approval queue by default — auto_approve_clients is an
+  # explicit opt-in for deployments that accept self-registered clients
+  # without review.
+  # mcp:
+  #   enabled: true
+  #   oauth:
+  #     enabled: true
+  #     auto_approve_clients: false   # default; set true to skip the queue
 
 apps:
   - registry
@@ -61,6 +71,10 @@ apps:
 # redirect URIs are correct.
 auth:
   canonical_base_url: "https://jentic.example.com"
+  platform_clients:
+    - client_id: "jentic-one-spa"
+      redirect_uris:
+        - "https://jentic.example.com/app/auth/callback"
 
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
 # WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
@@ -72,6 +86,19 @@ credentials:
     entries:
       - id: v1
         material: CHANGE_ME   # pragma: allowlist secret
+
+# Shared-state backend for cross-process coordination. The default (memory)
+# keeps rate limiters, consent handles, and circuit state per-process — fine
+# for a single-worker install, but a multi-worker or multi-instance deployment
+# needs Redis so the token-endpoint limiter and consent-nonce anti-replay
+# survive across workers.
+broker:
+  resilience:
+    backend:
+      backend: memory
+      # backend: redis
+      # redis_url: rediss://user:pass@redis.example.com:6379/0
+      # redis_key_prefix: jentic:prod:
 
 admin:
   auth:
