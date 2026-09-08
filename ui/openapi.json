@@ -4032,32 +4032,6 @@
         "title": "InstanceIdentityResponse",
         "type": "object"
       },
-      "IntrospectRequest": {
-        "description": "Introspection endpoint request (form body).",
-        "properties": {
-          "token": {
-            "title": "Token",
-            "type": "string",
-            "x-sensitive": true
-          },
-          "token_type_hint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Token Type Hint"
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "title": "IntrospectRequest",
-        "type": "object"
-      },
       "IntrospectResponse": {
         "description": "RFC 7662 introspection response.",
         "properties": {
@@ -29672,13 +29646,64 @@
     },
     "/oauth/introspect": {
       "post": {
-        "description": "Introspect a token (RFC 7662).",
+        "description": "Introspect a token (RFC 7662).\n\nAccepts both ``application/x-www-form-urlencoded`` (the §2.1 request\nencoding) and JSON (the platform's own contract) bodies. Both arms\nrequire a platform bearer identity, and both answer an unknown, invalid,\nor expired *token value* with 200 ``{\"active\": false}`` (§2.2) — only a\nmalformed request body (missing ``token``) is a 400 ``invalid_request``.",
         "operationId": "introspectEndpoint",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/IntrospectRequest"
+                "description": "Introspection endpoint request (RFC 7662) — JSON or form-encoded.",
+                "properties": {
+                  "token": {
+                    "title": "Token",
+                    "type": "string",
+                    "x-sensitive": true
+                  },
+                  "token_type_hint": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Token Type Hint"
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "title": "IntrospectRequest",
+                "type": "object"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "description": "Introspection endpoint request (RFC 7662) — JSON or form-encoded.",
+                "properties": {
+                  "token": {
+                    "title": "Token",
+                    "type": "string",
+                    "x-sensitive": true
+                  },
+                  "token_type_hint": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Token Type Hint"
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "title": "IntrospectRequest",
+                "type": "object"
               }
             }
           },

@@ -127,7 +127,6 @@ func (HealthResponse) RequiredFields() []string {
 func (InstanceIdentityResponse) RequiredFields() []string {
 	return []string{"backend", "canonical_base_url", "host"}
 }
-func (IntrospectRequest) RequiredFields() []string    { return []string{"token"} }
 func (IntrospectResponse) RequiredFields() []string   { return []string{"active"} }
 func (InviteIssuedResponse) RequiredFields() []string { return []string{"expires_at", "token"} }
 func (JobLinksResponse) RequiredFields() []string     { return []string{"self"} }

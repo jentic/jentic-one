@@ -213,3 +213,18 @@ class InvalidRevocationRequestError(AuthServiceError):
     def __init__(self, reason: str = "token is required") -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class InvalidIntrospectionRequestError(AuthServiceError):
+    """Raised when an RFC 7662 introspection request body is malformed.
+
+    Maps to 400 ``invalid_request`` (RFC 7662 §2.1: a request missing the
+    required ``token`` parameter answers 400) on both the form-encoded and
+    JSON arms of ``POST /oauth/introspect``. Whether the *token* is invalid,
+    unknown, or expired is never an error — that verdict is the RFC 7662 §2.2
+    ``{"active": false}`` response body.
+    """
+
+    def __init__(self, reason: str = "token is required") -> None:
+        super().__init__(reason)
+        self.reason = reason

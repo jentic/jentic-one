@@ -4,7 +4,6 @@
 /* eslint-disable */
 import type { Body_consentSubmit } from '../models/Body_consentSubmit';
 import type { Body_loginSubmit } from '../models/Body_loginSubmit';
-import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
@@ -429,13 +428,22 @@ export class OAuthService {
     /**
      * Introspect Endpoint
      * Introspect a token (RFC 7662).
+     *
+     * Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+     * encoding) and JSON (the platform's own contract) bodies. Both arms
+     * require a platform bearer identity, and both answer an unknown, invalid,
+     * or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+     * malformed request body (missing ``token``) is a 400 ``invalid_request``.
      * @returns IntrospectResponse Successful Response
      * @throws ApiError
      */
     public static introspectEndpoint({
         requestBody,
     }: {
-        requestBody: IntrospectRequest,
+        requestBody: {
+            token: string;
+            token_type_hint?: (string | null);
+        },
     }): CancelablePromise<IntrospectResponse> {
         return __request(OpenAPI, {
             method: 'POST',
