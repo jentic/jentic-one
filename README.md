@@ -46,6 +46,11 @@ Agents integrate through the `jentic` CLI, a generated skill, the local `jentic 
 or plain HTTP. Every path terminates at the credential-injecting Broker: the MCP server runs beside the
 agent as a thin client and holds no upstream credentials — those never leave your Broker.
 
+**Who it's for:** developers running a coding agent locally (Claude Code,
+Codex, Cursor, Cline, or one you built) that needs real API access; small
+teams running agents in a private network or VPC; anyone who needs to pass a
+security review before an agent touches production credentials.
+
 ## Quickstart
 
 **The open-source build is the real thing, not a trial** — the same code,
@@ -208,3 +213,4 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 ## License
 
 Jentic One is licensed under [Apache 2.0](LICENSE). See [License](./LICENSE)
+and [NOTICE](NOTICE) for details.

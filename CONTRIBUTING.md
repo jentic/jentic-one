@@ -78,14 +78,21 @@ workflow, and the checks a pull request has to pass.
    make check
    ```
 
+   (`make check` ends with `score`, which needs Node/`npx` and network access;
+   the offline gates run first, so a missing Node only fails the last step.)
+
 5. Start the app locally:
 
    ```bash
    make start-app
    ```
 
+   For the full dev loop (backend + UI watch), use `make dev` — see
+   [docs/development/local-setup.md](docs/development/local-setup.md).
+
 See [deploy/README.md](deploy/README.md) for the build architecture and
-common build tasks.
+common build tasks, and [docs/development/](docs/development/README.md) for
+the contributor-facing guides (local setup, releasing, product scope).
 
 ## Development workflow
 

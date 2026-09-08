@@ -22,6 +22,10 @@ Concretely, on the `0.MINOR.PATCH` line:
   [`docs/operations/upgrades.md`](docs/operations/upgrades.md).
 - **PATCH** (`0.13.2 → 0.13.3`) — bug fixes and non-breaking changes only.
 
+**Support window:** during the beta, fixes land on the latest release only —
+there are no maintained release branches and no backports. If you need a fix,
+upgrade to the release that carries it.
+
 We will not cut `1.0.0` until the public API, database schema, and CLI surface
 are stable enough to promise the usual SemVer backward-compatibility guarantee.
 

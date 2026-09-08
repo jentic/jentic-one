@@ -487,9 +487,14 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   including the exact broker URL and headers — before committing side effects.
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
-- Add `--json` to force machine-readable output on a terminal (works on
-  `search`, `execute`, `inspect`, `apis`, `access`, `doctor`). `context view`
-  has no `--json` flag — it emits JSON automatically in agent/non-TTY mode.
+- Add `--json` to force machine-readable output on a terminal. It exists on
+  **leaf** commands (`search`, `execute`, `inspect`, `apis list`,
+  `access list`, `doctor`); the bare group commands (`jentic apis`,
+  `jentic access`) reject it. Don't rely on non-TTY output being JSON
+  automatically: `register` persists `mode: human`, which wins over TTY
+  detection — set `JENTIC_MODE=agent` (or pass `--json` explicitly) when you
+  need parseable output. (`context view` has no `--json` flag at all — it
+  follows the same mode rules.)
 - **Correlation & retries**: export `JENTIC_SESSION_ID=<your session id>` and
   every request carries it as `X-Jentic-Session-Id`, so operators can group all
   of your calls in server logs; each `execute` also sends a fresh W3C

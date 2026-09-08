@@ -13,7 +13,7 @@
 #   3. publish-image — build the `app` container image and push it to GHCR
 #                      (ghcr.io/<owner>/jentic-one-app). One image serves every
 #                      surface via JENTIC__APPS; this is the image self-hosters
-#                      pull (see deploy/README.md "Self-hosted"). Needs gate +
+#                      pull (see deploy/README.md "The published image"). Needs gate +
 #                      smoke: the image is part of the release, so it must not
 #                      publish (nor move :latest) while any deployment mode is
 #                      red.
@@ -181,7 +181,7 @@ jobs:
 
       # One `app` image serves every surface — the surface set is chosen at
       # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
-      # see deploy/README.md "Self-hosted"). A single published `app` image
+      # see deploy/README.md "The published image"). A single published `app` image
       # therefore covers the whole self-hosted app + broker topology.
       #
       # MULTI-ARCH: we build from deploy/docker/app.multiarch.Dockerfile (a
@@ -285,12 +285,12 @@ jobs:
       # does for the CLI binaries (cosign keyless via the job's OIDC identity +
       # syft SBOM). Both target the immutable digest, never a floating tag.
       # Self-hosters verify with `cosign verify` (deploy/README.md "Verify the
-      # image signature").
+      # signature").
       # Sign the image and attach an SBOM attestation, mirroring what GoReleaser
       # does for the CLI binaries (cosign keyless via the job's OIDC identity +
       # syft SBOM). Both target the immutable INDEX digest, never a floating tag
       # — cosign signing an OCI index covers every arch under it. Self-hosters
-      # verify with `cosign verify` (deploy/README.md "Verify the image signature").
+      # verify with `cosign verify` (deploy/README.md "Verify the signature").
       - name: Sign the image and attest its SBOM (cosign keyless + syft)
         env:
           COSIGN_YES: "true"
@@ -330,7 +330,7 @@ jobs:
       # digest-addressed content).
       #
       # Dormant until the repo VARIABLES (not secrets — none of these values
-      # are sensitive, see deploy/README.md "AWS Marketplace publishing") are
+      # are sensitive, see docs/development/marketplace-publishing.md) are
       # set, so forks and pre-listing releases skip cleanly:
       #   MARKETPLACE_ECR_ROLE_ARN — IAM role trusting GitHub's OIDC provider,
       #                              scoped to this repo's release workflow
