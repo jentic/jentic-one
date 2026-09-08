@@ -124,6 +124,34 @@ data snapshot) and restart. Never "fix" this by re-generating keys — that
 makes every stored credential permanently unreadable. If the keys are truly
 lost, the humans must re-enter the affected credentials.
 
+To answer "which credentials are affected" without touching a secret: the
+key id is a plaintext `<key_id>:` prefix on every ciphertext column, so this
+prints only key ids and counts (Postgres; run against the **control**
+database — on SQLite replace `split_part(col, ':', 1)` with
+`substr(col, 1, instr(col, ':') - 1)`):
+
+```sql
+SELECT 'customer_api_keys' AS tbl, split_part(encrypted_key, ':', 1) AS key_id, count(*)
+  FROM control.customer_api_keys GROUP BY 2
+UNION ALL SELECT 'basic_credentials', split_part(encrypted_password, ':', 1), count(*)
+  FROM control.basic_credentials GROUP BY 2
+UNION ALL SELECT 'token_value_credentials', split_part(encrypted_token_value, ':', 1), count(*)
+  FROM control.token_value_credentials GROUP BY 2
+UNION ALL SELECT 'oauth_client_credentials', split_part(encrypted_client_secret, ':', 1), count(*)
+  FROM control.oauth_client_credentials GROUP BY 2
+UNION ALL SELECT 'oauth_tokens.access', split_part(encrypted_access_token, ':', 1), count(*)
+  FROM control.oauth_tokens GROUP BY 2
+UNION ALL SELECT 'oauth_tokens.refresh', split_part(encrypted_refresh_token, ':', 1), count(*)
+  FROM control.oauth_tokens WHERE encrypted_refresh_token IS NOT NULL GROUP BY 2
+UNION ALL SELECT 'sigv4.secret', split_part(encrypted_secret_access_key, ':', 1), count(*)
+  FROM control.sigv4_credentials GROUP BY 2
+UNION ALL SELECT 'sigv4.session', split_part(encrypted_session_token, ':', 1), count(*)
+  FROM control.sigv4_credentials WHERE encrypted_session_token IS NOT NULL GROUP BY 2;
+```
+
+Every `key_id` the result names must exist in `credentials.encryption`'s
+`entries` — any that don't are the credentials failing with 424.
+
 ## Database connection lost/refused at runtime (Postgres shape)
 
 The app or broker starts returning errors and the logs show connection

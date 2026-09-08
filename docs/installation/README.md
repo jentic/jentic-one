@@ -16,6 +16,7 @@ Production installs run from released artifacts only: the published container im
 | Runtime (default **on**) | `api.github.com` | "Update available" release check | `release_check.enabled: false` |
 | Runtime (default **on**) | `raw.githubusercontent.com` (`catalog.manifest_url`) | Public API catalog manifest refresh + update sweep | `catalog.manifest_max_age_seconds: 0` and `catalog.update_check_interval_seconds: 0` |
 | Runtime (default **off**) | `api.jentic.com` | Anonymous product telemetry | Off unless `telemetry.enabled: true` |
+| Browser (always) | `fonts.googleapis.com` / `fonts.gstatic.com` | Web fonts for the dashboard SPA and the auth consent/login pages | **No config knob** — the reference is baked into the pages. The egress is from the operator's *browser*, not the server; air-gapped, the pages render with system-font fallbacks. Block it at the browser/proxy if policy requires |
 
 (Defaults: [config reference](../reference/config.md).
 Brokered API calls go wherever your imported APIs point — that egress is the

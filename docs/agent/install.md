@@ -15,8 +15,12 @@ Related files: [operate.md](operate.md) (start/stop/upgrade/uninstall),
 1. **Never regenerate secrets over an existing install.** If
    `~/.jentic/jentic-one.yaml` already exists, this is a reinstall: keep that
    file (especially the `credentials.encryption` block) and `~/.jentic/.env`,
-   and skip to [Step 6](#6-run-database-migrations). A rotated encryption key
-   silently makes every stored credential unreadable.
+   and skip to [Step 6](#6-run-database-migrations) — after confirming the
+   pieces the skipped steps provide still exist: the `jentic` binary on
+   `PATH` (Step 2), `~/.jentic/docker-compose.yaml` (Step 4), and a `VER=`
+   line in `~/.jentic/.env` (also set in Step 2). Recreate any missing one from
+   its step without touching the two secret-bearing files. A rotated
+   encryption key silently makes every stored credential unreadable.
 2. **Do not print secret values** into chat, logs, or shell history beyond the
    generated files themselves. Generate secrets with command substitution, not
    by echoing them. If the human chose the
@@ -34,6 +38,12 @@ Related files: [operate.md](operate.md) (start/stop/upgrade/uninstall),
    compose file. Never rely on a variable exported in an earlier block.
 5. Ask the human the four questions in Step 0 before writing anything, unless
    they already told you.
+6. **Run each command block as one script** (`bash -e <<'EOF' … EOF` or a
+   saved file), not pasted line-by-line into your interactive shell. The
+   blocks depend on the first failing command stopping the block with a
+   branchable exit code (a stopped Docker daemon otherwise leaves no trace
+   to branch on), and the diagnostic blocks end in `exit 1` — fine for a
+   script, session-ending if pasted into a persistent shell.
 
 ## 0. Decisions (ask the human)
 
@@ -66,8 +76,11 @@ Then apply these changes, marked `HARDENED` at the affected steps:
   markers; the human runs a one-liner that fills in the secrets (and, on
   Postgres, `PGPASS`) — the values only ever exist in their shell.
 - **Never read the secret-bearing files back** (`jentic-one.yaml`,
-  `~/.jentic/.env`). To inspect the config, use
-  `grep -v -E 'jwt_secret|pepper|material|state_secret|password|PGPASS'`.
+  `~/.jentic/.env`). To inspect the config, print its *shape* only —
+  `grep -oE '^\s*[A-Za-z_]+:' ~/.jentic/jentic-one.yaml` emits keys and
+  never values. (Do not filter values out with a `grep -v` denylist: folded
+  YAML scalars put secret material on lines the denylist doesn't match, so
+  it fails open.)
 
 Every other step is unchanged — none of them touch secret values.
 
@@ -428,15 +441,22 @@ curl -fsS http://127.0.0.1:8000/admin/health   # → {"setup_required": true|fal
 ```
 
 - `setup_required: false` **twice in a row** (~2 s apart — a single read can
-  be a [warmup blip](troubleshoot.md#setup_required-flaps)): an admin already
-  exists (reinstall over live data) — tell the human to sign in at
-  `http://127.0.0.1:8000/app/login` and continue to Step 9.
+  be a [warmup blip](troubleshoot.md#setup_required-flaps)): corroborate
+  before trusting it — `/admin/health` swallows database errors and answers
+  with the same `setup_required: false` defaults, so also run
+  `docker compose -p jentic -f ~/.jentic/docker-compose.yaml run --rm -T app
+  python -m jentic_one.migrations.run --check` and require `OVERALL current`.
+  Both good: an admin already exists (reinstall over live data) — tell the
+  human to sign in at `http://127.0.0.1:8000/app/login` and continue to
+  Step 9.
 - `setup_required: true`: tell the human —
 
   > Open **http://127.0.0.1:8000/app/setup** and create the first admin
   > account (email + password, minimum 12 characters). I'll wait.
 
-  Then poll `setup_required` every few seconds until it is `false`.
+  Then poll `setup_required` every few seconds until it is `false`. Bound
+  the wait: after ~15 minutes, stop polling and re-ask the human instead of
+  looping forever.
 
 No human available (CI, fleet installs) →
 [troubleshoot.md](troubleshoot.md#no-human-available-at-the-first-admin-gate-ci-fleet-installs).

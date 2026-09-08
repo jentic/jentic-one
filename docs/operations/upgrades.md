@@ -26,7 +26,11 @@ Rolling *back* the app version is supported only together with restoring the
 matching pre-upgrade snapshot — old code on a newer schema is not a supported
 state. A schema downgrade path exists
 (`python -m jentic_one.migrations.run --direction down`), but it is a
-break-glass tool, not a supported rollback path: restore the snapshot
+break-glass tool, not a supported rollback path — know its sharp edges
+before touching it: the default steps back **one revision per database**
+(so a release spanning two revisions leaves a database half-downgraded and
+still exits 0), and several `down` bodies are deliberate no-ops that do not
+restore dropped data. Restore the snapshot
 instead, or roll forward to a fixed release. The version
 number's exact promises while in beta: [VERSIONING.md](../../VERSIONING.md).
 

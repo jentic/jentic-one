@@ -97,7 +97,11 @@ exposure vector in past audits.
 
 - Pin the image by digest (`ghcr.io/jentic/jentic-one-app@sha256:…`) and
   verify cosign signatures before the image crosses into a locked-down
-  network: [installation/README.md](../installation/README.md).
+  network: [installation/README.md](../installation/README.md). Note this
+  supersedes the `VER` indirection [operate.md](operate.md) calls the single
+  place the server version lives — once the compose file pins a digest, an
+  upgrade means updating the digest there *and* repinning `VER` (which still
+  drives CLI/server version-match checks), not `VER` alone.
 - Keep `runtime.debug: false` and `log_level: INFO` in production; the JSON
   log sink (`~/.jentic/logs/app.jsonl`) redacts secrets by design, but debug
   logging is noisier and slower.

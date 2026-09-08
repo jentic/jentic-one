@@ -268,6 +268,15 @@ def test_every_doc_is_reachable_from_the_docs_index() -> None:
 
     all_docs = {doc for doc in _tracked_markdown_files() if DOCS_ROOT in doc.parents}
 
+    # Tombstones: one-line redirect stubs left at high-traffic old paths after
+    # a move (released artifacts and external links still point there). They
+    # are deliberately unlinked from the index — exempt anything whose first
+    # heading is "# Moved".
+    tombstones = {
+        doc for doc in all_docs if doc.read_text(encoding="utf-8").lstrip().startswith("# Moved\n")
+    }
+    all_docs -= tombstones
+
     reachable: set[Path] = set()
     queue: deque[Path] = deque([DOCS_INDEX])
     while queue:

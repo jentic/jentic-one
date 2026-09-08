@@ -24,6 +24,24 @@ An agent's `Identity` carries its owner (`parent_actor_id`) and the owner's
 effective permissions (`parent_permissions`): an agent can never out-rank
 the human it belongs to.
 
+### How a human signs in
+
+Three mechanisms mint a `user` session, and they are mutually arranged, not
+stacked:
+
+1. **First-party password login** — the SPA posts to `POST /auth/login`
+   (admin surface) and gets a session JWT. Always on; this is the default
+   OSS sign-in.
+2. **Local-account login on the OAuth flow** (`auth.local_login.enabled`,
+   default **off**) — a password form on `/authorize` for standards-track
+   native-app sign-in (RFC 8252). Unlike mechanism 1 it does not hand back
+   a JWT: the form mints an OAuth authorization code, exchanged for tokens
+   like any other client.
+3. **External IdP** (`auth.idp.enabled`, generic OIDC or Google) — the
+   `/authorize` flow delegates to the provider and provisions/refreshes the
+   user on callback. When enabled, the IdP **always wins**: the local-login
+   form is never offered (no mixed mode).
+
 ## How an agent gets a token
 
 Agent identity is asymmetric — the platform never holds the agent's private
@@ -60,7 +78,12 @@ sequenceDiagram
    agent signs a short-lived assertion (≤ 5 minutes, single-use `jti`) with
    its private key; the auth surface verifies it against the registered
    JWKS and mints an opaque access/refresh token pair, recorded in the
-   admin DB.
+   admin DB. Two scope caveats: the `jti` replay cache is **process-local**
+   (an in-memory dict, not the shared-state backend), so with multiple auth
+   replicas an assertion is single-use per replica, not per instance; and
+   the `exp`/`iat` checks run with **zero clock leeway**, so a client clock
+   more than a few seconds fast produces `iat` rejections — keep both ends
+   on NTP.
 
 Operators and the SPA use session JWTs minted at login; API keys
 (`jak_`/`sak_`) are the long-lived alternative, resolved by prefix against

@@ -16,6 +16,12 @@ anything not listed as tested should be treated as best-effort.
 | `jentic run` — local-agent confinement | ✅ Supported (`bwrap` + user namespaces) | ✅ Supported (`sandbox-exec`) | ❌ Unsupported — no confinement backend | ❌ Unsupported — needs unprivileged user namespaces inside WSL; untested |
 | `jentic mcp` — local MCP stdio server | ✅ Supported | ✅ Supported | ⚠️ Partial — stdio mode works; `--http`'s default unix-socket/OS-identity mode fails closed (peer-credential checks are unsupported on Windows), and `mcp config` cannot locate the Claude Desktop config path | ✅ Supported |
 
+One nuance the Linux column hides: the Go CLIs are static binaries
+(`CGO_ENABLED=0`) and run on **musl** distributions like Alpine, but the
+server container image is Ubuntu/glibc-based — "Linux ✅" for the server
+means a host that can run glibc Linux containers, not that the app runs on
+a musl userland directly.
+
 ## Windows in practice
 
 Step-by-step path: [windows.md](windows.md). The shape:

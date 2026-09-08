@@ -58,7 +58,11 @@ Two append-only records, both in the **admin database** (which is why
 - **Audit entries** — one per admin/control-plane mutation: actor (type, id,
   session), action, target, timestamp, and trace id. Append-only by
   construction (the table carries no update column). Over the API via
-  `GET /audit` (requires `audit:read`).
+  `GET /audit` (requires `audit:read`), which filters on `target_type`,
+  `target_id`, `actor_id`, `origin`, `since`, and `until` (cursor-paginated
+  via `cursor`/`limit`); in the UI under **Monitor → Audit**. Credential
+  *use* is not an audit row — it surfaces as a `credential.accessed` event
+  and in Executions.
 
 For durability, ship them like any other database rows: they are ordinary
 tables in the admin database, so your normal

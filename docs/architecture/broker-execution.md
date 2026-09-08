@@ -31,9 +31,15 @@ sequenceDiagram
     B->>P: dispatch: Deadline → Retry → CircuitBreaker → SigV4 → HTTP
     P->>U: forward request (hop-by-hop + spoofable headers stripped)
     U-->>P: response
-    P-->>B: outcome (upstream errors tagged, body verbatim)
-    B->>D: record execution + audit events
-    B-->>A: response (secret never included)
+    alt streaming fast path (sync non-idempotent, the effective default)
+        P-->>B: response streamed through
+        B-->>A: response (secret never included)
+        B--)D: record execution (post-response, best-effort)
+    else buffered path (idempotent or passthrough disabled)
+        P-->>B: outcome (upstream errors tagged, body verbatim)
+        B->>D: record execution + audit events
+        B-->>A: response (secret never included)
+    end
 ```
 
 ## One pipeline, two callers — and a streaming fast path

@@ -37,6 +37,11 @@ the packaged version of this chart with published images.
 - For the bundled PostgreSQL: a default StorageClass. Local clusters ship
   one; on a bare cluster the symptom of missing storage is the `postgresql`
   pod `Pending` with "pod has unbound immediate PersistentVolumeClaims".
+  The data PVC defaults to **8Gi** (`postgresql.persistence.size`) and is
+  created through the StatefulSet's `volumeClaimTemplates`, so the size is
+  **immutable after first install** — resizing means expanding the PVC by
+  hand (if the StorageClass allows it) or a dump/restore into a new
+  release. Size it before first install.
 
 ## 1. Get the images
 
@@ -183,7 +188,11 @@ your ingress, routing UI/control traffic to the `app` Service and execution
 traffic to the `broker` Service. The chart ships **no** Ingress resource and
 no `ingress.*` values — you bring your own manifest, pointing at the
 `<release>-app` and `<release>-broker` Services on port 8000. Agents need
-both URLs. Then walk through
+both URLs. Behind that ingress, also set
+`auth.oauth_rate_limit.trusted_proxies` in the config file to the ingress
+pods' socket IPs: the pre-auth rate limiter keys on client IP, and with the
+default (empty) list every client shares the ingress's one bucket. Then walk
+through
 the [first brokered call](../guides/first-call.md).
 
 ## External database (production)
@@ -251,7 +260,10 @@ global:
   file — dev-grade), or a Secret mounted via
   `global.appSecrets.existingSecret` that carries the three
   `db-password-{registry,control,admin}` keys — the pods consume those via
-  `secretKeyRef` whenever the explicit value is unset. See
+  `secretKeyRef` whenever the explicit value is unset. If you do put a
+  password in a values file, **quote it**: an all-digit password unquoted
+  is a YAML *number* (`0123456789` renders as `1.23456789e+08`) and
+  authentication fails inscrutably. See
   [Secrets](#secrets) below. The mandatory set is the same as the
   [Docker guide, step 2](docker.md#2-write-the-config).
 
@@ -374,7 +386,12 @@ annotations are covered in the
    `--reuse-values` when you're changing nothing but the tag). On the
    bundled-DB path the migrate hook re-runs automatically — inside
    `--timeout`, hence the explicit value; the Helm default of 5 minutes can
-   `SIGTERM` a long migration mid-run on a populated database. Against an
+   `SIGTERM` a long migration mid-run on a populated database. Also know
+   the hook is `post-upgrade`: the **new pods roll out first and serve on
+   the old schema until the migrate Job finishes** — new-release code is
+   expected to tolerate the previous schema for that window; for a
+   zero-surprise upgrade on a populated database, scale to 0 first or
+   upgrade in a maintenance window. Against an
    external database, re-run migrations first (see above).
 
 Generated secrets are never rotated by an upgrade, and `helm uninstall`

@@ -17,6 +17,13 @@ Reboot when prompted; you get Ubuntu by default. (Anything WSL2-capable
 works — [Microsoft's guide](https://learn.microsoft.com/windows/wsl/install)
 covers older Windows builds.)
 
+The two failures people actually hit here: virtualization disabled in
+firmware (`wsl --install` or the first launch fails with
+`HCS_E_HYPERV_NOT_INSTALLED` / "Please enable the Virtual Machine Platform"
+— enable VT-x/AMD-V in BIOS/UEFI, then re-run), and a stale WSL kernel on
+older builds (`WSL 2 requires an update to its kernel component` — run
+`wsl --update`, or install the kernel MSI Microsoft's guide links).
+
 ## 2. Install Docker Desktop with the WSL2 backend
 
 Install [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
@@ -51,9 +58,17 @@ scoop install jentic
 
 `winget` resolves the package only after Microsoft accepts the manifest
 submission for a release — "No package found matching input criteria" means
-use the Scoop bucket above instead.
+use the Scoop bucket above instead. Either way, **open a new terminal
+afterwards**: the install edits `PATH`, and the shell you ran it in doesn't
+see the change.
 
 Manual `.zip` download and cosign verification are in [cli.md](cli.md).
+Note `jentic.exe` is **not Authenticode-signed** (integrity is verified via
+cosign instead), so a manually downloaded binary may trip SmartScreen or
+arrive with the Mark-of-the-Web — `Unblock-File .\jentic.exe` (or the file
+Properties → Unblock checkbox) clears it; winget/scoop installs don't hit
+this.
+
 Agents on native Windows can `register`, `search`, and
 `inspect` against the app at `http://127.0.0.1:8000`, and `execute`
 through the broker at `http://127.0.0.1:8100`, thanks to the loopback
