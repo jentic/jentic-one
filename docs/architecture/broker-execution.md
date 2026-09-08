@@ -36,15 +36,23 @@ sequenceDiagram
     B-->>A: response (secret never included)
 ```
 
-## One pipeline, two callers
+## One pipeline, two callers — and a streaming fast path
 
 The docstring rule in [`broker/services/execution/pipeline.py`](../../src/jentic_one/broker/services/execution/pipeline.py) is
 "one pipeline, two callers": the execution use-case (`run_execution` in
-[`broker/services/execution/service.py`](../../src/jentic_one/broker/services/execution/service.py)) is invoked by exactly two paths, and
+[`broker/services/execution/service.py`](../../src/jentic_one/broker/services/execution/service.py)) is invoked by two paths, and
 neither re-implements any step.
 
 - **The sync router.** The catch-all route awaits `run_execution` and adapts
-  the outcome to a FastAPI response. This is the default.
+  the outcome to a FastAPI response. This is the buffered path — but note it
+  is **not** what most sync requests take by default: with
+  `broker.upstream.stream_passthrough_enabled` (default `true`), a sync
+  request without an idempotency key is routed to the **streaming fast
+  path** instead, which performs the same permission check, URL validation,
+  and credential injection but streams the upstream body straight through
+  and writes the execution record *after* the response, in a background
+  task. Requests carrying an idempotency key, and installs that disable
+  passthrough, take the buffered pipeline below.
 - **The async worker.** A request carrying `Prefer: respond-async` is not
   executed inline: the router enqueues a `JobKind.EXECUTION` job and answers
   `202` with a `/jobs/{job_id}` link. The shared `WorkerLoop`
@@ -136,8 +144,9 @@ one place a secret meets a request:
    secret back.
 4. **Audit** — every resolve/decrypt emits a `CREDENTIAL_ACCESSED` event.
 
-Before any of that, the toolkit deriver
-([`broker/repos/caching_toolkit_deriver.py`](../../src/jentic_one/broker/repos/caching_toolkit_deriver.py)) works out which toolkit serves
+Before any of that, the toolkit resolver
+([`broker/repos/toolkit_binding_resolver.py`](../../src/jentic_one/broker/repos/toolkit_binding_resolver.py), wrapped by the
+short-TTL cache in [`caching_toolkit_deriver.py`](../../src/jentic_one/broker/repos/caching_toolkit_deriver.py)) works out which toolkit serves
 the call — a single cross-DB lookup intersecting the agent's toolkit
 bindings (admin DB) with the toolkit→credential bindings (control DB); none
 → `403`, several → `409` asking for
@@ -147,10 +156,15 @@ bindings (admin DB) with the toolkit→credential bindings (control DB); none
 
 ## What gets recorded
 
-Every execution lands as an append-only `ExecutionRecord` in the admin DB
+Executions land as append-only `ExecutionRecord` rows in the admin DB
 ([`shared/executions/ingest.py`](../../src/jentic_one/shared/executions/ingest.py)): status, duration, operation and API
 identity, HTTP status, actor, origin, and the credential used (by id and
-name, never the secret). Lifecycle events (`EXECUTION_COMPLETED` /
+name, never the secret). On the buffered and async paths the write happens
+before the response; on the streaming fast path it is a post-response
+background task and **best-effort** — a database failure there is logged and
+counted (`broker.streaming_execution.persist_failures`,
+[monitoring.md](../operations/monitoring.md)) but does not fail the call, so
+a completed call can, rarely, lack its record. Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 

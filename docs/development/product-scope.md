@@ -60,8 +60,9 @@ scope):
 - **Database backends:** Postgres **and** SQLite — SQLite is a supported *production*
   target, not dev-only ([`shared/db/backends/sqlite.py`](../../src/jentic_one/shared/db/backends/sqlite.py)).
 - **Registry search is lexical** (Postgres and SQLite FTS strategies under
-  [`registry/repos/search/`](../../src/jentic_one/registry/repos/search/)); there is no ML/embeddings stack, and an arch test
-  keeps ML imports out of the core surfaces
+  [`registry/repos/search/`](../../src/jentic_one/registry/repos/search/)). The registry's ingest pipeline has an
+  embeddings stage ([`registry/ingest/embeddings/`](../../src/jentic_one/registry/ingest/embeddings/)), but an arch test
+  keeps ML imports out of the core surfaces (broker, admin, control)
   ([`tests/arch/test_no_ml_in_core_surfaces.py`](../../tests/arch/test_no_ml_in_core_surfaces.py)).
 
 An issue is **in scope** when it improves the security, correctness, reliability,

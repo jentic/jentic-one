@@ -54,7 +54,10 @@ flowchart LR
     BRK --> UP
 
     REG --- RDB
+    REG -.- ADB
     CON --- CDB
+    CON -.- ADB
+    CON -.->|"MCP mount only"| RDB
     ADM --- ADB
     AUTH --- ADB
     AUTH --- CDB
@@ -67,11 +70,16 @@ Five things the diagram compresses:
 
 - **Five surfaces, one package.** `registry`, `control`, `admin`, `broker`,
   and `auth` each live in their own package under [`src/jentic_one/`](../../src/jentic_one/);
-  cross-surface imports are forbidden, with one sanctioned seam (the
-  broker's credential services import control to refresh OAuth tokens);
+  cross-surface imports are forbidden, with two sanctioned seams (the
+  broker's credential services import control to refresh OAuth tokens, and
+  auth leans on admin throughout);
   [`shared/`](../../src/jentic_one/shared/) holds what they have in common, and `wiring.py` is the
   composition point that sees across them
-  ([surfaces and layering](surfaces-and-layering.md)).
+  ([surfaces and layering](surfaces-and-layering.md)). The dotted DB edges
+  are real but narrower than the solid ones: control and registry read the
+  admin DB to verify callers (API keys, permissions), and a control process
+  serving the `/mcp` mount reaches the registry DB for in-process
+  search/inspect.
 - **The surface set is chosen at runtime.** One container image runs either
   role; `JENTIC__APPS` picks the surfaces, and the entrypoint refuses to
   bundle the broker with anything else

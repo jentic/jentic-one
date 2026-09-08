@@ -89,13 +89,15 @@ approval flow; `ToolkitKey` and `CustomerAPIKey` are bearer-key rows for
 
 ### Admin — identity and operations
 
-`User` and `Agent` are the actor tables (an agent is owned by a user);
-`OauthClient` rows back dynamic client registration. Token state lives in
+`User`, `Agent`, and `ServiceAccount` are the actor tables (an agent is
+owned by a user); `OAuthClient` rows back dynamic client registration, and
+`agent_credentials`/`service_account_credentials` hold the long-lived API-key
+alternatives to the OAuth flow. Token state lives in
 `access_tokens`/`refresh_tokens`/`authorization_codes`; scope grants in
 `actor_scope_grants` and `user_permission_grants`. Operationally:
 `jobs`/`job_results` (the queue the `WorkerLoop` claims from),
 `execution_records` (append-only history of brokered calls), `events`, and
-`audit` rows.
+`audit_entries` rows.
 
 ## Conventions that hold across all three
 

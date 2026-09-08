@@ -43,7 +43,7 @@ Env form: `JENTIC__ENTITLEMENT__ENABLED=true`,
 
 | Pricing model | Required permission |
 | ------------- | ------------------- |
-| `contract` (default) | `license-manager:CheckoutLicense` (+ `license-manager:GetLicense`, `license-manager:ListReceivedLicenses` for debugging) |
+| `contract` (default) | `license-manager:CheckoutLicense` **and** `license-manager:CheckInLicense` — the gate checks a seat out and immediately back in after every successful probe; without check-in a provisional checkout holds the seat for up to 60 minutes, so a small-seat contract locks the buyer out of their own license (+ `license-manager:GetLicense`, `license-manager:ListReceivedLicenses` for debugging) |
 | `usage` | `aws-marketplace:RegisterUsage` |
 
 Credentials resolve from the standard runtime sources — static

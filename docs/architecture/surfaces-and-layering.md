@@ -24,15 +24,20 @@ src/jentic_one/
 └── __main__.py # process entrypoint
 ```
 
-**Surfaces do not import each other**, with one sanctioned seam. Every
-forbidden edge has a dedicated test in
+**Surfaces do not import each other**, with two sanctioned seams. Most
+forbidden edges have a dedicated test in
 [`tests/arch/test_module_boundaries.py`](../../tests/arch/test_module_boundaries.py)
 (`test_broker_does_not_import_control`, `test_control_does_not_import_admin`,
-…, `test_shared_does_not_import_auth`). The seam:
+…, `test_shared_does_not_import_auth`). The first seam:
 [`broker/services/credentials/`](../../src/jentic_one/broker/services/credentials/) imports control's OAuth provider and token
 repo to refresh expired tokens during injection
 ([`broker/services/credentials/refresh.py`](../../src/jentic_one/broker/services/credentials/refresh.py)), and
-`test_broker_does_not_import_control` excludes exactly that path. All other
+`test_broker_does_not_import_control` excludes exactly that path. The second
+seam is wider and **deliberately ungated**: `auth/` imports `admin/`
+throughout (repos, ORM schemas, services, and admin's scoping filters) —
+auth grew out of admin and still leans on it, and
+`test_module_boundaries.py` gates the 19 other ordered surface pairs but has
+no `test_auth_does_not_import_admin`. All other
 cross-surface needs are met three ways:
 
 - **[`shared/`](../../src/jentic_one/shared/)** — config, `Context`, the DB session layer, the `Broker`
@@ -72,12 +77,12 @@ and the test that enforces each:
 | Web never touches the DB or SQLAlchemy | `test_web_layer.py::test_web_no_direct_db_imports` |
 | Web never imports a repository | `test_web_layer.py::test_web_no_repository_imports` (and `test_web_handlers_use_services_not_repos`) |
 | Handlers get `Context` via `Depends(get_ctx)`, never construct it | `test_web_layer.py::test_web_no_direct_context_construction` |
-| Every non-health router declares an auth dependency | `test_web_layer.py::test_web_routers_require_auth` |
+| Every non-health router declares an auth dependency | `test_web_layer.py::test_web_routers_require_auth` — a whole-file check that exempts routers whose filename contains `health`, `discovery`, or `authorize` (so auth's `/authorize` flow is out of its scope) |
 | Errors are RFC 9457 problem details, not `HTTPException` | `test_web_layer.py::test_web_uses_problem_details_not_http_exception` |
-| Only `core/schema/` and `repos/` may import DB internals | `test_no_direct_db.py` |
+| Only `core/schema/` and `repos/` may import DB internals | `test_no_direct_db.py` — per-surface tests for broker/registry/control/admin (plus a `scoping/` exemption); the auth surface has no such test yet |
 | Repos are auth-agnostic (never import `Identity`) | `test_scoping_boundary.py::test_repos_do_not_import_identity` |
 | A surface's `scoping/filters.py` sees only its own ORM models | `test_scoping_boundary.py::test_scoping_modules_only_import_own_surface_models` |
-| Every scoped model is covered by its surface's filters | `test_scoping_coverage.py` |
+| Every scoped model is covered by its surface's filters | `test_scoping_coverage.py` — control and admin only; registry's `scoping/filters.py` has no completeness test yet |
 | Admin ORM models inherit `AdminBase` only | `test_admin_base_usage.py` |
 | Admin services never import SQLAlchemy | `test_admin_services_no_sqlalchemy.py` |
 | Transactions via `DatabaseSession.transaction()`, no manual commit | `test_no_manual_commit.py` |
