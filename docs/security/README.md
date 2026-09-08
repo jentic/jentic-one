@@ -99,8 +99,8 @@ you store.
 
 > **Note on "VPC":** a private subnet / VPC is just the cloud form of T3's private
 > network — Jentic One isn't publicly reachable, and clients get in over a VPN,
-> private DNS, or a PrivateLink-style endpoint. Jentic offers a managed **VPC
-> edition** if you'd rather not operate this yourself (see the end of this guide).
+> private DNS, or a PrivateLink-style endpoint. If you'd rather not operate this
+> yourself, [get in touch](https://jentic.com/contact).
 
 ## Concrete controls
 

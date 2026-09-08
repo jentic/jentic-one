@@ -39,7 +39,10 @@ place the server version lives — the compose file references `${VER}`), stop
 the stack, snapshot the data volume, run migrations, then restart. Never skip
 the migration step, and keep the CLI and server on the same release.
 
-First install the new CLI. The `sudo` step can block on an interactive
+First install the new CLI (the same unverified-download caveat as
+[install.md](install.md) step 2 applies — use
+[installation/cli.md](../installation/cli.md)'s cosign steps when the humans
+require a verified supply chain). The `sudo` step can block on an interactive
 password prompt — treat it as a **possible human gate** (or use the non-sudo
 fallback below):
 

@@ -105,7 +105,8 @@ ghcr.io/jentic/jentic-one-app:<version>`.)
 The agent-facing CLI is a single static binary from GitHub Releases (full
 matrix and cosign verification: [installation/cli.md](../installation/cli.md)).
 The snippet resolves the newest release that actually has an asset for this
-platform:
+platform. Note it performs **no signature verification** — when the humans
+require a verified supply chain, follow cli.md's cosign steps instead:
 
 ```bash
 OS=$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')

@@ -23,7 +23,7 @@ import (
 // the release job uses (docs/development/releasing.md). Shared by the installer shell copy;
 // keep the two in lockstep. The identity is the release workflow's OIDC subject.
 const (
-	cosignCertIdentityRegexp = `^https://github.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v`
+	cosignCertIdentityRegexp = `^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v`
 	cosignOIDCIssuer         = "https://token.actions.githubusercontent.com"
 )
 

@@ -29,7 +29,9 @@ native Windows — use WSL ([windows.md](windows.md)).
 Everything below is the manual path: locked-down hosts, air-gapped transfer,
 or when you want to verify the supply chain yourself. There is also a
 [one-line installer script](../../cli/README.md#3-one-line-download-verified-binary-no-compiler)
-which downloads, sha256-checks, and cosign-verifies for you.
+which downloads, sha256-checks, and cosign-verifies for you — with one caveat:
+if `cosign` isn't installed it prints a warning and continues with the
+sha256 check only.
 
 ## Manual download
 
