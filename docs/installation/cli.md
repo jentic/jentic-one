@@ -97,9 +97,11 @@ sudo install jenticctl /usr/local/bin/
 jentic doctor   # sanity check
 ```
 
-On Windows: unzip, put `jentic.exe` on `PATH`, run `jentic doctor`. `jenticctl`
-and `jentic run` (the local-agent sandbox) are unsupported on native Windows —
-use WSL for those.
+On Windows: unzip, put `jentic.exe` on `PATH`, run `jentic doctor`.
+`jenticctl` is unsupported on native Windows — use WSL2 for the server side.
+`jentic run` (the local-agent sandbox) is unsupported on native Windows *and*
+untested under WSL2 — the [platform matrix](platform-support.md) is the
+authority on what runs where.
 
 ## After installing
 

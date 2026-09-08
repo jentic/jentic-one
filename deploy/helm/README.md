@@ -30,6 +30,18 @@ and smoke-test workflow.
   subchart doesn't set `JENTIC__APPS=broker` itself, so running it on the
   published app image needs `broker.extraEnv.JENTIC__APPS=broker` (the AWS
   Marketplace overlay does exactly that).
+- No `securityContext` on any application pod (no `runAsNonRoot`,
+  `readOnlyRootFilesystem`, or `capabilities.drop`) — only the bundled
+  Postgres StatefulSet sets one. Hardening per
+  [docs/security/README.md](../../docs/security/README.md) currently means
+  patching the chart or applying a cluster policy.
+- No Ingress, NetworkPolicy, PodDisruptionBudget, HorizontalPodAutoscaler,
+  or anti-affinity anywhere in the chart — TLS termination and HA shaping
+  are yours to bring.
+- `global.observability.logging.{format,level}` are dead values (see
+  Observability below).
+- Omitting `global.image.tag` (and per-service tags) silently falls back to
+  `:latest` — no warning is printed, despite the comment in `_image.tpl`.
 
 ## Local cluster workflow
 
@@ -187,9 +199,13 @@ Subcharts include built-in support for structured logging and an OTel
 sidecar; see [`_logging.tpl`](jentic-one/charts/common/templates/_logging.tpl)
 and [`_otel-sidecar.tpl`](jentic-one/charts/common/templates/_otel-sidecar.tpl).
 
-- `LOG_FORMAT` (default `json`), `LOG_LEVEL` (default `info`), and
-  `OTEL_SERVICE_NAME` (`<release>-<chart>`, e.g. `jentic-broker`) are
-  injected into every service pod.
+- `OTEL_SERVICE_NAME` (`<release>-<chart>`, e.g. `jentic-broker`) is
+  injected into every service pod. The template also injects `LOG_FORMAT`
+  and `LOG_LEVEL`, but **nothing in the application reads them** — the real
+  knobs are the config keys `runtime.log_level` and `runtime.debug` (via
+  `extraEnv`: `JENTIC__RUNTIME__LOG_LEVEL`, `JENTIC__RUNTIME__DEBUG`); the
+  chart values `global.observability.logging.{format,level}` are dead. The
+  defaults coincide (JSON at info), which is why this goes unnoticed.
 - With `global.observability.otel.enabled=true`, each pod gets an OTel
   Collector sidecar receiving OTLP gRPC on `localhost:4317` and exporting to
   the configured endpoint:

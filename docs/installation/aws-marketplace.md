@@ -109,7 +109,13 @@ kubectl -n jentic-one port-forward svc/jentic-one-app 8000:8000
 curl -s http://localhost:8000/health   # {"status":"ok","version":"<version>"}
 ```
 
-Open `<your URL>/app` to create the first admin user, then connect an agent:
+Create the first admin **before** exposing the app publicly — the one-time
+setup endpoint is unauthenticated by design and closes only once a user
+exists. Do it over the port-forward above (open
+`http://localhost:8000/app/setup`, or run the one-shot `create-admin` from
+the [Docker guide, step 5](docker.md#5-create-the-first-admin)), confirm
+`curl -s http://localhost:8000/admin/health` shows `setup_required: false`,
+then connect an agent:
 
 ```bash
 jentic register --url <app URL> --broker-url <broker URL>
@@ -132,10 +138,11 @@ bundled instance and point each surface at your endpoint:
 --set global.databases.admin.host=<endpoint>
 ```
 
-Keep the passwords out of `--set` flags and values files: reference a
-Kubernetes Secret you manage via `secretKeyRef` env entries (or mount your
-own Secret with `global.appSecrets.existingSecret`) — the worked shape is in
-the [Helm guide's Secrets section](helm.md#secrets). Quick path for a trial
+Keep the passwords out of `--set` flags and values files: mount your own
+Secret with `global.appSecrets.existingSecret`, carrying the three
+`db-password-{registry,control,admin}` keys — the worked shape (and why a
+per-variable `secretKeyRef` via `extraEnv` does **not** work) is in the
+[Helm guide's Secrets section](helm.md#secrets). Quick path for a trial
 only: append `--set global.databases.<surface>.password=<…>` for the three
 surfaces (explicit passwords always win over generated ones) — **warning:**
 those values land in your shell history and are readable later via
@@ -156,8 +163,16 @@ helm upgrade jentic-one \
   oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
   --version <new-version> -n jentic-one --reset-values \
   --set global.serviceAccount.name=jentic-one \
+  --set global.awsmp.licenseSecret=<from-launch-page> \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=<url>
 ```
+
+"Your explicit overrides" means **every** `--set` from your install, not
+just these — on the external-database shape that includes the
+`postgresql.enabled=false` pair and the three `global.databases.*.host`
+values, or the upgrade re-enables the bundled database. `helm get values
+jentic-one -n jentic-one` prints what the release is currently running with;
+re-pass all of it.
 
 Do **not** use `--reuse-values` across chart versions: it reuses the old
 chart's baked defaults — including the image tag — so the pods keep running

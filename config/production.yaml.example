@@ -104,7 +104,9 @@ credentials:
 # keeps rate limiters, consent handles, and circuit state per-process — fine
 # for a single-worker install, but a multi-worker or multi-instance deployment
 # needs Redis so the token-endpoint limiter and consent-nonce anti-replay
-# survive across workers.
+# survive across workers. The redis client is an optional extra
+# (pip install jentic-one[redis]) and is NOT in the published container
+# image — enabling this backend there fails at startup.
 broker:
   resilience:
     backend:

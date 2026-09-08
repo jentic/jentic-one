@@ -131,7 +131,11 @@ journalctl -u jentic-broker -f
 ```
 
 As in the Docker guide, both surfaces are plain HTTP bound to loopback — front
-them with a TLS-terminating reverse proxy before exposing anything.
+them with a TLS-terminating reverse proxy before exposing anything. With the
+units healthy, finish with the Docker guide's
+[step 7, Connect the CLIs](docker.md#7-connect-the-clis)
+(`jentic register --url … --broker-url …`), then the
+[first brokered call](../guides/first-call.md).
 
 ## Upgrading
 

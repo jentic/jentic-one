@@ -114,10 +114,11 @@ observability:
     exporter: none     # or "otlp"
 ```
 
-**Connection-pool sizing:** each process caps at `pool_max` + 10 overflow per
-DB, and **both** the app and broker containers open all three pools — the
-example above holds (30+25+20) × 2 = **150 server connections** at steady
-state, and up to **210** if every pool bursts into its overflow. Size against
+**Connection-pool sizing:** each process holds up to `pool_max` connections
+per DB at steady state, plus 10 overflow per pool under burst, and **both**
+the app and broker containers open all three pools — the example above holds
+(20+15+10) × 2 = **90 server connections** at steady state, and up to
+**150** if every pool bursts into its overflow. Size against
 your instance's `max_connections` (managed-PG entry tiers are often ~100) or
 front Postgres with a pooler like pgbouncer.
 
@@ -207,7 +208,10 @@ GRANT USAGE, CREATE ON SCHEMA admin TO admin_user;
 ```
 
 (Passwords must match the `JENTIC__DATABASES__*__PASSWORD` values in
-`prod.env`. Simpler variant: one owning role for all three schemas.)
+`prod.env`. Simpler variant: one owning role for all three schemas. Don't
+skip the `GRANT` lines: a role without `CREATE` on its schema fails the very
+first migration with `permission denied for schema <name>` — if you see that
+error, this block is the fix.)
 
 **PostgreSQL version:** use 16 or newer — the compose examples and CI run
 `postgres:16`, and the Helm chart's bundled instance ships 17.x; nothing

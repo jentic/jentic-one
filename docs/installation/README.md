@@ -61,7 +61,13 @@ the verify commands linked above need nothing but the downloaded files and
   repeated inside the network.
 - **Helm chart:** not published to a registry yet — vendor
   [`deploy/helm/jentic-one/`](../../deploy/helm/README.md) from a checkout of this
-  repository at the release tag.
+  repository at the release tag. The documented bundled-DB install pulls
+  more than the app image: `docker.io/postgres:17.x` (the bundled
+  PostgreSQL), plus the OpenTelemetry Collector sidecar image if you enable
+  `global.observability.otel` and the gateway image if you enable that
+  subchart — mirror each into your internal registry and override the
+  corresponding `image.repository`, or an air-gapped install dies on
+  `ImagePullBackOff` for an image the transfer never carried.
 
 ## After installing
 

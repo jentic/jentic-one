@@ -14,7 +14,7 @@ anything not listed as tested should be treated as best-effort.
 | `jenticctl` — operator CLI | ✅ Supported (amd64, arm64) | ✅ Supported (amd64, arm64) | ❌ Not shipped — its surface is Docker/compose lifecycle; use WSL2 | ✅ Supported |
 | [`tools/install.sh`](../../tools/install.sh) installer | ✅ Supported | ✅ Supported | ❌ Unsupported — bash script | ✅ Supported |
 | `jentic run` — local-agent confinement | ✅ Supported (`bwrap` + user namespaces) | ✅ Supported (`sandbox-exec`) | ❌ Unsupported — no confinement backend | ❌ Unsupported — needs unprivileged user namespaces inside WSL; untested |
-| `jentic mcp` — local MCP stdio server | ✅ Supported | ✅ Supported | ✅ Supported (wherever `jentic` runs) | ✅ Supported |
+| `jentic mcp` — local MCP stdio server | ✅ Supported | ✅ Supported | ⚠️ Partial — stdio mode works; `--http`'s default unix-socket/OS-identity mode fails closed (peer-credential checks are unsupported on Windows), and `mcp config` cannot locate the Claude Desktop config path | ✅ Supported |
 
 ## Windows in practice
 

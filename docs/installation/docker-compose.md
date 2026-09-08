@@ -89,6 +89,11 @@ curl -fsS http://localhost:8000/health       # app
 curl -fsS http://localhost:8100/health       # broker
 ```
 
+The instance is up but nothing is connected to it yet — pick up the Docker
+guide at [step 7, Connect the CLIs](docker.md#7-connect-the-clis)
+(`jentic register --url … --broker-url …`), then make the
+[first brokered call](../guides/first-call.md).
+
 ## Upgrading (and rolling back)
 
 When the next release is cut:

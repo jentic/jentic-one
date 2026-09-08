@@ -84,6 +84,8 @@ run as a post-install/post-upgrade hook.
 helm install jentic ./deploy/helm/jentic-one \
   --namespace jentic-one --create-namespace \
   --timeout 30m \
+  --set app.extraEnv.JENTIC_ENV=production \
+  --set broker.extraEnv.JENTIC_ENV=production \
   --set global.appSecrets.generate=true \
   --set postgresql.enabled=true \
   --set global.postgresql.enabled=true \
@@ -96,10 +98,13 @@ helm install jentic ./deploy/helm/jentic-one \
 
 (`broker.enabled=true` is required — the umbrella chart ships the broker off.
 Both services run the one published image; `JENTIC__APPS=broker` makes the
-second one the broker. `global.image.tag` pins every subchart's tag in one
-place. `--timeout 30m` matters because the migrate hook runs *inside*
-Helm's timeout — the default is 5 minutes, and a `SIGTERM`ed migration run
-leaves a half-applied schema (see
+second one the broker. `JENTIC_ENV=production` is load-bearing: without it
+the config layer falls back to development mode, where missing secrets are
+silently generated per-process instead of refusing to boot — sessions die on
+every pod restart and the surfaces disagree, with no error. `global.image.tag`
+pins every subchart's tag in one place. `--timeout 30m` matters because the
+migrate hook runs *inside* Helm's timeout — the default is 5 minutes, and a
+`SIGTERM`ed migration run leaves a half-applied schema (see
 [upgrades.md](../operations/upgrades.md)). Set `<svc>.image.repository`
 explicitly for **every enabled service**:
 each subchart ships a non-empty local-build default (`jentic-one/<svc>`), and
@@ -124,18 +129,38 @@ helm upgrade jentic ./deploy/helm/jentic-one --reuse-values \
 
 (The kind dev values already set it to `http://localhost:8000`.)
 
-## 4. Verify
+## 4. Create the first admin, then verify
+
+Create the admin **before** you expose the app through an ingress:
+`POST /users:create-admin` is unauthenticated by design and self-closes only
+once the first user exists, so on the Helm path — where pods serve before
+any admin exists — racing it against public exposure is an avoidable risk.
+Run the one-shot from the [Docker guide, step 5](docker.md#5-create-the-first-admin)
+(re-running is safe: `setup already complete`), or open the one-time
+`/app/setup` page while the app is still port-forward-only.
+
+Then verify — note `/health` is dependency-free (it stays green with the
+database down or empty, [monitoring.md](../operations/monitoring.md#health)),
+so check the pieces that can actually be wrong:
 
 ```bash
 kubectl -n jentic-one get pods
 # expect: app, broker (+ postgresql on the bundled path) — all Running
 
-kubectl -n jentic-one port-forward svc/jentic-app 8000:8000
-curl -s http://localhost:8000/health   # {"status":"ok","version":"<version>"}
+kubectl -n jentic-one port-forward svc/jentic-app 8000:8000 &
+curl -s http://localhost:8000/health         # process liveness only
+curl -s http://localhost:8000/admin/health   # expect setup_required: false — proves the admin exists
+
+# Migrations actually applied? (the one check /health cannot make) — the app
+# pod already carries the database env, so run the check inside it:
+kubectl -n jentic-one exec deploy/jentic-app -- \
+  python -m jentic_one.migrations.run --check   # expect OVERALL current
+
+kubectl -n jentic-one port-forward svc/jentic-broker 8100:8000 &
+curl -s http://localhost:8100/health         # the broker answers too
 ```
 
-Open the app URL and create the first admin account (the one-time `/setup`
-page), then connect an agent:
+Then connect an agent:
 
 ```bash
 jentic register --url <app URL> --broker-url <broker URL>
@@ -143,7 +168,10 @@ jentic register --url <app URL> --broker-url <broker URL>
 
 Both services speak plain HTTP on port 8000 in-cluster — terminate TLS at
 your ingress, routing UI/control traffic to the `app` Service and execution
-traffic to the `broker` Service. Agents need both URLs. Then walk through
+traffic to the `broker` Service. The chart ships **no** Ingress resource and
+no `ingress.*` values — you bring your own manifest, pointing at the
+`<release>-app` and `<release>-broker` Services on port 8000. Agents need
+both URLs. Then walk through
 the [first brokered call](../guides/first-call.md).
 
 ## External database (production)
@@ -221,8 +249,9 @@ global:
 Four config values have no safe default: the credential-encryption keyset
 (`credentials.encryption` — a *list*, so it cannot ride the flat `JENTIC__*`
 env convention; credential writes fail without it), the admin JWT secret, the
-invite pepper, and the connect state secret (all three ship a placeholder
-that `JENTIC_ENV=production` refuses to boot with). On the bundled-DB path
+invite pepper, and the connect state secret. The latter three ship a
+placeholder that `JENTIC_ENV=production` refuses to boot with; the keyset
+ships nothing at all. On the bundled-DB path
 the same Secret also carries the database passwords. The chart offers three
 sources, in order of preference:
 
@@ -287,7 +316,12 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   `broker.resilience.backend.redis_url` (via `extraEnv`:
   `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` /
   `…__REDIS_URL`, identical on every replica). The chart does not bundle
-  Redis — bring your own.
+  Redis — bring your own. **One hard caveat:** the Redis client is an
+  optional extra (`pip install jentic-one[redis]`) that the published
+  `ghcr.io/jentic/jentic-one-app` image does **not** include — configuring
+  the redis backend on that image crash-loops every replica at startup. On
+  the published image today, keep `broker.replicas: 1`; scaling out means
+  building your own image with the `[redis]` extra.
 - **App** — the same shared-state backend also carries the auth surface's
   OAuth rate limiters and consent-nonce anti-replay, so the same rule
   applies: keep `app.replicas: 1` on the `memory` backend; configure Redis
@@ -337,3 +371,4 @@ rolling forward to a fixed release — the full contract:
 | `broker` pod `ImagePullBackOff` | `broker.image.repository` still the local-build default (`jentic-one/broker`) — point it at the published image + `JENTIC__APPS=broker`, or at an image you built and pushed (steps 1–2) |
 | Agent approved but token exchange fails `invalid_grant` | `JENTIC__AUTH__CANONICAL_BASE_URL` unset or differs from the registered `--url` (step 3) |
 | Fresh install against an external Postgres has no tables | The migrate hook renders only on the bundled-DB path — run migrations yourself (External database) |
+| `FATAL: sorry, too many clients already` (Postgres log), apps intermittently failing to connect | Each app/broker process opens pools into all three databases; the bundled `postgres` image defaults to `max_connections=100`, which two processes can exhaust — keep replicas at 1, raise `max_connections`, or front an external database with a pooler |
