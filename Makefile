@@ -113,7 +113,7 @@ score: ## Validate OpenAPI specs with the Jentic API Scorecard CLI (requires 80+
 detect-secrets: ## Check for new secrets not in baseline
 	uv run detect-secrets scan --baseline .secrets.baseline --exclude-files '\.git/'
 
-check: lint score detect-secrets test-arch ## Run lint, score, secrets audit, and arch-tests
+check: lint detect-secrets test-arch score ## Run lint, secrets audit, arch-tests, and score (score last: it needs npx/network and shouldn't block the offline gates)
 
 hooks: ## Install lefthook git hooks (pre-commit + commit-msg)
 	uv run lefthook install

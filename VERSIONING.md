@@ -17,8 +17,9 @@ While Jentic One is in the `0.x` line it is in **public beta**, as stated in the
 Concretely, on the `0.MINOR.PATCH` line:
 
 - **MINOR** (`0.13 → 0.14`) — may include breaking changes (API, DB schema, CLI
-  flags, config) as well as features. Read the release notes before upgrading
-  (an `UPGRADING.md` with rollback recipes is a planned follow-up).
+  flags, config) as well as features. Read the release notes before
+  upgrading; the upgrade contract and rollback recipes are in
+  [`docs/operations/upgrades.md`](docs/operations/upgrades.md).
 - **PATCH** (`0.13.2 → 0.13.3`) — bug fixes and non-breaking changes only.
 
 We will not cut `1.0.0` until the public API, database schema, and CLI surface
@@ -53,5 +54,6 @@ procedure.
 
 The `0.x` line continues the restored `v0.1.0`…`v0.13.2` tag baseline —
 automated releases picked up at `v0.14.0` rather than resetting, because the
-earlier tags and GitHub Releases are real and publicly visible. The full
-history is in [`CHANGELOG.md`](CHANGELOG.md).
+earlier tags and GitHub Releases are real and publicly visible.
+[`CHANGELOG.md`](CHANGELOG.md) covers `v0.14.0` onward; the earlier tags
+carry GitHub Releases only.

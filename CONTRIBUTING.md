@@ -177,9 +177,15 @@ The codebase is a modular monolith with **AST-enforced module boundaries**
 - `docs/reference/` is **generated — never hand-edit**. Regenerate with
   `make config-reference` (config.md), `make endpoints` (endpoints.md/.json);
   the CLI reference is `make cli-reference` (ui/public/cli-reference.json).
-- Any referential fact in prose — a command, path, port, or URL — should be
-  covered by an arch gate (`tests/arch/`) or quoted from a generated file, so
-  it fails CI when the code changes instead of silently going stale.
+- Changed an `AppConfig` field? Three artifacts regenerate, each with its own
+  gate: `make config-reference`, `make config-schema`, and
+  `cd cli && make generate-config` — run all three or CI fails one at a time.
+- Prefer generated files and arch gates (`tests/arch/`) over free-standing
+  referential facts in prose. The gates currently cover link targets,
+  heading anchors, doc reachability, install-channel names, cosign pins, and
+  the generated references — a command, port, or backticked path in prose is
+  **not** automatically checked, so quote generated output where you can and
+  expect review to press on the rest.
 
 ## Security
 

@@ -40,7 +40,7 @@
 </p>
 
 Giving an agent API access normally means giving it an API key. Jentic One removes that step.
-Register the APIs an agent may use, store the credentials once, and the agent makes its calls through the Broker. The Broker checks the agent's permissions, attaches the credential at execution time, and writes an audit record. Your agent never sees your keys.
+Register the APIs an agent may use, store the credentials once, and the agent makes its calls through the Broker. The Broker checks the agent's permissions, attaches the credential at execution time, and writes an execution record. Your agent never sees your keys.
 
 Agents integrate through the `jentic` CLI, a generated skill, the local `jentic mcp` server,
 or plain HTTP. Every path terminates at the credential-injecting Broker: the MCP server runs beside the
@@ -48,26 +48,10 @@ agent as a thin client and holds no upstream credentials — those never leave y
 
 ## Quickstart
 
-Every path below runs on Linux and macOS; on Windows, follow the
+**The open-source build is the real thing, not a trial** — the same code,
+broker, and security model as every other install shape. Every path below
+runs on Linux and macOS; on Windows, follow the
 [Windows guide](docs/installation/windows.md) (WSL2 + native `jentic.exe`).
-
-### Self-hosted (build from source)
-
-```bash
-# Build and start the service
-git clone https://github.com/jentic/jentic-one.git && cd jentic-one
-make install   # install dependencies and git hooks
-make dev       # idempotent local bring-up: fixtures + migrations + UI, then run the app
-curl -fsS http://127.0.0.1:8000/health   # verify it's up
-open http://127.0.0.1:8000               # macOS; Linux: xdg-open
-
-# Build the CLIs
-cd cli && make build
-./jenticctl    # operator CLI — install, manage, admin
-./jentic       # agent CLI — search, inspect, execute
-```
-
-[More on local development](docs/development/local-setup.md).
 
 ### Self-hosted (Docker)
 
@@ -105,6 +89,28 @@ recoveries by symptom.
 The production shape — external Postgres, image pinned and verified by digest,
 real secrets, TLS — is in [docs/installation/docker.md](docs/installation/docker.md).
 
+### Self-hosted (build from source)
+
+**Prerequisites:** `git`, [`uv`](https://docs.astral.sh/uv/), and Docker
+running (the dev bring-up starts Postgres and the observability stack in
+containers).
+
+```bash
+# Build and start the service
+git clone https://github.com/jentic/jentic-one.git && cd jentic-one
+make install   # install dependencies and git hooks
+make dev       # idempotent local bring-up: fixtures + migrations + UI, then run the app
+curl -fsS http://127.0.0.1:8000/health   # verify it's up
+open http://127.0.0.1:8000               # macOS; Linux: xdg-open
+
+# Build the CLIs
+cd cli && make build
+./jenticctl    # operator CLI — install, manage, admin
+./jentic       # agent CLI — search, inspect, execute
+```
+
+[More on local development](docs/development/local-setup.md).
+
 ### Install the CLI
 
 ```bash
@@ -133,8 +139,8 @@ Next: [make your first brokered call](docs/guides/first-call.md).
 ## How it works
 
 Jentic One handles secure third-party API execution for agents. It deploys as two peer units
-above a shared database. **App** is the control plane and contains the Registry, Control and
-Admin surfaces. **Broker** is the data plane. Configuration happens through App; the agent
+above a shared database. **App** is the control plane and contains the Registry, Control,
+Admin and Auth surfaces. **Broker** is the data plane. Configuration happens through App; the agent
 talks only to the Broker.
 
 <p align="center">
@@ -142,7 +148,7 @@ talks only to the Broker.
 </p>
 
 On each call the Broker checks the agent's permissions, attaches the stored credential,
-forwards the request, and writes an audit record. The credential is added inside the Broker,
+forwards the request, and writes an execution record. The credential is added inside the Broker,
 after the permission check, and is never returned to the caller.
 
 For the next level of detail — the five surfaces, the process shapes, the broker's
@@ -161,9 +167,13 @@ We think the fix is structural, not better prompting: the agent should never hol
 credential at all. In Jentic One the key is stored once, encrypted, on your
 infrastructure; the agent gets an identity instead. Every call goes through the Broker,
 which checks that agent's permissions, injects the credential after the check, and
-writes an audit record. A compromised agent can only make the calls it was allowed
+writes an execution record. A compromised agent can only make the calls it was allowed
 to make anyway — and you can see every one of them, and cut that one agent off
-without touching the key.
+without touching the key. One boundary to know before you rely on that: the broker
+protects credentials from agents running as **other** OS users or on other machines —
+an agent running as the *same* OS user as its own credential-holding CLI state can
+read that state; the [same-host hardening guide](docs/security/same-host/README.md)
+covers when and how to split them.
 
 ## Documentation
 
@@ -176,6 +186,11 @@ The full index is at [docs/README.md](docs/README.md).
 - [Configuration reference](docs/reference/config.md) — every config key, default, and env var
 - [Endpoint & scope reference](docs/reference/endpoints.md) — every HTTP route and who may call it
 - [Local development](docs/development/local-setup.md) — running from a source checkout
+
+Telemetry is **opt-in and off by default** — a hand-rolled config sends
+nothing ([details](docs/reference/config.md#telemetry)). Vulnerability
+reports: [SECURITY.md](SECURITY.md). Support channels and what's covered:
+[SUPPORT.md](SUPPORT.md).
 
 Agents can read [llms.txt](llms.txt) for a machine-oriented map of the project.
 
