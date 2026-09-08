@@ -244,6 +244,37 @@ class OAuthClientRepository:
         return client
 
     @staticmethod
+    async def requeue_pending_if_killswitched(session: AsyncSession, client: OAuthClient) -> bool:
+        """Compare-and-set: ``approved`` + ``active=false`` → ``pending``.
+
+        The anonymous DCR re-queue (#1312): the guard re-checks the
+        kill-switched state at *write* time, so a concurrent admin
+        ``:approve`` (which re-arms ``active``) is never clobbered back to
+        pending by a re-register that read the row before the approve
+        committed — if the guard no longer matches, nothing is written.
+        ``active`` is left untouched (false, by the guard) — pending rows
+        are inactive by construction (D7).
+
+        The passed ORM instance is refreshed to the row's live state either
+        way (post-flip it is pending; on a lost race it carries the newer
+        admin-written state), so the caller's audit trail records reality.
+        Returns True when the row was flipped.
+        """
+        stmt = (
+            update(OAuthClient)
+            .where(
+                OAuthClient.id == client.id,
+                OAuthClient.approval_status == OAuthClientApprovalStatus.APPROVED.value,
+                OAuthClient.active.is_(False),
+            )
+            .values(approval_status=OAuthClientApprovalStatus.PENDING.value)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        await session.refresh(client)
+        return int(result.rowcount) > 0  # type: ignore[attr-defined]
+
+    @staticmethod
     async def deactivate(session: AsyncSession, id: str) -> bool:
         """Soft-delete by setting active=False. Returns True if updated."""
         stmt = update(OAuthClient).where(OAuthClient.id == id).values(active=False)

@@ -962,3 +962,91 @@ async def test_dedupe_prefers_denied_over_deactivated_approved(
     assert zombie.active is False
     # No pending row was manufactured around the deny.
     assert await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED) == []
+
+
+async def test_reattach_requeues_in_fallback_key_space_too(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """#1312, G13 fallback arm: the re-queue is key-space agnostic — a
+    software_id-less client (Cursor, mcp-remote) whose approved row was
+    deactivated also re-enters the approval queue on re-register."""
+    svc = OAuthDcrService(dcr_context)
+    client_svc = OAuthClientService(dcr_context)
+    first = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    await client_svc.approve(row.id, identity=_ADMIN)
+    await client_svc.deactivate(row.id, identity=_ADMIN)
+
+    second = await svc.register(client_name="Cursor", redirect_uris=_REDIRECT_URIS)
+
+    assert second.created is False
+    assert second.client_id == first.client_id
+    refreshed = await _row_by_client_id(dcr_context, first.client_id)
+    assert refreshed.approval_status == OAuthClientApprovalStatus.PENDING.value
+    assert refreshed.active is False
+
+
+async def test_auto_approve_policy_does_not_resurrect_killswitched_row(
+    auto_approve_context: Context, clean_dcr_tables: None
+) -> None:
+    """#1312 vs D9: the blanket auto-approve policy applies to *new* rows
+    only — a re-register on a row an admin explicitly deactivated re-queues
+    it as pending (the dedupe wins over the create arm), never silently
+    re-approves it. The admin kill switch beats the deployment policy."""
+    svc = OAuthDcrService(auto_approve_context)
+    client_svc = OAuthClientService(auto_approve_context)
+    first = await svc.register(
+        client_name="Claude", redirect_uris=_REDIRECT_URIS, software_id="com.anthropic.claude"
+    )
+    row = await _row_by_client_id(auto_approve_context, first.client_id)
+    assert row.approval_status == OAuthClientApprovalStatus.APPROVED.value  # D9 auto-approved
+    await client_svc.deactivate(row.id, identity=_ADMIN)
+
+    second = await svc.register(
+        client_name="Claude", redirect_uris=_REDIRECT_URIS, software_id="com.anthropic.claude"
+    )
+
+    assert second.created is False
+    assert second.client_id == first.client_id
+    refreshed = await _row_by_client_id(auto_approve_context, first.client_id)
+    assert refreshed.approval_status == OAuthClientApprovalStatus.PENDING.value
+    assert refreshed.active is False
+    assert await client_svc.is_public_client(first.client_id) is False
+
+
+async def test_requeue_cas_guard_never_downgrades_a_live_row(
+    dcr_context: Context, clean_dcr_tables: None
+) -> None:
+    """#1312 race pin: the re-queue is a compare-and-set — against a row
+    that is (or has concurrently become) approved+active, the guarded
+    UPDATE writes nothing and reports False, so a re-register racing an
+    admin ``:approve`` can never knock the just-approved client back to
+    pending. Against a genuinely kill-switched row it flips exactly once."""
+    svc = OAuthDcrService(dcr_context)
+    client_svc = OAuthClientService(dcr_context)
+    first = await svc.register(
+        client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
+    )
+    row = await _row_by_client_id(dcr_context, first.client_id)
+    await client_svc.approve(row.id, identity=_ADMIN)
+
+    # The lost-race arm: the row is live — the guard must not match.
+    async with dcr_context.admin_db.transaction() as session:
+        live = await OAuthClientRepository.get_by_id(session, row.id)
+        assert live is not None
+        flipped = await OAuthClientRepository.requeue_pending_if_killswitched(session, live)
+        assert flipped is False
+        # The instance is refreshed to the (unchanged) live state.
+        assert live.approval_status == OAuthClientApprovalStatus.APPROVED.value
+        assert live.active is True
+
+    # The genuine kill-switch arm: guard matches, flips exactly once.
+    await client_svc.deactivate(row.id, identity=_ADMIN)
+    async with dcr_context.admin_db.transaction() as session:
+        killed = await OAuthClientRepository.get_by_id(session, row.id)
+        assert killed is not None
+        assert await OAuthClientRepository.requeue_pending_if_killswitched(session, killed) is True
+        assert killed.approval_status == OAuthClientApprovalStatus.PENDING.value
+        assert killed.active is False
+        # Idempotence: a second attempt finds no approved row to flip.
+        assert await OAuthClientRepository.requeue_pending_if_killswitched(session, killed) is False

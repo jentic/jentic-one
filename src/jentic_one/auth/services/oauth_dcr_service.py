@@ -336,54 +336,58 @@ class OAuthDcrService:
                         "approval_status": winner.approval_status,
                         "active": winner.active,
                     }
-                    await OAuthClientRepository.set_approval_status(
-                        session,
-                        winner.id,
-                        approval_status=OAuthClientApprovalStatus.PENDING.value,
-                        active=False,
+                    # Compare-and-set: the guard re-checks approved+inactive
+                    # at write time, so a concurrent admin :approve is never
+                    # clobbered back to pending by this anonymous actor. The
+                    # repo refreshes `winner` to the live row either way, so
+                    # the audit trail below records reality.
+                    flipped = await OAuthClientRepository.requeue_pending_if_killswitched(
+                        session, winner
                     )
-                    await record_audit(
-                        session,
-                        action=AuditAction.UPDATE,
-                        target_type=AuditTargetType.OAUTH_CLIENT,
-                        target_id=winner.id,
-                        actor_type=_DCR_ACTOR,
-                        actor_id=None,
-                        before=before,
-                        after={
-                            "approval_status": winner.approval_status,
-                            "active": winner.active,
-                        },
-                        reason=(
-                            "anonymous DCR re-registration of a deactivated approved "
-                            "client: re-queued as pending for admin re-approval "
-                            "(D7 gate honesty, #1312)"
-                        ),
-                        origin=Origin.MCP.value,
-                    )
-                    # Unlike the quiet re-attach below, the flip is a status
-                    # transition that needs an admin decision — surface an
-                    # actionable approval-queue alert. This fires once per
-                    # flip, not per retry: the row is pending afterwards, so
-                    # subsequent re-registers take the quiet arm.
-                    await emit_event_best_effort(
-                        session,
-                        type=EventType.OAUTH_CLIENT_REGISTERED,
-                        severity=EventSeverity.INFO,
-                        summary=(
-                            f"OAuth client '{winner.name}' re-registered after "
-                            "deactivation and awaits administrator approval"
-                        ),
-                        requires_action=True,
-                        data={
-                            "oauth_client_id": winner.id,
-                            "client_id": winner.client_id,
-                            "client_name": winner.name,
-                            "approval_status": winner.approval_status,
-                            "software_id": winner.software_id,
-                        },
-                        created_by=_DCR_ACTOR,
-                    )
+                    if flipped:
+                        await record_audit(
+                            session,
+                            action=AuditAction.UPDATE,
+                            target_type=AuditTargetType.OAUTH_CLIENT,
+                            target_id=winner.id,
+                            actor_type=_DCR_ACTOR,
+                            actor_id=None,
+                            before=before,
+                            after={
+                                "approval_status": winner.approval_status,
+                                "active": winner.active,
+                            },
+                            reason=(
+                                "anonymous DCR re-registration of a deactivated approved "
+                                "client: re-queued as pending for admin re-approval "
+                                "(D7 gate honesty, #1312)"
+                            ),
+                            origin=Origin.MCP.value,
+                        )
+                        # Unlike the quiet re-attach below, the flip is a
+                        # status transition that needs an admin decision —
+                        # surface an actionable approval-queue alert. This
+                        # fires once per flip, not per retry: the row is
+                        # pending afterwards, so subsequent re-registers
+                        # take the quiet arm.
+                        await emit_event_best_effort(
+                            session,
+                            type=EventType.OAUTH_CLIENT_REGISTERED,
+                            severity=EventSeverity.INFO,
+                            summary=(
+                                f"OAuth client '{winner.name}' re-registered after "
+                                "deactivation and awaits administrator approval"
+                            ),
+                            requires_action=True,
+                            data={
+                                "oauth_client_id": winner.id,
+                                "client_id": winner.client_id,
+                                "client_name": winner.name,
+                                "approval_status": winner.approval_status,
+                                "software_id": winner.software_id,
+                            },
+                            created_by=_DCR_ACTOR,
+                        )
                 # F2: a re-attach must leave a forensic trace — the 200-dedupe
                 # arm discloses an existing (possibly approved) client_id to
                 # an anonymous caller, and a client bouncing off a denied row
