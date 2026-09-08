@@ -6,7 +6,9 @@
  * TOKEN SOURCE OF TRUTH: ui/src/index.css. The HSL triplets below are
  * hand-derived from the SPA palette; tests/unit/auth/web/test_theme_tokens.py
  * fails if they drift. Format matches the SPA: `H S% L%` triplets consumed
- * via hsl(var(--token)) so opacity modifiers work.
+ * via hsl(var(--token)) so opacity modifiers work. Like the SPA, the theme
+ * is DARK-ONLY (the platform ships no light theme — Manuel, 2026-09-08):
+ * one unconditional palette, no prefers-color-scheme split.
  *
  * SECURITY: this file is a static constant inlined into every auth page's
  * style block. It must never carry request- or row-derived data, external
@@ -17,89 +19,53 @@
  */
 
 :root {
-	/* Primary scale — ui/src/index.css `:root` (higher = darker). */
-	--primary-50: 180 11% 96%; /* #F5F7F7 */
+	/* Primary scale — ui/src/index.css `:root` (higher = darker). Only the
+	   steps the dark-only mappings below consume are mirrored here; add a
+	   step (and its drift-guard entry) when a new page needs it. */
 	--primary-100: 189 15% 91%; /* #E4EAEB */
 	--primary-300: 183 29% 72%; /* #A3CACC */
-	--primary-500: 185 18% 50%; /* #689296 */
 	--primary-700: 186 28% 26%; /* #305256 */
 	--primary-850: 192 38% 16%; /* #193238 */
 	--primary-900: 192 36% 13%; /* #162629 */
 	--primary-950: 192 35% 8%; /* #0E1A1D */
 
-	/* Accents + state — same source. */
-	--accent-orange: 31 97% 73%; /* #FDBD79 */
-	--accent-yellow: 52 78% 75%; /* #F1E38B */
+	/* Accents — same source. */
 	--accent-green: 162 66% 62%; /* #5EDEB9 */
-	--accent-pink: 358 64% 80%; /* #EDADAF */
-	--accent-blue: 203 78% 67%; /* #68BAEC */
-	--destructive: 13 87% 46%; /* #DB3B0F */
 
 	--radius: 0.75rem;
 
-	/* Light scheme (default) — the auth pages' historical look, now
-	   token-sourced: light wash background, white card, dark-teal action. */
-	--page-bg: var(--primary-50);
-	--card-bg: 0 0% 100%;
-	--card-border: var(--primary-100);
-	--fg: var(--primary-950);
-	--fg-muted: var(--primary-500);
-	--fg-label: var(--primary-700);
-	--inset-bg: var(--primary-50);
-	--inset-border: var(--primary-100);
-	--input-bg: 0 0% 100%;
-	--input-border: var(--primary-100);
-	--input-border-focus: var(--primary-700);
-	--ring: var(--primary-700);
-	--btn-primary-bg: var(--primary-700);
-	--btn-primary-bg-hover: var(--primary-850);
-	--btn-primary-fg: 0 0% 100%;
-	--btn-secondary-bg: var(--primary-50);
-	--btn-secondary-bg-hover: var(--primary-100);
-	--btn-secondary-fg: var(--primary-700);
-	--btn-secondary-border: var(--primary-100);
-	--brand-fg: var(--primary-950);
-	--badge-fg: var(--primary-700);
-	--app-name-fg: var(--primary-700);
-	--error-bg: 13 76% 91%;
-	--error-fg: 13 87% 34%;
+	/* Semantic mappings — dark-only, exactly the SPA's assignments
+	   (ui/src/index.css `:root`; the SPA has no light theme and no
+	   prefers-color-scheme/data-theme switch — decision: dark-only,
+	   Manuel 2026-09-08): bg primary-950, card primary-900, borders
+	   primary-700, primary action primary-300 on primary-950 text. */
+	--page-bg: var(--primary-950);
+	--card-bg: var(--primary-900);
+	--card-border: var(--primary-700);
+	--fg: 0 0% 100%;
+	--fg-muted: var(--primary-300);
+	--fg-label: var(--primary-100);
+	--inset-bg: var(--primary-850);
+	--inset-border: var(--primary-700);
+	--input-bg: var(--primary-950);
+	--input-border: var(--primary-700);
+	--input-border-focus: var(--primary-300);
+	--ring: var(--primary-300);
+	--btn-primary-bg: var(--primary-300);
+	--btn-primary-bg-hover: var(--primary-100);
+	--btn-primary-fg: var(--primary-950);
+	--btn-secondary-bg: var(--primary-900);
+	--btn-secondary-bg-hover: var(--primary-850);
+	--btn-secondary-fg: 0 0% 100%;
+	--btn-secondary-border: var(--primary-700);
+	--brand-fg: 0 0% 100%;
+	--badge-fg: var(--primary-300);
+	--app-name-fg: var(--primary-300);
+	--error-bg: 13 60% 18%;
+	--error-fg: 358 64% 80%;
 	--check-bg: var(--accent-green);
-	--elevation-card:
-		0 4px 6px hsl(var(--primary-950) / 0.07), 0 1px 3px hsl(var(--primary-950) / 0.06);
-	color-scheme: light dark;
-}
-
-/* Dark scheme — exactly the SPA's semantic assignments (ui/src/index.css):
-   bg primary-950, card primary-900, borders primary-700, primary action
-   primary-300 on primary-950 text, elevation from the dark shadow ramp. */
-@media (prefers-color-scheme: dark) {
-	:root {
-		--page-bg: var(--primary-950);
-		--card-bg: var(--primary-900);
-		--card-border: var(--primary-700);
-		--fg: 0 0% 100%;
-		--fg-muted: var(--primary-300);
-		--fg-label: var(--primary-100);
-		--inset-bg: var(--primary-850);
-		--inset-border: var(--primary-700);
-		--input-bg: var(--primary-950);
-		--input-border: var(--primary-700);
-		--input-border-focus: var(--primary-300);
-		--ring: var(--primary-300);
-		--btn-primary-bg: var(--primary-300);
-		--btn-primary-bg-hover: var(--primary-100);
-		--btn-primary-fg: var(--primary-950);
-		--btn-secondary-bg: var(--primary-900);
-		--btn-secondary-bg-hover: var(--primary-850);
-		--btn-secondary-fg: 0 0% 100%;
-		--btn-secondary-border: var(--primary-700);
-		--brand-fg: 0 0% 100%;
-		--badge-fg: var(--primary-300);
-		--app-name-fg: var(--primary-300);
-		--error-bg: 13 60% 18%;
-		--error-fg: 358 64% 80%;
-		--elevation-card: 0 1px 2px 0 hsl(var(--primary-950) / 0.4);
-	}
+	--elevation-card: 0 1px 2px 0 hsl(var(--primary-950) / 0.4);
+	color-scheme: dark;
 }
 
 /* ---- shell ---- */

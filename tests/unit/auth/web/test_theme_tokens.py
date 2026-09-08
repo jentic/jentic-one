@@ -28,23 +28,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _UI_INDEX_CSS = _REPO_ROOT / "ui" / "src" / "index.css"
 _UI_LOGO_TSX = _REPO_ROOT / "ui" / "src" / "shared" / "ui" / "Logo.tsx"
 
-#: SPA tokens the auth theme mirrors. Every name listed here must carry the
-#: exact same HSL triplet in both files.
+#: SPA tokens the auth theme mirrors (the subset the dark-only mappings
+#: consume). Every name listed here must carry the exact same HSL triplet in
+#: both files.
 _SHARED_TOKENS = (
-    "--primary-50",
     "--primary-100",
     "--primary-300",
-    "--primary-500",
     "--primary-700",
     "--primary-850",
     "--primary-900",
     "--primary-950",
-    "--accent-orange",
-    "--accent-yellow",
     "--accent-green",
-    "--accent-pink",
-    "--accent-blue",
-    "--destructive",
 )
 
 _TRIPLET_RE = r"^\s*{name}:\s*([\d.]+ [\d.]+% [\d.]+%);"
@@ -114,6 +108,22 @@ def test_css_is_inline_safe_and_fetch_free() -> None:
     for m in re.finditer(r"url\(\s*[\"']?([^\"')]+)", css):
         assert m.group(1).startswith("data:image/svg+xml"), f"external fetch in CSS: {m.group(0)}"
     assert css.count("{") == css.count("}")
+
+
+def test_theme_is_dark_only_like_the_spa() -> None:
+    """The theme mirrors the SPA's dark-only posture (Manuel, 2026-09-08).
+
+    The SPA (``ui/src/index.css``) ships exactly one palette — dark — with
+    no ``prefers-color-scheme`` or ``data-theme`` switch, and the auth pages
+    must match: one unconditional token block, page surface on
+    ``--primary-950``, card on ``--primary-900``.
+    """
+    css = theme.AUTH_PAGE_CSS
+    assert "prefers-color-scheme: dark" not in css
+    assert "prefers-color-scheme: light" not in css
+    assert "color-scheme: dark;" in css
+    assert re.search(r"^\s*--page-bg:\s*var\(--primary-950\);", css, flags=re.MULTILINE)
+    assert re.search(r"^\s*--card-bg:\s*var\(--primary-900\);", css, flags=re.MULTILINE)
 
 
 def test_logo_svg_is_static_and_self_contained() -> None:

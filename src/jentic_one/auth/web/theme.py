@@ -10,8 +10,8 @@ gives them one platform-consistent look without touching that posture:
 - :data:`AUTH_PAGE_CSS` — a single stylesheet, packaged as
   ``assets/auth.css``, inlined into each page's ``<style>`` block. Its token
   values are hand-derived from the SPA palette (``ui/src/index.css``) and
-  drift-guarded by ``tests/unit/auth/web/test_theme_tokens.py``. Dark/light
-  follows ``prefers-color-scheme`` using the same palette values.
+  drift-guarded by ``tests/unit/auth/web/test_theme_tokens.py``. Dark-only,
+  exactly like the SPA (the platform ships no light theme).
 - :data:`JENTIC_LOGO_SVG` — the Jentic logo as inline SVG. The path
   geometry is copied verbatim from ``ui/src/shared/ui/Logo.tsx``
   (``LOGO_ICON_PATHS`` — the single source of truth for the glyph — plus
