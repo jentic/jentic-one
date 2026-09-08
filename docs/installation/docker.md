@@ -236,7 +236,7 @@ docker run --rm --env-file /etc/jentic/prod.env \
 ## 5. Create the first admin
 
 ```bash
-read -rs ADMIN_PASSWORD   # or fetch from your secrets manager
+read -rs ADMIN_PASSWORD   # run this line by itself; it waits silently for input (or fetch from your secrets manager)
 printf '%s\n' "$ADMIN_PASSWORD" | docker run --rm -i --env-file /etc/jentic/prod.env \
   -v /etc/jentic:/etc/jentic:ro \
   "$IMAGE" \

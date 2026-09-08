@@ -103,8 +103,10 @@ the config layer falls back to development mode, where missing secrets are
 silently generated per-process instead of refusing to boot — sessions die on
 every pod restart and the surfaces disagree, with no error. `global.image.tag`
 pins every subchart's tag in one place. `--timeout 30m` matters because the
-migrate hook runs *inside* Helm's timeout — the default is 5 minutes, and a
-`SIGTERM`ed migration run leaves a half-applied schema (see
+migrate hook runs *inside* Helm's timeout — the default is 5 minutes, after
+which Helm marks the release failed while the Job keeps running; the next
+`helm upgrade` retry then deletes the still-running hook Job mid-migration
+(`before-hook-creation`), leaving a half-applied schema (see
 [upgrades.md](../operations/upgrades.md)). Set `<svc>.image.repository`
 explicitly for **every enabled service**:
 each subchart ships a non-empty local-build default (`jentic-one/<svc>`), and
@@ -123,7 +125,7 @@ mismatch (including `localhost` vs `127.0.0.1`) fails with `invalid_grant`
 *after* the agent is approved:
 
 ```bash
-helm upgrade jentic ./deploy/helm/jentic-one --reuse-values \
+helm upgrade jentic ./deploy/helm/jentic-one --reuse-values --timeout 30m \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=https://jentic.example.com
 ```
 
@@ -135,9 +137,17 @@ Create the admin **before** you expose the app through an ingress:
 `POST /users:create-admin` is unauthenticated by design and self-closes only
 once the first user exists, so on the Helm path — where pods serve before
 any admin exists — racing it against public exposure is an avoidable risk.
-Run the one-shot from the [Docker guide, step 5](docker.md#5-create-the-first-admin)
-(re-running is safe: `setup already complete`), or open the one-time
-`/app/setup` page while the app is still port-forward-only.
+The app pod already carries the database env, so run the one-shot inside it
+(re-running is safe: `setup already complete`):
+
+```bash
+read -rs ADMIN_PASSWORD   # run this line by itself; it waits for input
+printf '%s\n' "$ADMIN_PASSWORD" | kubectl -n jentic-one exec -i deploy/jentic-app -- \
+  python -m jentic_one create-admin --email admin@example.com
+```
+
+Alternatively, open the one-time `/app/setup` page while the app is still
+port-forward-only.
 
 Then verify — note `/health` is dependency-free (it stays green with the
 database down or empty, [monitoring.md](../operations/monitoring.md#health)),
@@ -160,7 +170,9 @@ kubectl -n jentic-one port-forward svc/jentic-broker 8100:8000 &
 curl -s http://localhost:8100/health         # the broker answers too
 ```
 
-Then connect an agent:
+Then connect an agent — note `register` needs the URLs agents will actually
+use, so bring your ingress up first (below) rather than registering against
+a port-forward `localhost` URL:
 
 ```bash
 jentic register --url <app URL> --broker-url <broker URL>
@@ -230,9 +242,8 @@ global:
               - { name: JENTIC__DATABASES__REGISTRY__SCHEMA_NAME, value: registry }
               # …repeat HOST/NAME/USER/SCHEMA_NAME for CONTROL and ADMIN
   ```
-- **First admin:** same shape — the
-  `python -m jentic_one create-admin --email …` one-shot from the
-  [Docker guide, step 5](docker.md#5-create-the-first-admin). Re-running is
+- **First admin:** same as [step 4](#4-create-the-first-admin-then-verify)
+  — run the `create-admin` one-shot inside the app pod. Re-running is
   safe (`setup already complete`).
 - **Secrets:** database passwords must match the roles you created. The
   chart supports exactly two password sources on this path: explicit
@@ -252,8 +263,12 @@ env convention; credential writes fail without it), the admin JWT secret, the
 invite pepper, and the connect state secret. The latter three ship a
 placeholder that `JENTIC_ENV=production` refuses to boot with; the keyset
 ships nothing at all. On the bundled-DB path
-the same Secret also carries the database passwords. The chart offers three
-sources, in order of preference:
+the same Secret also carries the database passwords. (A fifth value,
+`auth.id_signing`, is needed only for `openid`-scope flows — nothing
+generates it, not even the chart's generated Secret; carry it in the
+`existingSecret`'s `config.yaml` when you use OIDC/MCP interactive sign-in —
+see the [Docker guide's worked config](docker.md#2-write-the-config).) The
+chart offers three sources, in order of preference:
 
 1. **`global.appSecrets.generate: true`** — the chart mints random values
    into a release-scoped Secret (`<release>-app-secrets`) on first install
@@ -288,6 +303,7 @@ the `db-password-*` keys of the `existingSecret` above; anything fancier
 (ExternalSecrets per variable, CSI volumes) means patching the subchart
 templates. Host/port/name/schema are not secrets — plain values are fine
 for those.
+
 Encryption-key **rotation** is a config-level operation in every mode: add a
 new keyset entry and flip `active_id`. Stored secrets re-encrypt under the
 new key only when they are rewritten — there is no bulk re-encrypt and no
@@ -335,7 +351,7 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
 Each pod can run an OpenTelemetry Collector sidecar:
 
 ```bash
-helm upgrade jentic ./deploy/helm/jentic-one --reuse-values \
+helm upgrade jentic ./deploy/helm/jentic-one --reuse-values --timeout 30m \
   --set global.observability.otel.enabled=true \
   --set global.observability.otel.endpoint=http://otel-collector:4317
 ```
@@ -350,11 +366,16 @@ annotations are covered in the
 1. Get (or build and push) the new release's images (step 1) and re-vendor
    the chart at the **new** release tag.
 2. `helm upgrade jentic ./deploy/helm/jentic-one --timeout 30m …` with the
-   new `global.image.tag`. On the bundled-DB path the migrate hook re-runs
-   automatically — inside `--timeout`, hence the explicit value; the Helm
-   default of 5 minutes can `SIGTERM` a long migration mid-run on a
-   populated database. Against an external database, re-run migrations
-   first (see above).
+   new `global.image.tag` — and **every `--set` from your install**: a plain
+   `helm upgrade` (no `--reuse-values`) resets everything else to chart
+   defaults, which flips `broker.enabled` back off and, on the external-DB
+   shape, re-enables the bundled Postgres. `helm get values jentic` prints
+   what the release currently runs with; re-pass all of it (or use
+   `--reuse-values` when you're changing nothing but the tag). On the
+   bundled-DB path the migrate hook re-runs automatically — inside
+   `--timeout`, hence the explicit value; the Helm default of 5 minutes can
+   `SIGTERM` a long migration mid-run on a populated database. Against an
+   external database, re-run migrations first (see above).
 
 Generated secrets are never rotated by an upgrade, and `helm uninstall`
 intentionally keeps the `jentic-app-secrets` Secret (and the Postgres PVC) so

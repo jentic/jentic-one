@@ -45,10 +45,10 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 # Migrations must never be SIGTERMed mid-run (the run is not atomic —
-# see docs/operations/upgrades.md). systemd's default start timeout is
-# 90 s, which a CREATE INDEX CONCURRENTLY on a populated database can
-# exceed.
-TimeoutStartSec=1800
+# see docs/operations/upgrades.md). Type=oneshot units have no start
+# timeout by default; pin that explicitly so a drop-in or a changed
+# DefaultTimeoutStartSec can't introduce one.
+TimeoutStartSec=infinity
 EnvironmentFile=/etc/jentic/image.env
 ExecStart=/usr/bin/docker run --rm --env-file /etc/jentic/prod.env \
   -v /etc/jentic:/etc/jentic:ro \

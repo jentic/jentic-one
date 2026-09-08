@@ -5,7 +5,11 @@ long-running services against an **external** PostgreSQL — the compose shape
 of the [Docker guide](docker.md), which explains each step (image digest,
 config, database prep). Follow that page through step 3 first, then save the
 worked config as `./production.yaml` and the secrets env block as `.env`,
-both next to the compose file.
+both next to the compose file. The same permissions logic as the Docker
+guide's step 2 applies: `chmod 644 production.yaml` with a non-world-readable
+parent directory, `chmod 600 .env` (only compose reads it, host-side) — and
+if the config carries the encryption keyset, treat the directory like a
+secret store.
 
 Want the database in compose too?
 [`docker/local-setup/docker-compose.yaml`](../../docker/local-setup/docker-compose.yaml)
@@ -81,7 +85,7 @@ Create the roles and schemas on your Postgres first
 ```bash
 docker compose up -d migrate                 # runs migrations, then exits 0
 docker compose logs migrate                  # `up -d` detaches — check it succeeded
-read -rs ADMIN_PASSWORD
+read -rs ADMIN_PASSWORD                      # run this line by itself; it waits silently for input
 printf '%s\n' "$ADMIN_PASSWORD" | docker compose run --rm -T app \
   python -m jentic_one create-admin --email admin@example.com
 docker compose up -d app broker              # start the long-running services

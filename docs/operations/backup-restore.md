@@ -46,7 +46,7 @@ CLI-managed installs (`jenticctl install`): the volume is
 `~/.jentic/.env` — the same invariant, spelled out in the runbook's
 [uninstall notes](../agent/operate.md#uninstall).
 
-## PostgreSQL (production installs)
+## PostgreSQL installs
 
 The three databases are schemas in your Postgres instance — back them up like
 any Postgres database, live:
@@ -67,18 +67,23 @@ with the services stopped:
 # 1. Stop everything that writes (docker stop jentic-app jentic-broker,
 #    scale the deployments to 0, or systemctl stop jentic-app jentic-broker).
 
-# 2. Empty the three schemas, then recreate them with the same grants as
-#    the provisioning SQL (Docker guide, step 3):
+# 2. Empty the three schemas. Drop only — do NOT recreate them: the dump
+#    carries its own CREATE SCHEMA and GRANT statements (the roles survive
+#    the drop), and a pre-created schema makes step 3 abort on
+#    'schema already exists'.
 psql -h db.prod.internal -U postgres -d jentic \
   -c 'DROP SCHEMA registry CASCADE' \
   -c 'DROP SCHEMA control  CASCADE' \
   -c 'DROP SCHEMA admin    CASCADE'
-# ...then re-run the CREATE SCHEMA / GRANT lines from step 3.
 
 # 3. Restore, failing loudly on the first error instead of continuing:
 pg_restore -h db.prod.internal -U postgres -d jentic \
   --exit-on-error jentic-YYYYMMDDTHHMMSSZ.dump
 ```
+
+(If the restore reports missing roles, the target instance was never
+provisioned — create the roles first: Docker guide step 3, or the Helm
+chart's `pg-init` ConfigMap for bundled-Postgres installs.)
 
 Then run migrations before starting the services if the target release is
 newer than the dump, and restart. Note what this is and is not: restoring a

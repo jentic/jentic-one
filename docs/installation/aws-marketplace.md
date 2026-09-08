@@ -78,12 +78,15 @@ aws ecr get-login-password --region us-east-1 \
 
 helm install jentic-one \
   oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
-  --version <version> --namespace jentic-one --create-namespace \
+  --version <version> --namespace jentic-one --create-namespace --timeout 30m \
   --set global.serviceAccount.name=jentic-one \
   --set global.awsmp.licenseSecret=<from-launch-page>
 ```
 
 No passwords or further configuration are required at install time.
+(`--timeout 30m`: the chart's migrate hook runs inside Helm's timeout, and
+the 5-minute default can `SIGTERM` a long migration mid-run — see
+[helm.md](helm.md#2-install).)
 
 ## Post-install: set the canonical base URL
 
@@ -105,17 +108,23 @@ helm upgrade jentic-one \
 kubectl -n jentic-one get pods
 # expect: app, broker, postgresql — all Running
 
-kubectl -n jentic-one port-forward svc/jentic-one-app 8000:8000
+kubectl -n jentic-one port-forward svc/jentic-one-app 8000:8000 &
 curl -s http://localhost:8000/health   # {"status":"ok","version":"<version>"}
 ```
 
 Create the first admin **before** exposing the app publicly — the one-time
 setup endpoint is unauthenticated by design and closes only once a user
 exists. Do it over the port-forward above (open
-`http://localhost:8000/app/setup`, or run the one-shot `create-admin` from
-the [Docker guide, step 5](docker.md#5-create-the-first-admin)), confirm
-`curl -s http://localhost:8000/admin/health` shows `setup_required: false`,
-then connect an agent:
+`http://localhost:8000/app/setup`), or run the one-shot inside the app pod:
+
+```bash
+read -rs ADMIN_PASSWORD   # run this line by itself; it waits for input
+printf '%s\n' "$ADMIN_PASSWORD" | kubectl -n jentic-one exec -i deploy/jentic-one-app -- \
+  python -m jentic_one create-admin --email admin@example.com
+```
+
+Confirm `curl -s http://localhost:8000/admin/health` shows
+`setup_required: false`, then connect an agent:
 
 ```bash
 jentic register --url <app URL> --broker-url <broker URL>
@@ -161,7 +170,7 @@ overrides:
 ```bash
 helm upgrade jentic-one \
   oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
-  --version <new-version> -n jentic-one --reset-values \
+  --version <new-version> -n jentic-one --reset-values --timeout 30m \
   --set global.serviceAccount.name=jentic-one \
   --set global.awsmp.licenseSecret=<from-launch-page> \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=<url>

@@ -65,7 +65,7 @@ the verify commands linked above need nothing but the downloaded files and
   more than the app image: `docker.io/postgres:17.x` (the bundled
   PostgreSQL), plus the OpenTelemetry Collector sidecar image if you enable
   `global.observability.otel` and the gateway image if you enable that
-  subchart — mirror each into your internal registry and override the
+  subchart. Mirror each into your internal registry and override the
   corresponding `image.repository`, or an air-gapped install dies on
   `ImagePullBackOff` for an image the transfer never carried.
 
