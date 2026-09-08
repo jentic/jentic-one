@@ -294,9 +294,10 @@ class OAuthDcrService:
             # two key spaces never cross-match. The fetched rows' exact URI
             # sets are re-checked because the fingerprint is a hash
             # (collision guard). Among multiple exact matches
-            # (double-register race) prefer approved > pending > denied,
-            # then oldest — `min` is stable and the repo returns rows
-            # oldest-first.
+            # (double-register race) prefer the D7-gate-aware order —
+            # approved+active > pending > denied > approved+inactive
+            # (see _dedupe_rank) — then oldest: `min` is stable and the
+            # repo returns rows oldest-first.
             if software_id:
                 candidates = await OAuthClientRepository.list_dcr_by_dedupe_key(
                     session, software_id, fingerprint
