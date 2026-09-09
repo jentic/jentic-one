@@ -136,6 +136,17 @@ def test_broker_surface_gets_admin_db_access(app_config: AppConfig) -> None:
     _ = ctx.admin_db
 
 
+def test_registry_surface_gets_admin_and_control_db_access(app_config: AppConfig) -> None:
+    """A standalone registry surface needs all three databases: admin for the
+    auth verifier and GET /governed-hosts' toolkit-binding leg, control for the
+    governed-hosts credential-scope leg (issue #1278)."""
+    allowed = _expand_allowed_dbs(["registry"], app_config)
+    assert allowed >= {"registry", "admin", "control"}
+    ctx = Context(app_config, allowed_dbs=allowed)
+    _ = ctx.admin_db
+    _ = ctx.control_db
+
+
 def test_reference_endpoint_serves_scope_join(ctx: Context) -> None:
     """GET /reference/endpoints.json serves the canonical scope reference."""
     app = create_combined_app(ctx, ["registry", "admin", "control", "auth"])

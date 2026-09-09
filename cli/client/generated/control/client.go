@@ -1853,6 +1853,24 @@ type ExecutionStatsResponse struct {
 	TotalExecutions    int                    `json:"total_executions"`
 }
 
+// GovernedHostsResponse The caller's governed host set (canonical order) with its change digest.
+//
+// **Hosts only, deliberately**: the set exists for interception scoping
+// (divert lists, host filters), so it carries the minimum knowledge — API
+// detail stays behind the existing authenticated reads (“GET /apis“).
+//
+// Deliberately **unpaginated**: the set is bounded by the caller's own toolkit
+// bindings (tens of hosts, not thousands) and the digest must cover the whole
+// set atomically — a paginated digest would be meaningless. This is a
+// documented deviation from the list-endpoint pagination convention.
+type GovernedHostsResponse struct {
+	// Data Governed host entries, normalised (lowercased, FQDN root dot stripped, internationalised names IDNA/punycode-encoded), deduplicated, and sorted — the literal URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry is a hostname, a bare IP literal, or either followed by a non-default port (`host[:port]` — default ports are already stripped). Compare case-insensitively (lowercase the incoming host before matching); a gate keying on hostname or SNI alone must strip any `:port` suffix from the entry first. Variable-bearing hosts (defaultless `{var}` server variables) are excluded — the broker's discovery never matches them. On a `5xx` retain the last known set; never fall back to an empty (intercept-nothing) list.
+	Data []string `json:"data"`
+
+	// Digest SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag`. To change-poll, send it back quoted — `If-None-Match: "<digest>"` (the bare digest is accepted as a compatibility form) — and expect an empty `304` until the host set changes. Poll at most once per minute.
+	Digest string `json:"digest"`
+}
+
 // GroupBy Grouping dimension for usage statistics.
 type GroupBy string
 
@@ -3665,6 +3683,12 @@ type ListExecutionsParams struct {
 	Origin    *string    `form:"origin,omitempty" json:"origin,omitempty"`
 	Cursor    *string    `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetGovernedHostsParams defines parameters for GetGovernedHosts.
+type GetGovernedHostsParams struct {
+	// IfNoneMatch Change-poll precondition: the `ETag` from a previous response (quoted, `"<digest>"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.
+	IfNoneMatch *string `json:"if-none-match,omitempty"`
 }
 
 // InspectOperationParams defines parameters for InspectOperation.
@@ -5949,6 +5973,28 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /executions/{execution_id} (the `GetExecution` operationId).
 	GetExecution(ctx context.Context, executionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetGovernedHosts Get Governed Hosts
+	//
+	// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+	//
+	// **Always self-scoped** — derived from the authenticated identity's own
+	// toolkit bindings; there is no cross-actor or admin variant. Toolkits bind
+	// to agents, so agent-scoped tokens (the OAuth agent-consent flow's output)
+	// are the callers this endpoint serves — a plain user token yields an empty
+	// set. The ``digest`` covers exactly the ``data`` list and is also emitted as
+	// a strong ``ETag``, so integrators poll with ``If-None-Match: "<digest>"``
+	// and get an empty ``304`` until their host set actually changes (the
+	// change-poll seam that replaces ``GET /apis`` enumeration for interception
+	// scoping). Poll at most once per minute; on any ``5xx`` retain the last
+	// known set — never fall back to an empty (intercept-nothing) list.
+	//
+	// Responses are identity-scoped and marked ``Cache-Control: private,
+	// no-store`` — a shared cache must never serve one actor's host set to
+	// another.
+	//
+	// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
+	GetGovernedHosts(ctx context.Context, params *GetGovernedHostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Health
 	//
@@ -9578,6 +9624,38 @@ func (c *Client) ListExecutions(ctx context.Context, params *ListExecutionsParam
 // Corresponds with GET /executions/{execution_id} (the `GetExecution` operationId).
 func (c *Client) GetExecution(ctx context.Context, executionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetExecutionRequest(c.Server, executionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetGovernedHosts Get Governed Hosts
+//
+// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+//
+// **Always self-scoped** — derived from the authenticated identity's own
+// toolkit bindings; there is no cross-actor or admin variant. Toolkits bind
+// to agents, so agent-scoped tokens (the OAuth agent-consent flow's output)
+// are the callers this endpoint serves — a plain user token yields an empty
+// set. The “digest“ covers exactly the “data“ list and is also emitted as
+// a strong “ETag“, so integrators poll with “If-None-Match: "<digest>"“
+// and get an empty “304“ until their host set actually changes (the
+// change-poll seam that replaces “GET /apis“ enumeration for interception
+// scoping). Poll at most once per minute; on any “5xx“ retain the last
+// known set — never fall back to an empty (intercept-nothing) list.
+//
+// Responses are identity-scoped and marked “Cache-Control: private,
+// no-store“ — a shared cache must never serve one actor's host set to
+// another.
+//
+// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
+func (c *Client) GetGovernedHosts(ctx context.Context, params *GetGovernedHostsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetGovernedHostsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -17230,6 +17308,48 @@ func NewGetExecutionRequest(server string, executionId string) (*http.Request, e
 	return req, nil
 }
 
+// NewGetGovernedHostsRequest constructs an http.Request for the GetGovernedHosts method
+func NewGetGovernedHostsRequest(server string, params *GetGovernedHostsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/governed-hosts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.IfNoneMatch != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "if-none-match", *params.IfNoneMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("if-none-match", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -22284,6 +22404,30 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /executions/{execution_id} (the `GetExecution` operationId).
 	GetExecutionWithResponse(ctx context.Context, executionId string, reqEditors ...RequestEditorFn) (*GetExecutionHTTPResp, error)
+
+	// GetGovernedHostsWithResponse Get Governed Hosts
+	//
+	// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+	//
+	// **Always self-scoped** — derived from the authenticated identity's own
+	// toolkit bindings; there is no cross-actor or admin variant. Toolkits bind
+	// to agents, so agent-scoped tokens (the OAuth agent-consent flow's output)
+	// are the callers this endpoint serves — a plain user token yields an empty
+	// set. The ``digest`` covers exactly the ``data`` list and is also emitted as
+	// a strong ``ETag``, so integrators poll with ``If-None-Match: "<digest>"``
+	// and get an empty ``304`` until their host set actually changes (the
+	// change-poll seam that replaces ``GET /apis`` enumeration for interception
+	// scoping). Poll at most once per minute; on any ``5xx`` retain the last
+	// known set — never fall back to an empty (intercept-nothing) list.
+	//
+	// Responses are identity-scoped and marked ``Cache-Control: private,
+	// no-store`` — a shared cache must never serve one actor's host set to
+	// another.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
+	GetGovernedHostsWithResponse(ctx context.Context, params *GetGovernedHostsParams, reqEditors ...RequestEditorFn) (*GetGovernedHostsHTTPResp, error)
 
 	// GetHealthWithResponse Health
 	//
@@ -31606,6 +31750,103 @@ func (r GetExecutionHTTPResp) ContentType() string {
 	return ""
 }
 
+// GetGovernedHostsHTTPResp200Headers the declared response headers of an HTTP 200 response for GetGovernedHosts
+type GetGovernedHostsHTTPResp200Headers struct {
+	ETag *string
+}
+
+// GetGovernedHostsHTTPResp304Headers the declared response headers of an HTTP 304 response for GetGovernedHosts
+type GetGovernedHostsHTTPResp304Headers struct {
+	ETag *string
+}
+
+type GetGovernedHostsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GovernedHostsResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetGovernedHostsHTTPResp200Headers
+	// Headers304 the parsed response headers for an HTTP 304 response
+	Headers304 *GetGovernedHostsHTTPResp304Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetGovernedHostsHTTPResp) GetJSON200() *GovernedHostsResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetGovernedHostsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetGovernedHostsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetGovernedHostsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetGovernedHostsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -39858,6 +40099,36 @@ func (c *ClientWithResponses) GetExecutionWithResponse(ctx context.Context, exec
 		return nil, err
 	}
 	return ParseGetExecutionHTTPResp(rsp)
+}
+
+// GetGovernedHostsWithResponse Get Governed Hosts
+//
+// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+//
+// **Always self-scoped** — derived from the authenticated identity's own
+// toolkit bindings; there is no cross-actor or admin variant. Toolkits bind
+// to agents, so agent-scoped tokens (the OAuth agent-consent flow's output)
+// are the callers this endpoint serves — a plain user token yields an empty
+// set. The “digest“ covers exactly the “data“ list and is also emitted as
+// a strong “ETag“, so integrators poll with “If-None-Match: "<digest>"“
+// and get an empty “304“ until their host set actually changes (the
+// change-poll seam that replaces “GET /apis“ enumeration for interception
+// scoping). Poll at most once per minute; on any “5xx“ retain the last
+// known set — never fall back to an empty (intercept-nothing) list.
+//
+// Responses are identity-scoped and marked “Cache-Control: private,
+// no-store“ — a shared cache must never serve one actor's host set to
+// another.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /governed-hosts (the `GetGovernedHosts` operationId).
+func (c *ClientWithResponses) GetGovernedHostsWithResponse(ctx context.Context, params *GetGovernedHostsParams, reqEditors ...RequestEditorFn) (*GetGovernedHostsHTTPResp, error) {
+	rsp, err := c.GetGovernedHosts(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetGovernedHostsHTTPResp(rsp)
 }
 
 // GetHealthWithResponse Health
@@ -48425,6 +48696,100 @@ func ParseGetExecutionHTTPResp(rsp *http.Response) (*GetExecutionHTTPResp, error
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetGovernedHostsHTTPResp parses an HTTP response from a GetGovernedHostsWithResponse call
+func ParseGetGovernedHostsHTTPResp(rsp *http.Response) (*GetGovernedHostsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetGovernedHostsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GovernedHostsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 304:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetGovernedHostsHTTPResp200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 304:
+		var headers GetGovernedHostsHTTPResp304Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers304 = &headers
 	}
 
 	return response, nil

@@ -121,6 +121,7 @@ func (ExecutionResponse) RequiredFields() []string {
 func (ExecutionStatsResponse) RequiredFields() []string {
 	return []string{"daily_buckets", "success_rate_percent", "top_operations", "total_executions"}
 }
+func (GovernedHostsResponse) RequiredFields() []string { return []string{"data", "digest"} }
 func (HealthResponse) RequiredFields() []string {
 	return []string{"setup_required", "status", "surface"}
 }
