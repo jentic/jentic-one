@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { page } from 'vitest/browser';
 import { http, HttpResponse } from 'msw';
 import { renderWithProviders, screen, within, userEvent, checkA11y } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
@@ -19,21 +20,105 @@ function renderSection(route = '/settings') {
 }
 
 describe('OAuthClientsSection', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
+		// The roster swaps to stacked cards below `sm` (640px); these specs
+		// assert the desktop table grammar, so pin a desktop viewport.
+		await page.viewport(1280, 900);
 		setToken('test-token');
 		resetSettingsStore();
 	});
 
-	it('lists clients with badges and the per-client active-grant count', async () => {
+	// ------------------------------------------------------------------
+	// Roster (ClientsTable)
+	// ------------------------------------------------------------------
+
+	it('defaults to the Active segment: working fleet only, pending/denied/inactive hidden', async () => {
 		renderSection();
 
 		// The admin-registered confidential client, with its §4.8 grant count.
 		expect(await screen.findByText('Internal Dashboard')).toBeInTheDocument();
-		expect(screen.getByText('Active grants:')).toBeInTheDocument();
-		expect(screen.getByText('2')).toBeInTheDocument();
-		// Pending/denied rows are inactive → hidden from the default clients list.
+		expect(
+			screen.getByRole('button', { name: 'View grants for Internal Dashboard' }),
+		).toHaveTextContent('2');
+		// Pending, denied, and deactivated rows stay out of the default view.
+		expect(screen.queryByText('Cursor')).not.toBeInTheDocument();
 		expect(screen.queryByText('Sketchy Tool')).not.toBeInTheDocument();
+		expect(screen.queryByText('Legacy App')).not.toBeInTheDocument();
 	});
+
+	it('status segments carry live counts and Inactive surfaces the approved+inactive zombie (#1312)', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		// Live counts over the full include_inactive pool.
+		expect(screen.getByRole('button', { name: 'All 4' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Active 1' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Pending 1' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Denied 1' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Inactive 1' })).toBeInTheDocument();
+
+		// The zombie — approved but deactivated, invisible to both queue
+		// filters — lives under the Inactive segment with its chip.
+		await user.click(screen.getByRole('button', { name: 'Inactive 1' }));
+		expect(await screen.findByText('Legacy App')).toBeInTheDocument();
+		expect(screen.getByText('Inactive')).toBeInTheDocument();
+		expect(screen.queryByText('Internal Dashboard')).not.toBeInTheDocument();
+	});
+
+	it('never offers Reactivate on a denied row — its recovery routes to the queue', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		// The denied row's kebab: Review in queue, but NO Reactivate (a PATCH
+		// active=true would leave approval_status=denied — still gate-blocked).
+		await user.click(screen.getByRole('button', { name: 'Denied 1' }));
+		await screen.findByText('Sketchy Tool');
+		await user.click(screen.getByRole('button', { name: 'Actions for Sketchy Tool' }));
+		expect(
+			await screen.findByRole('menuitem', { name: 'Review in queue Sketchy Tool' }),
+		).toBeInTheDocument();
+		expect(screen.queryByRole('menuitem', { name: /Reactivate/ })).not.toBeInTheDocument();
+		await user.keyboard('{Escape}');
+
+		// The approved+inactive zombie DOES get Reactivate — the one state
+		// where a plain PATCH active=true actually un-blocks the client.
+		await user.click(screen.getByRole('button', { name: 'Inactive 1' }));
+		await screen.findByText('Legacy App');
+		await user.click(screen.getByRole('button', { name: 'Actions for Legacy App' }));
+		expect(
+			await screen.findByRole('menuitem', { name: 'Reactivate Legacy App' }),
+		).toBeInTheDocument();
+	});
+
+	it('"Review in queue" on a denied row lands on the queue tab, Denied slice', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(screen.getByRole('button', { name: 'Denied 1' }));
+		await screen.findByText('Sketchy Tool');
+		await user.click(screen.getByRole('button', { name: 'Actions for Sketchy Tool' }));
+		await user.click(
+			await screen.findByRole('menuitem', { name: 'Review in queue Sketchy Tool' }),
+		);
+
+		// Queue tab, denied filter: the row re-offers Approve without Deny.
+		expect(await screen.findByText('Sketchy Tool')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Deny' })).not.toBeInTheDocument();
+	});
+
+	it('has no critical a11y violations on the clients tab', async () => {
+		const { container } = renderSection();
+		await screen.findByText('Internal Dashboard');
+		await checkA11y(container);
+	});
+
+	// ------------------------------------------------------------------
+	// Approval queue
+	// ------------------------------------------------------------------
 
 	it('carries the pending count on the Approval queue tab label', async () => {
 		renderSection();
@@ -42,17 +127,24 @@ describe('OAuthClientsSection', () => {
 		expect(await within(tab).findByText('1')).toBeInTheDocument();
 	});
 
-	it('deep-links to the queue via ?tab=queue (the rail Review action)', async () => {
+	it('deep-links to the queue via ?tab=queue and leads with the verifiable origins', async () => {
 		renderSection('/settings?tab=queue');
-		// The pending DCR registration renders with its badges (scoped to the
-		// row heading — "Pending" also names the queue's filter button).
-		const heading = await screen.findByText('Cursor');
+
+		// Origins-first (the #1264 anti-spoofing posture): the headline is the
+		// redirect-URI origin + software_id, with the type/status chips.
+		const heading = await screen.findByText('http://localhost:33418');
 		const row = heading.closest('h3');
 		expect(row).not.toBeNull();
 		expect(within(row as HTMLElement).getByText('Public')).toBeInTheDocument();
 		expect(within(row as HTMLElement).getByText('DCR')).toBeInTheDocument();
+		expect(within(row as HTMLElement).getByText('Agent consent')).toBeInTheDocument();
 		expect(within(row as HTMLElement).getByText('Pending')).toBeInTheDocument();
 		expect(screen.getByText('com.cursor.ide')).toBeInTheDocument();
+
+		// The attacker-chosen display name is demoted to labelled secondary text.
+		expect(screen.getByText(/Self-reported name:/)).toBeInTheDocument();
+		expect(screen.getByText('Cursor')).toBeInTheDocument();
+		expect(within(row as HTMLElement).queryByText('Cursor')).not.toBeInTheDocument();
 	});
 
 	it('approves a pending registration and empties the queue (D7 pending→approved)', async () => {
@@ -173,5 +265,142 @@ describe('OAuthClientsSection', () => {
 		const { container } = renderSection('/settings?tab=queue');
 		await screen.findByText('Cursor');
 		await checkA11y(container);
+	});
+
+	// ------------------------------------------------------------------
+	// Detail sheet (metadata + grants + audit)
+	// ------------------------------------------------------------------
+
+	it('opens the detail sheet from the roster name: metadata and grants render', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(
+			screen.getByRole('button', { name: 'View details for Internal Dashboard' }),
+		);
+		const sheet = await screen.findByTestId('sheet-primitive');
+
+		// Metadata: consent model, client type, provenance, scope restriction.
+		expect(within(sheet).getByText('User — consent acts as the user')).toBeInTheDocument();
+		expect(within(sheet).getByText('Confidential (client secret)')).toBeInTheDocument();
+		expect(within(sheet).getByText('Admin-registered')).toBeInTheDocument();
+		expect(within(sheet).getByText('https://app.example.com/callback')).toBeInTheDocument();
+
+		// Grants (via GET /admin/oauth-grants?client_id=…): the two active
+		// consents render with their agents resolved from the directory.
+		expect(await within(sheet).findByText('Invoice Bot')).toBeInTheDocument();
+		expect(within(sheet).getByText('Support Triage')).toBeInTheDocument();
+	});
+
+	it('revoke honours can_revoke: enabled kill switch vs. disabled with explanation', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+		await user.click(
+			screen.getByRole('button', { name: 'View details for Internal Dashboard' }),
+		);
+		const sheet = await screen.findByTestId('sheet-primitive');
+		await within(sheet).findByText('Invoice Bot');
+
+		// The G10 divergence: the caller can LIST ocg_2 but not revoke it —
+		// the button disables instead of offering a 403.
+		expect(
+			within(sheet).getByRole('button', { name: 'Revoke grant ocg_2 (not permitted)' }),
+		).toBeDisabled();
+
+		// The revocable grant goes through the confirm dialog.
+		await user.click(within(sheet).getByRole('button', { name: 'Revoke grant ocg_1' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Revoke this grant?' });
+		await user.click(within(dialog).getByRole('button', { name: 'Revoke' }));
+		expect(await screen.findByText('Grant revoked')).toBeInTheDocument();
+	});
+
+	it('surfaces the decision history — including the deny reason — in Recent changes', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		// The denied client's audit trail carries the operator's deny reason,
+		// which the old UI captured and then never showed anywhere.
+		await user.click(screen.getByRole('button', { name: 'Denied 1' }));
+		await screen.findByText('Sketchy Tool');
+		await user.click(screen.getByRole('button', { name: 'View details for Sketchy Tool' }));
+		const sheet = await screen.findByTestId('sheet-primitive');
+
+		expect(await within(sheet).findByText('oauth_client.deny')).toBeInTheDocument();
+		expect(within(sheet).getByText(/unknown redirect URIs/)).toBeInTheDocument();
+	});
+
+	// ------------------------------------------------------------------
+	// Create/edit form sheet
+	// ------------------------------------------------------------------
+
+	it('creates a public agent-consent client (consent_model + token_endpoint_auth_method sent)', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(screen.getByRole('button', { name: 'Add client' }));
+		const sheet = await screen.findByTestId('sheet-primitive');
+		await user.type(within(sheet).getByLabelText('Name'), 'mcp-bridge');
+		await user.type(
+			within(sheet).getByLabelText('Redirect URI 1'),
+			'https://bridge.example.com/cb',
+		);
+		await user.selectOptions(within(sheet).getByLabelText('Client type'), 'public');
+		await user.selectOptions(within(sheet).getByLabelText('Consent model'), 'agent');
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
+
+		// The mock store echoes what the form SENT: the new roster row carries
+		// the Public (token_endpoint_auth_method=none) and Agent-consent chips.
+		const name = await screen.findByRole('button', { name: 'View details for mcp-bridge' });
+		const row = name.closest('tr');
+		expect(row).not.toBeNull();
+		expect(within(row as HTMLElement).getByText('Public')).toBeInTheDocument();
+		expect(within(row as HTMLElement).getByText('Agent consent')).toBeInTheDocument();
+
+		// Public clients are PKCE-only: no one-time secret dialog.
+		expect(screen.queryByText(/Copy this secret now/)).not.toBeInTheDocument();
+	});
+
+	it('shows the one-time secret for a new confidential client (and wipes it on close)', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(screen.getByRole('button', { name: 'Add client' }));
+		const sheet = await screen.findByTestId('sheet-primitive');
+		await user.type(within(sheet).getByLabelText('Name'), 'server-app');
+		await user.type(
+			within(sheet).getByLabelText('Redirect URI 1'),
+			'https://server.example.com/cb',
+		);
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
+
+		// Confidential default → the one-time secret dialog.
+		expect(await screen.findByText('ocs_mock_secret_once')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Done' }));
+		// Sensitive-data exception: the secret does not survive the close.
+		expect(screen.queryByText('ocs_mock_secret_once')).not.toBeInTheDocument();
+	});
+
+	it('keeps the create-form draft across a casual dismiss (dialog-state rule)', async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(screen.getByRole('button', { name: 'Add client' }));
+		let sheet = await screen.findByTestId('sheet-primitive');
+		await user.type(within(sheet).getByLabelText('Name'), 'half-typed-app');
+		await user.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+		// Let the exit animation finish so the reopen starts from 'closed'.
+		await expect.poll(() => screen.queryByTestId('sheet-primitive')).toBeNull();
+
+		// Reopen: the draft survived — the sheet is mounted persistently, not
+		// conditionally (the old implementation lost drafts here).
+		await user.click(screen.getByRole('button', { name: 'Add client' }));
+		sheet = await screen.findByTestId('sheet-primitive');
+		expect(within(sheet).getByLabelText('Name')).toHaveValue('half-typed-app');
 	});
 });

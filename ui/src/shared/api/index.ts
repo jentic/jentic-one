@@ -257,7 +257,9 @@ export type { VersionResponse } from '@/shared/api/generated/models/VersionRespo
 
 // OAuth client management (third-party application registrations). Append-only.
 export { OAuthClientsService } from '@/shared/api/generated/services/OAuthClientsService';
-export type { OAuthClientCreateRequest } from '@/shared/api/generated/models/OAuthClientCreateRequest';
+// Value export (not type-only): the create request carries enum namespaces
+// (`consent_model`, `token_endpoint_auth_method`) the form sheet needs.
+export { OAuthClientCreateRequest } from '@/shared/api/generated/models/OAuthClientCreateRequest';
 export type { OAuthClientCreateResponse } from '@/shared/api/generated/models/OAuthClientCreateResponse';
 export type { OAuthClientResponse } from '@/shared/api/generated/models/OAuthClientResponse';
 export type { OAuthClientRotateSecretResponse } from '@/shared/api/generated/models/OAuthClientRotateSecretResponse';
@@ -285,3 +287,7 @@ export type { IdpDescriptor } from '@/shared/api/idp';
 export { OAuthService } from '@/shared/api/generated/services/OAuthService';
 export type { OAuthGrantResponse } from '@/shared/api/generated/models/OAuthGrantResponse';
 export type { OAuthGrantListResponse } from '@/shared/api/generated/models/OAuthGrantListResponse';
+// Admin cross-view rows (`GET /admin/oauth-grants`) — the per-client grants
+// panel in the OAuth-clients detail sheet. Append-only, like the rest.
+export type { OAuthGrantAdminResponse } from '@/shared/api/generated/models/OAuthGrantAdminResponse';
+export type { OAuthGrantAdminListResponse } from '@/shared/api/generated/models/OAuthGrantAdminListResponse';

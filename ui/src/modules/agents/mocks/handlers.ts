@@ -1283,7 +1283,9 @@ export const agentsHandlers = [
 	}),
 	http.post('/oauth-grants/:id\\:revoke', ({ params }) => {
 		const grant = oauthGrants.find((g) => g.id === params.id);
-		if (!grant) return new HttpResponse(null, { status: 404 });
+		// Not one of OURS — fall through (the settings module registers the
+		// same kill-switch path for its admin-cross-view grants store).
+		if (!grant) return undefined;
 		// Idempotent, like the backend: re-revoking is a 204 no-op.
 		if (grant.status === 'active') {
 			grant.status = 'revoked';
