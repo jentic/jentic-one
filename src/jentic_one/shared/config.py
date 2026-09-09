@@ -334,7 +334,31 @@ class OAuthRateLimitConfig(BaseModel):
     # Anonymous dynamic client registration (POST /oauth-clients).
     registration_rpm: int = 10
     registration_burst: int = 5
+    # Approval-pending status poll (GET /oauth/approval/status). One tab polls
+    # at 12 rpm, so 120/60 keeps ~10 concurrent pending tabs behind one NAT
+    # inside the bucket; the page also honors Retry-After with backoff, so
+    # saturation degrades to a slower cadence rather than a thundering retry.
+    # Lives in its own namespace so polling can never drain the /authorize
+    # (or registration) quota.
+    approval_status_rpm: int = 120
+    approval_status_burst: int = 60
     trusted_proxies: list[str] = Field(default_factory=list)
+
+
+class LocalLoginConfig(BaseModel):
+    """Local-account login form on the ``/authorize`` flow (no external IdP).
+
+    Default **off**: ``/authorize`` behaviour is byte-identical (including the
+    ``server_error`` redirect when no IdP is configured) and ``GET|POST /login``
+    answer the framework's plain 404. Enabling it makes the standards-track
+    native-app sign-in flow (RFC 8252: DCR + system browser + loopback redirect
+    + PKCE) work against the first-party password account store, without any
+    client ever handling a password. An external IdP always wins: when
+    ``auth.idp.enabled`` is true the login form is never offered (no mixed
+    mode in v1).
+    """
+
+    enabled: bool = False
 
 
 class AuthConfig(BaseModel):
@@ -356,6 +380,7 @@ class AuthConfig(BaseModel):
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
+    local_login: LocalLoginConfig = Field(default_factory=LocalLoginConfig)
     platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
     oauth_rate_limit: OAuthRateLimitConfig = Field(default_factory=OAuthRateLimitConfig)
 

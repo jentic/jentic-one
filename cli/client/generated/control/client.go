@@ -341,16 +341,16 @@ func (e CredentialType) Valid() bool {
 
 // Defines values for DecideItemSchemaDecision.
 const (
-	Approved DecideItemSchemaDecision = "approved"
-	Denied   DecideItemSchemaDecision = "denied"
+	DecideItemSchemaDecisionApproved DecideItemSchemaDecision = "approved"
+	DecideItemSchemaDecisionDenied   DecideItemSchemaDecision = "denied"
 )
 
 // Valid indicates whether the value is a known member of the DecideItemSchemaDecision enum.
 func (e DecideItemSchemaDecision) Valid() bool {
 	switch e {
-	case Approved:
+	case DecideItemSchemaDecisionApproved:
 		return true
-	case Denied:
+	case DecideItemSchemaDecisionDenied:
 		return true
 	default:
 		return false
@@ -422,22 +422,22 @@ func (e InstanceIdentityResponseBackend) Valid() bool {
 
 // Defines values for InviteState.
 const (
-	Accepted InviteState = "accepted"
-	Expired  InviteState = "expired"
-	Pending  InviteState = "pending"
-	Redeemed InviteState = "redeemed"
+	InviteStateAccepted InviteState = "accepted"
+	InviteStateExpired  InviteState = "expired"
+	InviteStatePending  InviteState = "pending"
+	InviteStateRedeemed InviteState = "redeemed"
 )
 
 // Valid indicates whether the value is a known member of the InviteState enum.
 func (e InviteState) Valid() bool {
 	switch e {
-	case Accepted:
+	case InviteStateAccepted:
 		return true
-	case Expired:
+	case InviteStateExpired:
 		return true
-	case Pending:
+	case InviteStatePending:
 		return true
-	case Redeemed:
+	case InviteStateRedeemed:
 		return true
 	default:
 		return false
@@ -621,6 +621,45 @@ const (
 func (e OAuth2UpdateRequestType) Valid() bool {
 	switch e {
 	case OAuth2UpdateRequestTypeOauth2:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthApprovalDecisionRequestAction.
+const (
+	OAuthApprovalDecisionRequestActionApprove OAuthApprovalDecisionRequestAction = "approve"
+	OAuthApprovalDecisionRequestActionDeny    OAuthApprovalDecisionRequestAction = "deny"
+)
+
+// Valid indicates whether the value is a known member of the OAuthApprovalDecisionRequestAction enum.
+func (e OAuthApprovalDecisionRequestAction) Valid() bool {
+	switch e {
+	case OAuthApprovalDecisionRequestActionApprove:
+		return true
+	case OAuthApprovalDecisionRequestActionDeny:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthApprovalStatusResponseStatus.
+const (
+	OAuthApprovalStatusResponseStatusApproved OAuthApprovalStatusResponseStatus = "approved"
+	OAuthApprovalStatusResponseStatusDenied   OAuthApprovalStatusResponseStatus = "denied"
+	OAuthApprovalStatusResponseStatusPending  OAuthApprovalStatusResponseStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the OAuthApprovalStatusResponseStatus enum.
+func (e OAuthApprovalStatusResponseStatus) Valid() bool {
+	switch e {
+	case OAuthApprovalStatusResponseStatusApproved:
+		return true
+	case OAuthApprovalStatusResponseStatusDenied:
+		return true
+	case OAuthApprovalStatusResponseStatusPending:
 		return true
 	default:
 		return false
@@ -1385,6 +1424,14 @@ type BodyConsentSubmit struct {
 	ConsentToken string  `json:"consent_token"`
 }
 
+// BodyLoginSubmit defines model for Body_loginSubmit.
+type BodyLoginSubmit struct {
+	Csrf     string `json:"csrf"`
+	Email    string `json:"email"`
+	Ls       string `json:"ls"`
+	Password string `json:"password"`
+}
+
 // CatalogEntryLinksResponse Hypermedia links for a catalog entry.
 //
 // Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
@@ -2121,6 +2168,40 @@ type OAuth2UpdateRequest struct {
 // OAuth2UpdateRequestType defines model for OAuth2UpdateRequest.Type.
 type OAuth2UpdateRequestType string
 
+// OAuthApprovalDecisionRequest Inline admin approve/deny posted from the approval-pending page.
+//
+// “state“ is the signed approval-state blob minted by “/authorize“ for
+// this exact authorize request — the decision endpoint never accepts a bare
+// “client_id“.
+//
+// “state“ is deliberately NOT marked x-sensitive: the CLI's GEN-21
+// redaction backstop unions every sensitive field's BARE name globally, and
+// "state" is generic enough to redact unrelated CLI output (e.g. the MCP
+// session-diagnosis “state“ field). The blob is not a lasting bearer
+// credential — it is HMAC-signed, purpose-discriminated, TTL'd (600 s), and
+// the decision endpoint additionally requires an authenticated admin with
+// “oauth-clients:write“ — so global redaction buys nothing worth that
+// collision.
+type OAuthApprovalDecisionRequest struct {
+	Action OAuthApprovalDecisionRequestAction `json:"action"`
+	State  string                             `json:"state"`
+}
+
+// OAuthApprovalDecisionRequestAction defines model for OAuthApprovalDecisionRequest.Action.
+type OAuthApprovalDecisionRequestAction string
+
+// OAuthApprovalStatusResponse Minimal tri-state approval status for a pending-client authorize request.
+//
+// Deliberately carries nothing else — no client name, redirect URIs, or
+// metadata — so the anonymous poll endpoint cannot be used to read client
+// details out of the registry.
+type OAuthApprovalStatusResponse struct {
+	Status OAuthApprovalStatusResponseStatus `json:"status"`
+}
+
+// OAuthApprovalStatusResponseStatus defines model for OAuthApprovalStatusResponse.Status.
+type OAuthApprovalStatusResponseStatus string
+
 // OAuthClientCreateRequest Request body for creating an OAuth client.
 //
 // Examples: {"description":"My application production deployment","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
@@ -2399,6 +2480,34 @@ type OAuthGrantResponse struct {
 
 	// UserId The consenting user who approved this grant. Shown even after an agent ownership transfer: the grant stays with the original consenter (it is their consent, not the agent's).
 	UserId string `json:"user_id"`
+}
+
+// OAuthSessionContinueRequest Front-channel session-continue exchange posted from the login page.
+//
+// “state“ is the signed “login“-purpose carry-through token (“ls“)
+// minted by rung 3 of “flow.resolve_identity_gate“ for this exact
+// authorize request — the exchange never accepts bare flow parameters, so a
+// caller cannot probe arbitrary client ids through it.
+//
+// “state“ is deliberately NOT marked x-sensitive, for the same reason as
+// “OAuthApprovalDecisionRequest.state“: the CLI's redaction backstop
+// unions bare field names globally, and the blob is not a lasting bearer
+// credential (HMAC-signed, purpose-discriminated, TTL'd; the endpoint
+// additionally requires an authenticated platform user).
+type OAuthSessionContinueRequest struct {
+	State string `json:"state"`
+}
+
+// OAuthSessionContinueResponse The resume leg for a successful session-continue exchange.
+//
+// “redirect_url“ is a same-origin, relative “/authorize“ URL re-running
+// the ORIGINAL authorize request plus the short-TTL “session“-purpose
+// continuation blob (“sc“) pinning the platform user at exchange time.
+// Relative by design (mirrors the approval-pending page's resume URL): the
+// page script navigates within its own origin, never to a caller-influenced
+// absolute URL.
+type OAuthSessionContinueResponse struct {
+	RedirectUrl string `json:"redirect_url"`
 }
 
 // OperationPreviewListResponse Capped, offset-paginated operation preview for a catalog entry.
@@ -2792,8 +2901,10 @@ type RedeemInviteRequest struct {
 
 // RegisterRequest POST /register request body.
 type RegisterRequest struct {
-	ClientName              string                 `json:"client_name"`
-	GrantTypes              *[]string              `json:"grant_types,omitempty"`
+	ClientName string    `json:"client_name"`
+	GrantTypes *[]string `json:"grant_types,omitempty"`
+
+	// Jwks A JSON Web Key Set containing at least one Ed25519 public key (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.
 	Jwks                    map[string]interface{} `json:"jwks"`
 	Scope                   *string                `json:"scope,omitempty"`
 	TokenEndpointAuthMethod *string                `json:"token_endpoint_auth_method,omitempty"`
@@ -3003,7 +3114,10 @@ type TokenResponse struct {
 	ExpiresIn    int     `json:"expires_in"`
 	IdToken      *string `json:"id_token,omitempty"`
 	RefreshToken *string `json:"refresh_token,omitempty"`
-	TokenType    *string `json:"token_type,omitempty"`
+
+	// Scope Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent and service-account tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
+	Scope     *string `json:"scope,omitempty"`
+	TokenType *string `json:"token_type,omitempty"`
 }
 
 // ToolkitAgentListResponse Paginated list of agents bound to a toolkit.
@@ -3474,6 +3588,9 @@ type AuthorizeEndpointParams struct {
 	Scope               *string `form:"scope,omitempty" json:"scope,omitempty"`
 	State               *string `form:"state,omitempty" json:"state,omitempty"`
 	Nonce               *string `form:"nonce,omitempty" json:"nonce,omitempty"`
+
+	// Sc Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
+	Sc *string `form:"sc,omitempty" json:"sc,omitempty"`
 }
 
 // ListCatalogParams defines parameters for ListCatalog.
@@ -3594,6 +3711,12 @@ type ListJobsParams struct {
 	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// LoginPageParams defines parameters for LoginPage.
+type LoginPageParams struct {
+	// Ls Signed authorization-flow state (carry-through token)
+	Ls string `form:"ls" json:"ls"`
+}
+
 // GetMe200JSONResponseBody defines parameters for GetMe.
 type GetMe200JSONResponseBody struct {
 	union json.RawMessage
@@ -3636,6 +3759,12 @@ type DeleteNoteParams struct {
 // UpdateNoteParams defines parameters for UpdateNote.
 type UpdateNoteParams struct {
 	IfMatch *string `json:"if-match,omitempty"`
+}
+
+// ApprovalStatusEndpointParams defines parameters for ApprovalStatusEndpoint.
+type ApprovalStatusEndpointParams struct {
+	// St Signed approval-state blob minted by /authorize
+	St string `form:"st" json:"st"`
 }
 
 // AuthorizeOauthCallbackParams defines parameters for AuthorizeOauthCallback.
@@ -3790,6 +3919,9 @@ type ConnectCredentialJSONRequestBody = ConnectRequestBody
 // AcknowledgeEventJSONRequestBody defines body for AcknowledgeEvent for application/json ContentType.
 type AcknowledgeEventJSONRequestBody = EventAcknowledgeRequest
 
+// LoginSubmitFormdataRequestBody defines body for LoginSubmit for application/x-www-form-urlencoded ContentType.
+type LoginSubmitFormdataRequestBody = BodyLoginSubmit
+
 // ReportMcpConfigRegistrationJSONRequestBody defines body for ReportMcpConfigRegistration for application/json ContentType.
 type ReportMcpConfigRegistrationJSONRequestBody = McpConfigRegistrationRequest
 
@@ -3801,6 +3933,9 @@ type UpdateNoteJSONRequestBody = NoteUpdateRequest
 
 // RegisterOauthClientEndpointJSONRequestBody defines body for RegisterOauthClientEndpoint for application/json ContentType.
 type RegisterOauthClientEndpointJSONRequestBody = OAuthClientRegistrationRequest
+
+// ApprovalDecisionEndpointJSONRequestBody defines body for ApprovalDecisionEndpoint for application/json ContentType.
+type ApprovalDecisionEndpointJSONRequestBody = OAuthApprovalDecisionRequest
 
 // ConsentSubmitFormdataRequestBody defines body for ConsentSubmit for application/x-www-form-urlencoded ContentType.
 type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
@@ -3816,6 +3951,9 @@ type RevokeEndpointJSONRequestBody = RevokeRequest
 
 // RevokeEndpointFormdataRequestBody defines body for RevokeEndpoint for application/x-www-form-urlencoded ContentType.
 type RevokeEndpointFormdataRequestBody = RevokeRequest
+
+// SessionContinueEndpointJSONRequestBody defines body for SessionContinueEndpoint for application/json ContentType.
+type SessionContinueEndpointJSONRequestBody = OAuthSessionContinueRequest
 
 // TokenEndpointJSONRequestBody defines body for TokenEndpoint for application/json ContentType.
 type TokenEndpointJSONRequestBody TokenEndpointJSONBody
@@ -5902,6 +6040,63 @@ type ClientInterface interface {
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// LoginPage Local-account login form (authorization flow)
+	//
+	// Render the local-account login form for an in-flight ``/authorize`` request.
+	//
+	// Verifies the ``ls`` signature/TTL/purpose **before** rendering — an
+	// expired, forged, or wrong-purpose token never gets a form — re-checks the
+	// D7 client gate (a client denied or deactivated while the user holds the
+	// ``ls`` must not be asked for a password), rejects an already-spent ``ls``,
+	// and embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.
+	//
+	// Corresponds with GET /login (the `LoginPage` operationId).
+	LoginPage(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginSubmitWithBody Local-account login submit (authorization flow)
+	//
+	// Authenticate the local account and rejoin the authorization flow.
+	//
+	// Success never mints a JWT — it flows straight into code issuance (platform
+	// client) or the consent handle (registered third-party client), exactly
+	// where the IdP callback rejoins, and burns the single-use ``ls``.
+	// Credential failures re-render the form with one generic message: lockout
+	// state, unknown email, and wrong password are indistinguishable (no
+	// user-enumeration response oracle), while the shared
+	// ``AuthService.authenticate`` core still increments the failed-login count
+	// and applies the lockout threshold. An account flagged
+	// ``must_change_password`` authenticates but is told to rotate via the UI
+	// first — the OAuth plane must not hand a fully-scoped token to a
+	// temporary-password principal the UI would have boxed into
+	// change-password-only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /login (the `LoginSubmit` operationId).
+	LoginSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginSubmitWithFormdataBody Local-account login submit (authorization flow)
+	//
+	// Authenticate the local account and rejoin the authorization flow.
+	//
+	// Success never mints a JWT — it flows straight into code issuance (platform
+	// client) or the consent handle (registered third-party client), exactly
+	// where the IdP callback rejoins, and burns the single-use ``ls``.
+	// Credential failures re-render the form with one generic message: lockout
+	// state, unknown email, and wrong password are indistinguishable (no
+	// user-enumeration response oracle), while the shared
+	// ``AuthService.authenticate`` core still increments the failed-login count
+	// and applies the lockout threshold. An account flagged
+	// ``must_change_password`` authenticates but is told to rotate via the UI
+	// first — the OAuth plane must not hand a fully-scoped token to a
+	// temporary-password principal the UI would have boxed into
+	// change-password-only.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /login (the `LoginSubmit` operationId).
+	LoginSubmitWithFormdataBody(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ReportMcpConfigRegistrationWithBody Report MCP config registration
 	//
 	// Record that an MCP server entry was written for an agent runtime.
@@ -6021,8 +6216,14 @@ type ClientInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -6038,8 +6239,14 @@ type ClientInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -6062,6 +6269,56 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
 	RevokeOauthGrant(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApprovalDecisionEndpointWithBody Approve or deny a pending client inline (approval-pending page)
+	//
+	// Thin wrapper over the admin approval path for the approval-pending page.
+	//
+	// Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+	// / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+	// decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+	// same audit records, same D7 active/approval_status coupling; this endpoint
+	// only translates the signed state blob into the client row. CSRF posture
+	// matches the consent POST: no ambient credential is honored — the browser
+	// must explicitly present the SPA bearer token, which a cross-site form
+	// cannot do.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+	ApprovalDecisionEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApprovalDecisionEndpoint Approve or deny a pending client inline (approval-pending page)
+	//
+	// Thin wrapper over the admin approval path for the approval-pending page.
+	//
+	// Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+	// / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+	// decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+	// same audit records, same D7 active/approval_status coupling; this endpoint
+	// only translates the signed state blob into the client row. CSRF posture
+	// matches the consent POST: no ambient credential is honored — the browser
+	// must explicitly present the SPA bearer token, which a cross-site form
+	// cannot do.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+	ApprovalDecisionEndpoint(ctx context.Context, body ApprovalDecisionEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApprovalStatusEndpoint Poll client approval status (approval-pending page)
+	//
+	// Minimal tri-state poll for the approval-pending page.
+	//
+	// Anonymous but keyed by the signed approval-state blob — never a bare
+	// client_id, so the endpoint cannot be used to enumerate registrations. Any
+	// verification failure (bad signature, wrong purpose, expired ``iat``,
+	// malformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by
+	// re-running /authorize, which mints a fresh blob. The response carries ONLY
+	// the tri-state — no names, redirect URIs, or metadata.
+	//
+	// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
+	ApprovalStatusEndpoint(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizeOauthCallback Authorize Oauth Callback
 	//
@@ -6264,6 +6521,60 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SessionContinueEndpointWithBody Exchange a live platform session for an authorize continuation
+	//
+	// Rung 1 of the /authorize identity ladder: reuse the platform session.
+	//
+	// The login page's script posts the pending authorize state (the ``ls``
+	// carry-through token) with the SPA's bearer token in the Authorization
+	// header — no cookies, no ambient credentials, so a cross-site form cannot
+	// drive it (same CSRF posture as the consent POST and the inline approval
+	// decision). The platform token is validated by the standard auth
+	// dependency (users only), and the ``active`` / ``must_change_password``
+	// fences are re-checked with a LIVE user-row read — not the token's baked
+	// claims — matching rung 3's ``password_rotation_required`` posture, so an
+	// admin-forced reset fences the exchange immediately even while pre-reset
+	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+	// success the response carries a relative ``/authorize`` resume URL bearing
+	// a short-TTL, ``session``-purpose continuation blob that pins THIS
+	// caller's ``user_id`` — the identity is fixed at exchange time, before the
+	// consent page renders it with its "Not you?" escape.
+	//
+	// Every failure after authentication is the same generic 400: an invalid
+	// blob must not let the caller learn anything about the client or the flow.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+	SessionContinueEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SessionContinueEndpoint Exchange a live platform session for an authorize continuation
+	//
+	// Rung 1 of the /authorize identity ladder: reuse the platform session.
+	//
+	// The login page's script posts the pending authorize state (the ``ls``
+	// carry-through token) with the SPA's bearer token in the Authorization
+	// header — no cookies, no ambient credentials, so a cross-site form cannot
+	// drive it (same CSRF posture as the consent POST and the inline approval
+	// decision). The platform token is validated by the standard auth
+	// dependency (users only), and the ``active`` / ``must_change_password``
+	// fences are re-checked with a LIVE user-row read — not the token's baked
+	// claims — matching rung 3's ``password_rotation_required`` posture, so an
+	// admin-forced reset fences the exchange immediately even while pre-reset
+	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+	// success the response carries a relative ``/authorize`` resume URL bearing
+	// a short-TTL, ``session``-purpose continuation blob that pins THIS
+	// caller's ``user_id`` — the identity is fixed at exchange time, before the
+	// consent page renders it with its "Not you?" escape.
+	//
+	// Every failure after authentication is the same generic 400: an invalid
+	// blob must not let the caller learn anything about the client or the flow.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+	SessionContinueEndpoint(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TokenEndpointWithBody Token Endpoint
 	//
@@ -9463,6 +9774,93 @@ func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...Requ
 	return c.Client.Do(req)
 }
 
+// LoginPage Local-account login form (authorization flow)
+//
+// Render the local-account login form for an in-flight “/authorize“ request.
+//
+// Verifies the “ls“ signature/TTL/purpose **before** rendering — an
+// expired, forged, or wrong-purpose token never gets a form — re-checks the
+// D7 client gate (a client denied or deactivated while the user holds the
+// “ls“ must not be asked for a password), rejects an already-spent “ls“,
+// and embeds “ls“ plus a fresh single-use CSRF nonce bound to it.
+//
+// Corresponds with GET /login (the `LoginPage` operationId).
+func (c *Client) LoginPage(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginPageRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginSubmitWithBody Local-account login submit (authorization flow)
+//
+// Authenticate the local account and rejoin the authorization flow.
+//
+// Success never mints a JWT — it flows straight into code issuance (platform
+// client) or the consent handle (registered third-party client), exactly
+// where the IdP callback rejoins, and burns the single-use “ls“.
+// Credential failures re-render the form with one generic message: lockout
+// state, unknown email, and wrong password are indistinguishable (no
+// user-enumeration response oracle), while the shared
+// “AuthService.authenticate“ core still increments the failed-login count
+// and applies the lockout threshold. An account flagged
+// “must_change_password“ authenticates but is told to rotate via the UI
+// first — the OAuth plane must not hand a fully-scoped token to a
+// temporary-password principal the UI would have boxed into
+// change-password-only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /login (the `LoginSubmit` operationId).
+func (c *Client) LoginSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginSubmitRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginSubmitWithFormdataBody Local-account login submit (authorization flow)
+//
+// Authenticate the local account and rejoin the authorization flow.
+//
+// Success never mints a JWT — it flows straight into code issuance (platform
+// client) or the consent handle (registered third-party client), exactly
+// where the IdP callback rejoins, and burns the single-use “ls“.
+// Credential failures re-render the form with one generic message: lockout
+// state, unknown email, and wrong password are indistinguishable (no
+// user-enumeration response oracle), while the shared
+// “AuthService.authenticate“ core still increments the failed-login count
+// and applies the lockout threshold. An account flagged
+// “must_change_password“ authenticates but is told to rotate via the UI
+// first — the OAuth plane must not hand a fully-scoped token to a
+// temporary-password principal the UI would have boxed into
+// change-password-only.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /login (the `LoginSubmit` operationId).
+func (c *Client) LoginSubmitWithFormdataBody(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginSubmitRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ReportMcpConfigRegistrationWithBody Report MCP config registration
 //
 // Record that an MCP server entry was written for an agent runtime.
@@ -9702,8 +10100,14 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -9729,8 +10133,14 @@ func (c *Client) RegisterOauthClientEndpointWithBody(ctx context.Context, conten
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -9764,6 +10174,86 @@ func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterO
 // Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
 func (c *Client) RevokeOauthGrant(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeOauthGrantRequest(c.Server, grantId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApprovalDecisionEndpointWithBody Approve or deny a pending client inline (approval-pending page)
+//
+// Thin wrapper over the admin approval path for the approval-pending page.
+//
+// Authorization is byte-identical to “POST /admin/oauth-clients/{id}:approve“
+// / “:deny“ (“oauth-clients:write“, org:admin implies it) and the
+// decision itself is the SAME “OAuthClientService.approve“/“deny“ calls —
+// same audit records, same D7 active/approval_status coupling; this endpoint
+// only translates the signed state blob into the client row. CSRF posture
+// matches the consent POST: no ambient credential is honored — the browser
+// must explicitly present the SPA bearer token, which a cross-site form
+// cannot do.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+func (c *Client) ApprovalDecisionEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApprovalDecisionEndpointRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApprovalDecisionEndpoint Approve or deny a pending client inline (approval-pending page)
+//
+// Thin wrapper over the admin approval path for the approval-pending page.
+//
+// Authorization is byte-identical to “POST /admin/oauth-clients/{id}:approve“
+// / “:deny“ (“oauth-clients:write“, org:admin implies it) and the
+// decision itself is the SAME “OAuthClientService.approve“/“deny“ calls —
+// same audit records, same D7 active/approval_status coupling; this endpoint
+// only translates the signed state blob into the client row. CSRF posture
+// matches the consent POST: no ambient credential is honored — the browser
+// must explicitly present the SPA bearer token, which a cross-site form
+// cannot do.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+func (c *Client) ApprovalDecisionEndpoint(ctx context.Context, body ApprovalDecisionEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApprovalDecisionEndpointRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApprovalStatusEndpoint Poll client approval status (approval-pending page)
+//
+// Minimal tri-state poll for the approval-pending page.
+//
+// Anonymous but keyed by the signed approval-state blob — never a bare
+// client_id, so the endpoint cannot be used to enumerate registrations. Any
+// verification failure (bad signature, wrong purpose, expired “iat“,
+// malformed blob) is a 400 “invalid_grant“; the page reacts to a 400 by
+// re-running /authorize, which mints a fresh blob. The response carries ONLY
+// the tri-state — no names, redirect URIs, or metadata.
+//
+// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
+func (c *Client) ApprovalStatusEndpoint(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApprovalStatusEndpointRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -10076,6 +10566,80 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 // Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 func (c *Client) RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeEndpointRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SessionContinueEndpointWithBody Exchange a live platform session for an authorize continuation
+//
+// Rung 1 of the /authorize identity ladder: reuse the platform session.
+//
+// The login page's script posts the pending authorize state (the “ls“
+// carry-through token) with the SPA's bearer token in the Authorization
+// header — no cookies, no ambient credentials, so a cross-site form cannot
+// drive it (same CSRF posture as the consent POST and the inline approval
+// decision). The platform token is validated by the standard auth
+// dependency (users only), and the “active“ / “must_change_password“
+// fences are re-checked with a LIVE user-row read — not the token's baked
+// claims — matching rung 3's “password_rotation_required“ posture, so an
+// admin-forced reset fences the exchange immediately even while pre-reset
+// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+// success the response carries a relative “/authorize“ resume URL bearing
+// a short-TTL, “session“-purpose continuation blob that pins THIS
+// caller's “user_id“ — the identity is fixed at exchange time, before the
+// consent page renders it with its "Not you?" escape.
+//
+// Every failure after authentication is the same generic 400: an invalid
+// blob must not let the caller learn anything about the client or the flow.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+func (c *Client) SessionContinueEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSessionContinueEndpointRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SessionContinueEndpoint Exchange a live platform session for an authorize continuation
+//
+// Rung 1 of the /authorize identity ladder: reuse the platform session.
+//
+// The login page's script posts the pending authorize state (the “ls“
+// carry-through token) with the SPA's bearer token in the Authorization
+// header — no cookies, no ambient credentials, so a cross-site form cannot
+// drive it (same CSRF posture as the consent POST and the inline approval
+// decision). The platform token is validated by the standard auth
+// dependency (users only), and the “active“ / “must_change_password“
+// fences are re-checked with a LIVE user-row read — not the token's baked
+// claims — matching rung 3's “password_rotation_required“ posture, so an
+// admin-forced reset fences the exchange immediately even while pre-reset
+// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+// success the response carries a relative “/authorize“ resume URL bearing
+// a short-TTL, “session“-purpose continuation blob that pins THIS
+// caller's “user_id“ — the identity is fixed at exchange time, before the
+// consent page renders it with its "Not you?" escape.
+//
+// Every failure after authentication is the same generic 400: an invalid
+// blob must not let the caller learn anything about the client or the flow.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+func (c *Client) SessionContinueEndpoint(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSessionContinueEndpointRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15243,6 +15807,18 @@ func NewAuthorizeEndpointRequest(server string, params *AuthorizeEndpointParams)
 
 		}
 
+		if params.Sc != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sc", *params.Sc, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -17101,6 +17677,96 @@ func NewCancelJobRequest(server string, jobId string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewLoginPageRequest constructs an http.Request for the LoginPage method
+func NewLoginPageRequest(server string, params *LoginPageParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ls", params.Ls, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLoginSubmitRequestWithFormdataBody calls the generic LoginSubmit builder with application/x-www-form-urlencoded body
+func NewLoginSubmitRequestWithFormdataBody(server string, body LoginSubmitFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewLoginSubmitRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewLoginSubmitRequestWithBody constructs an http.Request for the LoginSubmit method, with any body, and a specified content type
+func NewLoginSubmitRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewReportMcpConfigRegistrationRequest calls the generic ReportMcpConfigRegistration builder with application/json body
 func NewReportMcpConfigRegistrationRequest(server string, body ReportMcpConfigRegistrationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -17757,6 +18423,96 @@ func NewRevokeOauthGrantRequest(server string, grantId string) (*http.Request, e
 	return req, nil
 }
 
+// NewApprovalDecisionEndpointRequest calls the generic ApprovalDecisionEndpoint builder with application/json body
+func NewApprovalDecisionEndpointRequest(server string, body ApprovalDecisionEndpointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApprovalDecisionEndpointRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewApprovalDecisionEndpointRequestWithBody constructs an http.Request for the ApprovalDecisionEndpoint method, with any body, and a specified content type
+func NewApprovalDecisionEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/approval/decision")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewApprovalStatusEndpointRequest constructs an http.Request for the ApprovalStatusEndpoint method
+func NewApprovalStatusEndpointRequest(server string, params *ApprovalStatusEndpointParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/approval/status")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "st", params.St, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAuthorizeOauthCallbackRequest constructs an http.Request for the AuthorizeOauthCallback method
 func NewAuthorizeOauthCallbackRequest(server string, params *AuthorizeOauthCallbackParams) (*http.Request, error) {
 	var err error
@@ -18017,6 +18773,46 @@ func NewRevokeEndpointRequestWithBody(server string, contentType string, body io
 	}
 
 	operationPath := fmt.Sprintf("/oauth/revoke")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSessionContinueEndpointRequest calls the generic SessionContinueEndpoint builder with application/json body
+func NewSessionContinueEndpointRequest(server string, body SessionContinueEndpointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSessionContinueEndpointRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSessionContinueEndpointRequestWithBody constructs an http.Request for the SessionContinueEndpoint method, with any body, and a specified content type
+func NewSessionContinueEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/session/continue")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -21664,6 +22460,65 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJobWithResponse(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*CancelJobHTTPResp, error)
 
+	// LoginPageWithResponse Local-account login form (authorization flow)
+	//
+	// Render the local-account login form for an in-flight ``/authorize`` request.
+	//
+	// Verifies the ``ls`` signature/TTL/purpose **before** rendering — an
+	// expired, forged, or wrong-purpose token never gets a form — re-checks the
+	// D7 client gate (a client denied or deactivated while the user holds the
+	// ``ls`` must not be asked for a password), rejects an already-spent ``ls``,
+	// and embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /login (the `LoginPage` operationId).
+	LoginPageWithResponse(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*LoginPageHTTPResp, error)
+
+	// LoginSubmitWithBodyWithResponse Local-account login submit (authorization flow)
+	//
+	// Authenticate the local account and rejoin the authorization flow.
+	//
+	// Success never mints a JWT — it flows straight into code issuance (platform
+	// client) or the consent handle (registered third-party client), exactly
+	// where the IdP callback rejoins, and burns the single-use ``ls``.
+	// Credential failures re-render the form with one generic message: lockout
+	// state, unknown email, and wrong password are indistinguishable (no
+	// user-enumeration response oracle), while the shared
+	// ``AuthService.authenticate`` core still increments the failed-login count
+	// and applies the lockout threshold. An account flagged
+	// ``must_change_password`` authenticates but is told to rotate via the UI
+	// first — the OAuth plane must not hand a fully-scoped token to a
+	// temporary-password principal the UI would have boxed into
+	// change-password-only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /login (the `LoginSubmit` operationId).
+	LoginSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error)
+
+	// LoginSubmitWithFormdataBodyWithResponse Local-account login submit (authorization flow)
+	//
+	// Authenticate the local account and rejoin the authorization flow.
+	//
+	// Success never mints a JWT — it flows straight into code issuance (platform
+	// client) or the consent handle (registered third-party client), exactly
+	// where the IdP callback rejoins, and burns the single-use ``ls``.
+	// Credential failures re-render the form with one generic message: lockout
+	// state, unknown email, and wrong password are indistinguishable (no
+	// user-enumeration response oracle), while the shared
+	// ``AuthService.authenticate`` core still increments the failed-login count
+	// and applies the lockout threshold. An account flagged
+	// ``must_change_password`` authenticates but is told to rotate via the UI
+	// first — the OAuth plane must not hand a fully-scoped token to a
+	// temporary-password principal the UI would have boxed into
+	// change-password-only.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /login (the `LoginSubmit` operationId).
+	LoginSubmitWithFormdataBodyWithResponse(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error)
+
 	// ReportMcpConfigRegistrationWithBodyWithResponse Report MCP config registration
 	//
 	// Record that an MCP server entry was written for an agent runtime.
@@ -21795,8 +22650,14 @@ type ClientWithResponsesInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -21812,8 +22673,14 @@ type ClientWithResponsesInterface interface {
 	// Register a public OAuth client anonymously (RFC 7591 subset).
 	//
 	// Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-	// ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-	// (D8). No client_secret is ever issued here and no registration_access_token
+	// ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+	// (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+	// redirect-URI set) for registrations without a ``software_id`` — so a
+	// pending client's awaiting-approval retry loop re-attaches instead of
+	// minting duplicate rows. Re-registering a client an administrator has
+	// deactivated re-enters the approval queue: the registration re-attaches
+	// (200) and the client awaits a fresh admin decision (#1312). No
+	// client_secret is ever issued here and no registration_access_token
 	// is returned (D12). New rows await admin approval unless the deployment
 	// auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
 	// lives on the route class — a disabled door 404s before this handler,
@@ -21838,6 +22705,58 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /oauth-grants/{grant_id}:revoke (the `RevokeOauthGrant` operationId).
 	RevokeOauthGrantWithResponse(ctx context.Context, grantId string, reqEditors ...RequestEditorFn) (*RevokeOauthGrantHTTPResp, error)
+
+	// ApprovalDecisionEndpointWithBodyWithResponse Approve or deny a pending client inline (approval-pending page)
+	//
+	// Thin wrapper over the admin approval path for the approval-pending page.
+	//
+	// Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+	// / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+	// decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+	// same audit records, same D7 active/approval_status coupling; this endpoint
+	// only translates the signed state blob into the client row. CSRF posture
+	// matches the consent POST: no ambient credential is honored — the browser
+	// must explicitly present the SPA bearer token, which a cross-site form
+	// cannot do.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+	ApprovalDecisionEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApprovalDecisionEndpointHTTPResp, error)
+
+	// ApprovalDecisionEndpointWithResponse Approve or deny a pending client inline (approval-pending page)
+	//
+	// Thin wrapper over the admin approval path for the approval-pending page.
+	//
+	// Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+	// / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+	// decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+	// same audit records, same D7 active/approval_status coupling; this endpoint
+	// only translates the signed state blob into the client row. CSRF posture
+	// matches the consent POST: no ambient credential is honored — the browser
+	// must explicitly present the SPA bearer token, which a cross-site form
+	// cannot do.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+	ApprovalDecisionEndpointWithResponse(ctx context.Context, body ApprovalDecisionEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*ApprovalDecisionEndpointHTTPResp, error)
+
+	// ApprovalStatusEndpointWithResponse Poll client approval status (approval-pending page)
+	//
+	// Minimal tri-state poll for the approval-pending page.
+	//
+	// Anonymous but keyed by the signed approval-state blob — never a bare
+	// client_id, so the endpoint cannot be used to enumerate registrations. Any
+	// verification failure (bad signature, wrong purpose, expired ``iat``,
+	// malformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by
+	// re-running /authorize, which mints a fresh blob. The response carries ONLY
+	// the tri-state — no names, redirect URIs, or metadata.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
+	ApprovalStatusEndpointWithResponse(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*ApprovalStatusEndpointHTTPResp, error)
 
 	// AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
 	//
@@ -22044,6 +22963,60 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithFormdataBodyWithResponse(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
+
+	// SessionContinueEndpointWithBodyWithResponse Exchange a live platform session for an authorize continuation
+	//
+	// Rung 1 of the /authorize identity ladder: reuse the platform session.
+	//
+	// The login page's script posts the pending authorize state (the ``ls``
+	// carry-through token) with the SPA's bearer token in the Authorization
+	// header — no cookies, no ambient credentials, so a cross-site form cannot
+	// drive it (same CSRF posture as the consent POST and the inline approval
+	// decision). The platform token is validated by the standard auth
+	// dependency (users only), and the ``active`` / ``must_change_password``
+	// fences are re-checked with a LIVE user-row read — not the token's baked
+	// claims — matching rung 3's ``password_rotation_required`` posture, so an
+	// admin-forced reset fences the exchange immediately even while pre-reset
+	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+	// success the response carries a relative ``/authorize`` resume URL bearing
+	// a short-TTL, ``session``-purpose continuation blob that pins THIS
+	// caller's ``user_id`` — the identity is fixed at exchange time, before the
+	// consent page renders it with its "Not you?" escape.
+	//
+	// Every failure after authentication is the same generic 400: an invalid
+	// blob must not let the caller learn anything about the client or the flow.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+	SessionContinueEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error)
+
+	// SessionContinueEndpointWithResponse Exchange a live platform session for an authorize continuation
+	//
+	// Rung 1 of the /authorize identity ladder: reuse the platform session.
+	//
+	// The login page's script posts the pending authorize state (the ``ls``
+	// carry-through token) with the SPA's bearer token in the Authorization
+	// header — no cookies, no ambient credentials, so a cross-site form cannot
+	// drive it (same CSRF posture as the consent POST and the inline approval
+	// decision). The platform token is validated by the standard auth
+	// dependency (users only), and the ``active`` / ``must_change_password``
+	// fences are re-checked with a LIVE user-row read — not the token's baked
+	// claims — matching rung 3's ``password_rotation_required`` posture, so an
+	// admin-forced reset fences the exchange immediately even while pre-reset
+	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+	// success the response carries a relative ``/authorize`` resume URL bearing
+	// a short-TTL, ``session``-purpose continuation blob that pins THIS
+	// caller's ``user_id`` — the identity is fixed at exchange time, before the
+	// consent page renders it with its "Not you?" escape.
+	//
+	// Every failure after authentication is the same generic 400: an invalid
+	// blob must not let the caller learn anything about the client or the flow.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+	SessionContinueEndpointWithResponse(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error)
 
 	// TokenEndpointWithBodyWithResponse Token Endpoint
 	//
@@ -31318,6 +32291,109 @@ func (r CancelJobHTTPResp) ContentType() string {
 	return ""
 }
 
+type LoginPageHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r LoginPageHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LoginPageHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LoginPageHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LoginPageHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LoginSubmitHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LoginSubmitHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r LoginSubmitHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LoginSubmitHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LoginSubmitHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LoginSubmitHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ReportMcpConfigRegistrationHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -32196,6 +33272,144 @@ func (r RevokeOauthGrantHTTPResp) ContentType() string {
 	return ""
 }
 
+type ApprovalDecisionEndpointHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthApprovalStatusResponse
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetJSON200() *OAuthApprovalStatusResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ApprovalDecisionEndpointHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApprovalDecisionEndpointHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApprovalDecisionEndpointHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApprovalDecisionEndpointHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApprovalStatusEndpointHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthApprovalStatusResponse
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApprovalStatusEndpointHTTPResp) GetJSON200() *OAuthApprovalStatusResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ApprovalStatusEndpointHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApprovalStatusEndpointHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApprovalStatusEndpointHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApprovalStatusEndpointHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type AuthorizeOauthCallbackHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -32597,6 +33811,82 @@ func (r RevokeEndpointHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeEndpointHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SessionContinueEndpointHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthSessionContinueResponse
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SessionContinueEndpointHTTPResp) GetJSON200() *OAuthSessionContinueResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SessionContinueEndpointHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SessionContinueEndpointHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SessionContinueEndpointHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SessionContinueEndpointHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -38894,6 +40184,83 @@ func (c *ClientWithResponses) CancelJobWithResponse(ctx context.Context, jobId s
 	return ParseCancelJobHTTPResp(rsp)
 }
 
+// LoginPageWithResponse Local-account login form (authorization flow)
+//
+// Render the local-account login form for an in-flight “/authorize“ request.
+//
+// Verifies the “ls“ signature/TTL/purpose **before** rendering — an
+// expired, forged, or wrong-purpose token never gets a form — re-checks the
+// D7 client gate (a client denied or deactivated while the user holds the
+// “ls“ must not be asked for a password), rejects an already-spent “ls“,
+// and embeds “ls“ plus a fresh single-use CSRF nonce bound to it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /login (the `LoginPage` operationId).
+func (c *ClientWithResponses) LoginPageWithResponse(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*LoginPageHTTPResp, error) {
+	rsp, err := c.LoginPage(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginPageHTTPResp(rsp)
+}
+
+// LoginSubmitWithBodyWithResponse Local-account login submit (authorization flow)
+//
+// Authenticate the local account and rejoin the authorization flow.
+//
+// Success never mints a JWT — it flows straight into code issuance (platform
+// client) or the consent handle (registered third-party client), exactly
+// where the IdP callback rejoins, and burns the single-use “ls“.
+// Credential failures re-render the form with one generic message: lockout
+// state, unknown email, and wrong password are indistinguishable (no
+// user-enumeration response oracle), while the shared
+// “AuthService.authenticate“ core still increments the failed-login count
+// and applies the lockout threshold. An account flagged
+// “must_change_password“ authenticates but is told to rotate via the UI
+// first — the OAuth plane must not hand a fully-scoped token to a
+// temporary-password principal the UI would have boxed into
+// change-password-only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /login (the `LoginSubmit` operationId).
+func (c *ClientWithResponses) LoginSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error) {
+	rsp, err := c.LoginSubmitWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginSubmitHTTPResp(rsp)
+}
+
+// LoginSubmitWithFormdataBodyWithResponse Local-account login submit (authorization flow)
+//
+// Authenticate the local account and rejoin the authorization flow.
+//
+// Success never mints a JWT — it flows straight into code issuance (platform
+// client) or the consent handle (registered third-party client), exactly
+// where the IdP callback rejoins, and burns the single-use “ls“.
+// Credential failures re-render the form with one generic message: lockout
+// state, unknown email, and wrong password are indistinguishable (no
+// user-enumeration response oracle), while the shared
+// “AuthService.authenticate“ core still increments the failed-login count
+// and applies the lockout threshold. An account flagged
+// “must_change_password“ authenticates but is told to rotate via the UI
+// first — the OAuth plane must not hand a fully-scoped token to a
+// temporary-password principal the UI would have boxed into
+// change-password-only.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /login (the `LoginSubmit` operationId).
+func (c *ClientWithResponses) LoginSubmitWithFormdataBodyWithResponse(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error) {
+	rsp, err := c.LoginSubmitWithFormdataBody(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginSubmitHTTPResp(rsp)
+}
+
 // ReportMcpConfigRegistrationWithBodyWithResponse Report MCP config registration
 //
 // Record that an MCP server entry was written for an agent runtime.
@@ -39097,8 +40464,14 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -39120,8 +40493,14 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithBodyWithResponse(ct
 // Register a public OAuth client anonymously (RFC 7591 subset).
 //
 // Returns 201 with the new “client_id“, or 200 with the **existing** row's
-// “client_id“ on an exact (“software_id“ + redirect-URI set) dedupe match
-// (D8). No client_secret is ever issued here and no registration_access_token
+// “client_id“ on an exact dedupe match (D8, extended per G13/#1251):
+// (“software_id“ + redirect-URI set), falling back to (“client_name“ +
+// redirect-URI set) for registrations without a “software_id“ — so a
+// pending client's awaiting-approval retry loop re-attaches instead of
+// minting duplicate rows. Re-registering a client an administrator has
+// deactivated re-enters the approval queue: the registration re-attaches
+// (200) and the client awaits a fresh admin decision (#1312). No
+// client_secret is ever issued here and no registration_access_token
 // is returned (D12). New rows await admin approval unless the deployment
 // auto-approves registrations (D9). The “server.mcp.oauth.enabled“ gate
 // lives on the route class — a disabled door 404s before this handler,
@@ -39157,6 +40536,76 @@ func (c *ClientWithResponses) RevokeOauthGrantWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseRevokeOauthGrantHTTPResp(rsp)
+}
+
+// ApprovalDecisionEndpointWithBodyWithResponse Approve or deny a pending client inline (approval-pending page)
+//
+// Thin wrapper over the admin approval path for the approval-pending page.
+//
+// Authorization is byte-identical to “POST /admin/oauth-clients/{id}:approve“
+// / “:deny“ (“oauth-clients:write“, org:admin implies it) and the
+// decision itself is the SAME “OAuthClientService.approve“/“deny“ calls —
+// same audit records, same D7 active/approval_status coupling; this endpoint
+// only translates the signed state blob into the client row. CSRF posture
+// matches the consent POST: no ambient credential is honored — the browser
+// must explicitly present the SPA bearer token, which a cross-site form
+// cannot do.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+func (c *ClientWithResponses) ApprovalDecisionEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApprovalDecisionEndpointHTTPResp, error) {
+	rsp, err := c.ApprovalDecisionEndpointWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApprovalDecisionEndpointHTTPResp(rsp)
+}
+
+// ApprovalDecisionEndpointWithResponse Approve or deny a pending client inline (approval-pending page)
+//
+// Thin wrapper over the admin approval path for the approval-pending page.
+//
+// Authorization is byte-identical to “POST /admin/oauth-clients/{id}:approve“
+// / “:deny“ (“oauth-clients:write“, org:admin implies it) and the
+// decision itself is the SAME “OAuthClientService.approve“/“deny“ calls —
+// same audit records, same D7 active/approval_status coupling; this endpoint
+// only translates the signed state blob into the client row. CSRF posture
+// matches the consent POST: no ambient credential is honored — the browser
+// must explicitly present the SPA bearer token, which a cross-site form
+// cannot do.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/approval/decision (the `ApprovalDecisionEndpoint` operationId).
+func (c *ClientWithResponses) ApprovalDecisionEndpointWithResponse(ctx context.Context, body ApprovalDecisionEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*ApprovalDecisionEndpointHTTPResp, error) {
+	rsp, err := c.ApprovalDecisionEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApprovalDecisionEndpointHTTPResp(rsp)
+}
+
+// ApprovalStatusEndpointWithResponse Poll client approval status (approval-pending page)
+//
+// Minimal tri-state poll for the approval-pending page.
+//
+// Anonymous but keyed by the signed approval-state blob — never a bare
+// client_id, so the endpoint cannot be used to enumerate registrations. Any
+// verification failure (bad signature, wrong purpose, expired “iat“,
+// malformed blob) is a 400 “invalid_grant“; the page reacts to a 400 by
+// re-running /authorize, which mints a fresh blob. The response carries ONLY
+// the tri-state — no names, redirect URIs, or metadata.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
+func (c *ClientWithResponses) ApprovalStatusEndpointWithResponse(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*ApprovalStatusEndpointHTTPResp, error) {
+	rsp, err := c.ApprovalStatusEndpoint(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApprovalStatusEndpointHTTPResp(rsp)
 }
 
 // AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
@@ -39429,6 +40878,72 @@ func (c *ClientWithResponses) RevokeEndpointWithFormdataBodyWithResponse(ctx con
 		return nil, err
 	}
 	return ParseRevokeEndpointHTTPResp(rsp)
+}
+
+// SessionContinueEndpointWithBodyWithResponse Exchange a live platform session for an authorize continuation
+//
+// Rung 1 of the /authorize identity ladder: reuse the platform session.
+//
+// The login page's script posts the pending authorize state (the “ls“
+// carry-through token) with the SPA's bearer token in the Authorization
+// header — no cookies, no ambient credentials, so a cross-site form cannot
+// drive it (same CSRF posture as the consent POST and the inline approval
+// decision). The platform token is validated by the standard auth
+// dependency (users only), and the “active“ / “must_change_password“
+// fences are re-checked with a LIVE user-row read — not the token's baked
+// claims — matching rung 3's “password_rotation_required“ posture, so an
+// admin-forced reset fences the exchange immediately even while pre-reset
+// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+// success the response carries a relative “/authorize“ resume URL bearing
+// a short-TTL, “session“-purpose continuation blob that pins THIS
+// caller's “user_id“ — the identity is fixed at exchange time, before the
+// consent page renders it with its "Not you?" escape.
+//
+// Every failure after authentication is the same generic 400: an invalid
+// blob must not let the caller learn anything about the client or the flow.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+func (c *ClientWithResponses) SessionContinueEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error) {
+	rsp, err := c.SessionContinueEndpointWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSessionContinueEndpointHTTPResp(rsp)
+}
+
+// SessionContinueEndpointWithResponse Exchange a live platform session for an authorize continuation
+//
+// Rung 1 of the /authorize identity ladder: reuse the platform session.
+//
+// The login page's script posts the pending authorize state (the “ls“
+// carry-through token) with the SPA's bearer token in the Authorization
+// header — no cookies, no ambient credentials, so a cross-site form cannot
+// drive it (same CSRF posture as the consent POST and the inline approval
+// decision). The platform token is validated by the standard auth
+// dependency (users only), and the “active“ / “must_change_password“
+// fences are re-checked with a LIVE user-row read — not the token's baked
+// claims — matching rung 3's “password_rotation_required“ posture, so an
+// admin-forced reset fences the exchange immediately even while pre-reset
+// SPA tokens are still in flight. The D7 client gate is re-checked, and on
+// success the response carries a relative “/authorize“ resume URL bearing
+// a short-TTL, “session“-purpose continuation blob that pins THIS
+// caller's “user_id“ — the identity is fixed at exchange time, before the
+// consent page renders it with its "Not you?" escape.
+//
+// Every failure after authentication is the same generic 400: an invalid
+// blob must not let the caller learn anything about the client or the flow.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
+func (c *ClientWithResponses) SessionContinueEndpointWithResponse(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error) {
+	rsp, err := c.SessionContinueEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSessionContinueEndpointHTTPResp(rsp)
 }
 
 // TokenEndpointWithBodyWithResponse Token Endpoint
@@ -47587,6 +49102,79 @@ func ParseCancelJobHTTPResp(rsp *http.Response) (*CancelJobHTTPResp, error) {
 	return response, nil
 }
 
+// ParseLoginPageHTTPResp parses an HTTP response from a LoginPageWithResponse call
+func ParseLoginPageHTTPResp(rsp *http.Response) (*LoginPageHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LoginPageHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseLoginSubmitHTTPResp parses an HTTP response from a LoginSubmitWithResponse call
+func ParseLoginSubmitHTTPResp(rsp *http.Response) (*LoginSubmitHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LoginSubmitHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseReportMcpConfigRegistrationHTTPResp parses an HTTP response from a ReportMcpConfigRegistrationWithResponse call
 func ParseReportMcpConfigRegistrationHTTPResp(rsp *http.Response) (*ReportMcpConfigRegistrationHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -48309,6 +49897,120 @@ func ParseRevokeOauthGrantHTTPResp(rsp *http.Response) (*RevokeOauthGrantHTTPRes
 	return response, nil
 }
 
+// ParseApprovalDecisionEndpointHTTPResp parses an HTTP response from a ApprovalDecisionEndpointWithResponse call
+func ParseApprovalDecisionEndpointHTTPResp(rsp *http.Response) (*ApprovalDecisionEndpointHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApprovalDecisionEndpointHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthApprovalStatusResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApprovalStatusEndpointHTTPResp parses an HTTP response from a ApprovalStatusEndpointWithResponse call
+func ParseApprovalStatusEndpointHTTPResp(rsp *http.Response) (*ApprovalStatusEndpointHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApprovalStatusEndpointHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthApprovalStatusResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseAuthorizeOauthCallbackHTTPResp parses an HTTP response from a AuthorizeOauthCallbackWithResponse call
 func ParseAuthorizeOauthCallbackHTTPResp(rsp *http.Response) (*AuthorizeOauthCallbackHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -48615,6 +50317,73 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 
 	case rsp.StatusCode == 429:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSessionContinueEndpointHTTPResp parses an HTTP response from a SessionContinueEndpointWithResponse call
+func ParseSessionContinueEndpointHTTPResp(rsp *http.Response) (*SessionContinueEndpointHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SessionContinueEndpointHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthSessionContinueResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail

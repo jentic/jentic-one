@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.39.0](https://github.com/jentic/jentic-one/compare/v0.38.0...v0.39.0) (2026-09-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **auth:** deployments that relied on the old default (DCR clients auto-approved at registration) must now either set server.mcp.oauth.auto_approve_clients: true explicitly or approve pending clients through the admin queue.
+
+### Features
+
+* **auth:** approval-in-flow page for pending OAuth clients on /authorize ([#1264](https://github.com/jentic/jentic-one/issues/1264)) ([a44cee6](https://github.com/jentic/jentic-one/commit/a44cee6c6f7f96b819b81b3476e30c45baffe405))
+* **auth:** default MCP OAuth DCR to admin approval, not auto-approve ([#1247](https://github.com/jentic/jentic-one/issues/1247)) ([dccb57d](https://github.com/jentic/jentic-one/commit/dccb57d0995bfcfa29095919c06ba65a34cfb740))
+* **auth:** local-account login form on the /authorize flow ([#1285](https://github.com/jentic/jentic-one/issues/1285)) ([4850b2b](https://github.com/jentic/jentic-one/commit/4850b2bfb5895a462ba1a18b73553a75e737642c))
+* **auth:** platform-consistent styling for OAuth pages (login + consent) ([#1314](https://github.com/jentic/jentic-one/issues/1314)) ([1bfe7fd](https://github.com/jentic/jentic-one/commit/1bfe7fdcf3487ec664677a118df8860a7fc847b2))
+* **auth:** platform-session reuse on /authorize (identity-ladder rung 1) ([#1300](https://github.com/jentic/jentic-one/issues/1300)) ([aec21ce](https://github.com/jentic/jentic-one/commit/aec21ce560be622cb51a00f641c7e7a59fa3e19b))
+* **auth:** RFC 7009 token revocation for MCP OAuth clients (closes G11) ([#1237](https://github.com/jentic/jentic-one/issues/1237)) ([29a98b3](https://github.com/jentic/jentic-one/commit/29a98b303b6070e68dfcfeb2235c4e5dc55cfda8))
+
+
+### Bug Fixes
+
+* **auth:** accept RFC 8252 private-use redirect schemes on the anonymous DCR door ([#1246](https://github.com/jentic/jentic-one/issues/1246)) ([5e243ce](https://github.com/jentic/jentic-one/commit/5e243ce4ff8f1fcab481c419bc561a1f6bcea26c))
+* **auth:** DCR dedupe re-attach honors the D7 client gate ([#1313](https://github.com/jentic/jentic-one/issues/1313)) ([2f9fd5b](https://github.com/jentic/jentic-one/commit/2f9fd5bed5e2b79f82d680d9e70d570884ac1724))
+* **auth:** dedupe software_id-less DCR registrations by name + redirect set ([#1261](https://github.com/jentic/jentic-one/issues/1261)) ([5917ed6](https://github.com/jentic/jentic-one/commit/5917ed69ab23c7c75291cd2266eaac329f1fe48e))
+* **auth:** include the RFC 6749 §5.1 scope member in every token response ([#1262](https://github.com/jentic/jentic-one/issues/1262)) ([749cbc4](https://github.com/jentic/jentic-one/commit/749cbc45143c4f60a2f0efb17cc3139ea539a922))
+* **auth:** omit unset optional members from OAuth responses ([#1259](https://github.com/jentic/jentic-one/issues/1259)) ([25f10b7](https://github.com/jentic/jentic-one/commit/25f10b70a9250bdd26e1000137dd52fcbbf8ab78))
+* **auth:** omit unset optional metadata from the anonymous DCR response ([#1250](https://github.com/jentic/jentic-one/issues/1250)) ([749fa18](https://github.com/jentic/jentic-one/commit/749fa1854fba417b07e10531c4c45f246194ed8d))
+* **config:** remove static placeholder secret defaults from the shipped image ([#1255](https://github.com/jentic/jentic-one/issues/1255)) ([305f4e2](https://github.com/jentic/jentic-one/commit/305f4e2c8b23d6585e79362495ebe2a4b38a0fd1))
+* **deploy:** mount app-secrets on admin/registry and share the parts-mode jwt_secret ([#1258](https://github.com/jentic/jentic-one/issues/1258)) ([b485fb6](https://github.com/jentic/jentic-one/commit/b485fb616d50efdbcc8505622202be362c856bd9))
+* **mcp:** answer 405, not the 401 challenge, to credential-less GET /mcp ([#1257](https://github.com/jentic/jentic-one/issues/1257)) ([464de56](https://github.com/jentic/jentic-one/commit/464de56ac4b45cdc89500fe7376bbd44c65c5d80)), closes [#1256](https://github.com/jentic/jentic-one/issues/1256)
+
+
+### Refactors
+
+* **admin:** factor credential check out of AuthService.login into authenticate ([#1282](https://github.com/jentic/jentic-one/issues/1282)) ([38f4cb9](https://github.com/jentic/jentic-one/commit/38f4cb97ba2fbcf7db6e12cfd5384cf8ff87f803))
+
+
+### Documentation
+
+* **auth:** document Ed25519 key requirement in RegisterRequest schema ([#566](https://github.com/jentic/jentic-one/issues/566)) ([5817943](https://github.com/jentic/jentic-one/commit/5817943a713d8b24ac4ab5a481baf9583d725b6b))
+* **comments:** remove how-it-used-to-be context from code comments ([#1248](https://github.com/jentic/jentic-one/issues/1248)) ([2096b7c](https://github.com/jentic/jentic-one/commit/2096b7cdb345e435503c77fada4eee1ad81ec876))
+
+
+### Build System
+
+* **deps-dev:** bump @testing-library/react in /ui in the testing group ([#1269](https://github.com/jentic/jentic-one/issues/1269)) ([8fbd113](https://github.com/jentic/jentic-one/commit/8fbd1136aa3114f5374c3827f275382ce5ca781a))
+* **deps-dev:** bump @testing-library/user-event ([#1291](https://github.com/jentic/jentic-one/issues/1291)) ([3d3d5cd](https://github.com/jentic/jentic-one/commit/3d3d5cdcc49a5cd6bd8212e001d38f794caf457c))
+* **deps-dev:** bump @types/node ([#1294](https://github.com/jentic/jentic-one/issues/1294)) ([ce15862](https://github.com/jentic/jentic-one/commit/ce158627baa4fa6f57ed6a6f68de38bdd5bc1338))
+* **deps-dev:** bump @types/node in /ui in the types group ([#1270](https://github.com/jentic/jentic-one/issues/1270)) ([7451e1c](https://github.com/jentic/jentic-one/commit/7451e1c053c08322c6fb1d57b68ff104eb33f4bd))
+* **deps-dev:** bump @types/react-dom in /ui in the react group ([#1290](https://github.com/jentic/jentic-one/issues/1290)) ([14a2d76](https://github.com/jentic/jentic-one/commit/14a2d768f31188cf9f075735af3bf0565f9d74ef))
+* **deps-dev:** bump @vitejs/plugin-react in /ui in the vite group ([#1265](https://github.com/jentic/jentic-one/issues/1265)) ([403128e](https://github.com/jentic/jentic-one/commit/403128e583da5ff18cbb0e34d79a40f216575278))
+* **deps-dev:** bump globals from 17.11.0 to 17.12.0 in /ui ([#1272](https://github.com/jentic/jentic-one/issues/1272)) ([418dde7](https://github.com/jentic/jentic-one/commit/418dde7e7113e472740c310b5999c5f5e4ea16eb))
+* **deps-dev:** bump ruff from 0.16.5 to 0.16.6 in the python group ([#1292](https://github.com/jentic/jentic-one/issues/1292)) ([3d88796](https://github.com/jentic/jentic-one/commit/3d88796bd578789e4310d4ddcad156cdfa169510))
+* **deps-dev:** bump sharp from 0.35.3 to 0.35.4 in /ui ([#1274](https://github.com/jentic/jentic-one/issues/1274)) ([124d32a](https://github.com/jentic/jentic-one/commit/124d32acf1cc1c007d5253642f716d5f7addaaeb))
+* **deps-dev:** bump the vite group across 1 directory with 4 updates ([#1289](https://github.com/jentic/jentic-one/issues/1289)) ([62ea866](https://github.com/jentic/jentic-one/commit/62ea866b244070e1be6e822be4e367f378104112))
+* **deps-dev:** bump typescript-eslint ([#1288](https://github.com/jentic/jentic-one/issues/1288)) ([eee0585](https://github.com/jentic/jentic-one/commit/eee05850f5626909150b3f8a4abb5fb70e270de2))
+* **deps:** bump @tanstack/react-query from 5.102.3 to 5.102.8 in /ui ([#1273](https://github.com/jentic/jentic-one/issues/1273)) ([04ffce1](https://github.com/jentic/jentic-one/commit/04ffce12e5dc2824a4aede0ea5ac5b2fa4f6099c))
+* **deps:** bump framer-motion from 13.1.1 to 13.2.0 in /ui ([#1293](https://github.com/jentic/jentic-one/issues/1293)) ([dd4f04a](https://github.com/jentic/jentic-one/commit/dd4f04a49526c3317756e08fc76697a8e27dbc80))
+* **deps:** bump lucide-react from 1.32.0 to 1.39.0 in /ui ([#1271](https://github.com/jentic/jentic-one/issues/1271)) ([2333432](https://github.com/jentic/jentic-one/commit/2333432a2b9919775ea5726910fd62c8aac2a5e2))
+* **deps:** bump lucide-react from 1.39.0 to 1.40.0 in /ui ([#1295](https://github.com/jentic/jentic-one/issues/1295)) ([24d05cd](https://github.com/jentic/jentic-one/commit/24d05cdb261b0a58d9c79d3c467649c24bde050d))
+* **deps:** bump react-router in /ui in the react group ([#1268](https://github.com/jentic/jentic-one/issues/1268)) ([a0417d2](https://github.com/jentic/jentic-one/commit/a0417d269116568689bbfc524485630e776c396a))
+* **deps:** bump the python group with 5 updates ([#1275](https://github.com/jentic/jentic-one/issues/1275)) ([2e27ff7](https://github.com/jentic/jentic-one/commit/2e27ff77edcd55d4564df793446f69614ba377ba))
+
 ## [0.38.0](https://github.com/jentic/jentic-one/compare/v0.37.4...v0.38.0) (2026-09-03)
 
 

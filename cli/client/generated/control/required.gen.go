@@ -154,14 +154,16 @@ func (MeServiceAccount) RequiredFields() []string {
 func (MeUser) RequiredFields() []string {
 	return []string{"admin", "email", "id", "must_change_password", "name", "scopes", "status"}
 }
-func (MintRequest) RequiredFields() []string              { return []string{"scope", "target_agent_id"} }
-func (MintResponse) RequiredFields() []string             { return []string{"access_token", "expires_in"} }
-func (NoAuthCreateRequest) RequiredFields() []string      { return []string{"api", "name", "type"} }
-func (NoteApiReference) RequiredFields() []string         { return []string{"name", "vendor", "version"} }
-func (NoteCreateRequest) RequiredFields() []string        { return []string{"body", "resource"} }
-func (OAuth2CreateRequest) RequiredFields() []string      { return []string{"api", "name", "type"} }
-func (OAuth2UpdateRequest) RequiredFields() []string      { return []string{"type"} }
-func (OAuthClientCreateRequest) RequiredFields() []string { return []string{"name", "redirect_uris"} }
+func (MintRequest) RequiredFields() []string                  { return []string{"scope", "target_agent_id"} }
+func (MintResponse) RequiredFields() []string                 { return []string{"access_token", "expires_in"} }
+func (NoAuthCreateRequest) RequiredFields() []string          { return []string{"api", "name", "type"} }
+func (NoteApiReference) RequiredFields() []string             { return []string{"name", "vendor", "version"} }
+func (NoteCreateRequest) RequiredFields() []string            { return []string{"body", "resource"} }
+func (OAuth2CreateRequest) RequiredFields() []string          { return []string{"api", "name", "type"} }
+func (OAuth2UpdateRequest) RequiredFields() []string          { return []string{"type"} }
+func (OAuthApprovalDecisionRequest) RequiredFields() []string { return []string{"action", "state"} }
+func (OAuthApprovalStatusResponse) RequiredFields() []string  { return []string{"status"} }
+func (OAuthClientCreateRequest) RequiredFields() []string     { return []string{"name", "redirect_uris"} }
 func (OAuthClientCreateResponse) RequiredFields() []string {
 	return []string{"active", "allowed_scopes", "approval_status", "client_id", "client_secret", "consent_model", "created_at", "created_by", "description", "id", "name", "redirect_uris", "registration_source", "require_consent", "software_id", "token_endpoint_auth_method", "updated_at"}
 }
@@ -184,6 +186,8 @@ func (OAuthGrantListResponse) RequiredFields() []string { return []string{"data"
 func (OAuthGrantResponse) RequiredFields() []string {
 	return []string{"agent_id", "can_revoke", "client_name", "client_origin", "created_at", "id", "last_used_at", "oauth_client_id", "revoked_at", "scopes", "status", "user_id"}
 }
+func (OAuthSessionContinueRequest) RequiredFields() []string  { return []string{"state"} }
+func (OAuthSessionContinueResponse) RequiredFields() []string { return []string{"redirect_url"} }
 func (OperationPreviewListResponse) RequiredFields() []string {
 	return []string{"data", "info", "offset", "security_schemes", "total", "truncated"}
 }

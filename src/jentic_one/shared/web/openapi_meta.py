@@ -810,9 +810,20 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # OAuth redirect callbacks (bound by a signed state param, not a session).
         "oauthCallback",
         "authorizeOauthCallback",
+        # Approval-pending status poll: anonymous by design (the polling
+        # browser has no platform token yet), bound by the signed
+        # approval-state blob minted at /authorize — not a session and not a
+        # bare client_id. Returns only the pending/approved/denied tri-state;
+        # rate limited in its own bucket instead.
+        "approvalStatusEndpoint",
         # OAuth consent screen (presented after IdP login, before issuing the code).
         "consentPage",
         "consentSubmit",
+        # Local-account login form on the /authorize flow: the caller is a
+        # browser mid-authorization with no token yet. Config-gated
+        # (auth.local_login.enabled → 404) and rate limited instead.
+        "loginPage",
+        "loginSubmit",
         # Browser-facing OAuth error page (no auth; just renders an error code).
         "errorPage",
         # Unauthenticated discovery metadata.
@@ -919,6 +930,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/oauth"), "OAuth"),
     (re.compile(r"^/authorize"), "OAuth"),
     (re.compile(r"^/error"), "OAuth"),
+    (re.compile(r"^/login$"), "OAuth"),
     (re.compile(r"^/register"), "Agent Registration"),
     (re.compile(r"^/\.well-known"), "Discovery"),
     (re.compile(r"^/me$"), "Identity"),

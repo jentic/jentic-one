@@ -20,7 +20,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
-from jentic.problem_details import Forbidden
+from jentic.problem_details import Forbidden, ProblemDetailException
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
@@ -117,6 +117,7 @@ from jentic_one.shared.tracing import (
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 logger = structlog.get_logger(__name__)
 
@@ -124,6 +125,13 @@ _meter = get_meter("broker")
 _streaming_persist_failures = _meter.create_counter(
     "broker.streaming_execution.persist_failures",
     description="Failed attempts to persist a streaming execution record",
+)
+_unregistered_url_handled = _meter.create_counter(
+    "broker.unregistered_url.handled",
+    description=(
+        "Injected UnregisteredUrlHandler invocations, by outcome: "
+        "handled (short-circuit), declined (fell through to 404), error (handler raised)"
+    ),
 )
 
 router = APIRouter()
@@ -583,6 +591,51 @@ def _resolve_broker(request: Request, runner: UpstreamRunner) -> Broker:
     return injected if injected is not None else broker_factory(runner)
 
 
+async def _handle_unregistered_url(
+    request: Request, *, method: str, upstream_url: str, identity: Identity
+) -> Response | None:
+    """Run the container-injected unregistered-URL hook, if any (None → 404).
+
+    Only ``_handle``'s *unregistered-URL* miss calls this — it runs after
+    ``validate_upstream_url``, so the handler only ever sees an egress-approved
+    URL (see ``UnregisteredUrlHandler``'s contract). The pinned-revision miss
+    never invokes it: the API is registered there, so that miss is a caller pin
+    error, not an unregistered flow.
+
+    A short-circuit leaves no execution row and emits no event — the
+    outcome-attributed counter is the core-side floor so operators see
+    handled/declined/error volumes without a downstream table.
+
+    A broken handler must not change the route's contract for callers: a raised
+    exception (other than a deliberate ``ProblemDetailException``) is logged and
+    counted here — inside the router, while ``request_id`` is still bound — and
+    falls through to the documented 404. Only ``Exception`` is caught, so
+    ``CancelledError`` propagates.
+    """
+    handler: UnregisteredUrlHandler | None = getattr(
+        request.app.state, "unregistered_url_handler", None
+    )
+    if handler is None:
+        return None
+    try:
+        response = await handler(
+            method=method, upstream_url=upstream_url, identity=identity, request=request
+        )
+    except ProblemDetailException:
+        # A deliberate downstream problem response — the handler owns it.
+        raise
+    except Exception:
+        _unregistered_url_handled.add(1, {"outcome": "error"})
+        logger.exception(
+            "unregistered_url_handler_failed",
+            handler=f"{type(handler).__module__}.{type(handler).__qualname__}",
+            method=method,
+        )
+        return None
+    _unregistered_url_handled.add(1, {"outcome": "handled" if response is not None else "declined"})
+    return response
+
+
 async def _handle(
     request: Request,
     method: str,
@@ -615,6 +668,11 @@ async def _handle(
 
     resolved = await discover(resolver, method=method, url=upstream_url)
     if resolved is None:
+        handled = await _handle_unregistered_url(
+            request, method=method, upstream_url=upstream_url, identity=identity
+        )
+        if handled is not None:
+            return handled
         raise OperationNotFoundError(
             detail="Operation not found — unregistered upstream URL.",
             type="operation_not_found",

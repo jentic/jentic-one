@@ -52,6 +52,7 @@ export type { BearerTokenCreateRequest } from './models/BearerTokenCreateRequest
 export type { BearerTokenUpdateRequest } from './models/BearerTokenUpdateRequest';
 export type { BindingWarningSchema } from './models/BindingWarningSchema';
 export type { Body_consentSubmit } from './models/Body_consentSubmit';
+export type { Body_loginSubmit } from './models/Body_loginSubmit';
 export type { CatalogEntryLinksResponse } from './models/CatalogEntryLinksResponse';
 export type { CatalogEntryResponse } from './models/CatalogEntryResponse';
 export type { CatalogListResponse } from './models/CatalogListResponse';
@@ -121,6 +122,8 @@ export { NoteType } from './models/NoteType';
 export type { NoteUpdateRequest } from './models/NoteUpdateRequest';
 export type { OAuth2CreateRequest } from './models/OAuth2CreateRequest';
 export type { OAuth2UpdateRequest } from './models/OAuth2UpdateRequest';
+export { OAuthApprovalDecisionRequest } from './models/OAuthApprovalDecisionRequest';
+export { OAuthApprovalStatusResponse } from './models/OAuthApprovalStatusResponse';
 export { OAuthClientCreateRequest } from './models/OAuthClientCreateRequest';
 export type { OAuthClientCreateResponse } from './models/OAuthClientCreateResponse';
 export type { OAuthClientDenyRequest } from './models/OAuthClientDenyRequest';
@@ -134,6 +137,8 @@ export type { OAuthGrantAdminListResponse } from './models/OAuthGrantAdminListRe
 export type { OAuthGrantAdminResponse } from './models/OAuthGrantAdminResponse';
 export type { OAuthGrantListResponse } from './models/OAuthGrantListResponse';
 export type { OAuthGrantResponse } from './models/OAuthGrantResponse';
+export type { OAuthSessionContinueRequest } from './models/OAuthSessionContinueRequest';
+export type { OAuthSessionContinueResponse } from './models/OAuthSessionContinueResponse';
 export type { OperationPreviewListResponse } from './models/OperationPreviewListResponse';
 export type { OperationResultResponse } from './models/OperationResultResponse';
 export type { OperationSummaryLinksResponse } from './models/OperationSummaryLinksResponse';

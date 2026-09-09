@@ -2491,6 +2491,36 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "loginPage",
+      "path": "/login",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Local-account login form (authorization flow)",
+      "surface": "login",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "loginSubmit",
+      "path": "/login",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Local-account login submit (authorization flow)",
+      "surface": "login",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -2768,6 +2798,47 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "approvalDecisionEndpoint",
+      "path": "/oauth/approval/decision",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Approve or deny a pending client inline (approval-pending page)",
+      "surface": "oauth",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "approvalStatusEndpoint",
+      "path": "/oauth/approval/status",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Poll client approval status (approval-pending page)",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,
@@ -2868,6 +2939,23 @@
       "summary": "Revoke Endpoint",
       "surface": "oauth",
       "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "sessionContinueEndpoint",
+      "path": "/oauth/session/continue",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Exchange a live platform session for an authorize continuation",
+      "surface": "oauth",
+      "typical_caller": "operator"
     },
     {
       "actor_types": [],
@@ -5175,5 +5263,5 @@
     ],
     "total": 33
   },
-  "total": 179
+  "total": 184
 }

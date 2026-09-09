@@ -60,11 +60,12 @@ _DCR_ACTOR = "dcr"
 class DcrRegisterResult:
     """Result of an anonymous OAuth-client registration.
 
-    ``created`` is False when the D8 dedupe key (``software_id`` + exact
-    redirect-URI set) matched an existing row — the router answers 200 rather
-    than 201. Metadata fields echo the *request's* validated values, never
-    the stored row's live (possibly admin-edited) state; only ``client_id``
-    and ``client_id_issued_at`` come from the row.
+    ``created`` is False when a dedupe key matched an existing DCR row —
+    (``software_id`` + exact redirect-URI set), or for software_id-less
+    registrations (``client_name`` + exact redirect-URI set) — and the router
+    answers 200 rather than 201. Metadata fields echo the *request's*
+    validated values, never the stored row's live (possibly admin-edited)
+    state; only ``client_id`` and ``client_id_issued_at`` come from the row.
     """
 
     client_id: str
@@ -187,15 +188,34 @@ def _to_result(
     )
 
 
-#: F6 dedupe-winner preference: a concurrent double-register (no unique
-#: constraint on the D8 key) can leave multiple rows for one exact set, and
-#: the admin may have approved the newer one. Prefer the row the client can
-#: actually use; ties break oldest-first (the repo's stable ordering).
-_APPROVAL_PREFERENCE: dict[str, int] = {
-    OAuthClientApprovalStatus.APPROVED.value: 0,
-    OAuthClientApprovalStatus.PENDING.value: 1,
-    OAuthClientApprovalStatus.DENIED.value: 2,
-}
+def _dedupe_rank(candidate: OAuthClient) -> int:
+    """F6 dedupe-winner preference, D7-gate-aware (#1312).
+
+    A concurrent double-register (no unique constraint on the D8 key) can
+    leave multiple rows for one exact set, and the admin may have approved
+    the newer one. Prefer the row the client can actually *use* — which is
+    the D7 gate (``active`` AND ``approved``), not ``approved`` alone:
+
+    0. approved + active — usable now; quiet re-attach.
+    1. pending — honestly in the approval queue; quiet re-attach.
+    2. denied — a visible, admin-reversible verdict; quiet re-attach. Ranked
+       above the kill-switched row so a deny is never sidestepped by
+       adopting (and re-queueing) a deactivated sibling.
+    3. approved + inactive — the kill-switched zombie: it fails the D7 gate
+       at every other door, so it only ever wins when it is the *sole*
+       match, and adopting it re-queues it as ``pending`` (see
+       :meth:`OAuthDcrService.register`).
+
+    Ties break oldest-first (``min`` is stable and the repo returns rows
+    oldest-first).
+    """
+    if candidate.approval_status == OAuthClientApprovalStatus.APPROVED.value:
+        return 0 if candidate.active else 3
+    if candidate.approval_status == OAuthClientApprovalStatus.PENDING.value:
+        return 1
+    if candidate.approval_status == OAuthClientApprovalStatus.DENIED.value:
+        return 2
+    return 4  # Unknown status: never preferred over a known lifecycle state.
 
 
 class OAuthDcrService:
@@ -219,10 +239,37 @@ class OAuthDcrService:
     ) -> DcrRegisterResult:
         """Register (or dedupe to) a public OAuth client row.
 
-        Dedupe (D8): an exact (``software_id`` + redirect-URI set) match
-        returns the existing row's ``client_id`` — idempotent re-register, so a
-        cached registration or a double-register race never bricks a client.
-        No ``software_id`` → no dedupe. Never dedupes on ``software_id`` alone.
+        Dedupe (D8, extended per G13/#1251): an exact (``software_id`` +
+        redirect-URI set) match returns the existing row's ``client_id`` —
+        idempotent re-register, so a cached registration or a double-register
+        race never bricks a client. Registrations *without* a ``software_id``
+        fall back to the (``client_name`` + redirect-URI set) key against
+        rows that also carry no ``software_id`` — otherwise clients that send
+        no software identity (Cursor, mcp-remote) mint a fresh pending row on
+        every awaiting-approval retry. Never dedupes on ``software_id`` or
+        ``client_name`` alone, and never across the two key spaces.
+
+        A dedupe hit preserves the stored row's name and redirect set
+        verbatim and — with one exception — its approval lifecycle: it only
+        writes an audit entry so anonymous re-attaches stay visible to
+        admins. The exception (#1312) is a kill-switched row
+        (``approved`` + ``active=false``, the admin soft-delete): announcing
+        that row "approved" would contradict the D7 gate every other door
+        enforces, and the row is visible in no admin UI tab. Such a hit
+        re-queues the row as ``pending`` (``active`` stays false), with an
+        audit record and an actionable approval-queue event — re-approval is
+        always an explicit admin act, never a silent resurrection. Pending
+        and denied rows are never touched: retries of a pending client stay
+        queue-quiet (G13), and a denied row re-attaches denied (recovery is
+        admin-actioned only).
+
+        A falsy or whitespace-only ``software_id`` is normalized to ``None``
+        *before* the key-space branch and the insert: ``""`` passes schema
+        validation (empty-default serializers are common) but would otherwise
+        take the fallback lookup (``IS NULL``) while storing ``""`` (NOT
+        NULL) — a row in *neither* key space that re-opens the #1251 loop.
+        Normalizing (rather than rejecting) follows RFC 7591's
+        ignore-don't-reject posture for metadata the server curtails.
         """
         _validate_metadata(
             redirect_uris=redirect_uris,
@@ -232,41 +279,143 @@ class OAuthDcrService:
         )
         if not client_name.strip():
             raise InvalidClientMetadataError("client_name is required")
+        software_id = (software_id or "").strip() or None
 
         allowed_scopes = _cap_scopes(scope)
         auto_approve = self._ctx.config.server.mcp.oauth.auto_approve_clients
         requested_set = set(redirect_uris)
         fingerprint = redirect_uris_fingerprint(redirect_uris)
+        name = client_name.strip()
 
         async def _write(session: AsyncSession) -> tuple[OAuthClient, bool]:
+            # D8 dedupe via the (software_id, redirect_uris_fingerprint)
+            # index; software_id-less registrations use the G13 fallback key
+            # (name, fingerprint) against software_id-less rows only — the
+            # two key spaces never cross-match. The fetched rows' exact URI
+            # sets are re-checked because the fingerprint is a hash
+            # (collision guard). Among multiple exact matches
+            # (double-register race) prefer the D7-gate-aware order —
+            # approved+active > pending > denied > approved+inactive
+            # (see _dedupe_rank) — then oldest: `min` is stable and the
+            # repo returns rows oldest-first.
             if software_id:
-                # D8 dedupe via the (software_id, redirect_uris_fingerprint)
-                # index; the fetched rows' exact URI sets are re-checked
-                # because the fingerprint is a hash (collision guard). Among
-                # multiple exact matches (double-register race) prefer
-                # approved > pending > denied, then oldest — `min` is stable
-                # and the repo returns rows oldest-first.
-                matches = [
-                    candidate
-                    for candidate in await OAuthClientRepository.list_dcr_by_dedupe_key(
-                        session, software_id, fingerprint
+                candidates = await OAuthClientRepository.list_dcr_by_dedupe_key(
+                    session, software_id, fingerprint
+                )
+            else:
+                candidates = await OAuthClientRepository.list_dcr_by_name_dedupe_key(
+                    session, name, fingerprint
+                )
+            matches = [
+                candidate
+                for candidate in candidates
+                if set(candidate.redirect_uris) == requested_set
+            ]
+            if matches:
+                winner = min(matches, key=_dedupe_rank)
+                if (
+                    winner.approval_status == OAuthClientApprovalStatus.APPROVED.value
+                    and not winner.active
+                ):
+                    # #1312: the kill-switched zombie — an admin deactivated
+                    # this approved row (soft-delete), so it fails the D7
+                    # gate at every enforcement door (token, refresh,
+                    # /authorize, the approval poll) *and* is visible in no
+                    # admin UI tab (the clients tab is active-only, the
+                    # queue tabs filter on pending/denied). Re-attaching and
+                    # announcing "approved" here would be the one door
+                    # telling a different story. Instead, treat the
+                    # re-registration as a fresh access request: re-queue
+                    # the row as pending (``active`` stays false — D7
+                    # pending rows are inactive by construction), so the
+                    # RFC 7592-deprovisioned client re-enters the approval
+                    # queue visibly and the status poll reads "pending"
+                    # honestly. Silent resurrection to approved is
+                    # impossible — re-approval is an explicit admin act
+                    # (the :approve verb).
+                    before = {
+                        "approval_status": winner.approval_status,
+                        "active": winner.active,
+                    }
+                    # Compare-and-set: the guard re-checks approved+inactive
+                    # at write time, so a concurrent admin :approve is never
+                    # clobbered back to pending by this anonymous actor. The
+                    # repo refreshes `winner` to the live row either way, so
+                    # the audit trail below records reality.
+                    flipped = await OAuthClientRepository.requeue_pending_if_killswitched(
+                        session, winner
                     )
-                    if set(candidate.redirect_uris) == requested_set
-                ]
-                if matches:
-                    winner = min(
-                        matches,
-                        key=lambda c: _APPROVAL_PREFERENCE.get(
-                            c.approval_status, len(_APPROVAL_PREFERENCE)
-                        ),
-                    )
-                    return winner, False
+                    if flipped:
+                        await record_audit(
+                            session,
+                            action=AuditAction.UPDATE,
+                            target_type=AuditTargetType.OAUTH_CLIENT,
+                            target_id=winner.id,
+                            actor_type=_DCR_ACTOR,
+                            actor_id=None,
+                            before=before,
+                            after={
+                                "approval_status": winner.approval_status,
+                                "active": winner.active,
+                            },
+                            reason=(
+                                "anonymous DCR re-registration of a deactivated approved "
+                                "client: re-queued as pending for admin re-approval "
+                                "(D7 gate honesty, #1312)"
+                            ),
+                            origin=Origin.MCP.value,
+                        )
+                        # Unlike the quiet re-attach below, the flip is a
+                        # status transition that needs an admin decision —
+                        # surface an actionable approval-queue alert. This
+                        # fires once per flip, not per retry: the row is
+                        # pending afterwards, so subsequent re-registers
+                        # take the quiet arm.
+                        await emit_event_best_effort(
+                            session,
+                            type=EventType.OAUTH_CLIENT_REGISTERED,
+                            severity=EventSeverity.INFO,
+                            summary=(
+                                f"OAuth client '{winner.name}' re-registered after "
+                                "deactivation and awaits administrator approval"
+                            ),
+                            requires_action=True,
+                            data={
+                                "oauth_client_id": winner.id,
+                                "client_id": winner.client_id,
+                                "client_name": winner.name,
+                                "approval_status": winner.approval_status,
+                                "software_id": winner.software_id,
+                            },
+                            created_by=_DCR_ACTOR,
+                        )
+                # F2: a re-attach must leave a forensic trace — the 200-dedupe
+                # arm discloses an existing (possibly approved) client_id to
+                # an anonymous caller, and a client bouncing off a denied row
+                # retries with no other admin-visible signal. Audit row only,
+                # deliberately no event: the whole point of the dedupe is
+                # that retries stop spamming the approval queue.
+                await record_audit(
+                    session,
+                    action=AuditAction.REGISTER,
+                    target_type=AuditTargetType.OAUTH_CLIENT,
+                    target_id=winner.id,
+                    actor_type=_DCR_ACTOR,
+                    actor_id=None,
+                    after={
+                        "client_id": winner.client_id,
+                        "approval_status": winner.approval_status,
+                    },
+                    reason="anonymous DCR re-attach (dedupe hit)",
+                    origin=Origin.MCP.value,
+                )
+                return winner, False
 
             approved = auto_approve
             client = await OAuthClientRepository.create(
                 session,
                 client_id=generate_client_id(),
-                name=client_name.strip(),
+                name=name,
                 redirect_uris=redirect_uris,
                 client_secret_hash=None,
                 description=None,
@@ -338,7 +487,7 @@ class OAuthDcrService:
         return _to_result(
             client,
             created=created,
-            client_name=client_name.strip(),
+            client_name=name,
             redirect_uris=redirect_uris,
             grant_types=grant_types,
             allowed_scopes=allowed_scopes,
