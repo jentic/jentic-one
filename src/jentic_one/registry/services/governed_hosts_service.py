@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 
 import structlog
 
 from jentic_one.registry.repos.governed_hosts_repo import GovernedHostsRepository
+from jentic_one.registry.services.errors import GovernedHostsUnavailableError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
@@ -25,8 +27,26 @@ logger = structlog.get_logger(__name__)
 
 
 def canonical_hosts(hosts: Iterable[str]) -> list[str]:
-    """Canonicalise a host set: lowercased, stripped, deduplicated, sorted."""
-    return sorted({host.strip().lower() for host in hosts if host and host.strip()})
+    """Canonicalise a host set: normalised entries, deduplicated, sorted.
+
+    Per-entry normalisation: lowercased, whitespace-stripped, FQDN root dot
+    removed, and internationalised names IDNA-encoded to the A-label
+    (punycode) form — the only form a TLS/SNI- or DNS-keyed gate ever sees.
+    Entries that IDNA cannot encode are kept verbatim (lowercased) rather
+    than dropped: under-inclusion is the unsafe direction here.
+    """
+    canonical: set[str] = set()
+    for host in hosts:
+        entry = host.strip().lower().rstrip(".") if host else ""
+        if not entry:
+            continue
+        if not entry.isascii():
+            # Unencodable entries are kept verbatim rather than dropped —
+            # under-inclusion is the unsafe direction for a divert list.
+            with suppress(UnicodeError):
+                entry = entry.encode("idna").decode("ascii")
+        canonical.add(entry)
+    return sorted(canonical)
 
 
 def compute_hosts_digest(hosts: Iterable[str]) -> str:
@@ -58,8 +78,8 @@ class GovernedHostsService:
     """Derives the caller's governed host set across the three databases.
 
     **Always self-scoped**: the set is derived for the authenticated identity's
-    own toolkit bindings — there is deliberately no cross-actor variant (admins
-    inspect other actors through the toolkit/binding admin reads).
+    own toolkit bindings — there is deliberately no cross-actor or admin
+    variant.
     """
 
     def __init__(self, ctx: Context) -> None:
@@ -82,7 +102,16 @@ class GovernedHostsService:
         Every early return logs its reason — an empty set is what a
         misconfigured caller also sees, so the distinction must be
         operator-visible even though the wire body is the same.
+
+        Raises :class:`GovernedHostsUnavailableError` (→ 503) when the process
+        lacks a required database leg — a misdeployment must fail loudly, not
+        as a bare 500 (or worse, an empty 200 a gate would read as "govern
+        nothing").
         """
+        for db_name in ("admin", "control", "registry"):
+            if not self._ctx.is_db_allowed(db_name):
+                raise GovernedHostsUnavailableError(db_name)
+
         if identity.actor_type is ActorType.TOOLKIT:
             toolkit_ids = {identity.sub}
         else:

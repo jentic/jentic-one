@@ -20,14 +20,15 @@ class GovernedHostsResponse(BaseModel):
 
     data: list[str] = Field(
         description=(
-            "Governed host entries, lowercased, deduplicated, and sorted — the "
-            "literal URL-index hosts the broker's discovery matches for the "
-            "caller's toolkit-bound APIs. An entry is a hostname, a bare IP "
-            "literal, or either followed by a non-default port "
-            "(`host[:port]` — default ports are already stripped). Compare "
-            "case-insensitively (entries are lowercased; lowercase the "
-            "incoming host before matching); a gate keying on hostname or SNI "
-            "alone must strip any `:port` suffix from the entry first. "
+            "Governed host entries, normalised (lowercased, FQDN root dot "
+            "stripped, internationalised names IDNA/punycode-encoded), "
+            "deduplicated, and sorted — the literal URL-index hosts the "
+            "broker's discovery matches for the caller's toolkit-bound APIs. "
+            "An entry is a hostname, a bare IP literal, or either followed by "
+            "a non-default port (`host[:port]` — default ports are already "
+            "stripped). Compare case-insensitively (lowercase the incoming "
+            "host before matching); a gate keying on hostname or SNI alone "
+            "must strip any `:port` suffix from the entry first. "
             "Variable-bearing hosts (defaultless `{var}` server variables) are "
             "excluded — the broker's discovery never matches them. On a `5xx` "
             "retain the last known set; never fall back to an empty "
