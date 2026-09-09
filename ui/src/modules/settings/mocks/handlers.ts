@@ -139,10 +139,26 @@ export function resetSettingsStore(): void {
 			created_by: null,
 		}),
 		// A previously denied DCR client — the denied→approved recovery path.
+		// Deliberately noisy (many scopes, several redirect URIs) so the
+		// queue card's "+N more" scope expander and the redirect-URI
+		// disclosure have a real target.
 		seedClient({
 			id: 'oac_denied_1',
 			client_id: 'oc_sketchy_tool',
 			name: 'Sketchy Tool',
+			redirect_uris: [
+				'https://sketchy.example.com/cb',
+				'https://sketchy.example.com/cb2',
+				'https://alt.sketchy.example.com/cb',
+			],
+			allowed_scopes: [
+				'apis:read',
+				'apis:write',
+				'agents:read',
+				'agents:write',
+				'credentials:read',
+				'audit:read',
+			],
 			token_endpoint_auth_method: 'none',
 			registration_source: 'dcr',
 			approval_status: 'denied',

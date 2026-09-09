@@ -22,6 +22,7 @@ import {
 	ActorLabel,
 	Badge,
 	Button,
+	CopyButton,
 	Dialog,
 	EmptyState,
 	ErrorAlert,
@@ -114,7 +115,29 @@ function DenyClientDialog({ client, open, onClose, onConfirm, isPending }: DenyC
 	);
 }
 
-/** One registration awaiting decision, origins-first. */
+/** Scope chips shown inline before the "+N more" affordance takes over. */
+const SCOPE_PREVIEW_COUNT = 4;
+
+/** Redirect URIs listed inline before collapsing behind a disclosure. */
+const URI_INLINE_LIMIT = 2;
+
+/**
+ * One registration awaiting decision — GitHub's app-approval "review card"
+ * grammar, origins-first:
+ *
+ *  - HEADER: the verifiable identity leads (redirect-URI origins as the
+ *    heading, with the type/status chips beside it) and provenance
+ *    ("registered <timeAgo>") sits right-aligned; the attacker-chosen name
+ *    is demoted to a quiet, explicitly labelled "Self-reported name" line.
+ *  - BODY: compact muted metadata — client_id (+ copy), the full redirect
+ *    URIs (behind a disclosure when long; the heading's origins already
+ *    summarise them), and a one-line scope summary with a "+N more"
+ *    expander instead of a chip wall (13 chips must not out-shout the
+ *    decision).
+ *  - FOOTER: the decision verbs, grouped and right-anchored — Deny (quiet,
+ *    danger-tinted) before Approve (primary). Denied rows re-offer Approve
+ *    only (the deliberate denied→active recovery).
+ */
 function QueueRow({
 	client,
 	onApprove,
@@ -129,98 +152,148 @@ function QueueRow({
 	denyPending: boolean;
 }) {
 	const origins = clientOrigins(client);
+	const [scopesExpanded, setScopesExpanded] = useState(false);
+	const [urisExpanded, setUrisExpanded] = useState(false);
+
+	const scopes = client.allowed_scopes;
+	const visibleScopes =
+		scopes == null ? [] : scopesExpanded ? scopes : scopes.slice(0, SCOPE_PREVIEW_COUNT);
+	const hiddenScopeCount = scopes == null ? 0 : scopes.length - visibleScopes.length;
+	const showUriList = client.redirect_uris.length <= URI_INLINE_LIMIT || urisExpanded;
+
 	return (
-		<div className="border-border rounded-lg border p-4">
-			{/* flex-wrap: at 375px the Approve/Deny pair drops below the
-			    origins headline instead of forcing horizontal overflow. */}
-			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div className="min-w-0">
-					{/* Headline = the VERIFIABLE identity: redirect-URI origins
-					    (+ software_id), never the self-chosen display name. */}
-					<h3 className="text-foreground flex flex-wrap items-center gap-2 font-medium">
+		<article className="border-border rounded-lg border">
+			{/* Header: the VERIFIABLE identity leads; provenance right-aligned. */}
+			<div className="px-4 pt-4">
+				<div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+					<h3 className="text-foreground flex min-w-0 flex-wrap items-center gap-2 font-medium">
 						<code className="min-w-0 truncate font-mono text-sm">
 							{origins.length > 0 ? origins.join(', ') : '(no redirect URIs)'}
 						</code>
 						<ClientTypeChips client={client} />
 						<ClientStatusBadges client={client} />
 					</h3>
-					{client.software_id && (
-						<p className="text-muted-foreground mt-0.5 font-mono text-xs">
-							{client.software_id}
-						</p>
-					)}
-					<p className="text-muted-foreground mt-1 text-sm">
-						Self-reported name: <span className="text-foreground">{client.name}</span>
-						{client.description && <span> — {client.description}</span>}
+					<p className="text-muted-foreground shrink-0 text-xs">
+						registered{' '}
+						<span title={formatTimestamp(client.created_at)}>
+							{timeAgo(client.created_at)}
+						</span>
+						{client.registration_source === 'admin' && client.created_by && (
+							<>
+								{' '}
+								by <ActorLabel actorId={client.created_by} />
+							</>
+						)}
 					</p>
 				</div>
-				<div className="flex shrink-0 gap-2">
-					<Button
-						size="sm"
-						onClick={(): void => onApprove(client)}
-						disabled={approvePending}
-					>
-						Approve
-					</Button>
-					{/* A denied row is already denied — the only verb it re-offers
-					    is Approve (the deliberate denied→active recovery). */}
-					{client.approval_status !== 'denied' && (
-						<Button
-							size="sm"
-							variant="outline"
-							onClick={(): void => onDeny(client)}
-							disabled={denyPending}
-						>
-							Deny
-						</Button>
+				{/* The self-chosen display name — quiet, and explicitly marked. */}
+				<p className="text-muted-foreground mt-1 text-sm">
+					Self-reported name: <span className="text-foreground">{client.name}</span>
+					{client.software_id && (
+						<code className="ml-2 font-mono text-xs">{client.software_id}</code>
 					)}
-				</div>
+					{client.description && <span> — {client.description}</span>}
+				</p>
 			</div>
-			<div className="mt-3 space-y-2 text-sm">
-				<div>
-					<span className="text-muted-foreground">Client ID: </span>
-					<code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+
+			{/* Quiet metadata block — mono/muted, not competing with the title. */}
+			<div className="text-muted-foreground space-y-1.5 px-4 pt-3 pb-4 text-xs">
+				<p className="flex items-center gap-1">
+					<code className="bg-muted rounded px-1.5 py-0.5 font-mono">
 						{client.client_id}
 					</code>
-				</div>
-				<div>
-					<span className="text-muted-foreground">Redirect URIs: </span>
-					<ul className="text-foreground mt-1 list-inside list-disc pl-1">
+					<CopyButton
+						value={client.client_id}
+						variant="ghost"
+						size="icon"
+						className="h-5 w-5 p-0.5"
+						toastMessage="Client ID copied"
+						ariaLabel={`Copy client ID for ${client.name}`}
+					/>
+				</p>
+				{/* The heading's origins already summarise the URIs; the full
+				    list collapses behind a disclosure when it gets long. */}
+				{client.redirect_uris.length > URI_INLINE_LIMIT && (
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-auto px-1 py-0.5 text-xs"
+						aria-expanded={urisExpanded}
+						onClick={(): void => setUrisExpanded((v) => !v)}
+					>
+						{urisExpanded
+							? 'Hide redirect URIs'
+							: `Show ${client.redirect_uris.length} redirect URIs`}
+					</Button>
+				)}
+				{showUriList && (
+					<ul className="space-y-0.5">
 						{client.redirect_uris.map((uri) => (
-							<li key={uri} className="truncate font-mono text-xs">
+							<li key={uri} className="truncate font-mono">
 								{uri}
 							</li>
 						))}
 					</ul>
-				</div>
-				{client.allowed_scopes != null && (
-					<div className="flex flex-wrap items-center gap-1">
-						<span className="text-muted-foreground">Allowed scopes: </span>
-						{client.allowed_scopes.length > 0 ? (
-							client.allowed_scopes.map((scope) => (
+				)}
+				{scopes != null && (
+					<p className="flex flex-wrap items-center gap-1">
+						<span>Allowed scopes:</span>
+						{scopes.length === 0 ? (
+							<span className="text-foreground">OIDC only</span>
+						) : (
+							visibleScopes.map((scope) => (
 								<Badge key={scope} variant="default">
 									{scope}
 								</Badge>
 							))
-						) : (
-							<span className="text-foreground text-xs">OIDC only</span>
 						)}
-					</div>
+						{hiddenScopeCount > 0 && (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-auto px-1 py-0.5 text-xs"
+								aria-expanded={false}
+								onClick={(): void => setScopesExpanded(true)}
+							>
+								+{hiddenScopeCount} more
+							</Button>
+						)}
+						{scopesExpanded && scopes.length > SCOPE_PREVIEW_COUNT && (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-auto px-1 py-0.5 text-xs"
+								aria-expanded
+								onClick={(): void => setScopesExpanded(false)}
+							>
+								Show less
+							</Button>
+						)}
+					</p>
 				)}
-				<p className="text-muted-foreground text-xs">
-					Registered{' '}
-					<span title={formatTimestamp(client.created_at)}>
-						{timeAgo(client.created_at)}
-					</span>
-					{client.registration_source === 'admin' && client.created_by && (
-						<>
-							{' '}
-							by <ActorLabel actorId={client.created_by} />
-						</>
-					)}
-				</p>
 			</div>
-		</div>
+
+			{/* Footer: the decision, grouped and anchored — never floating in
+			    the header where it competed with the identity signal. */}
+			<footer className="border-border flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3">
+				{/* A denied row is already denied — the only verb it re-offers
+				    is Approve (the deliberate denied→active recovery). */}
+				{client.approval_status !== 'denied' && (
+					<Button
+						size="sm"
+						variant="ghost"
+						className="text-danger hover:text-danger"
+						onClick={(): void => onDeny(client)}
+						disabled={denyPending}
+					>
+						{denyPending ? 'Denying…' : 'Deny'}
+					</Button>
+				)}
+				<Button size="sm" onClick={(): void => onApprove(client)} disabled={approvePending}>
+					{approvePending ? 'Approving…' : 'Approve'}
+				</Button>
+			</footer>
+		</article>
 	);
 }
 

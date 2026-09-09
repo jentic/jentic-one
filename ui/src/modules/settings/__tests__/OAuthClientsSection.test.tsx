@@ -266,6 +266,31 @@ describe('OAuthClientsSection', () => {
 		expect(await screen.findByText('No denied clients')).toBeInTheDocument();
 	});
 
+	it('collapses noisy queue-card metadata: scope "+N more" and redirect-URI disclosure', async () => {
+		const user = userEvent.setup();
+		renderSection('/settings?tab=queue');
+		await screen.findByText('Cursor');
+
+		// Sketchy Tool is seeded noisy: 6 scopes, 3 redirect URIs.
+		await user.click(screen.getByRole('button', { name: 'Denied' }));
+		await screen.findByText('Sketchy Tool');
+
+		// Scopes render as a one-line summary — 4 preview chips, the rest
+		// behind "+N more" (a chip wall must not out-shout the decision).
+		expect(screen.getByText('apis:read')).toBeInTheDocument();
+		expect(screen.queryByText('audit:read')).not.toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: '+2 more' }));
+		expect(screen.getByText('audit:read')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Show less' }));
+		expect(screen.queryByText('audit:read')).not.toBeInTheDocument();
+
+		// >2 redirect URIs collapse behind a disclosure — the headline's
+		// origins already summarise them.
+		expect(screen.queryByText('https://sketchy.example.com/cb')).not.toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Show 3 redirect URIs' }));
+		expect(screen.getByText('https://sketchy.example.com/cb')).toBeInTheDocument();
+	});
+
 	it('has no critical a11y violations on the queue tab', async () => {
 		const { container } = renderSection('/settings?tab=queue');
 		await screen.findByText('Cursor');
