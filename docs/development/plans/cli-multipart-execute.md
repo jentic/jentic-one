@@ -29,32 +29,39 @@ The blocker is **entirely in the CLI**. The broker is already fine:
 - A `multipart/form-data` body-size cap (50 MiB) already exists
   (`src/jentic_one/shared/config.py` `max_request_bytes_by_type`).
 
-The CLI, however (`cli/internal/cmd/execute.go`):
+The CLI, however (CLI-V2 layout):
 
 1. Offers **no** way to build a multipart body — only `-d`/`--data-file` (JSON).
-2. When a body is present and no explicit content-type header was given, it
-   **unconditionally stamps `Content-Type: application/json`** (lines ~219–221),
-   which strips any multipart boundary and guarantees upstream rejection.
+   The body is resolved as a raw `io.Reader` in
+   `cli/internal/cli/api/execute.go` (`executeE`).
+2. When a body is present and no explicit content-type header was given,
+   `cli/internal/agentops/execute.go` (`BuildRequest`) **unconditionally stamps
+   `Content-Type: application/json`**, which strips any multipart boundary and
+   guarantees upstream rejection.
 
 ## Fix (CLI-only — no broker or transport-contract change)
 
-Add `curl -F`-style flags to `cli/internal/cmd/execute.go`:
+Add `curl -F`-style flags to `cli/internal/cli/api/execute.go`:
 
 - `--form key=value` (repeatable) — text field parts.
 - `--form-file key=@path` (repeatable) — file parts read from disk.
 
 When either flag is present:
 
-1. Build the body with Go stdlib `mime/multipart.Writer`: write text fields with
-   `CreateFormField`, file parts with `CreateFormFile` (streaming the file
-   contents), then `Close()`.
-2. Set `Content-Type` from `writer.FormDataContentType()` — this carries the
-   generated `boundary=…`. Do **not** overwrite it with the JSON default.
+1. Build the body with Go stdlib `mime/multipart.Writer`: text fields via
+   `WriteField`, file parts via `CreateFormFile`, then `Close()`.
+2. Derive `Content-Type` from `writer.FormDataContentType()` (carries the
+   generated `boundary=…`) and thread it forward. The SDK broker transport
+   (`cli/client` `BrokerTransport`) is body/content-type-transparent, so the
+   boundary Content-Type is carried as a **header KV prepended to `--header`**;
+   `BuildRequest`'s existing header precedence then suppresses the JSON default
+   and applies it (a caller-supplied `--header Content-Type=…` still wins, since
+   the merge applies later headers last). No change to `agentops`/`BuildRequest`.
 3. Send those bytes as the request body exactly as today.
 
 The broker forwards the bytes + content-type untouched and injects credentials
 as it already does for JSON. **Nothing on the CLI→broker contract changes** — no
-base64 envelope, no broker code.
+base64 envelope, no broker code, no `agentops` core change.
 
 ### Guardrails
 
@@ -69,11 +76,14 @@ base64 envelope, no broker code.
 
 ## Tests
 
-- **Update** `cli/internal/cmd/execute_test.go` `TestExecuteCmdSendsBody` — it
-  currently hardcodes the `application/json` content-type expectation.
-- **Add** a CLI test: `--form` + `--form-file` builds a valid multipart body,
-  sets a `multipart/form-data; boundary=…` content-type, and forwards it; plus a
-  mutual-exclusion error case.
+- `cli/internal/cli/api/execute_test.go` `TestExecuteCmdSendsBody` continues to
+  assert the `application/json` default for raw bodies — unchanged, since the
+  fix only adds a new multipart branch and does not alter the raw-body path.
+- **Add** CLI tests in the same file: `TestExecuteCmdMultipartBody` (`--form` +
+  `--form-file` builds a valid multipart body, stamps a `multipart/form-data;
+  boundary=…` content-type, and forwards both parts intact),
+  `TestExecuteCmdMultipartRejectsRawBody` (mutual exclusion with `--data`), and
+  `TestExecuteCmdFormFileBadSpec` (rejects a `--form-file` missing `@path`).
 - **Add** a broker smoke test alongside the octet-stream round-trip in
   `tests/smoke/test_broker_execute_domains.py`, asserting a real multipart body
   reaches the upstream intact. The upstream harness already exposes

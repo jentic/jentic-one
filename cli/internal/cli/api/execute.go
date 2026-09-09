@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
@@ -37,6 +39,8 @@ type executeOptions struct {
 	headers        []string
 	data           string
 	dataFile       string
+	form           []string
+	formFile       []string
 	raw            bool
 	json           bool
 	brokerScheme   string
@@ -101,6 +105,8 @@ func newExecuteCmd(app *app) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.headers, "header", nil, "extra header as key=value (repeatable)")
 	cmd.Flags().StringVarP(&opts.data, "data", "d", "", "request body JSON (use - for stdin)")
 	cmd.Flags().StringVar(&opts.dataFile, "data-file", "", "read request body from this file")
+	cmd.Flags().StringArrayVar(&opts.form, "form", nil, "multipart/form-data text field as key=value (repeatable; mutually exclusive with --data/--data-file/stdin)")
+	cmd.Flags().StringArrayVar(&opts.formFile, "form-file", nil, "multipart/form-data file part as key=@path (repeatable; mutually exclusive with --data/--data-file/stdin)")
 	cmd.Flags().BoolVar(&opts.raw, "raw", false, "stream response body directly to stdout")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "force JSON envelope output")
 	cmd.Flags().StringVar(&opts.brokerScheme, "broker-scheme", config.DefaultBrokerScheme, "broker target scheme (http or https)")
@@ -216,8 +222,34 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 
 	// Resolve request body (cobra-side by design: the stdin fallback must never
 	// move into agentops — under stdio MCP, stdin is the JSON-RPC wire).
+	//
+	// Two body modes are mutually exclusive: a raw byte body (--data/--data-file/
+	// stdin, defaulting to Content-Type application/json in agentops.BuildRequest)
+	// and a multipart/form-data body assembled here from --form/--form-file. When
+	// multipart is requested we build the body and carry its boundary Content-Type
+	// forward as a header KV, which suppresses the JSON default and is applied by
+	// BuildRequest's caller-header precedence (CLI-1316).
+	usingMultipart := len(opts.form) > 0 || len(opts.formFile) > 0
 	var body io.Reader
+	var multipartContentType string
 	switch {
+	case usingMultipart:
+		// --form/--form-file cannot be combined with a raw byte body. Reject the
+		// explicit raw-body flags; the stdin auto-fallback is only taken when no
+		// body flag is set, so it cannot collide here.
+		if opts.data != "" || opts.dataFile != "" {
+			return &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        "--form/--form-file cannot be combined with --data/--data-file",
+				Actionable: "Send either a multipart body (--form/--form-file) or a raw body (--data/--data-file), not both.",
+			}
+		}
+		mpBody, ct, mpErr := buildMultipartBody(opts.form, opts.formFile)
+		if mpErr != nil {
+			return mpErr
+		}
+		body = mpBody
+		multipartContentType = ct
 	case opts.data == "-" || (opts.data == "" && opts.dataFile == "" && !term.IsTerminal(os.Stdin.Fd())):
 		data, readErr := io.ReadAll(os.Stdin)
 		if readErr != nil {
@@ -239,6 +271,12 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	headers, err := agentops.ParseKVs(opts.headers, func(v string) error { return badFlagKV("--header", v) })
 	if err != nil {
 		return err
+	}
+	if multipartContentType != "" {
+		// Prepend so an explicit --header Content-Type still wins (BuildRequest's
+		// merge applies later headers last), matching the raw-body path where a
+		// caller-supplied Content-Type overrides the automatic default.
+		headers = append([]agentops.KV{{Key: "Content-Type", Value: multipartContentType}}, headers...)
 	}
 
 	// Build phase (agentops.BuildRequest): path-param substitution, query
@@ -302,6 +340,55 @@ func badFlagKV(flag, value string) error {
 		Msg:        fmt.Sprintf("invalid %s value %q; expected key=value", flag, value),
 		Actionable: fmt.Sprintf("Pass %s as key=value (e.g. %s id=123).", flag, flag),
 	}
+}
+
+// buildMultipartBody assembles a multipart/form-data body from --form text
+// fields (key=value) and --form-file file parts (key=@path), returning the body
+// reader and the boundary-carrying Content-Type the broker must forward verbatim
+// (CLI-1316). The broker is byte-transparent for the request body, so once the
+// boundary Content-Type is set the multipart bytes reach the upstream intact
+// with the credential still injected on the headers.
+func buildMultipartBody(form, formFile []string) (io.Reader, string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	for _, kv := range form {
+		key, value, ok := strings.Cut(kv, "=")
+		if !ok || strings.TrimSpace(key) == "" {
+			return nil, "", badFlagKV("--form", kv)
+		}
+		if werr := w.WriteField(key, value); werr != nil {
+			return nil, "", fmt.Errorf("write form field %q: %w", key, werr)
+		}
+	}
+
+	for _, kv := range formFile {
+		key, spec, ok := strings.Cut(kv, "=")
+		if !ok || strings.TrimSpace(key) == "" || !strings.HasPrefix(spec, "@") {
+			return nil, "", &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        fmt.Sprintf("invalid --form-file value %q; expected key=@path", kv),
+				Actionable: "Pass --form-file as key=@path (e.g. --form-file images=@face.jpg).",
+			}
+		}
+		path := strings.TrimPrefix(spec, "@")
+		data, rerr := os.ReadFile(path) //nolint:gosec // operator-supplied upload path; same trust as --data-file.
+		if rerr != nil {
+			return nil, "", fmt.Errorf("read --form-file %s: %w", path, rerr)
+		}
+		part, cerr := w.CreateFormFile(key, filepath.Base(path))
+		if cerr != nil {
+			return nil, "", fmt.Errorf("create form file %q: %w", key, cerr)
+		}
+		if _, werr := part.Write(data); werr != nil {
+			return nil, "", fmt.Errorf("write --form-file %s: %w", path, werr)
+		}
+	}
+
+	if err := w.Close(); err != nil {
+		return nil, "", fmt.Errorf("finalize multipart body: %w", err)
+	}
+	return &buf, w.FormDataContentType(), nil
 }
 
 // executePlanPayload summarizes the resolved outbound request for --dry-run/
