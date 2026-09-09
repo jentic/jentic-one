@@ -131,7 +131,9 @@ function QueueRow({
 	const origins = clientOrigins(client);
 	return (
 		<div className="border-border rounded-lg border p-4">
-			<div className="flex items-start justify-between gap-3">
+			{/* flex-wrap: at 375px the Approve/Deny pair drops below the
+			    origins headline instead of forcing horizontal overflow. */}
+			<div className="flex flex-wrap items-start justify-between gap-3">
 				<div className="min-w-0">
 					{/* Headline = the VERIFIABLE identity: redirect-URI origins
 					    (+ software_id), never the self-chosen display name. */}
