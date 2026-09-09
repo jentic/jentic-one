@@ -335,14 +335,16 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "Governed Hosts",
         "description": (
             "The caller's own governed host set — the upstream hosts reachable through its "
-            "toolkit bindings (admin bindings → active credential scopes → registered APIs), "
-            "grouped by host and sorted. **Always self-scoped**: the set is derived for the "
-            "authenticated identity; admins inspect other actors via the Toolkits surface.\n\n"
+            "toolkit bindings (admin bindings → credential scopes, active or not → "
+            "registered APIs), deduplicated and sorted. **Always self-scoped**: the set is "
+            "derived for the authenticated identity; there is no cross-actor or admin "
+            "variant.\n\n"
             "The response carries a content-derived SHA-256 `digest` (also emitted as a "
             "strong `ETag`), so integrators — e.g. a native gate scoping traffic "
-            "interception per agent — poll with `If-None-Match` and receive an empty `304` "
-            "until the host set actually changes. Deliberately unpaginated: the set is "
-            "bounded by the caller's own bindings and the digest covers it atomically."
+            'interception per agent — poll with `If-None-Match: "<digest>"` and receive '
+            "an empty `304` until the host set actually changes. Deliberately unpaginated: "
+            "the set is bounded by the caller's own bindings and the digest covers it "
+            "atomically."
         ),
     },
     {

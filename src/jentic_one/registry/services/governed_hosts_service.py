@@ -14,10 +14,14 @@ import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+import structlog
+
 from jentic_one.registry.repos.governed_hosts_repo import GovernedHostsRepository
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
+
+logger = structlog.get_logger(__name__)
 
 
 def canonical_hosts(hosts: Iterable[str]) -> list[str]:
@@ -71,9 +75,13 @@ class GovernedHostsService:
         empty set (toolkits bind to agents, not users; the OAuth agent-consent
         flow is what leaves an integrator holding an agent-scoped token).
 
-        Hosts are the URL-index patterns the broker's discovery matches, so an
-        entry may contain ``{var}`` placeholder labels (defaultless server
-        variables) that discovery treats as single-label wildcards.
+        Hosts are the literal URL-index patterns the broker's discovery
+        matches; variable-bearing (``{var}``) hosts are excluded because
+        discovery never matches them (see ``governed_hosts_repo.py``).
+
+        Every early return logs its reason — an empty set is what a
+        misconfigured caller also sees, so the distinction must be
+        operator-visible even though the wire body is the same.
         """
         if identity.actor_type is ActorType.TOOLKIT:
             toolkit_ids = {identity.sub}
@@ -83,6 +91,11 @@ class GovernedHostsService:
                     session, sub=identity.sub
                 )
         if not toolkit_ids:
+            logger.info(
+                "governed_hosts_empty",
+                reason="no_toolkit_bindings",
+                actor_type=identity.actor_type,
+            )
             return _EMPTY_VIEW
 
         async with self._ctx.control_db.session() as session:
@@ -90,10 +103,27 @@ class GovernedHostsService:
                 session, toolkit_ids=toolkit_ids
             )
         if not scopes:
+            logger.info(
+                "governed_hosts_empty",
+                reason="no_credential_scopes",
+                actor_type=identity.actor_type,
+                toolkit_count=len(toolkit_ids),
+            )
             return _EMPTY_VIEW
 
         async with self._ctx.registry_db.session() as session:
             hosts = await GovernedHostsRepository.hosts_for_scopes(session, scopes=scopes)
 
         canonical = canonical_hosts(hosts)
-        return GovernedHostsView(hosts=tuple(canonical), digest=compute_hosts_digest(canonical))
+        digest = compute_hosts_digest(canonical)
+        # Counts and digest only — the host list itself is credential-coverage
+        # metadata and stays out of the logs.
+        logger.info(
+            "governed_hosts_derived",
+            actor_type=identity.actor_type,
+            toolkit_count=len(toolkit_ids),
+            scope_count=len(scopes),
+            host_count=len(canonical),
+            digest=digest,
+        )
+        return GovernedHostsView(hosts=tuple(canonical), digest=digest)

@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
@@ -227,16 +227,17 @@ async def test_multi_server_api_contributes_every_host(web_context: Context) -> 
 
 
 @pytest.mark.usefixtures("clean_tables")
-async def test_templated_host_is_returned_as_wildcard_pattern(web_context: Context) -> None:
-    """A defaultless server variable survives as the ``{var}`` pattern the
-    broker's discovery matches — integrators see the governed *pattern*, not a
-    silent omission."""
+async def test_templated_host_is_excluded(web_context: Context) -> None:
+    """A defaultless server variable produces a ``{var}`` host pattern the
+    URL index's exact-match lookup can never match (the regex branch requires
+    ``host IS NULL``, which the ingest never writes) — so publishing it would
+    tell a gate to divert traffic the broker cannot serve. Excluded."""
     await _seed_api(
         web_context,
         vendor=_VENDOR,
         name="alpha",
         version="v1",
-        urls="https://{region}.alpha.gvh.test/v1",
+        urls=["https://{region}.alpha.gvh.test/v1", "https://static.alpha.gvh.test/v1"],
     )
     tk = await _seed_toolkit_credential(
         web_context,
@@ -250,7 +251,7 @@ async def test_templated_host_is_returned_as_wildcard_pattern(web_context: Conte
     with _agent_client(web_context, agent_id) as client:
         resp = client.get("/governed-hosts")
     assert resp.status_code == 200
-    assert resp.json()["data"] == ["{region}.alpha.gvh.test"]
+    assert resp.json()["data"] == ["static.alpha.gvh.test"]
 
 
 @pytest.mark.usefixtures("clean_tables")
@@ -277,7 +278,13 @@ async def test_wildcard_credential_expands_to_all_covered_apis(web_context: Cont
 
 
 @pytest.mark.usefixtures("clean_tables")
-async def test_inactive_credential_is_excluded(web_context: Context) -> None:
+async def test_inactive_credential_is_still_governed(web_context: Context) -> None:
+    """An inactive credential's hosts stay in the governed set: the broker's
+    discovery/derivation matcher (``credential_coverage_where()``, used bare by
+    ``toolkit_binding_resolver``) carries no ``active`` clause, so that traffic
+    is still intercepted — it fails at credential injection, not at discovery.
+    Omitting the host would send the traffic direct to the upstream,
+    unbrokered."""
     await _seed_api(
         web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test"
     )
@@ -294,7 +301,91 @@ async def test_inactive_credential_is_excluded(web_context: Context) -> None:
     with _agent_client(web_context, agent_id) as client:
         resp = client.get("/governed-hosts")
     assert resp.status_code == 200
-    assert resp.json()["data"] == []
+    assert resp.json()["data"] == ["alpha.gvh.test"]
+
+
+@pytest.mark.usefixtures("clean_tables")
+async def test_two_agents_see_disjoint_host_sets(web_context: Context) -> None:
+    """Identity scoping, pinned adversarially: two agents with disjoint
+    bindings must never see each other's hosts. A mutation that unscopes any
+    of the three legs (an all-rows binding read, an unfiltered scope read, or
+    an unscoped host resolution) fails here — a single-actor test cannot
+    distinguish "self-scoped" from "returns everything"."""
+    await _seed_api(
+        web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test"
+    )
+    await _seed_api(
+        web_context, vendor=_VENDOR, name="beta", version="v1", urls="https://beta.gvh.test"
+    )
+    # Leg-2/3 tripwire: a toolkit + credential (covering gamma) bound to NO
+    # agent — its host must appear for neither actor.
+    await _seed_api(
+        web_context, vendor=_OTHER_VENDOR, name="gamma", version="v1", urls="https://gamma.gvh.test"
+    )
+    tk_a = await _seed_toolkit_credential(
+        web_context, toolkit_name="tk-gvh-a", api_vendor=_VENDOR, api_name="alpha", api_version="v1"
+    )
+    tk_b = await _seed_toolkit_credential(
+        web_context, toolkit_name="tk-gvh-b", api_vendor=_VENDOR, api_name="beta", api_version="v1"
+    )
+    await _seed_toolkit_credential(
+        web_context,
+        toolkit_name="tk-gvh-unbound",
+        api_vendor=_OTHER_VENDOR,
+        api_name="gamma",
+        api_version="v1",
+    )
+    agent_a = await _seed_agent_binding(web_context, agent_name="gvh-agent-a", toolkit_ids=[tk_a])
+    agent_b = await _seed_agent_binding(web_context, agent_name="gvh-agent-b", toolkit_ids=[tk_b])
+
+    with _agent_client(web_context, agent_a) as client:
+        resp_a = client.get("/governed-hosts")
+    with _agent_client(web_context, agent_b) as client:
+        resp_b = client.get("/governed-hosts")
+
+    assert resp_a.json()["data"] == ["alpha.gvh.test"]
+    assert resp_b.json()["data"] == ["beta.gvh.test"]
+    assert set(resp_a.json()["data"]).isdisjoint(resp_b.json()["data"])
+    assert resp_a.json()["digest"] != resp_b.json()["digest"]
+    for body in (resp_a.json(), resp_b.json()):
+        assert "gamma.gvh.test" not in body["data"]
+
+
+@pytest.mark.usefixtures("clean_tables")
+async def test_archived_revision_hosts_still_governed(web_context: Context) -> None:
+    """Archiving clears ``current_revision_id`` but never deletes the URL-index
+    rows, and discovery's ``lookup_by_host_any_revision`` has no revision or
+    state predicate — the archived revision's hosts still route through the
+    broker, so they must stay in the governed set."""
+    await _seed_api(
+        web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test"
+    )
+    tk = await _seed_toolkit_credential(
+        web_context,
+        toolkit_name="tk-gvh-arch",
+        api_vendor=_VENDOR,
+        api_name="alpha",
+        api_version="v1",
+    )
+    agent_id = await _seed_agent_binding(web_context, agent_name="gvh-agent-arch", toolkit_ids=[tk])
+
+    # Mirror RevisionService.archive: state → archived, live pointer cleared.
+    # The index rows stay (only re-indexing deletes them).
+    async with web_context.registry_db.session() as session:
+        await session.execute(
+            update(Api).where(Api.vendor == _VENDOR).values(current_revision_id=None)
+        )
+        await session.execute(
+            update(ApiRevision)
+            .where(ApiRevision.api_id.in_(select(Api.id).where(Api.vendor == _VENDOR)))
+            .values(state="archived")
+        )
+        await session.commit()
+
+    with _agent_client(web_context, agent_id) as client:
+        resp = client.get("/governed-hosts")
+    assert resp.status_code == 200
+    assert resp.json()["data"] == ["alpha.gvh.test"]
 
 
 @pytest.mark.usefixtures("clean_tables")
