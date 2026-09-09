@@ -372,16 +372,24 @@ func buildMultipartBody(form, formFile []string) (io.Reader, string, error) {
 			}
 		}
 		path := strings.TrimPrefix(spec, "@")
-		data, rerr := os.ReadFile(path) //nolint:gosec // operator-supplied upload path; same trust as --data-file.
-		if rerr != nil {
-			return nil, "", fmt.Errorf("read --form-file %s: %w", path, rerr)
+		f, oerr := os.Open(path) //nolint:gosec // operator-supplied upload path; same trust as --data-file.
+		if oerr != nil {
+			return nil, "", fmt.Errorf("read --form-file %s: %w", path, oerr)
 		}
 		part, cerr := w.CreateFormFile(key, filepath.Base(path))
 		if cerr != nil {
+			_ = f.Close()
 			return nil, "", fmt.Errorf("create form file %q: %w", key, cerr)
 		}
-		if _, werr := part.Write(data); werr != nil {
+		// Stream the file straight into the multipart part rather than reading
+		// it fully into a slice and copying again (uploads may be up to the
+		// broker's 50 MiB multipart cap).
+		if _, werr := io.Copy(part, f); werr != nil {
+			_ = f.Close()
 			return nil, "", fmt.Errorf("write --form-file %s: %w", path, werr)
+		}
+		if cerr := f.Close(); cerr != nil {
+			return nil, "", fmt.Errorf("close --form-file %s: %w", path, cerr)
 		}
 	}
 
