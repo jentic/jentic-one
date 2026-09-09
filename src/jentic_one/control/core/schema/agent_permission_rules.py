@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -19,15 +19,22 @@ class AgentPermissionRule(AuditableMixin, ControlBase):
     cleanup on agent deletion is an application-level sweep (no CASCADE
     across databases). ``credential_id`` FKs ``credentials`` so rules
     cascade with credential deletion.
+
+    ``UNIQUE (agent_id, credential_id, sequence)`` is both a legitimate
+    invariant for an ordered first-match-wins list (duplicate sequence
+    numbers would make evaluation order backend-dependent) and the
+    idempotency key the theme-5 flattening job's ``ON CONFLICT DO
+    NOTHING`` conflicts on (PR #35 review, finding P-03). Its backing
+    unique index also serves binding-scoped rule lookups.
     """
 
     __tablename__ = "agent_permission_rules"
     __table_args__ = (
-        Index(
-            "ix_agent_permission_rules_binding_seq",
+        UniqueConstraint(
             "agent_id",
             "credential_id",
             "sequence",
+            name="uq_agent_permission_rules_binding_seq",
         ),
     )
 

@@ -6,6 +6,10 @@ with no FK; rule cleanup on agent deletion is an application-level sweep.
 ``credential_id`` FKs ``credentials`` so rules cascade with credential
 deletion. Column shape mirrors ``toolkit_permission_rules`` (including
 ``match_mode``), evaluated sequence-ordered, first-match-wins, default-deny.
+``UNIQUE (agent_id, credential_id, sequence)`` guards evaluation-order
+determinism and is the idempotency key for the theme-5 flattening job's
+``ON CONFLICT DO NOTHING`` (PR #35 review, P-03); its backing unique index
+also serves binding-scoped lookups.
 
 Revision ID: q8e9f0a1b2c3
 Revises: p7d8e9f0a1b2
@@ -75,11 +79,12 @@ def upgrade() -> None:
         sa.Column("created_by", sa.String(255), nullable=True),
         sa.ForeignKeyConstraint(["credential_id"], ["credentials.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        "ix_agent_permission_rules_binding_seq",
-        "agent_permission_rules",
-        ["agent_id", "credential_id", "sequence"],
+        sa.UniqueConstraint(
+            "agent_id",
+            "credential_id",
+            "sequence",
+            name="uq_agent_permission_rules_binding_seq",
+        ),
     )
     op.create_index(
         "ix_agent_permission_rules_created_at", "agent_permission_rules", ["created_at"]
@@ -92,5 +97,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_agent_permission_rules_created_by", table_name="agent_permission_rules")
     op.drop_index("ix_agent_permission_rules_created_at", table_name="agent_permission_rules")
-    op.drop_index("ix_agent_permission_rules_binding_seq", table_name="agent_permission_rules")
     op.drop_table("agent_permission_rules")

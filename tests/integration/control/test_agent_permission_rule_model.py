@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -114,6 +115,70 @@ async def test_sequence_ordering_per_binding(
         )
         assert [r.sequence for r in rows] == [0, 1, 2]
         assert [r.effect for r in rows] == ["allow", "deny", "deny"]
+
+
+async def test_duplicate_sequence_per_binding_rejected(
+    control_db: DatabaseSession, clean_rules: None
+) -> None:
+    """The same sequence number twice on one binding violates the unique constraint.
+
+    ``UNIQUE (agent_id, credential_id, sequence)`` keeps first-match-wins
+    evaluation deterministic and gives the theme-5 flattening job's
+    ``ON CONFLICT DO NOTHING`` a real conflict target (PR #35, P-03).
+    """
+    cred_id = await _create_credential(control_db)
+    async with control_db.session() as session:
+        session.add(
+            AgentPermissionRule(
+                agent_id="agt_uniq01",
+                credential_id=cred_id,
+                effect="allow",
+                path=".*",
+                sequence=0,
+            )
+        )
+        await session.commit()
+
+    async with control_db.session() as session:
+        session.add(
+            AgentPermissionRule(
+                agent_id="agt_uniq01",
+                credential_id=cred_id,
+                effect="deny",
+                path="/admin/.*",
+                sequence=0,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def test_same_sequence_across_bindings_allowed(
+    control_db: DatabaseSession, clean_rules: None
+) -> None:
+    """Sequence 0 on two different bindings is fine — uniqueness is per binding."""
+    cred_id = await _create_credential(control_db)
+    other_cred = await _create_credential(control_db, "cred_rule02")
+    async with control_db.session() as session:
+        for agent_id, credential_id in (
+            ("agt_multi01", cred_id),
+            ("agt_multi01", other_cred),
+            ("agt_multi02", cred_id),
+        ):
+            session.add(
+                AgentPermissionRule(
+                    agent_id=agent_id,
+                    credential_id=credential_id,
+                    effect="allow",
+                    path=".*",
+                    sequence=0,
+                )
+            )
+        await session.commit()
+
+    async with control_db.session() as session:
+        rows = (await session.execute(select(AgentPermissionRule))).scalars().all()
+        assert len(rows) == 3
 
 
 async def test_cascade_on_credential_delete(control_db: DatabaseSession, clean_rules: None) -> None:
