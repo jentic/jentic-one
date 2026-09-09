@@ -106,15 +106,24 @@ export function canRotateSecret(client: OAuthClient): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Unique `scheme://host[:port]` origins derived from the redirect URIs — the
- * VERIFIABLE identity signal (the #1264 authorize-page posture), as opposed to
- * the attacker-chosen client_name. Non-URL entries fall back to the raw
- * string rather than disappearing.
+ * Unique origins derived from the redirect URIs — the VERIFIABLE identity
+ * signal (the #1264 authorize-page posture), as opposed to the
+ * attacker-chosen client_name.
+ *
+ * Non-special schemes (`cursor://…`, `vscode://…` — exactly the native/MCP
+ * client class this signal exists for) parse successfully under WHATWG but
+ * with an OPAQUE origin that serialises as the literal string "null", so
+ * `url.origin` alone would render "null" AND dedupe distinct custom-scheme
+ * clients into one entry. Derive `scheme://host` ourselves in that case;
+ * when the host is empty too (`myapp:/cb`), fall back to the raw URI rather
+ * than disappearing.
  */
 export function clientOrigins(client: Pick<OAuthClient, 'redirect_uris'>): string[] {
 	const origins = client.redirect_uris.map((uri) => {
 		try {
-			return new URL(uri).origin;
+			const url = new URL(uri);
+			if (url.origin !== 'null') return url.origin;
+			return url.host ? `${url.protocol}//${url.host}` : uri;
 		} catch {
 			return uri;
 		}

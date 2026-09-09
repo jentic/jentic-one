@@ -4,7 +4,7 @@
  * All three are stateless (no drafts), so conditional mounting by the owner
  * is fine per the dialog-state rule.
  */
-import { Button, CopyButton, Dialog } from '@/shared/ui';
+import { Button, CopyButton, Dialog, ErrorAlert } from '@/shared/ui';
 
 /**
  * One-time secret reveal (create / rotate). Stays a `Dialog` — a blocking
@@ -119,9 +119,11 @@ export function DeactivateConfirmDialog({
 				a deactivated client that re-registers via DCR returns to the approval queue.
 			</p>
 			{error != null && (
-				<p className="text-danger mt-2 text-sm">
-					{error instanceof Error ? error.message : 'An error occurred'}
-				</p>
+				<div className="mt-3">
+					<ErrorAlert
+						message={error instanceof Error ? error : 'Failed to deactivate the client'}
+					/>
+				</div>
 			)}
 		</Dialog>
 	);

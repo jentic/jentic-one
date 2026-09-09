@@ -43,7 +43,11 @@ import {
 	type OAuthClient,
 	type OAuthClientGrant,
 } from '@/modules/settings/api/hooks';
-import { canRotateSecret, clientOrigins } from '@/modules/settings/components/clientStatus';
+import {
+	canReactivate,
+	canRotateSecret,
+	clientOrigins,
+} from '@/modules/settings/components/clientStatus';
 import { ClientStatusBadges, ClientTypeChips } from '@/modules/settings/components/clientBadges';
 
 type GrantStatusFilter = 'active' | 'revoked' | 'all';
@@ -284,6 +288,8 @@ export interface ClientDetailSheetProps {
 	onRotate: (client: OAuthClient) => void;
 	/** Opens the section-level deactivate confirm (explains the DCR re-queue). */
 	onDeactivate: (client: OAuthClient) => void;
+	/** Fires the section-level reactivate mutation (approved+inactive only). */
+	onReactivate: (client: OAuthClient) => void;
 }
 
 export function ClientDetailSheet({
@@ -293,6 +299,7 @@ export function ClientDetailSheet({
 	onEdit,
 	onRotate,
 	onDeactivate,
+	onReactivate,
 }: ClientDetailSheetProps) {
 	// Re-read while open so decisions taken from the queue/roster (approve,
 	// rotate, deactivate) refresh the sheet; the seed row renders immediately.
@@ -313,6 +320,22 @@ export function ClientDetailSheet({
 							'Blocks new authorization flows. A deactivated client that re-registers via DCR returns to the approval queue.',
 						buttonLabel: 'Deactivate',
 						ariaLabel: `Deactivate ${client.name}`,
+						emphasis: 'outline' as const,
+					},
+				]
+			: []),
+		// The approved+inactive zombie's escape hatch — without it a
+		// deactivated client's own console offers no recovery path.
+		// (Denied rows never reach here: `canReactivate` requires approved.)
+		...(canReactivate(client)
+			? [
+					{
+						key: 'reactivate',
+						title: 'Reactivate client',
+						description:
+							'Restores the client — it can start authorization flows again immediately.',
+						buttonLabel: 'Reactivate',
+						ariaLabel: `Reactivate ${client.name}`,
 						emphasis: 'outline' as const,
 					},
 				]
@@ -468,6 +491,7 @@ export function ClientDetailSheet({
 						actions={dangerActions}
 						onAction={(key): void => {
 							if (key === 'deactivate') onDeactivate(client);
+							if (key === 'reactivate') onReactivate(client);
 							if (key === 'rotate') onRotate(client);
 						}}
 					/>

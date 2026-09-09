@@ -117,12 +117,18 @@ export function resetSettingsStore(): void {
 			description: 'Company metrics dashboard.',
 		}),
 		// A DCR-registered PUBLIC client awaiting the D7 approval decision:
-		// inactive by construction until approved, no secret (PKCE-only).
+		// inactive by construction until approved, no secret (PKCE-only). The
+		// second redirect URI is a NON-SPECIAL scheme (WHATWG opaque origin)
+		// — exactly the native/MCP client class — pinning the queue headline's
+		// scheme://host derivation instead of a literal "null".
 		seedClient({
 			id: 'oac_pending_1',
 			client_id: 'oc_cursor_ide',
 			name: 'Cursor',
-			redirect_uris: ['http://localhost:33418/callback'],
+			redirect_uris: [
+				'http://localhost:33418/callback',
+				'cursor://anysphere.cursor-mcp/oauth/callback',
+			],
 			token_endpoint_auth_method: 'none',
 			consent_model: 'agent',
 			registration_source: 'dcr',
@@ -301,7 +307,15 @@ export const settingsHandlers = [
 		if (body.active === true && row.approval_status !== 'approved') {
 			return new HttpResponse(null, { status: 409 });
 		}
-		Object.assign(row, body, { updated_at: now() });
+		// allowed_scopes is TRI-STATE on PATCH, mirroring oauth_client_service:
+		// null/omitted = NO CHANGE, ['*'] = reset to unrestricted (stored
+		// null), any other array = restrict to it ([] = OIDC-only). A plain
+		// Object.assign would treat null as "clear" and diverge.
+		const { allowed_scopes: scopeUpdate, ...rest } = body;
+		Object.assign(row, rest, { updated_at: now() });
+		if (scopeUpdate != null) {
+			row.allowed_scopes = scopeUpdate.includes('*') ? null : scopeUpdate;
+		}
 		return HttpResponse.json(withGrantCount(row));
 	}),
 	http.delete('/admin/oauth-clients/:id', ({ params }) => {

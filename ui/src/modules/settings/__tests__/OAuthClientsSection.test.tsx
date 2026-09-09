@@ -131,9 +131,14 @@ describe('OAuthClientsSection', () => {
 		renderSection('/settings?tab=queue');
 
 		// Origins-first (the #1264 anti-spoofing posture): the headline is the
-		// redirect-URI origin + software_id, with the type/status chips.
-		const heading = await screen.findByText('http://localhost:33418');
-		const row = heading.closest('h3');
+		// redirect-URI origins + software_id, with the type/status chips. The
+		// custom-scheme URI (WHATWG opaque origin) must render as
+		// scheme://host — NOT the literal "null" `URL.origin` serialises to.
+		const origins = await screen.findByText(
+			'http://localhost:33418, cursor://anysphere.cursor-mcp',
+		);
+		expect(origins.textContent).not.toContain('null');
+		const row = origins.closest('h3');
 		expect(row).not.toBeNull();
 		expect(within(row as HTMLElement).getByText('Public')).toBeInTheDocument();
 		expect(within(row as HTMLElement).getByText('DCR')).toBeInTheDocument();
@@ -291,6 +296,26 @@ describe('OAuthClientsSection', () => {
 		// consents render with their agents resolved from the directory.
 		expect(await within(sheet).findByText('Invoice Bot')).toBeInTheDocument();
 		expect(within(sheet).getByText('Support Triage')).toBeInTheDocument();
+
+		// The opened sheet (a body portal — outside the render container)
+		// carries no critical a11y violations either.
+		await checkA11y(document.body);
+	});
+
+	it("offers Reactivate in a zombie's detail sheet (recovery from its own console)", async () => {
+		const user = userEvent.setup();
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		// The approved+inactive zombie must not be stranded: its own console
+		// (the danger zone) carries the recovery verb.
+		await user.click(screen.getByRole('button', { name: 'Inactive 1' }));
+		await screen.findByText('Legacy App');
+		await user.click(screen.getByRole('button', { name: 'View details for Legacy App' }));
+		const sheet = await screen.findByTestId('sheet-primitive');
+
+		await user.click(within(sheet).getByRole('button', { name: 'Reactivate Legacy App' }));
+		expect(await screen.findByText('Legacy App reactivated')).toBeInTheDocument();
 	});
 
 	it('revoke honours can_revoke: enabled kill switch vs. disabled with explanation', async () => {
@@ -364,6 +389,46 @@ describe('OAuthClientsSection', () => {
 		expect(screen.queryByText(/Copy this secret now/)).not.toBeInTheDocument();
 	});
 
+	it('un-restricting scopes on edit PATCHes ["*"] (tri-state), not a silent null no-op', async () => {
+		const user = userEvent.setup();
+		// Record the PATCH payload, then fall through to the store handler so
+		// the flow stays end-to-end (returning undefined defers to the next
+		// matching handler).
+		const captured: { body?: Record<string, unknown> } = {};
+		worker.use(
+			http.patch('/admin/oauth-clients/:id', async ({ request }) => {
+				captured.body = (await request.clone().json()) as Record<string, unknown>;
+				return undefined;
+			}),
+		);
+		renderSection();
+		await screen.findByText('Internal Dashboard');
+
+		// Internal Dashboard is seeded WITH a restriction (apis:read) —
+		// unchecking the box must reset it, not silently change nothing.
+		await user.click(screen.getByRole('button', { name: 'Actions for Internal Dashboard' }));
+		await user.click(await screen.findByRole('menuitem', { name: 'Edit Internal Dashboard' }));
+		const sheet = await screen.findByTestId('sheet-primitive');
+		await user.click(within(sheet).getByRole('checkbox', { name: 'Restrict allowed scopes' }));
+		await user.click(within(sheet).getByRole('button', { name: 'Update' }));
+		await screen.findByText('OAuth client updated');
+
+		// The tri-state sentinel rides the wire (null would mean NO CHANGE)…
+		expect(captured.body?.allowed_scopes).toEqual(['*']);
+		// …and the create-only fields never ride along on PATCH.
+		expect(captured.body).not.toHaveProperty('consent_model');
+		expect(captured.body).not.toHaveProperty('token_endpoint_auth_method');
+
+		// End-to-end: the store applied the reset, so the detail sheet reads
+		// Unrestricted. (Wait out the edit sheet's exit animation first.)
+		await expect.poll(() => screen.queryByTestId('sheet-primitive')).toBeNull();
+		await user.click(
+			screen.getByRole('button', { name: 'View details for Internal Dashboard' }),
+		);
+		const detail = await screen.findByTestId('sheet-primitive');
+		expect(await within(detail).findByText('Unrestricted')).toBeInTheDocument();
+	});
+
 	it('shows the one-time secret for a new confidential client (and wipes it on close)', async () => {
 		const user = userEvent.setup();
 		renderSection();
@@ -393,6 +458,8 @@ describe('OAuthClientsSection', () => {
 		await user.click(screen.getByRole('button', { name: 'Add client' }));
 		let sheet = await screen.findByTestId('sheet-primitive');
 		await user.type(within(sheet).getByLabelText('Name'), 'half-typed-app');
+		// The opened form sheet passes axe too (body portal, so check the body).
+		await checkA11y(document.body);
 		await user.click(within(sheet).getByRole('button', { name: 'Cancel' }));
 		// Let the exit animation finish so the reopen starts from 'closed'.
 		await expect.poll(() => screen.queryByTestId('sheet-primitive')).toBeNull();

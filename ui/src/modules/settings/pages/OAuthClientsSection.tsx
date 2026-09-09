@@ -266,6 +266,7 @@ export function OAuthClientsSection() {
 				onEdit={openEdit}
 				onRotate={setRotateTarget}
 				onDeactivate={setDeactivateTarget}
+				onReactivate={(client): void => void handleReactivate(client)}
 			/>
 
 			{/* Stateless confirms — conditional mounting is fine here. */}

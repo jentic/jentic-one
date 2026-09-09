@@ -315,8 +315,14 @@ export function ApprovalQueue({ filter, onFilterChange }: ApprovalQueueProps) {
 								setDenyTarget(c);
 								setDenyOpen(true);
 							}}
-							approvePending={approveMutation.isPending}
-							denyPending={denyMutation.isPending}
+							// Per-row pending (mutation variables carry the target id)
+							// so one in-flight decision doesn't grey out the whole queue.
+							approvePending={
+								approveMutation.isPending && approveMutation.variables === client.id
+							}
+							denyPending={
+								denyMutation.isPending && denyMutation.variables?.id === client.id
+							}
 						/>
 					))}
 				</div>

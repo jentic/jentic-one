@@ -75,6 +75,19 @@ const SEGMENT_ORDER: Record<Exclude<ClientStatusFilter, 'all'>, number> = {
 };
 
 /**
+ * What an empty grid means depends on WHICH slice is empty: an untouched
+ * filter must not blame a "filter" the user never typed, and a quiet segment
+ * should point at where the rows actually live (status-and-filter rule).
+ */
+const SEGMENT_EMPTY_MESSAGE: Record<ClientStatusFilter, string> = {
+	all: 'No clients registered yet.',
+	active: 'No active clients — check the Pending or Inactive views.',
+	pending: 'No pending clients — new DCR registrations land in the approval queue.',
+	denied: 'No denied clients.',
+	inactive: 'No inactive clients — every approved client is live.',
+};
+
+/**
  * The lifecycle verbs a row offers. Reactivate deliberately requires
  * approved+inactive (see module comment); denied rows get "Review in queue".
  */
@@ -246,25 +259,32 @@ export function ClientsTable({
 		return c;
 	}, [rows]);
 
+	// The current segment's candidate pool, BEFORE the text filter — the
+	// filter input narrows this pool, so its disabled state and the empty
+	// copy are gated on it (not on the whole roster).
+	const segmentPool = useMemo(
+		() =>
+			rows.filter(
+				(client) => statusFilter === 'all' || clientStatusSegment(client) === statusFilter,
+			),
+		[rows, statusFilter],
+	);
+
 	const filtered = useMemo(() => {
 		const q = filterQuery.trim().toLowerCase();
-		return rows
-			.filter((client) => {
-				if (statusFilter !== 'all' && clientStatusSegment(client) !== statusFilter) {
-					return false;
-				}
-				if (!q) return true;
-				return (
+		return segmentPool
+			.filter(
+				(client) =>
+					!q ||
 					client.name.toLowerCase().includes(q) ||
-					client.client_id.toLowerCase().includes(q)
-				);
-			})
+					client.client_id.toLowerCase().includes(q),
+			)
 			.sort(
 				(a, b) =>
 					SEGMENT_ORDER[clientStatusSegment(a)] - SEGMENT_ORDER[clientStatusSegment(b)] ||
 					b.created_at.localeCompare(a.created_at),
 			);
-	}, [rows, filterQuery, statusFilter]);
+	}, [segmentPool, filterQuery]);
 
 	const segmentOptions = CLIENT_STATUS_FILTERS.map((value) => ({
 		value,
@@ -280,7 +300,11 @@ export function ClientsTable({
 			columns={buildColumns(onOpenDetail, onAction, pendingId)}
 			data={filtered}
 			getRowKey={(row) => row.id}
-			emptyMessage="No clients match your filter."
+			emptyMessage={
+				filterQuery.trim()
+					? 'No clients match your filter.'
+					: SEGMENT_EMPTY_MESSAGE[statusFilter]
+			}
 			ariaLabel="OAuth client list"
 			renderCard={(row) => (
 				<div className="space-y-2">
@@ -292,6 +316,9 @@ export function ClientsTable({
 							onAction={onAction}
 						/>
 					</div>
+					{/* The verifiable origins stay visible on phones too — the
+					    card must not demote the anti-spoofing signal. */}
+					<OriginsCell client={row} />
 					<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
 						<ClientStatusBadges client={row} />
 						<ClientTypeChips client={row} />
@@ -318,7 +345,7 @@ export function ClientsTable({
 						placeholder="Filter clients by name or id…"
 						aria-label="Filter clients"
 						icon={<Filter className="h-3.5 w-3.5" />}
-						disabled={rows.length === 0}
+						disabled={segmentPool.length === 0}
 					/>
 				</div>
 				<div className="flex min-w-0 items-center gap-2">

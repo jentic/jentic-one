@@ -279,10 +279,20 @@ export function ClientFormSheet({ open, onClose, client, onSecretRevealed }: Cli
 			return;
 		}
 		setValidationError(null);
-		const scopePayload = restrictScopes ? allowedScopes : null;
 
 		try {
 			if (isEdit) {
+				// allowed_scopes is TRI-STATE on PATCH (OAuthClientUpdateRequest):
+				// null/omitted = NO CHANGE, `['*']` = reset to unrestricted, any
+				// other array = restrict to it ([] = OIDC-only). Sending null on
+				// uncheck would success-toast a silent no-op, so translate the
+				// checkbox against the client's CURRENT restriction instead.
+				let scopeUpdate: string[] | undefined;
+				if (restrictScopes) {
+					scopeUpdate = allowedScopes;
+				} else if (client.allowed_scopes != null) {
+					scopeUpdate = ['*'];
+				}
 				await updateMutation.mutateAsync({
 					id: client.id,
 					input: {
@@ -290,7 +300,7 @@ export function ClientFormSheet({ open, onClose, client, onSecretRevealed }: Cli
 						description: description.trim() || null,
 						redirect_uris: uris,
 						require_consent: requireConsent,
-						allowed_scopes: scopePayload,
+						...(scopeUpdate !== undefined ? { allowed_scopes: scopeUpdate } : {}),
 					},
 				});
 				toast({ title: 'OAuth client updated', variant: 'success' });
@@ -301,7 +311,7 @@ export function ClientFormSheet({ open, onClose, client, onSecretRevealed }: Cli
 					description: description.trim() || undefined,
 					redirect_uris: uris,
 					require_consent: requireConsent,
-					allowed_scopes: scopePayload,
+					allowed_scopes: restrictScopes ? allowedScopes : null,
 					consent_model:
 						consentModel === 'agent'
 							? OAuthClientCreateRequest.consent_model.AGENT
@@ -317,6 +327,10 @@ export function ClientFormSheet({ open, onClose, client, onSecretRevealed }: Cli
 				if (result.client_secret) {
 					onSecretRevealed?.(result.client_secret);
 				}
+				// The one-time secret has been handed to the owner's reveal
+				// dialog — don't let it linger in the mutation cache too
+				// (mirrors the rotate path's reset-after-reveal).
+				createMutation.reset();
 			}
 		} catch (err) {
 			toast({
