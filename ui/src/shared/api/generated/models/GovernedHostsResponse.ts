@@ -16,11 +16,11 @@
  */
 export type GovernedHostsResponse = {
     /**
-     * Governed host patterns, lowercased, deduplicated, and sorted — the URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry may contain a `{var}` placeholder label (a defaultless server variable), which the broker matches as a single-label wildcard.
+     * Governed host entries, lowercased, deduplicated, and sorted — the literal URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry is a hostname, a bare IP literal, or either followed by a non-default port (`host[:port]` — default ports are already stripped). Compare case-insensitively (entries are lowercased; lowercase the incoming host before matching); a gate keying on hostname or SNI alone must strip any `:port` suffix from the entry first. Variable-bearing hosts (defaultless `{var}` server variables) are excluded — the broker's discovery never matches them. On a `5xx` retain the last known set; never fall back to an empty (intercept-nothing) list.
      */
     data: Array<string>;
     /**
-     * SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag` for If-None-Match change-polling.
+     * SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag`. To change-poll, send it back quoted — `If-None-Match: "<digest>"` (the bare digest is accepted as a compatibility form) — and expect an empty `304` until the host set changes. Poll at most once per minute.
      */
     digest: string;
 };

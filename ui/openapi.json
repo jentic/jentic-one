@@ -3942,7 +3942,7 @@
         "description": "The caller's governed host set (canonical order) with its change digest.\n\n**Hosts only, deliberately**: the set exists for interception scoping\n(divert lists, host filters), so it carries the minimum knowledge — API\ndetail stays behind the existing authenticated reads (``GET /apis``).\n\nDeliberately **unpaginated**: the set is bounded by the caller's own toolkit\nbindings (tens of hosts, not thousands) and the digest must cover the whole\nset atomically — a paginated digest would be meaningless. This is a\ndocumented deviation from the list-endpoint pagination convention.",
         "properties": {
           "data": {
-            "description": "Governed host patterns, lowercased, deduplicated, and sorted — the URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry may contain a `{var}` placeholder label (a defaultless server variable), which the broker matches as a single-label wildcard.",
+            "description": "Governed host entries, lowercased, deduplicated, and sorted — the literal URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry is a hostname, a bare IP literal, or either followed by a non-default port (`host[:port]` — default ports are already stripped). Compare case-insensitively (entries are lowercased; lowercase the incoming host before matching); a gate keying on hostname or SNI alone must strip any `:port` suffix from the entry first. Variable-bearing hosts (defaultless `{var}` server variables) are excluded — the broker's discovery never matches them. On a `5xx` retain the last known set; never fall back to an empty (intercept-nothing) list.",
             "items": {
               "type": "string"
             },
@@ -3950,7 +3950,7 @@
             "type": "array"
           },
           "digest": {
-            "description": "SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag` for If-None-Match change-polling.",
+            "description": "SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag`. To change-poll, send it back quoted — `If-None-Match: \"<digest>\"` (the bare digest is accepted as a compatibility form) — and expect an empty `304` until the host set changes. Poll at most once per minute.",
             "title": "Digest",
             "type": "string"
           }
@@ -26189,8 +26189,28 @@
     },
     "/governed-hosts": {
       "get": {
-        "description": "The caller's governed host set (toolkit-bound hosts) with an ETag digest.\n\n**Always self-scoped** — derived from the authenticated identity's own\ntoolkit bindings; there is no cross-actor variant. Toolkits bind to agents\nand toolkit keys, so those are the callers this endpoint serves — a plain\nuser token yields an empty set. The ``digest`` covers exactly the ``data``\nlist and is also emitted as a strong ``ETag``, so integrators poll with\n``If-None-Match`` and get an empty ``304`` until their host set actually\nchanges (the change-poll seam that replaces ``GET /apis`` enumeration for\ninterception scoping).",
+        "description": "The caller's governed host set (toolkit-bound hosts) with an ETag digest.\n\n**Always self-scoped** — derived from the authenticated identity's own\ntoolkit bindings; there is no cross-actor or admin variant. Toolkits bind\nto agents, so agent-scoped tokens (the OAuth agent-consent flow's output)\nare the callers this endpoint serves — a plain user token yields an empty\nset. The ``digest`` covers exactly the ``data`` list and is also emitted as\na strong ``ETag``, so integrators poll with ``If-None-Match: \"<digest>\"``\nand get an empty ``304`` until their host set actually changes (the\nchange-poll seam that replaces ``GET /apis`` enumeration for interception\nscoping). Poll at most once per minute; on any ``5xx`` retain the last\nknown set — never fall back to an empty (intercept-nothing) list.\n\nResponses are identity-scoped and marked ``Cache-Control: private,\nno-store`` — a shared cache must never serve one actor's host set to\nanother.",
         "operationId": "getGovernedHosts",
+        "parameters": [
+          {
+            "description": "Change-poll precondition: the `ETag` from a previous response (quoted, `\"<digest>\"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.",
+            "in": "header",
+            "name": "if-none-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Change-poll precondition: the `ETag` from a previous response (quoted, `\"<digest>\"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.",
+              "title": "If-None-Match"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -26200,7 +26220,26 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Strong entity tag: the quoted `digest` (`\"<hex>\"`). Echo it in `If-None-Match` to change-poll.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The host set still matches the presented `If-None-Match` — empty body, `ETag` echoed.",
+            "headers": {
+              "ETag": {
+                "description": "Strong entity tag: the quoted `digest` (`\"<hex>\"`). Echo it in `If-None-Match` to change-poll.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
@@ -38077,7 +38116,7 @@
       "name": "APIs"
     },
     {
-      "description": "The caller's own governed host set — the upstream hosts reachable through its toolkit bindings (admin bindings → active credential scopes → registered APIs), grouped by host and sorted. **Always self-scoped**: the set is derived for the authenticated identity; admins inspect other actors via the Toolkits surface.\n\nThe response carries a content-derived SHA-256 `digest` (also emitted as a strong `ETag`), so integrators — e.g. a native gate scoping traffic interception per agent — poll with `If-None-Match` and receive an empty `304` until the host set actually changes. Deliberately unpaginated: the set is bounded by the caller's own bindings and the digest covers it atomically.",
+      "description": "The caller's own governed host set — the upstream hosts reachable through its toolkit bindings (admin bindings → credential scopes, active or not → registered APIs), deduplicated and sorted. **Always self-scoped**: the set is derived for the authenticated identity; there is no cross-actor or admin variant.\n\nThe response carries a content-derived SHA-256 `digest` (also emitted as a strong `ETag`), so integrators — e.g. a native gate scoping traffic interception per agent — poll with `If-None-Match: \"<digest>\"` and receive an empty `304` until the host set actually changes. Deliberately unpaginated: the set is bounded by the caller's own bindings and the digest covers it atomically.",
       "name": "Governed Hosts"
     },
     {
