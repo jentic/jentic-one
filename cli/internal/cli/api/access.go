@@ -81,7 +81,7 @@ func newAccessRequestCmd(app *app) *cobra.Command {
 			"  2 — request was denied, expired, or withdrawn (only with --wait)\n" +
 			"  3 — still pending when --timeout elapsed (only with --wait)\n" +
 			"  4 — partially approved; not all items granted (only with --wait)",
-		Example: "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n" +
+		Example: "  jentic access request --toolkit httpbin.org/httpbin.org --reason \"smoke test\"\n" +
 			"  jentic access request --toolkit-id tk_123 --wait\n" +
 			"  jentic access request --scope owner:toolkits:read --json\n" +
 			"  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n" +

@@ -36,12 +36,16 @@ allow. See `docs/security/hardening.md` before using real credentials.
    approve the agent in the UI at `/app`.
 2. If no admin account exists yet, point the user to `/setup` (browser) or `jenticctl setup`
    (terminal). This is a one-time step.
-3. Import an API from https://github.com/jentic/jentic-public-apis (e.g. `httpbin.org`, used in
-   step 6), or register a private OpenAPI description of the user's own service.
+3. Import an API from https://github.com/jentic/jentic-public-apis. For example, run
+   `jentic catalog import httpbin.org` for the API used in step 6, or register a private OpenAPI
+   description of the user's own service. Catalog commands take the exact `api_id` printed by
+   `jentic catalog search`; do not rewrite it as a `vendor/name` reference.
 4. Store a credential for that API, once. It is encrypted at rest and is never returned.
 5. Request access: `jentic access request --toolkit <vendor/name>` files a reviewable request;
-   granting is always a human action. The operator binds the agent to a toolkit — access is
-   default-deny, and a rule-less binding still blocks everything.
+   granting is always a human action. Unlike catalog commands, this flag takes the imported API
+   reference. For the current httpbin entry that is `httpbin.org/httpbin.org`; confirm it with
+   `jentic apis list --json`. The operator binds the agent to a toolkit — access is default-deny,
+   and a rule-less binding still blocks everything.
 6. `jentic execute GET:https://httpbin.org/get --json` runs a call through the Broker with the
    credential injected. Give `execute` the operation's full upstream URL (as returned by
    `jentic search`/`jentic inspect`) or its operation_id — the Broker is a forward proxy, not a

@@ -42,9 +42,9 @@ const STEPS: Step[] = [
 	},
 	{
 		title: 'Import an API from the catalog',
-		body: 'Browse the public catalog and import an API into your local registry. Imported APIs are auto-promoted to live so they can be executed.',
+		body: 'Browse the public catalog and import the exact API ID shown in the results. Imported APIs are auto-promoted to live so they can be executed.',
 		code: `jentic catalog search "httpbin"
-jentic catalog import <api_id>`,
+jentic catalog import httpbin.org`,
 		prompt: true,
 	},
 	{
