@@ -109,8 +109,8 @@ canonical manual/E2E check. Registered API `facecheck-id/facecheck-id/v1.02`
 
    Expected: a real `200` from FaceCheck returning an `id_search` (not the
    previous empty-body validation failure). Confirm with `--dry-run` that the
-   request now carries a `multipart/form-data; boundary=…` content-type and a
-   non-empty body.
+   request carries a `multipart/form-data; boundary=…` content-type before
+   performing the live check.
 
 2. **JSON search (already worked — confirms the round-trip).** Feed the returned
    `id_search` into the JSON step, which was never blocked:
