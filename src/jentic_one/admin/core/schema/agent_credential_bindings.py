@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -55,4 +55,12 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
     rule_set_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     bound_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # Reversible per-consumer cut-off (PR #35 review): a suspended binding is
+    # excluded from broker derivation but keeps its permission rules, so
+    # restoring access is a flag flip rather than a destructive re-bind that
+    # loses authored policy. Unbind soft-suspends by default; row deletion is
+    # an explicit purge.
+    suspended: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
     )

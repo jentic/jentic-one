@@ -71,6 +71,10 @@ class EventType:
     CREDENTIAL_UNDECRYPTABLE = "credential.undecryptable"
     CREDENTIAL_BOUND_TO_TOOLKIT = "credential.bound_to_toolkit"
     CREDENTIAL_UNBOUND_FROM_TOOLKIT = "credential.unbound_from_toolkit"
+    # Direct agent↔credential bindings (theme 5 phase 1). Coexists with the
+    # toolkit-binding events until the toolkit path is removed.
+    CREDENTIAL_BOUND_TO_AGENT = "credential.bound_to_agent"
+    CREDENTIAL_UNBOUND_FROM_AGENT = "credential.unbound_from_agent"
     TOOLKIT_CREATED = "toolkit.created"
     TOOLKIT_KEY_CREATED = "toolkit.key_created"
     TOOLKIT_PERMISSION_RULE_SET = "toolkit.permission_rule_set"

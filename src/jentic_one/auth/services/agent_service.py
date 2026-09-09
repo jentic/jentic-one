@@ -13,17 +13,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
+    AgentCredentialBindingRepository,
     AgentCredentialRepository,
     AgentRepository,
     AgentToolkitBindingRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.auth.repos import ToolkitNameRepository
+from jentic_one.auth.repos import CredentialRefRepository, ToolkitNameRepository
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
     ClaimActorNotAllowedError,
     ClaimTokenInvalidError,
+    CredentialBindingConflictError,
+    CredentialBindingNotFoundError,
+    CredentialNotVisibleError,
     InvalidOwnerError,
     InvalidTransitionError,
     ToolkitBindingConflictError,
@@ -34,6 +38,7 @@ from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
+    CredentialBindingView,
     ToolkitBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
@@ -384,6 +389,7 @@ class AgentService:
             await AgentRepository.archive(session, agent_id)
             await ActorScopeGrantRepository.revoke_all(session, agent_id)
             await AgentToolkitBindingRepository.delete_for_agent(session, agent_id)
+            await AgentCredentialBindingRepository.delete_for_agent(session, agent_id)
             await record_audit(
                 session,
                 action=AuditAction.ARCHIVE,
@@ -481,6 +487,184 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+
+    def _can_see_credential(self, identity: Identity, created_by: str | None) -> bool:
+        """Visibility policy for the direct bind path (theme 5 phase 1).
+
+        The caller can bind an agent to a credential they administer
+        (``org:admin`` or a ``credentials:*`` scope — ``credentials:write``
+        implies read at the gate but arrives unexpanded on the API-key path,
+        so both are listed) or one they created. Finer owner-delegation
+        semantics (an owner's agents seeing the owner's credentials) stay on
+        the control-side scoping seam, not here.
+        """
+        allowed = {"org:admin", "credentials:read", "credentials:write"}
+        if allowed & set(identity.permissions):
+            return True
+        return created_by is not None and created_by == identity.sub
+
+    async def list_credentials(
+        self, agent_id: str, *, identity: Identity
+    ) -> list[CredentialBindingView]:
+        """List direct credential bindings for an agent, name-enriched."""
+        await self.get_agent(agent_id, identity=identity)
+        async with self._ctx.admin_db.session() as session:
+            bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
+        views = [CredentialBindingView.model_validate(b) for b in bindings]
+        # Enrich from the control DB with the credential's human-readable name
+        # and the API it serves (the credential-side analogue of the toolkit
+        # `serves` enrichment, issue #686). The bindings above are already
+        # scoped to this agent. Failure to reach the control DB is non-fatal.
+        credential_ids = [v.credential_id for v in views]
+        if credential_ids and self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                refs = await CredentialRefRepository.get_refs_for_ids(session, credential_ids)
+            for view in views:
+                ref = refs.get(view.credential_id)
+                if ref is None:
+                    continue
+                view.name = ref.name
+                view.serves = [
+                    ServedApiRef(
+                        api_vendor=ref.api_vendor,
+                        api_name=ref.api_name,
+                        api_version=ref.api_version,
+                    )
+                ]
+        return views
+
+    async def bind_credential(
+        self, agent_id: str, *, credential_id: str, identity: Identity
+    ) -> CredentialBindingView:
+        """Create a direct agent↔credential binding.
+
+        Unlike the toolkit bind route, this path verifies the caller can see
+        the target credential before writing the binding (control-DB lookup;
+        the toolkit route's missing check is a known asymmetry the direct
+        path deliberately does not inherit).
+        """
+        await self.get_agent(agent_id, identity=identity)
+        ref = None
+        if self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                ref = await CredentialRefRepository.get_by_id(session, credential_id)
+        if ref is None or not self._can_see_credential(identity, ref.created_by):
+            raise CredentialNotVisibleError(credential_id)
+        async with self._ctx.admin_db.transaction() as session:
+            try:
+                binding = await AgentCredentialBindingRepository.bind(
+                    session, agent_id=agent_id, credential_id=credential_id, created_by=identity.sub
+                )
+            except IntegrityError:
+                raise CredentialBindingConflictError(agent_id, credential_id) from None
+            await record_audit(
+                session,
+                action=AuditAction.GRANT,
+                target_type=AuditTargetType.CREDENTIAL_BINDING,
+                target_id=binding.id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                target_parent_id=agent_id,
+                reason="bind_credential",
+                origin=identity.origin.value,
+            )
+            await emit_event_best_effort(
+                session,
+                type=EventType.CREDENTIAL_BOUND_TO_AGENT,
+                severity=EventSeverity.INFO,
+                summary=f"Credential {credential_id} bound to agent {agent_id}",
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+            )
+        view = CredentialBindingView.model_validate(binding)
+        view.name = ref.name
+        view.serves = [
+            ServedApiRef(
+                api_vendor=ref.api_vendor, api_name=ref.api_name, api_version=ref.api_version
+            )
+        ]
+        return view
+
+    async def unbind_credential(
+        self, agent_id: str, *, credential_id: str, purge: bool, identity: Identity
+    ) -> None:
+        """Unbind a credential from an agent.
+
+        Default is a reversible suspend (the binding row and its authored
+        permission rules survive; the broker derivation will exclude it).
+        ``purge=True`` deletes the row outright — the explicit destructive
+        path.
+        """
+        await self.get_agent(agent_id, identity=identity)
+        async with self._ctx.admin_db.transaction() as session:
+            if purge:
+                removed = await AgentCredentialBindingRepository.purge(
+                    session, agent_id=agent_id, credential_id=credential_id
+                )
+            else:
+                removed = await AgentCredentialBindingRepository.set_suspended(
+                    session, agent_id=agent_id, credential_id=credential_id, suspended=True
+                )
+            if not removed:
+                raise CredentialBindingNotFoundError(agent_id, credential_id)
+            await record_audit(
+                session,
+                action=AuditAction.REVOKE if purge else AuditAction.DISABLE,
+                target_type=AuditTargetType.CREDENTIAL_BINDING,
+                target_id=credential_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                target_parent_id=agent_id,
+                reason="purge_credential_binding" if purge else "suspend_credential_binding",
+                origin=identity.origin.value,
+            )
+            verb = "unbound (purged) from" if purge else "suspended for"
+            await emit_event_best_effort(
+                session,
+                type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+                severity=EventSeverity.INFO,
+                summary=f"Credential {credential_id} {verb} agent {agent_id}",
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+            )
+
+    async def resume_credential(
+        self, agent_id: str, *, credential_id: str, identity: Identity
+    ) -> CredentialBindingView:
+        """Lift a suspended binding — the reverse of the default unbind."""
+        await self.get_agent(agent_id, identity=identity)
+        async with self._ctx.admin_db.transaction() as session:
+            updated = await AgentCredentialBindingRepository.set_suspended(
+                session, agent_id=agent_id, credential_id=credential_id, suspended=False
+            )
+            if not updated:
+                raise CredentialBindingNotFoundError(agent_id, credential_id)
+            binding = await AgentCredentialBindingRepository.get(
+                session, agent_id=agent_id, credential_id=credential_id
+            )
+            await record_audit(
+                session,
+                action=AuditAction.ENABLE,
+                target_type=AuditTargetType.CREDENTIAL_BINDING,
+                target_id=credential_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                target_parent_id=agent_id,
+                reason="resume_credential_binding",
+                origin=identity.origin.value,
+            )
+            await emit_event_best_effort(
+                session,
+                type=EventType.CREDENTIAL_BOUND_TO_AGENT,
+                severity=EventSeverity.INFO,
+                summary=f"Credential {credential_id} binding resumed for agent {agent_id}",
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+            )
+        return CredentialBindingView.model_validate(binding)
 
     async def get_scopes(self, agent_id: str, *, identity: Identity) -> list[str]:
         await self.get_agent(agent_id, identity=identity)

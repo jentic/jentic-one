@@ -722,6 +722,104 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "listAgentCredentials",
+      "path": "/agents/{agent_id}/credentials",
+      "public": false,
+      "required_scopes": [],
+      "summary": "List Credentials",
+      "surface": "agents",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "bindAgentCredential",
+      "path": "/agents/{agent_id}/credentials",
+      "public": false,
+      "required_scopes": [
+        "agents:write"
+      ],
+      "summary": "Bind Credential",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "unbindAgentCredential",
+      "path": "/agents/{agent_id}/credentials/{credential_id}",
+      "public": false,
+      "required_scopes": [
+        "agents:write"
+      ],
+      "summary": "Unbind Credential",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "resumeAgentCredentialBinding",
+      "path": "/agents/{agent_id}/credentials/{credential_id}:resume",
+      "public": false,
+      "required_scopes": [
+        "agents:write"
+      ],
+      "summary": "Resume Credential Binding",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
         "agents:write": [
@@ -5237,5 +5335,5 @@
     ],
     "total": 33
   },
-  "total": 183
+  "total": 187
 }

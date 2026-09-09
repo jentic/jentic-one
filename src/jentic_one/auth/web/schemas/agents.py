@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 ScopeStr = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_:./-]+$")]
@@ -65,6 +66,25 @@ class ToolkitBindingListResponse(BaseModel):
     """List of toolkit bindings."""
 
     data: list[ToolkitBindingResponse]
+
+
+class CredentialBindingResponse(BaseModel):
+    """Direct agent↔credential binding representation in API responses."""
+
+    id: str
+    agent_id: str
+    credential_id: str
+    # Human-readable credential name (control DB); None when unresolvable.
+    name: str | None = None
+    bound_at: datetime
+    suspended: bool
+    serves: list[ServedApiRef] = []
+
+
+class CredentialBindingListResponse(BaseModel):
+    """List of direct credential bindings."""
+
+    data: list[CredentialBindingResponse]
 
 
 class AgentPatchRequest(BaseModel):
@@ -131,6 +151,12 @@ class ToolkitBindRequest(BaseModel):
     """Request body for binding a toolkit."""
 
     toolkit_id: str = Field(min_length=1, max_length=255)
+
+
+class CredentialBindRequest(BaseModel):
+    """Request body for directly binding a credential to an agent."""
+
+    credential_id: str = Field(min_length=1, max_length=255)
 
 
 class JwksUpdateRequest(BaseModel):

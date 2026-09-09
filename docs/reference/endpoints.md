@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **183**._
+_Total endpoints: **187**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -109,7 +109,7 @@ _Total endpoints: **183**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (51)
+## Operator-facing (typically a human operator / admin) (54)
 
 
 ### `access-requests`
@@ -134,6 +134,9 @@ _Total endpoints: **183**._
 | PATCH | `/agents/{agent_id}` | `agents:write` | operator | Update Agent |
 | GET | `/agents/{agent_id}/api-key` | `agents:read` | operator | Get Agent Api Key Info |
 | GET | `/agents/{agent_id}/api-key/history` | `agents:read` | operator | Get Agent Api Key History |
+| POST | `/agents/{agent_id}/credentials` | `agents:write` | operator | Bind Credential |
+| DELETE | `/agents/{agent_id}/credentials/{credential_id}` | `agents:write` | operator | Unbind Credential |
+| POST | `/agents/{agent_id}/credentials/{credential_id}:resume` | `agents:write` | operator | Resume Credential Binding |
 | PUT | `/agents/{agent_id}/jwks` | `agents:write` | operator | Update Agent Jwks |
 | GET | `/agents/{agent_id}/scopes` | `agents:read` | operator | Get Agent Scopes |
 | PUT | `/agents/{agent_id}/scopes` | `agents:write` | operator | Replace Agent Scopes |
@@ -228,7 +231,7 @@ _Total endpoints: **183**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (73)
+## Any authenticated actor (74)
 
 
 ### `access-requests`
@@ -263,6 +266,7 @@ _Total endpoints: **183**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/agents/{agent_id}` | _any authenticated_ | any | Get Agent |
+| GET | `/agents/{agent_id}/credentials` | _any authenticated_ | any | List Credentials |
 | GET | `/agents/{agent_id}/oauth-grants` | _any authenticated_ | any | List agent OAuth grants |
 | GET | `/agents/{agent_id}/toolkits` | _any authenticated_ | any | List Toolkits |
 

@@ -51,3 +51,22 @@ class ToolkitBindingView(BaseModel):
     bound_at: datetime
     # APIs the bound toolkit serves, derived from its credentials (control DB).
     serves: list[ServedApiRef] = []
+
+
+class CredentialBindingView(BaseModel):
+    """Read-model for a direct agent↔credential binding (theme 5 phase 1)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    agent_id: str
+    credential_id: str
+    # Human-readable credential name resolved from the control DB. None when
+    # the credential no longer exists or the control DB is unreachable.
+    name: str | None = None
+    bound_at: datetime
+    # Reversible per-consumer cut-off: excluded from derivation, rules kept.
+    suspended: bool = False
+    # The API the bound credential serves (control DB) — the credential-side
+    # analogue of the toolkit `serves` list (issue #686).
+    serves: list[ServedApiRef] = []
