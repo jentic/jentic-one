@@ -250,13 +250,17 @@ def test_edge_multipart_forwarded_intact(
     file_bytes = bytes(range(256)) * 4  # 1024 bytes spanning every byte value
 
     body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'
-        f"{field_value}\r\n"
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'
-        "Content-Type: application/octet-stream\r\n\r\n"
-    ).encode() + file_bytes + f"\r\n--{boundary}--\r\n".encode()
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'
+            f"{field_value}\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+        + file_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
 
     raw, status, _ = broker_call(
         broker_url,
@@ -269,9 +273,7 @@ def test_edge_multipart_forwarded_intact(
     assert status == 200, f"{status}: {raw!r}"
     parsed = json.loads(raw)
     assert parsed["fields"] == {field_name: field_value}
-    assert parsed["files"] == [
-        {"field": file_field, "filename": filename, "size": len(file_bytes)}
-    ]
+    assert parsed["files"] == [{"field": file_field, "filename": filename, "size": len(file_bytes)}]
 
 
 @pytest.mark.smoke
