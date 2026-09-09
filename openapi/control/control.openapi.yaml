@@ -1767,6 +1767,36 @@ components:
       - credential_id
       title: CredentialBindRequest
       type: object
+    CredentialBindingEntry:
+      description: Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
+      properties:
+        bound_at:
+          format: date-time
+          title: Bound At
+          type: string
+        credential_id:
+          title: Credential Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        serves:
+          default: []
+          items:
+            $ref: '#/components/schemas/ServedApiRef'
+          title: Serves
+          type: array
+        suspended:
+          default: false
+          title: Suspended
+          type: boolean
+      required:
+      - credential_id
+      - bound_at
+      title: CredentialBindingEntry
+      type: object
     CredentialBindingListResponse:
       description: List of direct credential bindings.
       properties:
@@ -2902,6 +2932,12 @@ components:
           - type: string
           - type: 'null'
           title: Approved By
+        credential_bindings:
+          default: []
+          items:
+            $ref: '#/components/schemas/CredentialBindingEntry'
+          title: Credential Bindings
+          type: array
         id:
           title: Id
           type: string

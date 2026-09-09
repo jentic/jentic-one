@@ -16,6 +16,7 @@ from jentic_one.auth.web.deps import (
     get_user_service,
 )
 from jentic_one.auth.web.schemas.identity import (
+    CredentialBindingEntry,
     MeAgent,
     MeResponse,
     MeServiceAccount,
@@ -78,6 +79,7 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
     try:
         agent = await agent_svc.get_agent(identity.sub, identity=identity)
         toolkits = await agent_svc.list_toolkits(identity.sub, identity=identity)
+        credentials = await agent_svc.list_credentials(identity.sub, identity=identity)
         # Read the live grants rather than echoing the token's scopes, so an
         # approved grant shows up here immediately even when the presented token
         # was minted before the grant (#673). `token_scopes` exposes the token's
@@ -107,6 +109,16 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
                 serves=tb.serves,
             )
             for tb in toolkits
+        ],
+        credential_bindings=[
+            CredentialBindingEntry(
+                credential_id=cb.credential_id,
+                name=cb.name,
+                bound_at=cb.bound_at,
+                suspended=cb.suspended,
+                serves=cb.serves,
+            )
+            for cb in credentials
         ],
     )
 
