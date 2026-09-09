@@ -79,6 +79,46 @@ base64 envelope, no broker code.
   reaches the upstream intact. The upstream harness already exposes
   `/edge/multipart` (`tests/harness/smoke_upstream/routers/edge.py`).
 
+### End-to-end verification: FaceCheck ID
+
+The issue was discovered wiring FaceCheck reverse-image-search, whose flow is a
+multipart upload feeding a JSON search — so it exercises the exact gap and is the
+canonical manual/E2E check. Registered API `facecheck-id/facecheck-id/v1.02`
+(host `facecheck.id`), credential bound (`Authorization` header), broker up.
+
+1. **Multipart upload (the previously-broken step).** `POST /api/upload_pic` has
+   a `multipart/form-data` body with field `images` (`type: string, format:
+   binary`). With the new flags it becomes invokable:
+
+   ```bash
+   jentic execute op_<upload_pic> \
+     --broker-scheme http \
+     --form-file images=@face.jpg \
+     --raw
+   ```
+
+   Expected: a real `200` from FaceCheck returning an `id_search` (not the
+   previous empty-body validation failure). Confirm with `--dry-run` that the
+   request now carries a `multipart/form-data; boundary=…` content-type and a
+   non-empty body.
+
+2. **JSON search (already worked — confirms the round-trip).** Feed the returned
+   `id_search` into the JSON step, which was never blocked:
+
+   ```bash
+   jentic execute op_a5a5a5fd9a2de907f3edb9fa8a89ceeb620c4be7 \
+     --broker-scheme http \
+     -d '{"id_search":"<id_from_step_1>"}' \
+     --raw
+   ```
+
+Passing step 1 (and thus completing step 2 with a real `id_search`) is the
+end-to-end proof the multipart path works through the broker with credential
+injection intact. Note the raw-broker bypass (`curl -F` straight at
+`http://127.0.0.1:8100/https://facecheck.id/api/upload_pic`) is **not** a valid
+check — it returns `401` because it lacks the internally-minted caller token; the
+capability must be exercised through `jentic execute`.
+
 ## Out of scope
 
 - Multi-step workflow orchestration (e.g. chaining upload → search
