@@ -7,18 +7,18 @@
  * and the section-level confirm/secret dialogs. Data wiring stays in
  * `settings/api/hooks.ts`.
  *
- * The active tab lives in `?tab=` so the agent rail's "Review" action on an
- * `oauth_client.registered` alert can deep-link straight to the queue; the
- * queue's pending/denied filter is lifted here so a denied roster row's
- * "Review in queue" verb lands directly on the Denied slice.
+ * The page chrome — header, "Add client", PageHelp, and the Clients/Queue
+ * TabNav — lives one level UP in `SettingsPage` (flattened per review: one
+ * tab bar, no double headers). This component is a controlled panel: the
+ * page passes the active tab down and the create-sheet open state is lifted
+ * so the header action can open it; the queue's pending/denied filter stays
+ * here so a denied roster row's "Review in queue" verb lands directly on the
+ * Denied slice.
  */
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
-import { KeyRound, Plus, ShieldQuestion } from 'lucide-react';
-import { Button, PageHelp, TabNav, toast, type TabNavOption } from '@/shared/ui';
+import { toast } from '@/shared/ui';
 import {
 	useDeactivateOAuthClient,
-	useOAuthClientQueue,
 	useOAuthClients,
 	useReactivateOAuthClient,
 	useRotateOAuthClientSecret,
@@ -34,33 +34,30 @@ import {
 	SecretDialog,
 } from '@/modules/settings/components/ClientLifecycleDialogs';
 
-const SECTION_TABS = ['clients', 'queue'] as const;
-type SectionTab = (typeof SECTION_TABS)[number];
+export const SECTION_TABS = ['clients', 'queue'] as const;
+export type SectionTab = (typeof SECTION_TABS)[number];
 
-function isSectionTab(value: string | null): value is SectionTab {
+export function isSectionTab(value: string | null): value is SectionTab {
 	return SECTION_TABS.includes(value as SectionTab);
 }
 
-export function OAuthClientsSection() {
-	const [searchParams, setSearchParams] = useSearchParams();
-	const tabParam = searchParams.get('tab');
-	const activeTab: SectionTab = isSectionTab(tabParam) ? tabParam : 'clients';
-	// Fetched at section level so the queue tab label can carry the pending
-	// count even while the clients tab is active.
-	const { data: pendingClients } = useOAuthClientQueue('pending');
-	const [queueFilter, setQueueFilter] = useState<QueueFilter>('pending');
+export interface OAuthClientsSectionProps {
+	/** The page-owned tab (mirrors `?tab=`; see SettingsPage). */
+	activeTab: SectionTab;
+	/** Page-owned tab setter — "Review in queue" retargets through it. */
+	onTabChange: (tab: SectionTab) => void;
+	/** Lifted create-sheet state so the header's "Add client" can open it. */
+	createOpen: boolean;
+	onCreateOpenChange: (open: boolean) => void;
+}
 
-	const setTab = (tab: SectionTab): void => {
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				if (tab === 'clients') next.delete('tab');
-				else next.set('tab', tab);
-				return next;
-			},
-			{ replace: false },
-		);
-	};
+export function OAuthClientsSection({
+	activeTab,
+	onTabChange,
+	createOpen,
+	onCreateOpenChange,
+}: OAuthClientsSectionProps) {
+	const [queueFilter, setQueueFilter] = useState<QueueFilter>('pending');
 
 	// One include_inactive read backs the roster: the status segments partition
 	// the joint (approval_status, active) state client-side — including the
@@ -68,8 +65,8 @@ export function OAuthClientsSection() {
 	const clientsQuery = useOAuthClients(true);
 
 	// Sheet/dialog targets. Target + open are separate for the sheets so a
-	// dismissal keeps the mounted component (and any draft) alive.
-	const [createOpen, setCreateOpen] = useState(false);
+	// dismissal keeps the mounted component (and any draft) alive. (The
+	// create sheet's open state is the lifted `createOpen` prop.)
 	const [editTarget, setEditTarget] = useState<OAuthClient | null>(null);
 	const [editOpen, setEditOpen] = useState(false);
 	const [detailTarget, setDetailTarget] = useState<OAuthClient | null>(null);
@@ -131,7 +128,7 @@ export function OAuthClientsSection() {
 				break;
 			case 'review-in-queue':
 				setQueueFilter('denied');
-				setTab('queue');
+				onTabChange('queue');
 				break;
 		}
 	};
@@ -167,65 +164,8 @@ export function OAuthClientsSection() {
 		}
 	};
 
-	const tabOptions: TabNavOption<SectionTab>[] = [
-		{ value: 'clients', label: 'Clients', icon: <KeyRound className="h-4 w-4" /> },
-		{
-			value: 'queue',
-			label: 'Approval queue',
-			icon: <ShieldQuestion className="h-4 w-4" />,
-			count: pendingClients?.length || undefined,
-		},
-	];
-
 	return (
 		<section>
-			<div className="mb-6 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-				<div className="min-w-0 flex-1">
-					<h2 className="text-foreground text-lg font-semibold tracking-tight">
-						OAuth Clients
-					</h2>
-					<p className="text-muted-foreground mt-0.5 text-sm">
-						Manage third-party applications that can authenticate users via Jentic One.
-					</p>
-				</div>
-				<div className="flex shrink-0 items-center gap-2 self-center">
-					<Button onClick={(): void => setCreateOpen(true)}>
-						<Plus className="h-4 w-4" />
-						Add client
-					</Button>
-					<PageHelp
-						title="About OAuth Clients"
-						intro="OAuth clients are third-party applications that use Jentic One for user authentication."
-						sections={[
-							{
-								heading: 'Client ID',
-								body: 'The client_id is a public identifier used in OAuth flows. Configure it in the third-party application.',
-							},
-							{
-								heading: 'Client Secret',
-								body: 'The client secret is shown once at creation and after rotation. Store it securely — it cannot be retrieved later.',
-							},
-							{
-								heading: 'Redirect URIs',
-								body: 'OAuth callbacks are only allowed to URLs in this list. Include all environments (dev, staging, prod).',
-							},
-							{
-								heading: 'Approval queue',
-								body: 'Clients that register themselves (DCR) wait in the queue until an admin approves them. Judge a registration by its redirect-URI origins — the name is self-reported.',
-							},
-						]}
-					/>
-				</div>
-			</div>
-
-			<TabNav<SectionTab>
-				options={tabOptions}
-				value={activeTab}
-				onChange={setTab}
-				ariaLabel="OAuth client sections"
-				className="mb-4"
-			/>
-
 			{activeTab === 'queue' && (
 				<ApprovalQueue filter={queueFilter} onFilterChange={setQueueFilter} />
 			)}
@@ -239,7 +179,7 @@ export function OAuthClientsSection() {
 					onRefresh={(): void => void clientsQuery.refetch()}
 					onOpenDetail={openDetail}
 					onAction={handleAction}
-					onCreate={(): void => setCreateOpen(true)}
+					onCreate={(): void => onCreateOpenChange(true)}
 					pendingId={pendingId}
 				/>
 			)}
@@ -248,7 +188,7 @@ export function OAuthClientsSection() {
 			    dismiss keeps the form draft; only a committed create resets it. */}
 			<ClientFormSheet
 				open={createOpen}
-				onClose={(): void => setCreateOpen(false)}
+				onClose={(): void => onCreateOpenChange(false)}
 				onSecretRevealed={(secret): void => {
 					setSecretDialogTitle('Client Secret Created');
 					setRevealedSecret(secret);

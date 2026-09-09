@@ -1,22 +1,28 @@
 /**
- * SettingsPage layout pins:
+ * SettingsPage layout pins — the FLAT platform grammar (per review):
  *
- *  - the section nav is RESPONSIVE: a persistent side column at `md+`
- *    (Button-based, `border-r` stretching with the flex row), collapsing to
- *    the platform's horizontal `TabNav` grammar on phones — a hard `w-56`
- *    column would eat half of a 375px screen;
- *  - the sidebar row fills the Layout content column (`min-h-[calc(100dvh-…)]`
- *    on the shell) so the border reaches the viewport bottom on short content
- *    while long content still scrolls with the DOCUMENT (no nested scroll
- *    container);
+ *  - no left sidebar (it was the SPA's only one, with a single destination)
+ *    and no "Developer Settings" register — the page is PageShell +
+ *    PageHeader + ONE page-level TabNav, the AgentsPage shape;
+ *  - the header actions carry "Add client" + the page help;
+ *  - exactly one tab bar (Clients / Approval queue) — no nested tab bars,
+ *    no double headers;
  *  - no horizontal overflow at phone width.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, waitFor, checkA11y } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { resetSettingsStore } from '@/modules/settings/mocks/handlers';
 import { SettingsPage } from '@/modules/settings/pages/SettingsPage';
+
+/** Wait out PageHeader's fade-in so axe doesn't sample blended colours. */
+async function settleHeader(): Promise<void> {
+	const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
+	const motionEl = h1.closest('div[style]');
+	if (!motionEl) return;
+	await waitFor(() => expect(getComputedStyle(motionEl).opacity).toBe('1'));
+}
 
 describe('SettingsPage', () => {
 	beforeEach(() => {
@@ -24,33 +30,43 @@ describe('SettingsPage', () => {
 		resetSettingsStore();
 	});
 
-	it('renders the section nav as a side column on desktop, not tabs', async () => {
+	it('renders the flat page grammar: header actions + a single page-level tab bar', async () => {
 		await page.viewport(1280, 900);
 		renderWithProviders(<SettingsPage />, { route: '/settings' });
 		await screen.findByText('Internal Dashboard');
 
-		// The md+ grammar: sidebar buttons inside the "Settings sections" nav…
-		expect(screen.getByRole('button', { name: 'Developer Settings' })).toBeInTheDocument();
-		// …while the mobile TabNav is display:none (role queries skip hidden).
-		expect(screen.queryByRole('tab', { name: 'Developer Settings' })).not.toBeInTheDocument();
+		// PageHeader is the page title; the old section heading register and
+		// the sidebar's "Developer Settings" destination are gone.
+		expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
+		expect(screen.queryByText('Developer Settings')).not.toBeInTheDocument();
+		expect(screen.queryByText('OAuth Clients')).not.toBeInTheDocument();
+
+		// ONE tab bar, owned by the page: Clients / Approval queue.
+		expect(screen.getAllByRole('tablist')).toHaveLength(1);
+		expect(screen.getByRole('tab', { name: /Clients/ })).toBeInTheDocument();
+		expect(screen.getByRole('tab', { name: /Approval queue/ })).toBeInTheDocument();
+
+		// The section's actions folded into the header's actions slot.
+		expect(screen.getByRole('button', { name: /Add client/ })).toBeInTheDocument();
+		expect(
+			screen.getByRole('button', { name: 'Help for About OAuth Clients' }),
+		).toBeInTheDocument();
 	});
 
-	it('collapses the section nav to horizontal tabs at phone width, without overflow', async () => {
+	it('fits phone width without a sidebar or horizontal overflow', async () => {
 		await page.viewport(375, 812);
 		const { container } = renderWithProviders(<SettingsPage />, { route: '/settings' });
 		await screen.findByText('Internal Dashboard');
 
-		// The phone grammar: a TabNav above the content…
-		expect(screen.getByRole('tab', { name: 'Developer Settings' })).toBeInTheDocument();
-		// …and no side column eating half the screen.
-		expect(
-			screen.queryByRole('button', { name: 'Developer Settings' }),
-		).not.toBeInTheDocument();
+		// Same flat structure at 375px — tabs, not a w-56 column.
+		expect(screen.getByRole('tab', { name: /Clients/ })).toBeInTheDocument();
+		expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
 
 		// The whole surface (header, tabs, roster cards) fits 375px — the
 		// document must not scroll sideways.
 		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 
+		await settleHeader();
 		await checkA11y(container);
 	});
 });

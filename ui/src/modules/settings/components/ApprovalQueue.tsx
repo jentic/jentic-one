@@ -181,10 +181,13 @@ function QueueRow({
 			<div className="px-4 pt-4">
 				<div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
 					<div className="flex min-w-0 items-center gap-2">
-						<h3 className="text-foreground min-w-0 truncate text-base font-semibold">
+						{/* h2: with the page flattened these cards sit directly
+						    under the PageHeader h1 — section-title rung of the
+						    ladder (font-heading font-semibold, page-scaffold). */}
+						<h2 className="font-heading text-foreground min-w-0 truncate text-base font-semibold">
 							{client.name}
-						</h3>
-						{/* The chip sits OUTSIDE the h3 so the tooltip's described
+						</h2>
+						{/* The chip sits OUTSIDE the h2 so the tooltip's described
 						    text doesn't pollute the heading's accessible name. */}
 						{client.registration_source === 'dcr' && (
 							<Tooltip content="Name is self-reported by the client during registration — verify the origin below.">

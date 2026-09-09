@@ -1,22 +1,45 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { http, HttpResponse } from 'msw';
-import { renderWithProviders, screen, within, userEvent, checkA11y } from '@/__tests__/test-utils';
+import {
+	renderWithProviders,
+	screen,
+	waitFor,
+	within,
+	userEvent,
+	checkA11y,
+} from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken, type EventResponse } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { AgentStreamProvider, useAgentStream } from '@/shared/lib/agentStream';
 import { resetSettingsStore } from '@/modules/settings/mocks/handlers';
-import { OAuthClientsSection } from '@/modules/settings/pages/OAuthClientsSection';
+import { SettingsPage } from '@/modules/settings/pages/SettingsPage';
 
+// The full flattened page (header + page-level TabNav + section): the page
+// owns the ?tab= wiring and the tab bar, so the surface is exercised through
+// it — rendering the section alone would leave the tabs unmounted.
 function renderSection(route = '/settings') {
 	return renderWithProviders(
 		<>
-			<OAuthClientsSection />
+			<SettingsPage />
 			<Toaster />
 		</>,
 		{ route },
 	);
+}
+
+/**
+ * PageHeader's content fades in (250ms); axe sampling mid-animation sees
+ * blended colours and reports false contrast violations on the header's
+ * primary action. Wait for the motion wrapper to settle before any axe run
+ * (the CredentialsPage suite does the same for its stagger).
+ */
+async function settleHeader(): Promise<void> {
+	const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
+	const motionEl = h1.closest('div[style]');
+	if (!motionEl) return;
+	await waitFor(() => expect(getComputedStyle(motionEl).opacity).toBe('1'));
 }
 
 describe('OAuthClientsSection', () => {
@@ -113,6 +136,7 @@ describe('OAuthClientsSection', () => {
 	it('has no critical a11y violations on the clients tab', async () => {
 		const { container } = renderSection();
 		await screen.findByText('Internal Dashboard');
+		await settleHeader();
 		await checkA11y(container);
 	});
 
@@ -222,7 +246,7 @@ describe('OAuthClientsSection', () => {
 		const user = userEvent.setup();
 		renderWithProviders(
 			<AgentStreamProvider live={false}>
-				<OAuthClientsSection />
+				<SettingsPage />
 				<Toaster />
 				<SettleProbe />
 			</AgentStreamProvider>,
@@ -301,6 +325,7 @@ describe('OAuthClientsSection', () => {
 	it('has no critical a11y violations on the queue tab', async () => {
 		const { container } = renderSection('/settings?tab=queue');
 		await screen.findByText('Cursor');
+		await settleHeader();
 		await checkA11y(container);
 	});
 
@@ -331,6 +356,7 @@ describe('OAuthClientsSection', () => {
 
 		// The opened sheet (a body portal — outside the render container)
 		// carries no critical a11y violations either.
+		await settleHeader();
 		await checkA11y(document.body);
 	});
 
@@ -491,6 +517,7 @@ describe('OAuthClientsSection', () => {
 		let sheet = await screen.findByTestId('sheet-primitive');
 		await user.type(within(sheet).getByLabelText('Name'), 'half-typed-app');
 		// The opened form sheet passes axe too (body portal, so check the body).
+		await settleHeader();
 		await checkA11y(document.body);
 		await user.click(within(sheet).getByRole('button', { name: 'Cancel' }));
 		// Let the exit animation finish so the reopen starts from 'closed'.
