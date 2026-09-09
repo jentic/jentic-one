@@ -349,7 +349,12 @@ export function ClientsTable({
 					/>
 				</div>
 				<div className="flex min-w-0 items-center gap-2">
-					<div className="min-w-0 overflow-x-auto">
+					{/* This wrapper exists only so the segments can PAN at phone
+					    widths (they're genuinely wider than the screen there);
+					    hide-scrollbar is cosmetic for that panning. The animation
+					    itself never overflows — SegmentedToggle owns that
+					    invariant (non-overshooting spring + clip). */}
+					<div className="hide-scrollbar min-w-0 overflow-x-auto">
 						<SegmentedToggle<ClientStatusFilter>
 							options={segmentOptions}
 							value={statusFilter}
