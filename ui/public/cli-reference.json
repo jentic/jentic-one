@@ -1747,6 +1747,18 @@
               "usage": "Emit a machine-readable execution plan (implies --dry-run)"
             },
             {
+              "name": "form",
+              "type": "stringArray",
+              "default": "[]",
+              "usage": "multipart/form-data text field as key=value (repeatable; mutually exclusive with --data/--data-file/stdin)"
+            },
+            {
+              "name": "form-file",
+              "type": "stringArray",
+              "default": "[]",
+              "usage": "multipart/form-data file part as key=@path (repeatable; mutually exclusive with --data/--data-file/stdin)"
+            },
+            {
               "name": "header",
               "type": "stringArray",
               "default": "[]",
