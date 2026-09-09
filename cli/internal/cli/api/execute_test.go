@@ -7,6 +7,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -658,6 +660,346 @@ func TestExecuteCmdSendsBody(t *testing.T) {
 	}
 	if gotContentType != "application/json" {
 		t.Errorf("content-type = %q", gotContentType)
+	}
+}
+
+// TestExecuteCmdMultipartBody exercises the --form/--form-file path (#1316):
+// the CLI must assemble a multipart/form-data body, stamp the boundary
+// Content-Type (NOT the JSON default), infer the file part's Content-Type from
+// its extension, honor the @@ literal-@ escape, and forward it all
+// byte-transparently.
+func TestExecuteCmdMultipartBody(t *testing.T) {
+	var gotContentType string
+	var gotField string
+	var gotHandle string
+	var gotFileName string
+	var gotFileBody string
+	var gotFileContentType string
+	var gotParts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/upload"}`))
+			return
+		}
+		gotContentType = r.Header.Get("Content-Type")
+		mediaType, params, perr := mime.ParseMediaType(gotContentType)
+		if perr != nil || mediaType != "multipart/form-data" {
+			t.Errorf("content-type = %q (parse err %v)", gotContentType, perr)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Errorf("read part: %v", err)
+				return
+			}
+			gotParts++
+			data, _ := io.ReadAll(part)
+			switch part.FormName() {
+			case "demo":
+				gotField = string(data)
+			case "handle":
+				gotHandle = string(data)
+			case "images":
+				gotFileName = part.FileName()
+				gotFileBody = string(data)
+				gotFileContentType = part.Header.Get("Content-Type")
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id_search":"abc"}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "face.jpg")
+	if err := os.WriteFile(imgPath, []byte("JPEGBYTES"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "uploadPic",
+		"--form", "demo=true",
+		"--form", "handle=@@lit", // doubled @ escapes to a literal leading @
+		"--form-file", "images=@" + imgPath,
+		"--json",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.HasPrefix(gotContentType, "multipart/form-data") {
+		t.Errorf("content-type = %q; want multipart/form-data", gotContentType)
+	}
+	if gotParts != 3 {
+		t.Errorf("part count = %d; want 3", gotParts)
+	}
+	if gotField != "true" {
+		t.Errorf("form field demo = %q; want %q", gotField, "true")
+	}
+	if gotHandle != "@lit" {
+		t.Errorf("form field handle = %q; want %q", gotHandle, "@lit")
+	}
+	if gotFileName != "face.jpg" {
+		t.Errorf("file part name = %q; want %q", gotFileName, "face.jpg")
+	}
+	if gotFileBody != "JPEGBYTES" {
+		t.Errorf("file part body = %q; want %q", gotFileBody, "JPEGBYTES")
+	}
+	if gotFileContentType != "image/jpeg" {
+		t.Errorf("file part content-type = %q; want %q", gotFileContentType, "image/jpeg")
+	}
+}
+
+// TestExecuteCmdMultipartRejectsRawBody guards the mutual-exclusion: --form and
+// a raw byte body (--data/--data-file) cannot be combined.
+func TestExecuteCmdMultipartRejectsRawBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/upload"}`))
+			return
+		}
+		t.Errorf("broker should not be called when the body flags conflict")
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "uploadPic",
+		"--form", "demo=true",
+		"-d", `{"name":"Alice"}`,
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected an error when --form is combined with --data")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("err = %v; want CodedError with code %q", err, ux.CodeMissingArgument)
+	}
+}
+
+// TestExecuteCmdFormFileBadSpec rejects a --form-file value missing the @path
+// form.
+func TestExecuteCmdFormFileBadSpec(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/upload"}`))
+			return
+		}
+		t.Errorf("broker should not be called for an invalid --form-file spec")
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "uploadPic",
+		"--form-file", "images=face.jpg", // missing @
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected an error for a --form-file value without @path")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("err = %v; want CodedError with code %q", err, ux.CodeMissingArgument)
+	}
+}
+
+// TestExecuteCmdMultipartRejectsExplicitContentType pins the boundary guard: the
+// generated multipart Content-Type carries a per-invocation boundary that must
+// match the body bytes, so an explicit --header Content-Type is rejected rather
+// than merged (it could never carry the right boundary and would make the
+// upstream fail to parse the body).
+func TestExecuteCmdMultipartRejectsExplicitContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/upload"}`))
+			return
+		}
+		t.Errorf("broker should not be called when --header Content-Type conflicts with --form")
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "uploadPic",
+		"--form", "demo=true",
+		"--header", "content-type=multipart/form-data", // any case must be caught
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected an error when --header Content-Type is combined with --form")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("err = %v; want CodedError with code %q", err, ux.CodeMissingArgument)
+	}
+}
+
+// TestExecuteCmdFormValueAtPrefixRejected guards the curl footgun: curl's -F
+// treats @value as a file reference, so a @-prefixed --form value is almost
+// always a mistaken file-upload attempt that would silently send the literal
+// string. It must fail closed and point at --form-file (a literal leading @ is
+// sent by doubling it — covered in TestExecuteCmdMultipartBody).
+func TestExecuteCmdFormValueAtPrefixRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/upload"}`))
+			return
+		}
+		t.Errorf("broker should not be called for a @-prefixed --form value")
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "uploadPic",
+		"--form", "images=@face.jpg", // curl habit: file parts belong on --form-file
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected an error for a @-prefixed --form value")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("err = %v; want CodedError with code %q", err, ux.CodeMissingArgument)
+	}
+	if !strings.Contains(coded.Actionable, "--form-file") {
+		t.Errorf("actionable = %q; want a pointer at --form-file", coded.Actionable)
+	}
+}
+
+// TestExecuteCmdFormFileNotFound pins the missing-file error path: a wrong path
+// is agent-causable input (ARCH-4), so it must surface a machine error_code —
+// not a bare fmt.Errorf — and the broker must never be dialed.
+func TestExecuteCmdFormFileNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/upload"}`))
+			return
+		}
+		t.Errorf("broker should not be called when the --form-file path does not exist")
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "uploadPic",
+		"--form-file", "images=@" + filepath.Join(t.TempDir(), "missing.jpg"),
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected an error for a missing --form-file path")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("err = %v; want CodedError with code %q", err, ux.CodeMissingArgument)
+	}
+}
+
+// TestExecuteCmdFormFileDirectory rejects a directory path with a clear coded
+// error instead of failing mid-copy with a misleading read error.
+func TestExecuteCmdFormFileDirectory(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/upload"}`))
+			return
+		}
+		t.Errorf("broker should not be called when the --form-file path is a directory")
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "uploadPic",
+		"--form-file", "images=@" + t.TempDir(),
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected an error for a --form-file path that is a directory")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("err = %v; want CodedError with code %q", err, ux.CodeMissingArgument)
+	}
+	if !strings.Contains(coded.Msg, "directory") {
+		t.Errorf("msg = %q; want it to name the directory problem", coded.Msg)
 	}
 }
 
