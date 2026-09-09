@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -92,6 +94,7 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  jentic execute listPets --query limit=10 --json\n" +
 			"  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n" +
 			"  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n" +
+			"  jentic execute uploadPic --form demo=true --form-file images=@face.jpg --json\n" +
 			"  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n" +
 			"  jentic execute listPets --broker-scheme http --broker-host 127.0.0.1:8100",
 		Args: exactNamedArgs("<METHOD:url | METHOD:/path | operation_id>", "target"),
@@ -105,8 +108,8 @@ func newExecuteCmd(app *app) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.headers, "header", nil, "extra header as key=value (repeatable)")
 	cmd.Flags().StringVarP(&opts.data, "data", "d", "", "request body JSON (use - for stdin)")
 	cmd.Flags().StringVar(&opts.dataFile, "data-file", "", "read request body from this file")
-	cmd.Flags().StringArrayVar(&opts.form, "form", nil, "multipart/form-data text field as key=value (repeatable; mutually exclusive with --data/--data-file/stdin)")
-	cmd.Flags().StringArrayVar(&opts.formFile, "form-file", nil, "multipart/form-data file part as key=@path (repeatable; mutually exclusive with --data/--data-file/stdin)")
+	cmd.Flags().StringArrayVar(&opts.form, "form", nil, "multipart/form-data text field as key=value (repeatable; cannot be combined with --data/--data-file; a piped stdin body is ignored)")
+	cmd.Flags().StringArrayVar(&opts.formFile, "form-file", nil, "multipart/form-data file part as key=@path (repeatable; cannot be combined with --data/--data-file; a piped stdin body is ignored)")
 	cmd.Flags().BoolVar(&opts.raw, "raw", false, "stream response body directly to stdout")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "force JSON envelope output")
 	cmd.Flags().StringVar(&opts.brokerScheme, "broker-scheme", config.DefaultBrokerScheme, "broker target scheme (http or https)")
@@ -227,8 +230,8 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	// stdin, defaulting to Content-Type application/json in agentops.BuildRequest)
 	// and a multipart/form-data body assembled here from --form/--form-file. When
 	// multipart is requested we build the body and carry its boundary Content-Type
-	// forward as a header KV, which suppresses the JSON default and is applied by
-	// BuildRequest's caller-header precedence (CLI-1316).
+	// forward as a header KV, which suppresses the JSON default via BuildRequest's
+	// caller-header precedence (#1316).
 	usingMultipart := len(opts.form) > 0 || len(opts.formFile) > 0
 	var body io.Reader
 	var multipartContentType string
@@ -273,10 +276,21 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 		return err
 	}
 	if multipartContentType != "" {
-		// Prepend so an explicit --header Content-Type still wins (BuildRequest's
-		// merge applies later headers last), matching the raw-body path where a
-		// caller-supplied Content-Type overrides the automatic default.
-		headers = append([]agentops.KV{{Key: "Content-Type", Value: multipartContentType}}, headers...)
+		// The generated boundary is inseparable from the multipart body bytes,
+		// so no caller-supplied Content-Type can ever be correct here — honoring
+		// an override would send a header whose boundary does not match the body
+		// (a silent upstream parse failure). Reject instead of merging; the
+		// generated Content-Type is appended last so it is authoritative.
+		for _, kv := range headers {
+			if strings.EqualFold(strings.TrimSpace(kv.Key), "Content-Type") {
+				return &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        "--header Content-Type cannot be combined with --form/--form-file: the multipart Content-Type carries a generated boundary that must match the body",
+					Actionable: "Drop the --header Content-Type flag; execute sets the multipart Content-Type (with its boundary) automatically.",
+				}
+			}
+		}
+		headers = append(headers, agentops.KV{Key: "Content-Type", Value: multipartContentType})
 	}
 
 	// Build phase (agentops.BuildRequest): path-param substitution, query
@@ -345,7 +359,7 @@ func badFlagKV(flag, value string) error {
 // buildMultipartBody assembles a multipart/form-data body from --form text
 // fields (key=value) and --form-file file parts (key=@path), returning the body
 // reader and the boundary-carrying Content-Type the broker must forward verbatim
-// (CLI-1316). The broker is byte-transparent for the request body, so once the
+// (#1316). The broker is byte-transparent for the request body, so once the
 // boundary Content-Type is set the multipart bytes reach the upstream intact
 // with the credential still injected on the headers.
 func buildMultipartBody(form, formFile []string) (io.Reader, string, error) {
@@ -357,6 +371,19 @@ func buildMultipartBody(form, formFile []string) (io.Reader, string, error) {
 		if !ok || strings.TrimSpace(key) == "" {
 			return nil, "", badFlagKV("--form", kv)
 		}
+		// curl's -F treats a leading @ as a file reference; here file parts live
+		// on --form-file, so a @-prefixed --form value is almost always a curl
+		// habit that would silently send the literal string as text. Fail closed;
+		// a doubled @@ is the escape hatch for an intentional literal leading @.
+		if strings.HasPrefix(value, "@@") {
+			value = value[1:]
+		} else if strings.HasPrefix(value, "@") {
+			return nil, "", &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        fmt.Sprintf("--form value for %q starts with @ (%q); --form sends the literal text, file parts use --form-file", key, value),
+				Actionable: fmt.Sprintf("Upload a file with --form-file %s=@path, or send a literal leading @ by doubling it (--form %s=@@…).", key, key),
+			}
+		}
 		if werr := w.WriteField(key, value); werr != nil {
 			return nil, "", fmt.Errorf("write form field %q: %w", key, werr)
 		}
@@ -364,29 +391,45 @@ func buildMultipartBody(form, formFile []string) (io.Reader, string, error) {
 
 	for _, kv := range formFile {
 		key, spec, ok := strings.Cut(kv, "=")
-		if !ok || strings.TrimSpace(key) == "" || !strings.HasPrefix(spec, "@") {
+		path := strings.TrimPrefix(spec, "@")
+		if !ok || strings.TrimSpace(key) == "" || !strings.HasPrefix(spec, "@") || path == "" {
 			return nil, "", &ux.CodedError{
 				Code:       ux.CodeMissingArgument,
 				Msg:        fmt.Sprintf("invalid --form-file value %q; expected key=@path", kv),
 				Actionable: "Pass --form-file as key=@path (e.g. --form-file images=@face.jpg).",
 			}
 		}
-		path := strings.TrimPrefix(spec, "@")
 		f, oerr := os.Open(path) //nolint:gosec // operator-supplied upload path; same trust as --data-file.
 		if oerr != nil {
-			return nil, "", fmt.Errorf("read --form-file %s: %w", path, oerr)
+			// A wrong path is agent-causable input (ARCH-4), so it surfaces a
+			// machine error_code like the malformed-spec branch above.
+			return nil, "", &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        fmt.Sprintf("cannot read --form-file %s: %v", path, oerr),
+				Actionable: fmt.Sprintf("Check that the file exists and is readable, then retry with --form-file %s=@<path>.", key),
+			}
 		}
-		part, cerr := w.CreateFormFile(key, filepath.Base(path))
+		if fi, serr := f.Stat(); serr == nil && fi.IsDir() {
+			_ = f.Close()
+			return nil, "", &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        fmt.Sprintf("--form-file %s is a directory; expected a file", path),
+				Actionable: fmt.Sprintf("Point --form-file %s=@<path> at a regular file.", key),
+			}
+		}
+		part, cerr := createFilePart(w, key, path)
 		if cerr != nil {
 			_ = f.Close()
 			return nil, "", fmt.Errorf("create form file %q: %w", key, cerr)
 		}
 		// Stream the file straight into the multipart part rather than reading
 		// it fully into a slice and copying again (uploads may be up to the
-		// broker's 50 MiB multipart cap).
+		// broker's 50 MiB multipart cap). The body still accumulates in buf —
+		// a *bytes.Buffer keeps the request replayable for the SDK transport's
+		// retry rewind (GetBody), which an io.Pipe stream would break.
 		if _, werr := io.Copy(part, f); werr != nil {
 			_ = f.Close()
-			return nil, "", fmt.Errorf("write --form-file %s: %w", path, werr)
+			return nil, "", fmt.Errorf("read --form-file %s: %w", path, werr)
 		}
 		if cerr := f.Close(); cerr != nil {
 			return nil, "", fmt.Errorf("close --form-file %s: %w", path, cerr)
@@ -397,6 +440,23 @@ func buildMultipartBody(form, formFile []string) (io.Reader, string, error) {
 		return nil, "", fmt.Errorf("finalize multipart body: %w", err)
 	}
 	return &buf, w.FormDataContentType(), nil
+}
+
+// createFilePart creates the multipart part for a --form-file upload. Unlike
+// multipart.Writer.CreateFormFile — which hardcodes application/octet-stream —
+// the part Content-Type is inferred from the file extension so MIME-validating
+// upload APIs (image/jpeg, application/pdf, …) accept the part, falling back to
+// octet-stream for unknown extensions. Disposition escaping matches
+// CreateFormFile via multipart.FileContentDisposition.
+func createFilePart(w *multipart.Writer, key, path string) (io.Writer, error) {
+	contentType := mime.TypeByExtension(filepath.Ext(path))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", multipart.FileContentDisposition(key, filepath.Base(path)))
+	h.Set("Content-Type", contentType)
+	return w.CreatePart(h)
 }
 
 // executePlanPayload summarizes the resolved outbound request for --dry-run/
