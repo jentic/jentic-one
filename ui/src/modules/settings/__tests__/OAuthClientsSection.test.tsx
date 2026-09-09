@@ -127,29 +127,36 @@ describe('OAuthClientsSection', () => {
 		expect(await within(tab).findByText('1')).toBeInTheDocument();
 	});
 
-	it('deep-links to the queue via ?tab=queue and leads with the verifiable origins', async () => {
+	it('deep-links to the queue via ?tab=queue: name-led heading with the Unverified marker and adjacent origins', async () => {
 		renderSection('/settings?tab=queue');
 
-		// Origins-first (the #1264 anti-spoofing posture): the headline is the
-		// redirect-URI origins + software_id, with the type/status chips. The
-		// custom-scheme URI (WHATWG opaque origin) must render as
-		// scheme://host — NOT the literal "null" `URL.origin` serialises to.
-		const origins = await screen.findByText(
-			'http://localhost:33418, cursor://anysphere.cursor-mcp',
-		);
-		expect(origins.textContent).not.toContain('null');
-		const row = origins.closest('h3');
-		expect(row).not.toBeNull();
-		expect(within(row as HTMLElement).getByText('Public')).toBeInTheDocument();
-		expect(within(row as HTMLElement).getByText('DCR')).toBeInTheDocument();
-		expect(within(row as HTMLElement).getByText('Agent consent')).toBeInTheDocument();
-		expect(within(row as HTMLElement).getByText('Pending')).toBeInTheDocument();
-		expect(screen.getByText('com.cursor.ide')).toBeInTheDocument();
+		// Hierarchy v2: the client NAME is the heading — what humans scan for.
+		const heading = await screen.findByRole('heading', { name: 'Cursor' });
+		const card = heading.closest('article') as HTMLElement;
+		expect(card).not.toBeNull();
 
-		// The attacker-chosen display name is demoted to labelled secondary text.
-		expect(screen.getByText(/Self-reported name:/)).toBeInTheDocument();
-		expect(screen.getByText('Cursor')).toBeInTheDocument();
-		expect(within(row as HTMLElement).queryByText('Cursor')).not.toBeInTheDocument();
+		// …but it carries the anti-spoofing posture through LABELING: the
+		// Unverified chip sits beside the name, and its tooltip explains why.
+		// These pins must fail if someone removes the marker or the origins.
+		expect(within(card).getByText('Unverified')).toBeInTheDocument();
+		expect(
+			within(card).getByText(/self-reported by the client during registration/),
+		).toBeInTheDocument();
+
+		// The VERIFIABLE line sits directly under the name: origins +
+		// software_id. The custom-scheme URI (WHATWG opaque origin) must
+		// render as scheme://host — NOT the literal "null" `URL.origin`
+		// serialises to.
+		const verifiable = within(card).getByText(
+			'http://localhost:33418, cursor://anysphere.cursor-mcp · com.cursor.ide',
+		);
+		expect(verifiable.textContent).not.toContain('null');
+
+		// Status right-aligned in the header; type chips in the metadata block.
+		expect(within(card).getByText('Pending')).toBeInTheDocument();
+		expect(within(card).getByText('Public')).toBeInTheDocument();
+		expect(within(card).getByText('DCR')).toBeInTheDocument();
+		expect(within(card).getByText('Agent consent')).toBeInTheDocument();
 	});
 
 	it('approves a pending registration and empties the queue (D7 pending→approved)', async () => {

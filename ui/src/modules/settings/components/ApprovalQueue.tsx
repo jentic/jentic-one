@@ -1,13 +1,13 @@
 /**
- * ApprovalQueue — the D7 DCR approval queue, rebuilt origins-first.
+ * ApprovalQueue — the D7 DCR approval queue, name-led with a trust marker.
  *
- * Anti-spoofing posture (the #1264 authorize-page stance, GitHub's OAuth-app
- * review grammar): the row HEADLINE is the verifiable signal — the
- * redirect-URI origins plus the RFC 7591 `software_id` — while the
- * attacker-chosen `client_name` is demoted to secondary text explicitly
- * labelled "self-reported name". Each row also shows the allowed scopes (if
- * restricted), the consent-model chip, and registered-`timeAgo` provenance
- * (+`created_by` for admin-registered rows).
+ * Anti-spoofing posture (the #1264 authorize-page stance): the row heading is
+ * the client NAME — what humans scan for — explicitly flagged with an
+ * "Unverified" chip (the name is attacker-chosen), while the VERIFIABLE
+ * signal — redirect-URI origins + the RFC 7591 `software_id` — sits directly
+ * beneath in quiet mono for the admin to check before approving. Each row
+ * also shows the allowed scopes (if restricted), the consent-model chip, and
+ * registered-`timeAgo` provenance (+`created_by` for admin-registered rows).
  *
  * Approve activates the client (approved+active atomically); Deny keeps the
  * row (reversible — the Denied filter re-offers Approve as the recovery
@@ -31,6 +31,7 @@ import {
 	LoadingState,
 	SegmentedToggle,
 	toast,
+	Tooltip,
 	type SegmentedToggleOption,
 } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
@@ -122,18 +123,22 @@ const SCOPE_PREVIEW_COUNT = 4;
 const URI_INLINE_LIMIT = 2;
 
 /**
- * One registration awaiting decision — GitHub's app-approval "review card"
- * grammar, origins-first:
+ * One registration awaiting decision — name-led with an explicit trust
+ * marker (hierarchy v2, per review):
  *
- *  - HEADER: the verifiable identity leads (redirect-URI origins as the
- *    heading, with the type/status chips beside it) and provenance
- *    ("registered <timeAgo>") sits right-aligned; the attacker-chosen name
- *    is demoted to a quiet, explicitly labelled "Self-reported name" line.
- *  - BODY: compact muted metadata — client_id (+ copy), the full redirect
- *    URIs (behind a disclosure when long; the heading's origins already
- *    summarise them), and a one-line scope summary with a "+N more"
- *    expander instead of a chip wall (13 chips must not out-shout the
- *    decision).
+ *  - HEADER: the client NAME is the heading — it's what humans scan for —
+ *    immediately followed by a small "Unverified" chip (tooltip explains the
+ *    name is self-reported), which carries the anti-spoofing posture through
+ *    LABELING rather than typographic demotion. Status badge + provenance
+ *    ("registered <timeAgo>") right-aligned.
+ *  - Directly under the title: the VERIFIABLE line — redirect-URI origins +
+ *    `software_id` in quiet mono. This is what the admin actually checks
+ *    before approving (the #1264 authorize-page posture); for local DCR
+ *    clients the origin is `http://127.0.0.1:…` noise as a TITLE, but it's
+ *    exactly right as the verification line.
+ *  - BODY: compact muted metadata — client_id (+ copy) with the type chips,
+ *    the full redirect URIs (behind a disclosure when long), and a one-line
+ *    scope summary with a "+N more" expander instead of a chip wall.
  *  - FOOTER: the decision verbs, grouped and right-anchored — Deny (quiet,
  *    danger-tinted) before Approve (primary). Denied rows re-offer Approve
  *    only (the deliberate denied→active recovery).
@@ -161,44 +166,63 @@ function QueueRow({
 	const hiddenScopeCount = scopes == null ? 0 : scopes.length - visibleScopes.length;
 	const showUriList = client.redirect_uris.length <= URI_INLINE_LIMIT || urisExpanded;
 
+	// One string so it reads (and truncates) as a single quiet line.
+	const verifiableLine = [
+		origins.length > 0 ? origins.join(', ') : '(no redirect URIs)',
+		client.software_id,
+	]
+		.filter(Boolean)
+		.join(' · ');
+
 	return (
 		<article className="border-border rounded-lg border">
-			{/* Header: the VERIFIABLE identity leads; provenance right-aligned. */}
+			{/* Header: the name leads (it's what humans scan for), explicitly
+			    marked Unverified; status + provenance right-aligned. */}
 			<div className="px-4 pt-4">
 				<div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-					<h3 className="text-foreground flex min-w-0 flex-wrap items-center gap-2 font-medium">
-						<code className="min-w-0 truncate font-mono text-sm">
-							{origins.length > 0 ? origins.join(', ') : '(no redirect URIs)'}
-						</code>
-						<ClientTypeChips client={client} />
-						<ClientStatusBadges client={client} />
-					</h3>
-					<p className="text-muted-foreground shrink-0 text-xs">
-						registered{' '}
-						<span title={formatTimestamp(client.created_at)}>
-							{timeAgo(client.created_at)}
-						</span>
-						{client.registration_source === 'admin' && client.created_by && (
-							<>
-								{' '}
-								by <ActorLabel actorId={client.created_by} />
-							</>
+					<div className="flex min-w-0 items-center gap-2">
+						<h3 className="text-foreground min-w-0 truncate text-base font-semibold">
+							{client.name}
+						</h3>
+						{/* The chip sits OUTSIDE the h3 so the tooltip's described
+						    text doesn't pollute the heading's accessible name. */}
+						{client.registration_source === 'dcr' && (
+							<Tooltip content="Name is self-reported by the client during registration — verify the origin below.">
+								<Badge variant="warning" className="shrink-0">
+									Unverified
+								</Badge>
+							</Tooltip>
 						)}
-					</p>
+					</div>
+					<div className="flex shrink-0 flex-wrap items-center gap-2">
+						<ClientStatusBadges client={client} />
+						<span className="text-muted-foreground text-xs">
+							registered{' '}
+							<span title={formatTimestamp(client.created_at)}>
+								{timeAgo(client.created_at)}
+							</span>
+							{client.registration_source === 'admin' && client.created_by && (
+								<>
+									{' '}
+									by <ActorLabel actorId={client.created_by} />
+								</>
+							)}
+						</span>
+					</div>
 				</div>
-				{/* The self-chosen display name — quiet, and explicitly marked. */}
-				<p className="text-muted-foreground mt-1 text-sm">
-					Self-reported name: <span className="text-foreground">{client.name}</span>
-					{client.software_id && (
-						<code className="ml-2 font-mono text-xs">{client.software_id}</code>
-					)}
-					{client.description && <span> — {client.description}</span>}
+				{/* The verifiable identity — origins + software_id — right under
+				    the self-reported name it keeps honest. */}
+				<p className="text-muted-foreground mt-1 min-w-0 truncate font-mono text-xs">
+					{verifiableLine}
 				</p>
+				{client.description && (
+					<p className="text-muted-foreground mt-1 text-sm">{client.description}</p>
+				)}
 			</div>
 
 			{/* Quiet metadata block — mono/muted, not competing with the title. */}
 			<div className="text-muted-foreground space-y-1.5 px-4 pt-3 pb-4 text-xs">
-				<p className="flex items-center gap-1">
+				<p className="flex flex-wrap items-center gap-1.5">
 					<code className="bg-muted rounded px-1.5 py-0.5 font-mono">
 						{client.client_id}
 					</code>
@@ -210,9 +234,10 @@ function QueueRow({
 						toastMessage="Client ID copied"
 						ariaLabel={`Copy client ID for ${client.name}`}
 					/>
+					<ClientTypeChips client={client} />
 				</p>
-				{/* The heading's origins already summarise the URIs; the full
-				    list collapses behind a disclosure when it gets long. */}
+				{/* The verifiable line's origins already summarise the URIs; the
+				    full list collapses behind a disclosure when it gets long. */}
 				{client.redirect_uris.length > URI_INLINE_LIMIT && (
 					<Button
 						variant="ghost"
