@@ -25,6 +25,17 @@ class BoundAgentRow(NamedTuple):
     bound_at: datetime
 
 
+class CredentialBoundAgentRow(NamedTuple):
+    """Result row for agents directly bound to a credential (theme 5 phase 1)."""
+
+    binding_id: str
+    agent_id: str
+    agent_name: str
+    agent_status: str
+    bound_at: datetime
+    suspended: bool
+
+
 class UserDisplayRow(NamedTuple):
     """Display fields for a user, resolved cross-DB for labelling only."""
 
@@ -204,3 +215,53 @@ class PrerequisiteRepository:
                 {"toolkit_id": toolkit_id, "limit": limit},
             )
         return [BoundAgentRow(*row) for row in result.fetchall()]
+
+    @staticmethod
+    async def list_agents_for_credential(
+        session: AsyncSession,
+        *,
+        credential_id: str,
+        cursor: tuple[datetime, str] | None = None,
+        limit: int = 50,
+    ) -> list[CredentialBoundAgentRow]:
+        """Return agents directly bound to a credential, paginated by (bound_at DESC, id DESC).
+
+        The reverse lookup behind ``GET /credentials/{id}/agents`` (theme 5
+        phase 1) — the direct-binding analogue of ``list_agents_for_toolkit``
+        above, reading ``agent_credential_bindings`` instead of the toolkit
+        join table. Suspended bindings are included (with their flag) so the
+        credential-detail view can show a reversible cut-off, not hide it.
+        """
+        if cursor is not None:
+            cursor_ts, cursor_id = cursor
+            result = await session.execute(
+                text(
+                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended "
+                    "FROM agent_credential_bindings b "
+                    "JOIN agents a ON a.id = b.agent_id "
+                    "WHERE b.credential_id = :credential_id "
+                    "AND (b.bound_at < :cursor_ts "
+                    "     OR (b.bound_at = :cursor_ts AND b.id < :cursor_id)) "
+                    "ORDER BY b.bound_at DESC, b.id DESC "
+                    "LIMIT :limit"
+                ),
+                {
+                    "credential_id": credential_id,
+                    "cursor_ts": cursor_ts,
+                    "cursor_id": cursor_id,
+                    "limit": limit,
+                },
+            )
+        else:
+            result = await session.execute(
+                text(
+                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended "
+                    "FROM agent_credential_bindings b "
+                    "JOIN agents a ON a.id = b.agent_id "
+                    "WHERE b.credential_id = :credential_id "
+                    "ORDER BY b.bound_at DESC, b.id DESC "
+                    "LIMIT :limit"
+                ),
+                {"credential_id": credential_id, "limit": limit},
+            )
+        return [CredentialBoundAgentRow(*row) for row in result.fetchall()]

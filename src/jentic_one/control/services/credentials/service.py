@@ -16,7 +16,10 @@ from jentic_one.control.repos import (
     Sigv4CredentialRepository,
     TokenValueCredentialRepository,
 )
-from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.control.repos.prerequisite_repo import (
+    CredentialBoundAgentRow,
+    PrerequisiteRepository,
+)
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
@@ -337,6 +340,56 @@ class CredentialService:
             if credential is None:
                 raise CredentialNotFoundError(credential_id)
             return self._to_redacted(credential)
+
+    async def list_agents(
+        self,
+        credential_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+        identity: Identity,
+    ) -> tuple[list[CredentialBoundAgentRow], bool, str | None]:
+        """List agents directly bound to a credential. Returns (data, has_more, next_cursor).
+
+        The reverse lookup for the credential-detail "Agents" view (theme 5
+        phase 1) — the direct-binding analogue of ``ToolkitService.list_agents``.
+        Visibility is the same gate as ``get``: the caller must be able to see
+        the credential itself before enumerating who is bound to it (hard
+        problem 7/9 owner-gating; existence never leaks past the filters).
+        """
+        access_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(
+                session, credential_id, filters=access_filters
+            )
+            if credential is None:
+                raise CredentialNotFoundError(credential_id)
+
+        decoded_cursor = None
+        if cursor is not None:
+            ts, cid = decode_cursor_str(cursor)
+            decoded_cursor = (ts, cid)
+
+        async with self._ctx.admin_db.session() as session:
+            rows = await PrerequisiteRepository.list_agents_for_credential(
+                session, credential_id=credential_id, cursor=decoded_cursor, limit=limit + 1
+            )
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = encode_cursor(last.bound_at, last.binding_id)
+
+        return rows, has_more, next_cursor
 
     async def list_all(
         self,

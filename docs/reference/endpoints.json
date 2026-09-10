@@ -2234,6 +2234,32 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listCredentialAgents",
+      "path": "/credentials/{credential_id}/agents",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "List agents bound to credential",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
         "credentials:write": [
           "credentials:read"
         ]
@@ -5335,5 +5361,5 @@
     ],
     "total": 33
   },
-  "total": 187
+  "total": 188
 }

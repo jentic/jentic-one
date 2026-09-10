@@ -34,6 +34,8 @@ from jentic_one.control.web.schemas.credentials import (
     APIReferenceResponse,
     ConnectChallengeResponse,
     ConnectRequestBody,
+    CredentialAgentListResponse,
+    CredentialAgentResponse,
     CredentialCreateRequest,
     CredentialCreateResponse,
     CredentialListResponse,
@@ -288,6 +290,45 @@ async def get_credential(
     """Get a single credential with redacted secrets."""
     view = await svc.get(credential_id, identity=identity)
     return _to_redacted_response(view)
+
+
+@router.get(
+    "/credentials/{credential_id}/agents",
+    summary="List agents bound to credential",
+    responses=not_found(),
+)
+async def list_credential_agents(
+    credential_id: str,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> CredentialAgentListResponse:
+    """List agents directly bound to a credential with cursor-based pagination.
+
+    The reverse lookup for the credential-detail "Agents" view (theme 5
+    phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+    Suspended bindings are included with their flag set.
+    """
+    data, has_more, next_cursor = await svc.list_agents(
+        credential_id, cursor=cursor, limit=limit, identity=identity
+    )
+    return CredentialAgentListResponse(
+        data=[
+            CredentialAgentResponse(
+                agent_id=row.agent_id,
+                agent_name=row.agent_name,
+                status=row.agent_status,
+                bound_at=row.bound_at,
+                suspended=row.suspended,
+            )
+            for row in data
+        ],
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
 
 
 @router.patch(

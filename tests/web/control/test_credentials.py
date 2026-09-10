@@ -11,12 +11,14 @@ Exercises the real HTTP path (router → service → DB) to pin two invariants:
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from jentic_one.admin.repos import AgentCredentialBindingRepository
 from jentic_one.shared.context import Context
 
 pytestmark = pytest.mark.integration
@@ -268,3 +270,137 @@ def test_catalog_api_id_defaults_to_null(cred_writer_client: TestClient) -> None
     cred_id = _create_api_key(cred_writer_client)
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
     assert got["catalog_api_id"] is None
+
+
+# --- Agent bindings (reverse lookup, theme 5 phase 1) ---
+
+
+@pytest.fixture()
+async def bound_agents(
+    cred_writer_client: TestClient, web_context: Context
+) -> AsyncGenerator[tuple[str, list[str]], None]:
+    """A credential with two directly-bound agents, the second suspended.
+
+    Yields ``(credential_id, [agent_id_active, agent_id_suspended])``. Bindings
+    live in the admin DB (cross-DB from the credential row) — exactly the seam
+    the reverse-lookup endpoint has to bridge.
+    """
+    credential_id = _create_api_key(cred_writer_client)
+    agent_ids = ["agnt_credagents_active", "agnt_credagents_suspend"]
+    async with web_context.admin_db.transaction() as session:
+        for agent_id, name in zip(
+            agent_ids, ("cred-agents-active", "cred-agents-suspended"), strict=True
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO agents (id, name, registered_by, status, created_by) "
+                    "VALUES (:id, :name, :registered_by, 'pending', 'usr_test') "
+                    "ON CONFLICT DO NOTHING"
+                ),
+                {"id": agent_id, "name": name, "registered_by": "usr_webtest_cred_writer"},
+            )
+            await AgentCredentialBindingRepository.bind(
+                session, agent_id=agent_id, credential_id=credential_id, created_by="usr_test"
+            )
+        await AgentCredentialBindingRepository.set_suspended(
+            session, agent_id=agent_ids[1], credential_id=credential_id, suspended=True
+        )
+    yield credential_id, agent_ids
+
+    async with web_context.admin_db.session() as session:
+        await session.execute(
+            text("DELETE FROM agent_credential_bindings WHERE credential_id = :cid"),
+            {"cid": credential_id},
+        )
+        for agent_id in agent_ids:
+            await session.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})
+        await session.commit()
+
+
+async def test_list_credential_agents(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """The reverse lookup returns every direct binding with its suspended flag —
+    a suspended binding is shown (reversible cut-off), never hidden."""
+    credential_id, (active_id, suspended_id) = bound_agents
+
+    resp = cred_writer_client.get(f"/credentials/{credential_id}/agents")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["has_more"] is False
+    assert body["next_cursor"] is None
+    rows = {r["agent_id"]: r for r in body["data"]}
+    assert set(rows) == {active_id, suspended_id}
+    assert rows[active_id]["agent_name"] == "cred-agents-active"
+    assert rows[active_id]["suspended"] is False
+    assert rows[suspended_id]["suspended"] is True
+    for row in rows.values():
+        assert row["status"] == "pending"
+        assert row["bound_at"] is not None
+
+
+async def test_list_credential_agents_paginates(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """limit=1 walks the two bindings across two pages via next_cursor."""
+    credential_id, agent_ids = bound_agents
+
+    first = cred_writer_client.get(f"/credentials/{credential_id}/agents?limit=1").json()
+    assert len(first["data"]) == 1
+    assert first["has_more"] is True
+    assert first["next_cursor"]
+
+    second = cred_writer_client.get(
+        f"/credentials/{credential_id}/agents",
+        params={"limit": 1, "cursor": first["next_cursor"]},
+    ).json()
+    assert len(second["data"]) == 1
+    assert second["has_more"] is False
+    seen = {first["data"][0]["agent_id"], second["data"][0]["agent_id"]}
+    assert seen == set(agent_ids)
+
+
+def test_list_credential_agents_empty(cred_writer_client: TestClient) -> None:
+    """A credential with no direct bindings returns an empty page, not 404."""
+    credential_id = _create_api_key(cred_writer_client)
+    resp = cred_writer_client.get(f"/credentials/{credential_id}/agents")
+    assert resp.status_code == 200
+    assert resp.json() == {"data": [], "has_more": False, "next_cursor": None}
+
+
+def test_list_credential_agents_not_found(cred_writer_client: TestClient) -> None:
+    resp = cred_writer_client.get("/credentials/cred_nonexistent/agents")
+    assert resp.status_code == 404
+
+
+def test_list_credential_agents_respects_limit_bounds(cred_writer_client: TestClient) -> None:
+    credential_id = _create_api_key(cred_writer_client)
+    assert cred_writer_client.get(f"/credentials/{credential_id}/agents?limit=0").status_code == 422
+    assert (
+        cred_writer_client.get(f"/credentials/{credential_id}/agents?limit=201").status_code == 422
+    )
+
+
+def test_list_credential_agents_owner_gated(
+    bound_orphan_client: TestClient,
+    cred_writer_client: TestClient,
+    bound_agents: tuple[str, list[str]],
+) -> None:
+    """A caller who cannot see the credential gets a uniform 404 — who is bound
+    to a credential is exactly as sensitive as the credential itself (owner
+    gating on both axes, theme hard problems 7/9)."""
+    credential_id, _ = bound_agents
+    # The bound orphan holds owner:credentials:read (passes the route gate) but
+    # has no visibility path to this credential: not its creator, not org:admin,
+    # and it is not shared via any toolkit the orphan is bound to.
+    resp = bound_orphan_client.get(f"/credentials/{credential_id}/agents")
+    assert resp.status_code == 404
+
+
+def test_list_credential_agents_wrong_scope_is_403(
+    wrong_scope_client: TestClient, cred_writer_client: TestClient
+) -> None:
+    """A caller without any credentials-read scope is rejected at the gate."""
+    credential_id = _create_api_key(cred_writer_client)
+    resp = wrong_scope_client.get(f"/credentials/{credential_id}/agents")
+    assert resp.status_code == 403

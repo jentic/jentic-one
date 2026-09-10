@@ -63,6 +63,8 @@ export type { ClaimRequest } from './models/ClaimRequest';
 export type { ConnectChallengeResponse } from './models/ConnectChallengeResponse';
 export type { ConnectRequestBody } from './models/ConnectRequestBody';
 export type { CreateAdminRequest } from './models/CreateAdminRequest';
+export type { CredentialAgentListResponse } from './models/CredentialAgentListResponse';
+export type { CredentialAgentResponse } from './models/CredentialAgentResponse';
 export type { CredentialBindingEntry } from './models/CredentialBindingEntry';
 export type { CredentialBindingListResponse } from './models/CredentialBindingListResponse';
 export type { CredentialBindingResponse } from './models/CredentialBindingResponse';

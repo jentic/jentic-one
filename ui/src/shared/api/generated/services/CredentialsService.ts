@@ -10,6 +10,7 @@ import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateReques
 import type { BearerTokenUpdateRequest } from '../models/BearerTokenUpdateRequest';
 import type { ConnectChallengeResponse } from '../models/ConnectChallengeResponse';
 import type { ConnectRequestBody } from '../models/ConnectRequestBody';
+import type { CredentialAgentListResponse } from '../models/CredentialAgentListResponse';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
@@ -229,6 +230,46 @@ export class CredentialsService {
             },
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * List agents bound to credential
+     * List agents directly bound to a credential with cursor-based pagination.
+     *
+     * The reverse lookup for the credential-detail "Agents" view (theme 5
+     * phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+     * Suspended bindings are included with their flag set.
+     * @returns CredentialAgentListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listCredentialAgents({
+        credentialId,
+        cursor,
+        limit = 50,
+    }: {
+        credentialId: string,
+        cursor?: (string | null),
+        limit?: number,
+    }): CancelablePromise<CredentialAgentListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/credentials/{credential_id}/agents',
+            path: {
+                'credential_id': credentialId,
+            },
+            query: {
+                'cursor': cursor,
+                'limit': limit,
+            },
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

@@ -452,3 +452,27 @@ class ProviderDiscoveryResponse(BaseModel):
     """Discovery response listing all available credential providers."""
 
     providers: list[ProviderDiscoveryEntryResponse]
+
+
+class CredentialAgentResponse(BaseModel):
+    """Agent directly bound to a credential (theme 5 phase 1)."""
+
+    agent_id: str
+    agent_name: str
+    status: str
+    bound_at: datetime
+    suspended: bool = Field(
+        description=(
+            "True when the binding is soft-suspended (reversible cut-off): the "
+            "binding and its rules survive, but the agent cannot execute "
+            "through this credential until resumed."
+        )
+    )
+
+
+class CredentialAgentListResponse(BaseModel):
+    """Paginated list of agents directly bound to a credential."""
+
+    data: list[CredentialAgentResponse]
+    has_more: bool
+    next_cursor: str | None = None
