@@ -27,6 +27,7 @@ from typing import Any
 
 import mcp.types as mcp_types
 
+from jentic_one.mcp.spec import SERVED_TOOLS
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.instance_identity import resolve_instance_identity
 
@@ -43,13 +44,21 @@ CODE_TRANSPORT_ERROR = "TRANSPORT_ERROR"
 CODE_INTERNAL_ERROR = "INTERNAL_ERROR"
 
 #: error codes whose default recovery pointer is ``get_started`` (Go:
-#: ``softErrorExtra``'s code-keyed mapping). ``get_started`` is not served by
-#: this mount yet (it queues behind this PR with the other CLI-flavoured
-#: tools), but the pointer strings are part of the shared envelope contract —
-#: they must match the stdio server byte-for-byte.
+#: ``softErrorExtra``'s code-keyed mapping). The pointer *spellings* stay the
+#: shared envelope contract (byte-for-byte with the stdio server, which
+#: serves all ten tools), but this mount serves only ``SERVED_TOOLS`` —
+#: :func:`soft_error_result` drops any pointer that does not resolve in this
+#: lane's ``tools/list`` (#1254): a recovery pointer at a tool the caller
+#: cannot discover or call is a dead end, worse than no pointer.
 _DEFAULT_NEXT_TOOL_CODES = frozenset(
     {CODE_NOT_AUTHENTICATED, CODE_PENDING_APPROVAL, CODE_RESOLVE_FAILED}
 )
+
+#: the code-keyed default pointer (Go: ``softErrorExtra``). Not served on
+#: this lane, so today the default never reaches a rendered envelope — it is
+#: kept so serving ``get_started`` later restores the stdio behaviour with no
+#: further change here.
+_DEFAULT_NEXT_TOOL = "get_started"
 
 
 class ToolError(Exception):
@@ -124,10 +133,21 @@ def soft_error_result(ctx: Context, err: ToolError) -> mcp_types.CallToolResult:
         payload["details"] = err.details
     next_tool = err.next_tool
     if not next_tool and err.code in _DEFAULT_NEXT_TOOL_CODES:
-        next_tool = "get_started"
-    if next_tool:
+        next_tool = _DEFAULT_NEXT_TOOL
+    # Lane-aware pointer filter (#1254): only emit a ``next_tool`` the caller
+    # can actually see in THIS mount's ``tools/list``. Handlers keep raising
+    # the shared stdio pointer spellings (``get_started``, ``request_access``,
+    # …) so the contract never forks — the projection onto the served subset
+    # happens here, at the one seam every soft error renders through.
+    if next_tool in SERVED_TOOLS:
         payload["next_tool"] = next_tool
     for key, value in (err.extra or {}).items():
+        # The same lane filter guards the ``extra`` pass-through: without it a
+        # call site could smuggle a dangling pointer past the seam via
+        # ``extra={"next_tool": …}`` (``setdefault`` would insert it whenever
+        # the filter above dropped the field).
+        if key == "next_tool" and value not in SERVED_TOOLS:
+            continue
         payload.setdefault(key, value)
     payload["instance"] = instance_stamp(ctx)
     return _text_result(payload, is_error=True)
