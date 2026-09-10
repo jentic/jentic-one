@@ -1,143 +1,204 @@
 """Repository for cross-database effect operations.
 
-Uses raw SQL for admin-DB writes to avoid importing admin ORM models — the
-control module must not import from the admin module. Uses ON CONFLICT DO NOTHING
-for idempotent inserts without requiring rollback.
+Uses raw SQL for admin-DB reads/writes to avoid importing admin ORM models —
+the control module must not import from the admin module. Uses ON CONFLICT DO
+NOTHING for idempotent inserts without requiring rollback.
 """
 
 from __future__ import annotations
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models.api_identity import credential_coverage_where, slugify_api_field
 
 
-class BindTargetMissingError(Exception):
-    """A credential:bind insert failed a foreign-key check: a target row vanished.
-
-    Raised by :meth:`EffectsRepository.bind_credential_to_toolkit` when the
-    binding insert hits an FK violation — the toolkit or credential was deleted
-    between the caller's pre-validation and this write (a TOCTOU race). ``target``
-    is ``"toolkit"`` or ``"credential"`` so the control *service* can surface the
-    precise 422 without importing DB internals (``sqlalchemy.exc``) itself — which
-    ``tests/arch/test_no_direct_db.py`` forbids outside the repository layer.
-    """
-
-    def __init__(self, target: str, target_id: str) -> None:
-        super().__init__(f"{target} '{target_id}' not found for credential bind")
-        self.target = target
-        self.target_id = target_id
-
-
 class EffectsRepository:
-    """Write operations for approval effects, using raw SQL for cross-DB tables."""
+    """Read/write operations for approval effects, using raw SQL for cross-DB tables."""
 
     @staticmethod
-    def _owner_in_clause(
-        owner_ids: list[str] | None,
+    def _in_clause(
+        values: list[str] | None,
         params: dict[str, object],
         *,
-        column: str,
+        prefix: str,
     ) -> str | None:
-        """Build a parameterized ``AND <column> IN (...)`` owner-scope fragment.
+        """Build a parameterized ``<p>_0, <p>_1, …`` placeholder list.
 
-        Mutates ``params`` in place with ``owner_0..owner_n`` bindings and returns
-        the SQL fragment (with a leading space) to splice into the query. Returns:
-        - ``""`` when ``owner_ids is None`` (org:admin — no owner restriction),
-        - ``None`` when ``owner_ids`` is an empty list (sentinel: caller must
+        Mutates ``params`` in place and returns the comma-joined placeholder
+        fragment. Returns:
+
+        - ``""`` when ``values is None`` (no restriction — caller omits the
+          clause entirely),
+        - ``None`` when ``values`` is an empty list (sentinel: caller must
           short-circuit to "no rows" without running the query).
-
-        Centralizing this keeps the two callers (``resolve_toolkits_for_api`` and
-        ``toolkit_visible_to_owners``) from re-deriving the placeholder/param
-        plumbing and guarantees both stay parameterized (no string interpolation
-        of owner ids).
         """
-        if owner_ids is None:
+        if values is None:
             return ""
-        if not owner_ids:
+        if not values:
             return None
-        placeholders = ", ".join(f":owner_{i}" for i in range(len(owner_ids)))
-        for i, oid in enumerate(owner_ids):
-            params[f"owner_{i}"] = oid
-        return f"  AND {column} IN ({placeholders}) "
+        placeholders = ", ".join(f":{prefix}_{i}" for i in range(len(values)))
+        for i, val in enumerate(values):
+            params[f"{prefix}_{i}"] = val
+        return placeholders
 
     @staticmethod
-    async def bind_credential_to_toolkit(
+    async def resolve_credentials_for_api(
         session: AsyncSession,
         *,
-        toolkit_id: str,
-        credential_id: str,
-        created_by: str,
-    ) -> tuple[str, bool]:
-        """Create a toolkit-credential binding idempotently.
+        vendor: str,
+        name: str | None,
+        version: str | None,
+        owner_ids: list[str] | None = None,
+        bound_credential_ids: list[str] | None = None,
+    ) -> list[str]:
+        """Return credential IDs covering the given API identity, decider-visible.
 
-        Returns (binding_id, already_bound).
+        Theme-5 Phase 3 successor of the toolkit-era ``resolve_toolkits_for_api``
+        — the join through ``toolkit_credential_bindings`` is gone; the
+        candidate axis is the credential itself. An empty ``name``/``version``
+        reference axis means "any"; a NULL ``api_name``/``api_version`` on the
+        credential means it covers all names/versions for the vendor.
+
+        **Owner axis (hard problem 8):** the toolkit era scoped candidates by
+        the *toolkit's* owner (``tk.created_by``). Dropping the join must not
+        silently narrow resolution to "credentials I own" — a decider may
+        legitimately govern another owner's credential through an agent they
+        own that is already bound to it (the binding-widened visibility of
+        ``scoping/filters._binding_visibility_clause``). A credential is a
+        candidate when the decider **owns it** (``created_by IN owner_ids``)
+        **or** it appears in ``bound_credential_ids`` — the ids of credentials
+        bound to agents the decider owns, resolved by the caller from the
+        admin DB (`list_bound_credential_ids_for_owned_agents`) and pushed
+        down here as a plain id list (the cross-DB seam of hard problem 9; no
+        admin table is referenced in this query).
+
+        ``owner_ids`` is ``None`` only for an ``org:admin`` decider, who may
+        resolve across all owners (``bound_credential_ids`` is then irrelevant).
+        Passing an empty list for both returns no candidates.
+
+        To avoid widening a name-specific reference into a vendor-wide
+        (``api_name IS NULL``) credential, an **exact** name/version match is
+        preferred: NULL-wildcard credentials only contribute when no exact
+        match exists for the requested name (#775).
+
+        The ``vendor``/``name`` reference axes are canonicalized (slugified)
+        here before binding, because stored rows are canonical (the credential
+        service slugifies on write and the backfill migration re-slugs legacy
+        rows) — a raw reference like ``GitHub.com`` must be slugified to
+        ``github-com`` or it would match nothing (#656). ``version`` is trimmed
+        but never slugified, matching ``canonical_credential_scope``.
         """
-        existing = await ToolkitBindingRepository.get(session, toolkit_id, credential_id)
-        if existing is not None:
-            return existing.id, True
+        params: dict[str, object] = {"vendor": slugify_api_field(vendor)}
+        if name:
+            params["name"] = slugify_api_field(name)
+        if version:
+            params["version"] = version.strip()
+        name_scoped = bool(name)
+        version_scoped = bool(version)
 
-        try:
-            async with session.begin_nested():
-                binding = await ToolkitBindingRepository.bind(
-                    session,
-                    toolkit_id=toolkit_id,
-                    credential_id=credential_id,
-                    created_by=created_by,
-                )
-                return binding.id, False
-        except IntegrityError as exc:
-            # Two distinct IntegrityError causes converge here:
-            #  - a concurrent insert of the SAME (toolkit, credential) pair — the
-            #    unique constraint fired and the row now exists, so this is a
-            #    benign idempotent hit; OR
-            #  - a foreign-key violation because the toolkit/credential was
-            #    deleted between pre-validation and this write (a same-/cross-tx
-            #    TOCTOU race). Here no row exists — a bare `assert` would turn
-            #    that into an AssertionError → HTTP 500.
-            existing = await ToolkitBindingRepository.get(session, toolkit_id, credential_id)
-            if existing is not None:
-                return existing.id, True
-            # Real FK violation: attribute it to the side that vanished so the
-            # service can raise the matching 422. owner_ids=None is a pure
-            # existence check (no owner restriction) — used only to attribute the
-            # failure, never to authorize. Raising a neutral BindTargetMissingError
-            # keeps sqlalchemy.exc out of the control service. See issue #649.
-            toolkit_present = await EffectsRepository.toolkit_visible_to_owners(
-                session, toolkit_id=toolkit_id, owner_ids=None
+        visibility = ""
+        if owner_ids is not None:
+            owners = EffectsRepository._in_clause(owner_ids, params, prefix="owner")
+            bound = EffectsRepository._in_clause(
+                bound_credential_ids if bound_credential_ids is not None else [],
+                params,
+                prefix="bound",
             )
-            if toolkit_present:
-                raise BindTargetMissingError("credential", credential_id) from exc
-            raise BindTargetMissingError("toolkit", toolkit_id) from exc
+            clauses: list[str] = []
+            if owners is not None:
+                clauses.append(f"c.created_by IN ({owners})")
+            if bound is not None:
+                clauses.append(f"c.id IN ({bound})")
+            if not clauses:
+                return []
+            visibility = f" AND ({' OR '.join(clauses)}) "
+
+        # Shared coverage rule (see shared/models/api_identity.credential_coverage_where):
+        # a wildcard *reference* axis (empty name/version at bind time) omits that
+        # axis so it matches anything; a scoped axis matches NULL-wildcard or exact.
+        coverage = credential_coverage_where(name_scoped=name_scoped, version_scoped=version_scoped)
+        # Prefer an exact name match only when the reference names one — otherwise
+        # there is no exactness to rank on.
+        name_exact = "(CASE WHEN c.api_name = :name THEN 1 ELSE 0 END)" if name_scoped else "0"
+        base_query = (
+            f"SELECT DISTINCT c.id, {name_exact} AS name_exact "
+            "FROM credentials c "
+            f"WHERE {coverage} "
+            f"{visibility}"
+        )
+        result = await session.execute(text(base_query), params)
+        rows = result.all()
+        # Prefer exact name matches: if any candidate matched the requested name
+        # exactly, drop the NULL-wildcard (vendor-wide) matches so a named
+        # reference never silently binds a broader catch-all credential.
+        if any(row[1] for row in rows):
+            return sorted({row[0] for row in rows if row[1]})
+        return sorted({row[0] for row in rows})
 
     @staticmethod
-    async def bind_agent_to_toolkit(
+    async def list_bound_credential_ids_for_owned_agents(
+        session: AsyncSession,
+        *,
+        owner_ids: list[str],
+    ) -> list[str]:
+        """Credential ids bound to any agent owned by one of ``owner_ids`` (admin DB).
+
+        The push-down half of the hard-problem-8 owner axis: run on an **admin**
+        session, its result feeds ``resolve_credentials_for_api``'s
+        ``bound_credential_ids`` so the control-DB query never references an
+        admin table (cross-DB seam, hard problem 9; precedent
+        ``PrerequisiteRepository.list_credential_ids_for_agent``). Suspended
+        bindings still count — suspension is a broker-derivation cut-off, not a
+        governance-ownership change; the decider who owns the agent can still
+        see (and re-govern) the credential the binding names.
+        """
+        if not owner_ids:
+            return []
+        params: dict[str, object] = {}
+        owners = EffectsRepository._in_clause(owner_ids, params, prefix="owner")
+        result = await session.execute(
+            text(
+                "SELECT DISTINCT acb.credential_id "
+                "FROM agent_credential_bindings acb "
+                "JOIN agents a ON a.id = acb.agent_id "
+                f"WHERE a.owner_id IN ({owners})"
+            ),
+            params,
+        )
+        return [str(row[0]) for row in result.fetchall()]
+
+    @staticmethod
+    async def bind_agent_to_credential(
         session: AsyncSession,
         *,
         agent_id: str,
-        toolkit_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
         created_by: str,
     ) -> tuple[str, bool]:
-        """Create an agent-toolkit binding idempotently via raw SQL.
+        """Create a direct agent↔credential binding idempotently via raw SQL (admin DB).
 
-        Returns (binding_id, already_bound).
+        Returns ``(binding_id, already_bound)``. An existing binding is left
+        untouched (its ``rule_set_id``/``suspended`` state is authoritative) —
+        the retry/reconcile path must converge without clobbering operator
+        edits made between attempts.
         """
-        binding_id = generate_ksuid("atb")
+        binding_id = generate_ksuid("acb")
         result = await session.execute(
             text(
-                "INSERT INTO agent_toolkit_bindings (id, agent_id, toolkit_id, created_by) "
-                "VALUES (:id, :agent_id, :toolkit_id, :created_by) "
-                "ON CONFLICT (agent_id, toolkit_id) DO NOTHING "
+                "INSERT INTO agent_credential_bindings "
+                "(id, agent_id, credential_id, rule_set_id, created_by) "
+                "VALUES (:id, :agent_id, :credential_id, :rule_set_id, :created_by) "
+                "ON CONFLICT (agent_id, credential_id) DO NOTHING "
                 "RETURNING id"
             ),
             {
                 "id": binding_id,
                 "agent_id": agent_id,
-                "toolkit_id": toolkit_id,
+                "credential_id": credential_id,
+                "rule_set_id": rule_set_id,
                 "created_by": created_by,
             },
         )
@@ -148,106 +209,12 @@ class EffectsRepository:
 
         existing = await session.execute(
             text(
-                "SELECT id FROM agent_toolkit_bindings "
-                "WHERE agent_id = :agent_id AND toolkit_id = :toolkit_id LIMIT 1"
+                "SELECT id FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id LIMIT 1"
             ),
-            {"agent_id": agent_id, "toolkit_id": toolkit_id},
+            {"agent_id": agent_id, "credential_id": credential_id},
         )
         return existing.scalar_one(), True
-
-    @staticmethod
-    async def resolve_toolkits_for_api(
-        session: AsyncSession,
-        *,
-        vendor: str,
-        name: str | None,
-        version: str | None,
-        owner_ids: list[str] | None = None,
-    ) -> list[str]:
-        """Return toolkit IDs whose bound credential serves the given API identity.
-
-        The toolkit↔API relationship runs through credentials
-        (toolkit → credential → API). An empty ``name``/``version`` means "any";
-        a NULL ``api_name``/``api_version`` on the credential means it covers all
-        names/versions for the vendor.
-
-        ``owner_ids`` scopes the result to toolkits owned by one of those ids
-        (the deciding identity's own id and, when delegated, its parent). It is
-        ``None`` only for an ``org:admin`` decider, who may resolve across all
-        owners. Passing an empty list returns no candidates. Without this scope a
-        reference (a *public* ``vendor/name``) could resolve to another owner's
-        toolkit — see ``_resolve_toolkit_reference``.
-
-        To avoid widening a name-specific reference into a vendor-wide
-        (``api_name IS NULL``) credential, an **exact** name/version match is
-        preferred: NULL-wildcard credentials only contribute when no exact match
-        exists for the requested name.
-
-        The ``vendor``/``name`` reference axes are canonicalized (slugified) here
-        before binding, because stored rows are canonical (the credential service
-        slugifies on write and the backfill migration re-slugs legacy rows). The
-        shared SQL fragment compares bind params verbatim against those canonical
-        rows, so a raw reference like ``GitHub.com`` must be slugified to
-        ``github-com`` here or it would match nothing. ``version`` is trimmed but
-        never slugified, matching ``canonical_credential_scope``.
-        """
-        params: dict[str, object] = {"vendor": slugify_api_field(vendor)}
-        if name:
-            params["name"] = slugify_api_field(name)
-        if version:
-            params["version"] = version.strip()
-        name_scoped = bool(name)
-        version_scoped = bool(version)
-        owner_clause = EffectsRepository._owner_in_clause(owner_ids, params, column="tk.created_by")
-        if owner_clause is None:
-            return []
-
-        # Shared coverage rule (see shared/models/api_identity.credential_coverage_where):
-        # a wildcard *reference* axis (empty name/version at bind time) omits that
-        # axis so it matches anything; a scoped axis matches NULL-wildcard or exact.
-        coverage = credential_coverage_where(name_scoped=name_scoped, version_scoped=version_scoped)
-        # Prefer an exact name match only when the reference names one — otherwise
-        # there is no exactness to rank on.
-        name_exact = "(CASE WHEN c.api_name = :name THEN 1 ELSE 0 END)" if name_scoped else "0"
-        base_query = (
-            f"SELECT DISTINCT tcb.toolkit_id, {name_exact} AS name_exact "
-            "FROM toolkit_credential_bindings tcb "
-            "JOIN credentials c ON c.id = tcb.credential_id "
-            "JOIN toolkits tk ON tk.id = tcb.toolkit_id "
-            f"WHERE {coverage} "
-            f"{owner_clause}"
-        )
-        result = await session.execute(text(base_query), params)
-        rows = result.all()
-        # Prefer exact name matches: if any candidate matched the requested name
-        # exactly, drop the NULL-wildcard (vendor-wide) matches so a named
-        # reference never silently binds a broader catch-all toolkit.
-        if any(row[1] for row in rows):
-            return sorted({row[0] for row in rows if row[1]})
-        return sorted({row[0] for row in rows})
-
-    @staticmethod
-    async def toolkit_visible_to_owners(
-        session: AsyncSession,
-        *,
-        toolkit_id: str,
-        owner_ids: list[str] | None,
-    ) -> bool:
-        """Return whether ``toolkit_id`` exists and is visible to the owners.
-
-        ``owner_ids is None`` (an ``org:admin`` decider) sees every toolkit; an
-        empty list sees none. Used to reject an explicit ``to_id``/``resource_id``
-        ``toolkit:bind`` targeting a toolkit the decider does not own.
-        """
-        params: dict[str, object] = {"toolkit_id": toolkit_id}
-        owner_clause = EffectsRepository._owner_in_clause(owner_ids, params, column="created_by")
-        if owner_clause is None:
-            return False
-        result = await session.execute(
-            text(f"SELECT 1 FROM toolkits WHERE id = :toolkit_id {owner_clause}LIMIT 1"),
-            params,
-        )
-        return result.scalar_one_or_none() is not None
 
     @staticmethod
     async def grant_scope_to_actor(

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
+from jentic_one.shared.access_guidance import no_credential_serves_api_reason
 from jentic_one.shared.scopes import GRANTABLE_SCOPES
 
 
 def _format_api_reference(reference: dict[str, object]) -> str:
-    """Render a toolkit:bind ``resource_reference`` as a ``vendor[/name][@version]``
-    string, omitting absent parts so a vendor-only reference doesn't surface a
-    misleading ``vendor/None`` in error messages."""
+    """Render a ``credential:bind`` ``resource_reference`` as a
+    ``vendor[/name][@version]`` string, omitting absent parts so a vendor-only
+    reference doesn't surface a misleading ``vendor/None`` in error messages."""
     vendor = reference.get("vendor")
     name = reference.get("name")
     version = reference.get("version")
@@ -29,19 +29,6 @@ class AccessRequestNotFoundError(AccessRequestServiceError):
     def __init__(self, request_id: str) -> None:
         super().__init__(f"Access request '{request_id}' not found")
         self.request_id = request_id
-
-
-class PrerequisiteNotMetError(AccessRequestServiceError):
-    """Raised when a prerequisite binding is missing for the requested resource."""
-
-    def __init__(self, actor_id: str, to_id: str, resource_type: str) -> None:
-        super().__init__(
-            f"Prerequisite not met: {resource_type} binding between "
-            f"actor '{actor_id}' and target '{to_id}' does not exist"
-        )
-        self.actor_id = actor_id
-        self.to_id = to_id
-        self.resource_type = resource_type
 
 
 class DuplicatePendingError(AccessRequestServiceError):
@@ -107,54 +94,62 @@ class AdminEffectReconcileError(AccessRequestServiceError):
         self.item_ids = item_ids
 
 
-class ToolkitReferenceUnresolvedError(AccessRequestServiceError):
-    """Raised when a toolkit:bind resource_reference resolves to zero toolkits.
+class CredentialReferenceUnresolvedError(AccessRequestServiceError):
+    """Raised when a credential:bind resource_reference resolves to zero credentials.
 
-    The agent named an API (vendor/name/version) by reference, but no toolkit
-    serves it yet — a credential for that API must be provisioned and bound to a
-    toolkit first, before an agent can be bound to it.
+    The agent named an API (vendor/name/version) by reference, but no credential
+    covering it is visible to the approver — one must be provisioned first,
+    before the agent can be bound to it.
     """
 
     def __init__(self, reference: dict[str, object]) -> None:
-        super().__init__(no_toolkit_serves_api_reason(_format_api_reference(reference)))
+        super().__init__(no_credential_serves_api_reason(_format_api_reference(reference)))
         self.reference = reference
 
 
-class ToolkitReferenceAmbiguousError(AccessRequestServiceError):
-    """Raised when a toolkit:bind resource_reference resolves to several toolkits.
+class CredentialReferenceAmbiguousError(AccessRequestServiceError):
+    """Raised when a credential:bind resource_reference resolves to several credentials.
 
-    The approver must disambiguate by re-filing/amending the item with an explicit
-    resource_id (toolkit id).
+    The approver must disambiguate by amending the item with an explicit
+    resource_id (credential id).
     """
 
     def __init__(self, reference: dict[str, object], candidates: list[str]) -> None:
         super().__init__(
-            f"Multiple toolkits serve API {_format_api_reference(reference)}: "
+            f"Multiple credentials cover API {_format_api_reference(reference)}: "
             f"{', '.join(candidates)}; "
-            "amend the item with an explicit resource_id (toolkit id)"
+            "amend the item with an explicit resource_id (credential id)"
         )
         self.reference = reference
         self.candidates = candidates
 
 
-class ToolkitNotVisibleError(AccessRequestServiceError):
-    """Raised when a toolkit:bind targets a toolkit the decider cannot see.
+class UnsupportedAccessRequestItemError(AccessRequestServiceError):
+    """Raised when a stored item carries a retired (resource_type, action) pair.
 
-    The decider tried to bind an agent to a toolkit (by explicit id) that does
-    not exist or is owned by another operator/tenant. Reference-based binds that
-    resolve to no *visible* toolkit surface as ``ToolkitReferenceUnresolvedError``
-    instead, to avoid revealing whether the id exists elsewhere.
+    Theme-5 Phase 3 deleted the ``toolkit:create``/``toolkit:bind`` effects and
+    the schema rejects them on new filings, but a stored pre-Phase-3 item (a
+    pending row the auto-withdraw migration missed, or a raced filing) must
+    fail **loudly** on decide — never the old ``UNSUPPORTED`` silent skip,
+    which would approve-and-grant-nothing (the "hollow yes"). The directive
+    names the surviving verb so the caller can re-file.
     """
 
-    def __init__(self, toolkit_id: str) -> None:
-        super().__init__(f"Toolkit '{toolkit_id}' not found or not owned by the approver")
-        self.toolkit_id = toolkit_id
+    def __init__(self, resource_type: str, action: str) -> None:
+        super().__init__(
+            f"{resource_type}:{action} items are no longer supported. Toolkits were "
+            "retired; withdraw this request and re-file with "
+            "resource_type='credential', action='bind' naming the API by "
+            "resource_reference (or a credential id in resource_id)."
+        )
+        self.resource_type = resource_type
+        self.action = action
 
 
 class CredentialNotFoundForBindError(AccessRequestServiceError):
     """Raised when a credential:bind item names a credential that does not exist or is not visible.
 
-    The decider tried to bind a credential (by ``resource_id``) to a toolkit, but
+    The decider tried to bind an agent to a credential (by ``resource_id``), but
     no credential with that id is visible in the control DB — typically because
     the agent referenced a credential id that was never provisioned, or one owned
     by another operator. Surfaced as a 422 so the bad item fails up front rather
@@ -164,7 +159,7 @@ class CredentialNotFoundForBindError(AccessRequestServiceError):
     def __init__(self, credential_id: str) -> None:
         super().__init__(
             f"Credential '{credential_id}' not found or not visible; "
-            "provision the credential before binding it to a toolkit"
+            "provision the credential before binding an agent to it"
         )
         self.credential_id = credential_id
 
@@ -183,23 +178,62 @@ class UnsupportedScopeGrantError(AccessRequestServiceError):
 class RulesNotSupportedForBindError(AccessRequestServiceError):
     """Raised when permission rules accompany an item type that cannot enforce them.
 
-    Broker rules are keyed per ``(toolkit_id, credential_id)`` (see
-    ``broker/repos/rule_evaluator.py``), so only a ``credential:bind`` has a key
-    to enforce rules on. Attaching rules to e.g. a ``toolkit:bind`` (agent↔toolkit)
-    would silently produce an unrestricted binding — granted scope ≠ enforced scope.
+    Broker rules are keyed per ``(agent_id, credential_id)`` binding (see
+    ``broker/repos/agent_rule_evaluator.py``), so only a ``credential:bind`` has
+    a key to enforce rules on. Attaching rules to e.g. a ``scope:grant`` would
+    silently produce an unenforced allowlist — granted scope ≠ enforced scope.
     We reject it at the boundary and point the caller at ``credential:bind``.
     """
 
     def __init__(self, resource_type: str, action: str) -> None:
         super().__init__(
             f"Permission rules are not supported on {resource_type}:{action} items. "
-            "Rules are enforced per (toolkit_id, credential_id) binding, so they "
-            "can only be attached to credential:bind items. To set rules, file an "
-            "access request with resource_type='credential', action='bind' and "
-            "include your rules there (toolkits:write scope is not needed)."
+            "Rules are enforced per (agent, credential) binding, so they can only "
+            "be attached to credential:bind items. To set rules, file an access "
+            "request with resource_type='credential', action='bind' and include "
+            "your rules there."
         )
         self.resource_type = resource_type
         self.action = action
+
+
+class RulesRequiredForBindError(AccessRequestServiceError):
+    """Raised when a credential:bind item carries neither rules nor a rule set.
+
+    A rules-less agent↔credential binding is a live **default-deny** the
+    operator believes granted — the "hollow yes" as the default path (theme-5
+    hard problem 6). Every ``credential:bind`` must therefore carry either
+    inline ``rules`` or a ``rule_set_id``; ``validate()`` rejects a rules-less
+    bind before any effect is applied. The filing path substitutes a read-only
+    default when neither is provided, so this surfaces only for stored legacy
+    items or amendments that stripped the policy.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "credential:bind requires a policy: provide inline 'rules' or a "
+            "'rule_set_id' on the item (amend it via POST "
+            "/access-requests/{id}:amend). A binding without rules would be a "
+            "default-deny grant."
+        )
+
+
+class RuleSetNotFoundForBindError(AccessRequestServiceError):
+    """Raised when a credential:bind names a ``rule_set_id`` that does not resolve.
+
+    The rule-set pointer is FK-less across the control/admin seam, so the
+    application validates it at decide time: the set must exist (and remain
+    visible) for the binding's policy to be real. Approving past a dangling
+    pointer would create a live default-deny binding — the same hollow-yes
+    shape :class:`RulesRequiredForBindError` guards against.
+    """
+
+    def __init__(self, rule_set_id: str) -> None:
+        super().__init__(
+            f"Permission rule set '{rule_set_id}' not found; create it first "
+            "(POST /permission-rule-sets) or amend the item with inline rules"
+        )
+        self.rule_set_id = rule_set_id
 
 
 class RequiredFieldMissingError(AccessRequestServiceError):
@@ -216,23 +250,23 @@ class RequiredFieldMissingError(AccessRequestServiceError):
 class ProvisioningPlanNotFulfilledError(AccessRequestServiceError):
     """Raised when a provisioning plan's bind item is approved before fulfilment.
 
-    A provisioning plan carries inert ``toolkit:create`` / ``credential:provision``
-    intents that a human fulfils in the setup wizard — which creates the real
-    toolkit + credential and stamps their ids onto the ``credential:bind`` /
-    ``toolkit:bind`` items. Approving the plan through any other path (the plain
-    approve/deny surface, a raw ``:decide``) leaves those binds with no target,
-    so they can never succeed. We deny them with an actionable reason instead of
-    the cryptic "to_id missing" / "no toolkit serves API" a plain approval would
-    otherwise produce. This error is in ``_UNFULFILLABLE_BIND_TARGET`` so the
-    ``--wait`` loop closes with a legible message.
+    A provisioning plan carries an inert ``credential:provision`` intent that a
+    human fulfils in the setup wizard — which creates the real credential and
+    stamps its id onto the ``credential:bind`` item. Approving the plan through
+    any other path (the plain approve/deny surface, a raw ``:decide``) leaves
+    the bind with no target, so it can never succeed. We deny it with an
+    actionable reason instead of the cryptic "no credential covers API" a plain
+    approval would otherwise produce. This error is in
+    ``_UNFULFILLABLE_BIND_TARGET`` so the ``--wait`` loop closes with a legible
+    message.
 
     ``governing_intent_ids`` — populated by the caller from the ``PlanGovernance``
     value ``decide()`` computed — names the specific fulfilment intents whose
-    approval the wizard is still waiting on. For a ``toolkit:bind``,
-    ``governing_api`` additionally names the canonical ``(vendor, name)`` slug
-    key that tied the plan to this bind. Both are ``None``/empty when the caller
-    doesn't have the richer context (older call-sites, tests that construct the
-    error directly), keeping the constructor backwards-compatible.
+    approval the wizard is still waiting on. ``governing_api`` additionally
+    names the canonical ``(vendor, name)`` slug key that tied the plan to this
+    bind. Both are ``None``/empty when the caller doesn't have the richer
+    context (older call-sites, tests that construct the error directly),
+    keeping the constructor backwards-compatible.
     """
 
     def __init__(
@@ -246,7 +280,7 @@ class ProvisioningPlanNotFulfilledError(AccessRequestServiceError):
         base = (
             f"{resource_type}:{action} is part of a provisioning plan that has not been "
             "fulfilled yet. Approve this request from the setup wizard, which creates the "
-            "toolkit and credential and wires them before granting — a plain approval cannot "
+            "credential and wires it before granting — a plain approval cannot "
             "complete a plan."
         )
         details: list[str] = []

@@ -7,7 +7,6 @@ from jentic_one.control.services.access_requests.errors import (
     ItemNotOnRequestError,
     ItemNotPendingError,
     NotAReviewerError,
-    PrerequisiteNotMetError,
     RequestNotPendingError,
 )
 from jentic_one.control.services.access_requests.service import AccessRequestService
@@ -20,6 +19,5 @@ __all__ = [
     "ItemNotOnRequestError",
     "ItemNotPendingError",
     "NotAReviewerError",
-    "PrerequisiteNotMetError",
     "RequestNotPendingError",
 ]

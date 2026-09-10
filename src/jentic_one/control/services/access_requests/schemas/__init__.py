@@ -11,7 +11,6 @@ from jentic_one.control.services.access_requests.schemas.effects import (
     CredentialBindEffect,
     ScopeGrantEffect,
     SkippedEffect,
-    ToolkitBindEffect,
 )
 
 __all__ = [
@@ -23,5 +22,4 @@ __all__ = [
     "EvaluationCheck",
     "ScopeGrantEffect",
     "SkippedEffect",
-    "ToolkitBindEffect",
 ]

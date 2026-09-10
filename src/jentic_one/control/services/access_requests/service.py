@@ -17,9 +17,8 @@ from jentic_one.control.repos.access_request_repo import AccessRequestRepository
 from jentic_one.control.repos.credential_repo import CredentialRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
-from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
 from jentic_one.control.repos.toolkit_repo import ToolkitRepository
-from jentic_one.control.scoping.filters import build_access_filters, toolkit_owner_scope
+from jentic_one.control.scoping.filters import build_access_filters, credential_owner_scope
 from jentic_one.control.services.access_requests.effects import (
     PLAN_INTENT_COMBINATIONS,
     UNGOVERNED_PLAN,
@@ -33,17 +32,15 @@ from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
     AdminEffectReconcileError,
     CredentialNotFoundForBindError,
+    CredentialReferenceUnresolvedError,
     DuplicatePendingError,
     ItemNotOnRequestError,
     ItemNotPendingError,
     NotAReviewerError,
-    PrerequisiteNotMetError,
     ProvisioningPlanNotFulfilledError,
     RequestNotPendingError,
     RequiredFieldMissingError,
     RulesNotSupportedForBindError,
-    ToolkitNotVisibleError,
-    ToolkitReferenceUnresolvedError,
     assert_grantable_scope,
 )
 from jentic_one.control.services.access_requests.schemas.access_requests import (
@@ -77,13 +74,13 @@ logger = structlog.get_logger(__name__)
 # which rolls the whole control-DB transaction back and strands the request as
 # PENDING) so the loop closes — the agent's `jentic access request --wait`
 # resolves to `denied` with an actionable message rather than timing out blind.
-# Malformed-item failures (rules on a toolkit:bind, a non-grantable scope) and an
-# *ambiguous* reference are intentionally excluded: those still raise so the
-# request stays pending while the operator/agent fixes or amends it. See #696
-# (loop never closes) and #658 (can_fulfill doesn't model fulfillability).
+# Malformed-item failures (a rules-less credential:bind, a non-grantable scope,
+# a retired item type) and an *ambiguous* reference are intentionally excluded:
+# those still raise so the request stays pending while the operator/agent fixes
+# or amends it. See #696 (loop never closes) and #658 (can_fulfill doesn't
+# model fulfillability).
 _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
-    ToolkitReferenceUnresolvedError,
-    ToolkitNotVisibleError,
+    CredentialReferenceUnresolvedError,
     CredentialNotFoundForBindError,
     RequiredFieldMissingError,
     ProvisioningPlanNotFulfilledError,
@@ -105,18 +102,18 @@ _SETTLED_STATUSES: frozenset[AccessRequestStatus] = frozenset(
 class _AdminSatisfactionProbes:
     """Admin-DB satisfaction checks deferred until the control session closes.
 
-    ``get()`` computes control-DB satisfaction (credential bindings, toolkit
+    ``get()`` computes control-DB resolution (credential visibility, API
     reference resolution) inside its control session, but the corresponding
-    admin-DB existence checks (agent↔toolkit bindings, scope grants) must not
-    run while the control session is open — one DB session at a time, mirroring
-    ``_resolve_filer_owners``. Each probe carries the item id to stamp plus the
-    already-resolved lookup key.
+    admin-DB existence checks (agent↔credential bindings, scope grants) must
+    not run while the control session is open — one DB session at a time,
+    mirroring ``_resolve_filer_owners``. Each probe carries the item id to
+    stamp plus the already-resolved lookup key.
     """
 
-    # (item_id, agent_id, toolkit_id) — satisfied if the agent is bound to it.
-    # Always a single resolved toolkit: explicit ids probe directly, and
-    # ambiguous references are left un-annotated (see the annotator).
-    toolkit_binds: list[tuple[str, str, str]] = field(default_factory=list)
+    # (item_id, agent_id, credential_id) — satisfied if the direct binding
+    # exists. Always a single resolved credential: explicit ids probe directly,
+    # and ambiguous references are left un-annotated (see the annotator).
+    credential_binds: list[tuple[str, str, str]] = field(default_factory=list)
     # (item_id, actor_id, scope) — satisfied if the grant row exists.
     scope_grants: list[tuple[str, str, str]] = field(default_factory=list)
 
@@ -129,16 +126,23 @@ class AccessRequestService:
         self._effects = EffectApplicator(ctx)
 
     @staticmethod
-    def _reject_unsupported_rules(resource_type: str, action: str, rules: Any) -> None:
-        """Reject permission rules attached to an item type that cannot enforce them.
+    def _reject_unsupported_rules(
+        resource_type: str,
+        action: str,
+        rules: Any,
+        rule_set_id: Any = None,
+    ) -> None:
+        """Reject a policy attached to an item type that cannot enforce it.
 
         Raised before any DB write so a non-enforceable allowlist is never persisted
         (file) or stitched onto a stored item (amend). The rule-bearing allowlist
         (``RULE_BEARING_COMBINATIONS``) is shared with the repo's default-rule
-        substitution so the two never disagree. See ``RulesNotSupportedForBindError``
-        for the structural reason.
+        substitution so the two never disagree. Applies equally to inline
+        ``rules`` and a shared ``rule_set_id`` pointer — both are policy
+        carriers only a ``credential:bind`` can enforce. See
+        ``RulesNotSupportedForBindError`` for the structural reason.
         """
-        if rules and (resource_type, action) not in RULE_BEARING_COMBINATIONS:
+        if (rules or rule_set_id) and (resource_type, action) not in RULE_BEARING_COMBINATIONS:
             raise RulesNotSupportedForBindError(resource_type, action)
 
     @staticmethod
@@ -154,16 +158,6 @@ class AccessRequestService:
             return
         scope = item.get("resource_id")
         assert_grantable_scope(scope if isinstance(scope, str) else None)
-
-    async def _check_prerequisite(self, actor_id: str, resource_type: str, to_id: str) -> None:
-        """Verify that the actor has the required binding for the resource type."""
-        if resource_type == "credential":
-            async with self._ctx.admin_db.session() as session:
-                bound = await PrerequisiteRepository.agent_toolkit_binding_exists(
-                    session, agent_id=actor_id, toolkit_id=to_id
-                )
-                if not bound:
-                    raise PrerequisiteNotMetError(actor_id, to_id, resource_type)
 
     async def _emit(
         self,
@@ -227,27 +221,27 @@ class AccessRequestService:
         identity: Identity,
         request_id: str,
     ) -> None:
-        """Emit a best-effort ``TOOLKIT_BINDING_UNSERVED`` for unfulfillable filings.
+        """Emit a best-effort ``CREDENTIAL_BINDING_UNSERVED`` for unfulfillable filings.
 
-        A plain (non-plan) ``toolkit:bind`` filed by ``vendor/name`` reference
-        will typically deny on approval with
-        :class:`ToolkitReferenceUnresolvedError` when no toolkit owned by the
-        filer's owner currently serves that API. (Approval-time resolution
-        runs under the *decider's* scope — an org-admin can resolve toolkits
+        A plain (non-plan) ``credential:bind`` filed by ``vendor/name``
+        reference will typically deny on approval with
+        :class:`CredentialReferenceUnresolvedError` when no credential owned by
+        the filer's owner currently covers that API. (Approval-time resolution
+        runs under the *decider's* scope — an org-admin can resolve credentials
         the filer's owner doesn't hold, so this owner-scoped check is a
         heuristic, not a promise of denial.) Surfacing it at file time gives
         operators an early signal — symmetric to the broker's own emit for
         the same event on execute-time denials (see
-        ``execute._emit_toolkit_binding_unserved``).
+        ``execute._emit_credential_binding_unserved``).
 
         Deliberately silent when:
 
-        - the item names a specific ``resource_id``/``to_id`` (fulfilment is by
-          id, not by reference — no cheap file-time check applies);
+        - the item names a specific ``resource_id`` (fulfilment is by id, not
+          by reference — no cheap file-time check applies);
         - the request also carries fulfilment intents (a *provisioning plan*
-          creates the toolkit that will serve the API, so "nothing serves it
-          yet" is expected);
-        - a toolkit already serves the API for this owner (the plain-approve
+          creates the credential that will cover the API, so "nothing covers
+          it yet" is expected);
+        - a credential already covers the API for this owner (the plain-approve
           path will resolve cleanly).
 
         Never blocks the filing — the emit is best-effort and any lookup
@@ -267,9 +261,9 @@ class AccessRequestService:
 
         actor_type_value = identity.actor_type.value if identity.actor_type is not None else None
         for item in items:
-            if (item.get("resource_type"), item.get("action")) != ("toolkit", "bind"):
+            if (item.get("resource_type"), item.get("action")) != ("credential", "bind"):
                 continue
-            if item.get("resource_id") or item.get("to_id"):
+            if item.get("resource_id"):
                 continue
             reference = item.get("resource_reference") or {}
             raw_vendor = reference.get("vendor")
@@ -290,7 +284,7 @@ class AccessRequestService:
             version = str(raw_version) if raw_version is not None else None
             try:
                 async with self._ctx.control_db.session() as session:
-                    candidates = await EffectsRepository.resolve_toolkits_for_api(
+                    candidates = await EffectsRepository.resolve_credentials_for_api(
                         session,
                         vendor=vendor,
                         name=name,
@@ -312,13 +306,13 @@ class AccessRequestService:
             api_id = "/".join(part for part in (vendor, name) if part) or vendor
             summary = (
                 f"Access request {request_id} names API '{api_id}' but no owned "
-                "toolkit serves it yet — provision a credential to enable binding."
+                "credential covers it yet — provision a credential to enable binding."
             )
             try:
                 async with self._ctx.admin_db.transaction() as session:
                     await emit_event_best_effort(
                         session,
-                        type=EventType.TOOLKIT_BINDING_UNSERVED,
+                        type=EventType.CREDENTIAL_BINDING_UNSERVED,
                         severity=EventSeverity.WARNING,
                         summary=summary,
                         created_by=identity.sub,
@@ -336,7 +330,7 @@ class AccessRequestService:
             except Exception:
                 logger.warning(
                     "telemetry_emit_failed",
-                    event_type=EventType.TOOLKIT_BINDING_UNSERVED,
+                    event_type=EventType.CREDENTIAL_BINDING_UNSERVED,
                     request_id=request_id,
                     exc_info=True,
                 )
@@ -351,11 +345,13 @@ class AccessRequestService:
     ) -> AccessRequestView:
         """File a new access request."""
         for item in items:
-            self._reject_unsupported_rules(item["resource_type"], item["action"], item.get("rules"))
+            self._reject_unsupported_rules(
+                item["resource_type"],
+                item["action"],
+                item.get("rules"),
+                item.get("rule_set_id"),
+            )
             self._validate_grantable_scope(item)
-            to_id = item.get("to_id")
-            if to_id is not None:
-                await self._check_prerequisite(actor_id, item["resource_type"], to_id)
 
         config = self._ctx.config.control.access_requests
         expires_at = dt.datetime.now(dt.UTC) + dt.timedelta(days=config.ttl_days)
@@ -431,9 +427,9 @@ class AccessRequestService:
             actor_id=created_by,
             actor_type=identity.actor_type,
         )
-        # File-time fulfillability advisory: a plain (non-plan) toolkit:bind
-        # referenced by vendor/name that no owned toolkit currently serves will
-        # deny on approval with ToolkitReferenceUnresolvedError. Emit an
+        # File-time fulfillability advisory: a plain (non-plan) credential:bind
+        # referenced by vendor/name that no owned credential currently covers
+        # will deny on approval with CredentialReferenceUnresolvedError. Emit an
         # operator-visible signal *now* so the operator sees the gap before an
         # approve/deny cycle. Best-effort — never blocks the file() commit.
         await self._advise_unserved_bind_references(
@@ -454,6 +450,18 @@ class AccessRequestService:
     async def get(self, request_id: str, *, identity: Identity) -> AccessRequestView:
         """Get a single access request by ID with evaluation."""
         access_filters = build_access_filters(identity, AccessRequest)
+        # Pre-resolve the caller's hard-problem-8 owner axis for reference
+        # resolution (admin-DB push-down) BEFORE the control session opens —
+        # one DB session at a time, mirroring _resolve_filer_owners.
+        owner_ids = credential_owner_scope(identity)
+        bound_credential_ids: list[str] | None = None
+        if owner_ids is not None:
+            async with self._ctx.admin_db.session() as session:
+                bound_credential_ids = (
+                    await EffectsRepository.list_bound_credential_ids_for_owned_agents(
+                        session, owner_ids=owner_ids
+                    )
+                )
         async with self._ctx.control_db.session() as session:
             request = await AccessRequestRepository.get(session, request_id, filters=access_filters)
             if request is None:
@@ -463,7 +471,12 @@ class AccessRequestService:
             view = self._to_view(request, names=names)
             view.evaluation = self._compute_evaluation(request, identity)
             admin_probes = await self._annotate_satisfaction_control(
-                view, request, identity=identity, session=session
+                view,
+                request,
+                identity=identity,
+                session=session,
+                owner_ids=owner_ids,
+                bound_credential_ids=bound_credential_ids,
             )
         await self._annotate_satisfaction_admin(view, admin_probes)
         await self._resolve_filer_owners([view])
@@ -556,8 +569,10 @@ class AccessRequestService:
         # services (tests/arch/test_no_direct_db.py); the repos it's passed to
         # type it as AsyncSession.
         session: Any,
+        owner_ids: list[str] | None,
+        bound_credential_ids: list[str] | None,
     ) -> _AdminSatisfactionProbes:
-        """Stamp control-DB ``already_satisfied`` hints; collect admin-DB probes.
+        """Resolve control-DB targets; collect admin-DB satisfaction probes.
 
         Closes the manual-fulfilment gap (issue #826): an operator who set a
         binding/grant up by hand (or adopted existing artifacts) sees which
@@ -568,23 +583,24 @@ class AccessRequestService:
         Only PENDING effect items are annotated. Everything else stays ``None``
         (not computed): decided items, fulfilment-only intents (their outcome is
         the downstream binds'), items whose target is indeterminate (a
-        target-less credential:bind, a vendor-less toolkit reference), an
-        ambiguous toolkit reference (decide-time resolution would refuse it, so
-        a hint would advertise an approval that cannot succeed), and a
-        credential:bind whose credential the caller cannot see (mirrors
-        decide-time validation — and keeps the probe from acting as a
-        binding-existence oracle for amended-in foreign ids). A reference that
-        resolves to no toolkit visible to the caller is determinately False —
-        resolution runs under the caller's owner scope, the same scope
-        decide-time resolution would use.
+        vendor-less reference), an ambiguous credential reference (decide-time
+        resolution would refuse it, so a hint would advertise an approval that
+        cannot succeed), and a credential:bind whose credential the caller
+        cannot see (mirrors decide-time validation — and keeps the probe from
+        acting as a binding-existence oracle for amended-in foreign ids). A
+        reference that resolves to no credential visible to the caller is
+        determinately False — resolution runs under the caller's owner axis
+        (``owner_ids`` + the pre-fetched ``bound_credential_ids`` push-down),
+        the same axis decide-time resolution would use.
 
-        When a ``toolkit:bind`` is satisfied, ``already_satisfied_by`` names the
-        toolkit that satisfies it so consumers can point the operator at the
-        exact object instead of a bare boolean.
+        When a ``credential:bind`` is satisfied, ``already_satisfied_by`` names
+        the credential that satisfies it so consumers can point the operator at
+        the exact object instead of a bare boolean.
 
-        Control-DB checks (credential bindings, reference resolution) run on the
-        caller's ``session``; admin-DB checks are returned as probes for
-        :meth:`_annotate_satisfaction_admin` to run after this session closes.
+        Control-DB checks (credential visibility, reference resolution) run on
+        the caller's ``session``; admin-DB checks (the binding/grant existence)
+        are returned as probes for :meth:`_annotate_satisfaction_admin` to run
+        after this session closes.
         """
         probes = _AdminSatisfactionProbes()
         item_views_by_id = {iv.id: iv for iv in view.items}
@@ -594,12 +610,11 @@ class AccessRequestService:
             item_view = item_views_by_id[item.id]
             key = (item.resource_type, item.action)
             if key == ("credential", "bind"):
-                if item.to_id and item.resource_id:
-                    # Same visibility gate as decide-time validation
-                    # (_validate_credential_bind_target): a credential the
-                    # caller can't see means approval would 422, and probing
-                    # past it would leak binding existence for arbitrary
-                    # amended-in ids.
+                if item.resource_id:
+                    # Same visibility gate as decide-time validation: a
+                    # credential the caller can't see means approval would 422,
+                    # and probing past it would leak binding existence for
+                    # arbitrary amended-in ids.
                     credential = await CredentialRepository.get_by_id(
                         session,
                         item.resource_id,
@@ -607,35 +622,30 @@ class AccessRequestService:
                     )
                     if credential is None:
                         continue
-                    binding = await ToolkitBindingRepository.get(
-                        session, item.to_id, item.resource_id
-                    )
-                    item_view.already_satisfied = binding is not None
-            elif key == ("toolkit", "bind"):
-                explicit_id = item.resource_id or item.to_id
-                if explicit_id:
-                    probes.toolkit_binds.append((item.id, item.actor_id, explicit_id))
+                    probes.credential_binds.append((item.id, item.actor_id, item.resource_id))
                     continue
                 reference = item.resource_reference or {}
                 vendor = reference.get("vendor")
                 if not vendor:
                     continue
                 raw_name = reference.get("name")
-                candidates = await EffectsRepository.resolve_toolkits_for_api(
+                raw_version = reference.get("version")
+                candidates = await EffectsRepository.resolve_credentials_for_api(
                     session,
                     vendor=slugify_api_field(str(vendor)),
-                    name=slugify_api_field(str(raw_name)) if raw_name else raw_name,
-                    version=reference.get("version"),
-                    owner_ids=toolkit_owner_scope(identity),
+                    name=slugify_api_field(str(raw_name)) if raw_name else None,
+                    version=str(raw_version) if raw_version else None,
+                    owner_ids=owner_ids,
+                    bound_credential_ids=bound_credential_ids,
                 )
                 if not candidates:
                     item_view.already_satisfied = False
                 elif len(candidates) == 1:
-                    probes.toolkit_binds.append((item.id, item.actor_id, candidates[0]))
+                    probes.credential_binds.append((item.id, item.actor_id, candidates[0]))
                 # Several candidates: decide-time resolution would raise
-                # ToolkitReferenceAmbiguousError, so the item is not approvable
-                # as filed — leave the hint not-computed rather than advertise
-                # a satisfaction the operator can't act on.
+                # CredentialReferenceAmbiguousError, so the item is not
+                # approvable as filed — leave the hint not-computed rather than
+                # advertise a satisfaction the operator can't act on.
             elif key == ("scope", "grant") and item.resource_id:
                 probes.scope_grants.append((item.id, item.actor_id, item.resource_id))
         return probes
@@ -649,18 +659,19 @@ class AccessRequestService:
         :class:`_AdminSatisfactionProbes`). Each probe's lookup key was fully
         resolved on the control side, so this is pure existence checking.
         """
-        if not probes.toolkit_binds and not probes.scope_grants:
+        if not probes.credential_binds and not probes.scope_grants:
             return
         item_views_by_id = {iv.id: iv for iv in view.items}
         async with self._ctx.admin_db.session() as session:
-            for item_id, agent_id, toolkit_id in probes.toolkit_binds:
+            for item_id, agent_id, credential_id in probes.credential_binds:
                 item_view = item_views_by_id[item_id]
-                bound = await PrerequisiteRepository.agent_bound_to_any_toolkit(
-                    session, agent_id=agent_id, toolkit_ids=[toolkit_id]
+                binding = await PrerequisiteRepository.get_agent_credential_binding(
+                    session, agent_id=agent_id, credential_id=credential_id
                 )
+                bound = binding is not None
                 item_view.already_satisfied = bound
                 if bound:
-                    item_view.already_satisfied_by = toolkit_id
+                    item_view.already_satisfied_by = credential_id
             for item_id, actor_id, scope in probes.scope_grants:
                 item_view = item_views_by_id[item_id]
                 item_view.already_satisfied = await PrerequisiteRepository.actor_scope_grant_exists(
@@ -676,17 +687,19 @@ class AccessRequestService:
     ) -> AccessRequestView:
         """Apply decisions (approve/deny) to individual items on a request.
 
-        The decision itself and the in-control credential-bind effects are applied
-        atomically in a single control-DB transaction (phase 1). Admin-DB effects
-        (toolkit bind, scope grant) cannot share that transaction, so they are
-        applied **after** the control commit (phase 2) and acked back into the
-        control DB. Because an approved admin-effect item with ``applied_effects IS
-        NULL`` is the un-acked marker, ``decide()`` is **safe to call repeatedly**
-        with the same ``item_decisions``: a re-call reconciles any un-acked admin
-        effect (idempotent via ON CONFLICT) instead of erroring, and a genuine
-        conflict (e.g. requested DENY for an already-APPROVED item) still raises
-        ``ItemNotPendingError``. This makes the cross-DB write provably
-        reconcilable on retry with no orphaned admin-DB bindings/grants.
+        The decision itself is committed in a single control-DB transaction
+        (phase 1). Admin-DB effects (credential bind, scope grant) cannot share
+        that transaction, so they are applied **after** the control commit
+        (phase 2) — each in two stages, control-first (rules) then admin
+        (binding), see ``_reconcile_admin_effects`` — and acked back into the
+        control DB. Because an approved admin-effect item with
+        ``applied_effects IS NULL`` is the un-acked marker, ``decide()`` is
+        **safe to call repeatedly** with the same ``item_decisions``: a re-call
+        reconciles any un-acked admin effect (idempotent via ON CONFLICT)
+        instead of erroring, and a genuine conflict (e.g. requested DENY for an
+        already-APPROVED item) still raises ``ItemNotPendingError``. This makes
+        the cross-DB write provably reconcilable on retry with no orphaned
+        admin-DB bindings/grants.
 
         Before any admin-DB write, every approved item is ``validate()``-d: a
         freshly-approved (PENDING) item is validated inside phase 1 before its
@@ -717,7 +730,7 @@ class AccessRequestService:
             # Provisioning-plan governance is per-item (issue #778): a bind is
             # only held to the "must resolve by id (wizard-stamped)" contract
             # when a live intent in the same request actually targets it. An
-            # independent reference-only toolkit:bind for a different API in
+            # independent reference-only credential:bind for a different API in
             # the same request stays on the plain contract and resolves by its
             # reference; a withdrawn/denied intent no longer governs. See
             # ``plan_governance_for_items`` for the full rule. The mapping
@@ -805,9 +818,9 @@ class AccessRequestService:
                     # the admin write after the control commit (phase 2).
                     pending_admin_ids.append(item_id)
                 elif target.applied_effects is None:
-                    # Control-session effect (credential bind) or skipped: apply it
-                    # inline so it is atomic with the decision. Only do so once —
-                    # a populated applied_effects means it was already acked.
+                    # Fulfilment-only intent (a recorded no-op): apply it inline
+                    # so it is atomic with the decision. Only do so once — a
+                    # populated applied_effects means it was already acked.
                     control_effect_items.append((item_id, target))
 
             for item_id, item_result in control_effect_items:
@@ -900,15 +913,18 @@ class AccessRequestService:
     ) -> None:
         """Drive + ack all un-acked admin-DB effects for a request (phase 2).
 
-        Each admin effect resolves/authorizes its target on a fresh control-DB
-        session (the toolkit-reference/visibility check) and opens its own admin-DB
-        transaction (idempotent via ON CONFLICT); after a successful apply we record
-        the ack in a short control transaction. A single item's failure does not
-        abort the pass — every other item still gets driven and acked, and any item
-        left un-acked remains reconcilable on the next decide() call. If any item
-        failed, we re-raise afterwards so the caller learns the decision is
-        incomplete and should retry; the already-committed decision and the
-        already-acked items are preserved.
+        Each admin effect runs in two stages (theme-5 hard problem 6): a
+        control-DB **transaction** that resolves/authorizes the target and
+        writes the control half of the effect (a ``credential:bind``'s
+        permission rules — committed *before* any admin write, so a crash
+        leaves inert rules, never a live rule-less bind), then the admin-DB
+        write in its own transaction (idempotent via ON CONFLICT); after a
+        successful apply we record the ack in a short control transaction. A
+        single item's failure does not abort the pass — every other item still
+        gets driven and acked, and any item left un-acked remains reconcilable
+        on the next decide() call. If any item failed, we re-raise afterwards
+        so the caller learns the decision is incomplete and should retry; the
+        already-committed decision and the already-acked items are preserved.
 
         This helper is the single implementation shared by the inline phase-2 path
         and any future reconcile/sweeper entry point.
@@ -929,10 +945,15 @@ class AccessRequestService:
                 # Already acked (or no longer un-acked) by the time we got here.
                 continue
             try:
-                async with self._ctx.control_db.session() as session:
-                    effect = await self._effects.apply(
+                # Stage 1 (control): resolution + the rules write, committed
+                # before stage 2 begins — write order is the hard-problem-6
+                # invariant.
+                async with self._ctx.control_db.transaction() as session:
+                    prepared = await self._effects.prepare(
                         item, identity=identity, control_session=session
                     )
+                # Stage 2 (admin): the binding/grant row, own transaction.
+                effect = await self._effects.complete(item, identity=identity, prepared=prepared)
                 effects_dict = effect.model_dump()
                 async with self._ctx.control_db.transaction() as session:
                     await AccessRequestRepository.set_applied_effects(
@@ -975,10 +996,14 @@ class AccessRequestService:
                 target = items_by_id.get(item_id)
                 if target is None:
                     raise ItemNotOnRequestError(item_id, request_id)
-                # Closing the back door: rules cannot be amended onto an item type
-                # that can't enforce them (e.g. a toolkit:bind), only filed types.
+                # Closing the back door: a policy (rules or a rule-set pointer)
+                # cannot be amended onto an item type that can't enforce it
+                # (e.g. a scope:grant), only filed types.
                 self._reject_unsupported_rules(
-                    target.resource_type, target.action, amendment.get("rules")
+                    target.resource_type,
+                    target.action,
+                    amendment.get("rules"),
+                    amendment.get("rule_set_id"),
                 )
                 # A scope:grant's resource_id can be amended; re-run the same
                 # file-time allow-list guard so an amendment can't park a
@@ -1000,7 +1025,7 @@ class AccessRequestService:
                     item_id,
                     rules=amendment.get("rules"),
                     resource_id=amendment.get("resource_id"),
-                    to_id=amendment.get("to_id"),
+                    rule_set_id=amendment.get("rule_set_id"),
                 )
                 if result is None:
                     raise ItemNotPendingError(item_id, "unknown")
@@ -1141,6 +1166,7 @@ class AccessRequestService:
                     else None
                 ),
                 rules=item.rules,
+                rule_set_id=item.rule_set_id,
                 status=item.status,
                 applied_effects=item.applied_effects,
                 decided_by=item.decided_by,

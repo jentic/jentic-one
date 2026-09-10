@@ -42,6 +42,7 @@ def _to_item_response(item: AccessRequestItemView) -> AccessRequestItemResponse:
         toolkit_name=item.toolkit_name,
         credential_name=item.credential_name,
         rules=item.rules,
+        rule_set_id=item.rule_set_id,
         status=item.status,
         applied_effects=item.applied_effects,
         decided_by=item.decided_by,
