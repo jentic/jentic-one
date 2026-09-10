@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Text, case, cast, func, literal, select
+from sqlalchemy import Select, Text, case, cast, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import ColumnElement, SQLColumnExpression
 
@@ -313,8 +313,11 @@ class MonitoringRepository:
             )
             group_cols = [ExecutionRecord.api_vendor, ExecutionRecord.api_name]
         elif group_by == "toolkit":
-            key_expr = ExecutionRecord.toolkit_id
-            label_expr = ExecutionRecord.toolkit_id
+            # toolkit_id is nullable-legacy (theme-5 Phase 2): direct-binding
+            # executions have none, so pool them under "unknown" like the api
+            # branch does for missing identity axes.
+            key_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
+            label_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
             group_cols = [ExecutionRecord.toolkit_id]
         else:
             key_expr = _slash_join(
@@ -325,7 +328,7 @@ class MonitoringRepository:
             )
             group_cols = [ExecutionRecord.actor_type, ExecutionRecord.actor_id]
 
-        stmt = (
+        stmt: Select[Any] = (
             select(
                 key_expr.label("key"),
                 label_expr.label("label"),
@@ -383,7 +386,7 @@ class MonitoringRepository:
                 func.coalesce(ExecutionRecord.api_name, "unknown"),
             )
         elif group_by == "toolkit":
-            key_expr = ExecutionRecord.toolkit_id
+            key_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
         else:
             key_expr = _slash_join(
                 ExecutionRecord.actor_type, literal("/"), ExecutionRecord.actor_id
@@ -395,7 +398,7 @@ class MonitoringRepository:
             Text,
         ).label("seg")
 
-        stmt = (
+        stmt: Select[Any] = (
             select(
                 key_expr.label("key"),
                 segment_idx,

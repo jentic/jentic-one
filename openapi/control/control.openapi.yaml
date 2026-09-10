@@ -2616,8 +2616,10 @@ components:
           title: Status
           type: string
         toolkit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
           title: Toolkit Id
-          type: string
         toolkit_name:
           anyOf:
           - type: string
@@ -2628,7 +2630,6 @@ components:
           type: string
       required:
       - execution_id
-      - toolkit_id
       - trace_id
       - started_at
       - status

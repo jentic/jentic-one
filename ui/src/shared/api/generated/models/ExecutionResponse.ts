@@ -24,7 +24,7 @@ export type ExecutionResponse = {
     pinned_revisions?: (Record<string, any> | null);
     started_at: string;
     status: string;
-    toolkit_id: string;
+    toolkit_id?: (string | null);
     toolkit_name?: (string | null);
     trace_id: string;
 };
