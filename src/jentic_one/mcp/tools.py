@@ -15,8 +15,9 @@ Scope enforcement mirrors the REST routes fronted: the same
 identity through the same ``compute_effective`` expansion + ``org:admin``
 bypass ``get_current_identity`` applies. A scope failure maps exactly like the
 Go client's wire 403 (``mcpCoded``): NOT_AUTHENTICATED with the get_started
-pointer — except ``search_catalog``, whose 403 is a missing-scope fact the
-agent can fix itself (BROKER_DENIED + request_access, the Go special case).
+pointer — except ``search_catalog`` and ``import_api``, whose 403s are
+missing-scope facts the agent can fix itself (BROKER_DENIED + request_access,
+the Go special case).
 """
 
 from __future__ import annotations
@@ -536,6 +537,13 @@ _IMPORT_API_PARAMS = [ParamSpec("api_id", "string", ("id", "api"))]
 #: the Go side's ``importWaitBudget``); no config knob until someone needs one.
 _IMPORT_WAIT_BUDGET_SECONDS = 15.0
 
+#: Grace on top of the wait budget for the hard per-leg ceiling
+#: (``asyncio.timeout`` around the whole track-and-promote tail). The budget
+#: alone only gates BETWEEN polls — a single hung poll / result fetch /
+#: promote would hold the ASGI request open indefinitely; the ceiling turns
+#: that into the poll-failure arm (unknown state, never "still running").
+_IMPORT_WAIT_GRACE_SECONDS = 5.0
+
 #: In-process poll cadence for the job tracker: the first poll is immediate,
 #: then back off from the step to the max (Go: ``App.PollCadence``).
 _IMPORT_POLL_STEP_SECONDS = 0.25
@@ -613,14 +621,18 @@ async def _track_import_job(ctx: Context, job_id: str) -> tuple[JobView, bool]:
     (exponential backoff to a terminal DEAD_LETTER, ~30s+ total), so waiting
     for a terminal status would burn the whole wait budget on a job that can
     never succeed. ``job.error`` is populated while requeued, which is what
-    makes the early exit possible.
+    makes the early exit possible. A COMPLETED job is exempt: the worker never
+    clears ``job.error`` (requeue writes it; neither claim nor completion
+    resets it), so a job that failed once with the duplicate message and
+    succeeded on a later attempt carries the stale fragment forever — its
+    completed result is always more honest than its residual error.
     """
     svc = JobService(ctx)
     deadline = time.monotonic() + _IMPORT_WAIT_BUDGET_SECONDS
     delay = _IMPORT_POLL_STEP_SECONDS  # the first poll is immediate; back off from the step
     while True:
         job = await svc.get_by_id(job_id)
-        if job.error and _DUPLICATE_CONTENT_FRAGMENT in job.error:
+        if job.status != _JOB_COMPLETED and job.error and _DUPLICATE_CONTENT_FRAGMENT in job.error:
             return job, True
         if job.status in _JOB_TERMINAL_STATUSES or time.monotonic() >= deadline:
             return job, False
@@ -641,15 +653,19 @@ async def _promote_revisions(env: CallEnv, revisions: list[Any]) -> dict[str, st
     ``has_effective_permission`` (implication-map expansion), never a literal
     membership test: grants arrive unexpanded and ``org:admin`` implies
     ``apis:write`` only via the implication map. Every failure becomes a
-    per-revision ``"promote failed: …"`` entry — never a hard error.
+    per-revision ``"promote failed: …"`` entry — never a hard error; a
+    malformed row (non-dict, or no ``revision_id``) gets an explicit
+    index-keyed entry rather than vanishing silently.
     """
     promoted: dict[str, str] = {}
     can_write = has_effective_permission(env.identity.permissions, "apis:write")
-    for rev in revisions:
+    for idx, rev in enumerate(revisions):
         if not isinstance(rev, dict):
+            promoted[f"revision[{idx}]"] = "promote failed: malformed revision entry"
             continue
         revision_id = str(rev.get("revision_id") or "")
         if not revision_id:
+            promoted[f"revision[{idx}]"] = "promote failed: malformed revision entry"
             continue
         state = str(rev.get("state") or "")
         if state != "draft":
@@ -726,6 +742,41 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
     except CatalogUnavailableError as exc:
         raise ToolError(CODE_INTERNAL_ERROR, f"catalog not available: {exc}") from None
 
+    try:
+        require_scopes(env.identity, ["jobs:read"])
+    except ToolError:
+        # In-process tracking rides the same jobs:read gate the Go client's
+        # poll leg does (GET /jobs/{id}). Absent the scope, degrade to the
+        # filed-{job_id, status} envelope — NOT an error: the filing
+        # succeeded, only the courtesy tracking is off the table (REST
+        # parity: the poll would have been refused, the import would not).
+        # Both scopes ride DEFAULT_AGENT_SCOPES, so defaults are unaffected.
+        return tool_result(
+            env.ctx,
+            {"schema_version": SCHEMA_VERSION, "job_id": job_id, "status": "queued"},
+        )
+
+    try:
+        # The hard per-leg ceiling: the wait budget only gates BETWEEN polls —
+        # a hung poll / result fetch / promote inside the tail would hold the
+        # ASGI request open indefinitely without it.
+        async with asyncio.timeout(_IMPORT_WAIT_BUDGET_SECONDS + _IMPORT_WAIT_GRACE_SECONDS):
+            return await _finish_import(env, api_id, job_id)
+    except TimeoutError as exc:
+        # The ceiling lapse maps to the poll-failure arm: the job's state is
+        # UNKNOWN (a leg hung mid-flight) — never a clean "still running".
+        raise ToolError(
+            CODE_INTERNAL_ERROR,
+            f"import of {api_id} was filed as job {job_id}, but tracking it timed out mid-poll",
+            actionable="The job's state is unknown — do not re-import; poll this job "
+            "with get_execution_result using the job_id in this result.",
+            next_tool="get_execution_result",
+            extra={"job_id": job_id},
+        ) from exc
+
+
+async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.CallToolResult:
+    """The track-and-promote tail of import_api (runs under the hard ceiling)."""
     try:
         job, duplicate_content = await _track_import_job(env.ctx, job_id)
     except Exception as exc:
@@ -936,11 +987,20 @@ async def handle_get_execution_result(
             next_tool="get_execution_result",
         ) from None
 
-    if job.kind == _JOB_KIND_IMPORT and job.error and _DUPLICATE_CONTENT_FRAGMENT in job.error:
+    if (
+        job.kind == _JOB_KIND_IMPORT
+        and job.status != _JOB_COMPLETED
+        and job.error
+        and _DUPLICATE_CONTENT_FRAGMENT in job.error
+    ):
         # The same duplicate-content short-circuit import_api makes: a
         # duplicate import job polled here reports already_imported (the
         # content is present — possibly a lost concurrent race), never a
         # scary dead_letter after the worker burns its retry backoff.
+        # COMPLETED jobs are exempt: the worker never clears job.error, so a
+        # job that failed once with the duplicate message and succeeded on a
+        # later attempt carries the stale fragment — its completed result is
+        # always more honest than its residual error.
         return tool_result(env.ctx, _already_imported_payload(job.id))
 
     payload: dict[str, Any] = {
