@@ -59,7 +59,7 @@ describe('cross-module query-key registry', () => {
 	it('actorDirectoryKey derives from sharedQueryKeys.actorDirectoryRoot', () => {
 		// The SSE→query bridge invalidates `actorDirectoryRoot` when an agent
 		// registers, so surfaces resolving the new agent's `actor_id` (rail
-		// rows, the provisioning wizard's badge + toolkit-name suggestion)
+		// rows, the provisioning wizard's header badge)
 		// refetch instead of rendering the raw `agnt_…` id until the 5-minute
 		// staleTime expires. A forked key would silently miss that refresh.
 		expect([...actorDirectoryKey]).toEqual([...sharedQueryKeys.actorDirectoryRoot]);

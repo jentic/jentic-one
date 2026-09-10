@@ -902,8 +902,8 @@ export function AccessRequestDialog({
 				<div className="text-foreground space-y-3">
 					<p className="text-sm font-semibold">This request needs the setup wizard</p>
 					<p className="text-muted-foreground text-sm">
-						It’s a provisioning plan — approving it creates a toolkit and connects a
-						credential, then wires them before granting. Open it from{' '}
+						It’s a provisioning plan — approving it connects a credential and binds the
+						agent to it before granting. Open it from{' '}
 						<span className="font-medium">Access Requests</span> to run the guided
 						setup; a plain approval here can’t complete it.
 					</p>

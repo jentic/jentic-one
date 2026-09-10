@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { renderWithProviders, screen, waitFor, within, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
@@ -10,16 +10,45 @@ import {
 import type { AccessRequest } from '@/shared/lib/accessRequests';
 
 /**
- * The wizard's toolkit-name lifecycle has two async races worth pinning:
- *
- * 1. The actor directory resolves AFTER the seed effect, so the suggested name
- *    upgrades from the API slug to "<Agent> toolkit" — unless the operator
- *    already edited the field.
- * 2. `createPlanToolkit` may return a 409-disambiguated name ("… toolkit-2");
- *    the wizard must adopt the ACTUAL created name, because the review step
- *    and the no-auth credential name derive from this state. With agent-first
- *    naming, a second request from the same agent makes this the common path.
+ * The 2-item provisioning flow (toolkits retired): a plan is
+ * `credential:provision` (inert placeholder) + `credential:bind` (binds the
+ * AGENT directly to the credential + rules). The wizard creates/adopts a
+ * credential, amends `{item_id, resource_id}` onto the bind — never `to_id`,
+ * which is gone from the amend schema — and approves everything in one decide.
+ * These tests pin that no toolkit endpoint is ever touched.
  */
+
+// The real CreateCredentialDialog is a heavy two-step picker/form; the wizard
+// only cares about its `onCreated` callback. Stub it with a one-click
+// stand-in so the create path can be exercised without driving the form.
+vi.mock('@/shared/credentials/components/CreateCredentialDialog', () => ({
+	CreateCredentialDialog: ({
+		open,
+		onCreated,
+	}: {
+		open: boolean;
+		onCreated: (info: {
+			credentialId: string;
+			type: string;
+			provider: string;
+			needsConnect: boolean;
+		}) => void;
+	}) =>
+		open ? (
+			<button
+				onClick={() =>
+					onCreated({
+						credentialId: 'cred_created_1',
+						type: 'api_key',
+						provider: 'manual',
+						needsConnect: false,
+					})
+				}
+			>
+				Mock create credential
+			</button>
+		) : null,
+}));
 
 const AGENT_ID = 'agnt_wizard_test';
 
@@ -27,45 +56,55 @@ const AGENT_ID = 'agnt_wizard_test';
 function planRequest(): AccessRequest {
 	const ref = { vendor: 'open-meteo-com', name: 'forecast' };
 	return {
-		id: 'arq_plan_naming',
+		id: 'arq_plan_noauth',
 		actor_id: AGENT_ID,
 		status: 'pending',
 		requested_by: AGENT_ID,
 		created_by: AGENT_ID,
-		approve_url: 'https://app.example.test/access-requests/arq_plan_naming',
+		approve_url: 'https://app.example.test/access-requests/arq_plan_noauth',
 		reason: 'need weather data',
 		filed_at: new Date().toISOString(),
 		expires_at: new Date(Date.now() + 3_600_000).toISOString(),
 		items: [
 			{
 				id: 'i1',
-				resource_type: 'toolkit',
-				action: 'create',
-				status: 'pending',
-				resource_reference: ref,
-			},
-			{
-				id: 'i2',
 				resource_type: 'credential',
 				action: 'provision',
 				status: 'pending',
 				resource_reference: { ...ref, security_scheme: 'no_auth' },
 			},
 			{
-				id: 'i3',
+				id: 'i2',
 				resource_type: 'credential',
 				action: 'bind',
 				status: 'pending',
 				resource_reference: ref,
-			},
-			{
-				id: 'i4',
-				resource_type: 'toolkit',
-				action: 'bind',
-				status: 'pending',
-				resource_reference: ref,
+				// The server substitutes a read-only default when the filer
+				// omitted a policy, so pending binds always carry one.
+				rules: [{ effect: 'allow', methods: ['GET'] }],
 			},
 		],
+	};
+}
+
+/** A single-chain plan whose credential must be operator-provided (api_key). */
+function authPlanRequest(): AccessRequest {
+	const base = planRequest();
+	return {
+		...base,
+		id: 'arq_plan_auth',
+		approve_url: 'https://app.example.test/access-requests/arq_plan_auth',
+		items: base.items.map((it) =>
+			it.action === 'provision'
+				? {
+						...it,
+						resource_reference: {
+							...it.resource_reference,
+							security_scheme: 'api_key',
+						},
+					}
+				: it,
+		),
 	};
 }
 
@@ -103,107 +142,187 @@ function stubDirectoryAndRequest(request: AccessRequest, opts?: { directoryMisse
 	);
 }
 
-describe('ProvisioningRequestDialog — toolkit-name lifecycle', () => {
-	// The actor directory query is gated on holding a bearer token.
+/** Track any (retired) toolkit-endpoint traffic — must stay at zero. */
+function trackToolkitCalls(): { count: () => number } {
+	let calls = 0;
+	worker.use(
+		http.all('/toolkits', () => {
+			calls += 1;
+			return new HttpResponse(null, { status: 500 });
+		}),
+		http.all('/toolkits/*', () => {
+			calls += 1;
+			return new HttpResponse(null, { status: 500 });
+		}),
+	);
+	return { count: () => calls };
+}
+
+/** Stub the amend/decide submit path, echoing decisions onto the request. */
+function stubSubmitPath(
+	request: AccessRequest,
+	opts?: {
+		onAmend?: (body: unknown) => void;
+		onDecide?: (body: unknown) => void;
+	},
+) {
+	worker.use(
+		http.post('/access-requests/*', async ({ request: httpReq }) => {
+			const url = new URL(httpReq.url);
+			const body = await httpReq.json();
+			if (url.pathname.endsWith(':amend')) {
+				opts?.onAmend?.(body);
+				return HttpResponse.json(request);
+			}
+			if (url.pathname.endsWith(':decide')) {
+				opts?.onDecide?.(body);
+				const decisions = (body as { items: { item_id: string; decision: string }[] })
+					.items;
+				const byId = new Map(decisions.map((d) => [d.item_id, d.decision]));
+				return HttpResponse.json({
+					...request,
+					status: decisions.every((d) => d.decision === 'approved')
+						? 'approved'
+						: 'partially_approved',
+					items: request.items.map((it) => ({
+						...it,
+						status: byId.get(it.id) ?? it.status,
+					})),
+				});
+			}
+			return new HttpResponse(null, { status: 404 });
+		}),
+	);
+}
+
+type AmendItem = { item_id: string; resource_id?: string; to_id?: string; rules?: unknown[] };
+
+describe('ProvisioningRequestDialog — no-auth plan (2-item chain)', () => {
 	beforeEach(() => {
 		setToken('test-token');
-		// Drafts are module-scoped by design; tests share request fixtures.
 		resetProvisioningWizardDrafts();
 	});
 	afterEach(() => clearToken());
 
-	it('upgrades the suggested name once the actor directory resolves', async () => {
-		stubDirectoryAndRequest(planRequest());
-		renderWithProviders(
-			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
+	it('auto-creates the NO_AUTH credential and amends resource_id only — no toolkit calls', async () => {
+		const request = planRequest();
+		stubDirectoryAndRequest(request);
+		const toolkits = trackToolkitCalls();
+		let amendBody: unknown;
+		let decideBody: unknown;
+		let credentialCreateBody: unknown;
+		worker.use(
+			http.post('/credentials', async ({ request: httpReq }) => {
+				credentialCreateBody = await httpReq.json();
+				return HttpResponse.json({ credential: { credential_id: 'cred_noauth_1' } });
+			}),
 		);
+		stubSubmitPath(request, {
+			onAmend: (b) => (amendBody = b),
+			onDecide: (b) => (decideBody = b),
+		});
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
 
-		const input = await screen.findByLabelText('Toolkit name');
-		await waitFor(() => expect(input).toHaveValue('Weather Agent toolkit'));
+		// No-auth single chain: the wizard opens straight on the rules step.
+		expect(await screen.findByText('Confirm what the agent can do')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: /^Review/ }));
+
+		// Review is explicit that the credential is auto-created.
+		expect(await screen.findByText(/needs no auth/)).toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		// The NO_AUTH credential targets the plan's API.
+		expect(credentialCreateBody).toMatchObject({
+			type: 'no_auth',
+			api: { vendor: 'open-meteo-com', name: 'forecast' },
+		});
+
+		// One amend: the bind gets the credential id + rules; the provision
+		// placeholder is stamped with the same id (audit honesty). NOTHING
+		// carries `to_id` — it is gone from the amend schema.
+		const amendments = (amendBody as { items: AmendItem[] }).items;
+		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
+		expect(byItem.get('i2')?.resource_id).toBe('cred_noauth_1');
+		expect(byItem.get('i2')?.rules).toEqual([
+			{ effect: 'allow', methods: ['GET'], path: null, operations: null },
+		]);
+		expect(byItem.get('i1')?.resource_id).toBe('cred_noauth_1');
+		expect(amendments.every((a) => !('to_id' in a))).toBe(true);
+
+		// One decide approving both items; the toolkit surface was never touched.
+		const decisions = (decideBody as { items: { item_id: string; decision: string }[] }).items;
+		expect(decisions).toHaveLength(2);
+		expect(decisions.every((d) => d.decision === 'approved')).toBe(true);
+		expect(toolkits.count()).toBe(0);
 	});
 
-	it('falls back to a direct agent fetch when the cached directory misses', async () => {
-		// The real-world race: the agent registered seconds ago, so the cached
-		// directory predates it. The wizard must not settle for the raw
-		// `agnt_…` id / API-slug name — it fetches the agent by id itself.
+	it('resolves the agent name for the header via the directory-miss fallback', async () => {
 		stubDirectoryAndRequest(planRequest(), { directoryMisses: true });
 		renderWithProviders(
 			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
 		);
-
-		const input = await screen.findByLabelText('Toolkit name');
-		await waitFor(() => expect(input).toHaveValue('Weather Agent toolkit'));
-	});
-
-	it('never clobbers a manual edit with the late directory resolution', async () => {
-		stubDirectoryAndRequest(planRequest());
-		renderWithProviders(
-			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
-		);
-		const user = userEvent.setup();
-
-		const input = await screen.findByLabelText('Toolkit name');
-		await user.clear(input);
-		await user.type(input, 'my custom kit');
-		// Give the directory query time to land; the edit must survive it.
-		await new Promise((r) => setTimeout(r, 50));
-		expect(input).toHaveValue('my custom kit');
-	});
-
-	it('adopts the 409-disambiguated name the toolkit was actually created with', async () => {
-		stubDirectoryAndRequest(planRequest());
-		let attempts = 0;
-		worker.use(
-			http.post('/toolkits', () => {
-				attempts += 1;
-				if (attempts === 1) {
-					return HttpResponse.json({ detail: 'conflict' }, { status: 409 });
-				}
-				return HttpResponse.json({
-					toolkit: {
-						toolkit_id: 'tk_new',
-						name: 'Weather Agent toolkit-2',
-					},
-					api_key: 'k',
-				});
-			}),
-		);
-		renderWithProviders(
-			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
-		);
-		const user = userEvent.setup();
-
-		const input = await screen.findByLabelText('Toolkit name');
-		await waitFor(() => expect(input).toHaveValue('Weather Agent toolkit'));
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
-
-		// No-auth plan: toolkit → rules. Continue to the review summary.
-		await user.click(await screen.findByRole('button', { name: /^Review/ }));
-		// The review must show the name the server actually assigned, not the
-		// pre-collision suggestion.
-		expect(await screen.findByText('Weather Agent toolkit-2')).toBeInTheDocument();
-		expect(attempts).toBe(2);
+		// The header badge upgrades from the raw agnt_… id to the fetched name.
+		expect(await screen.findByText('Weather Agent')).toBeInTheDocument();
 	});
 });
 
-describe('ProvisioningRequestDialog — cancel with orphans', () => {
+describe('ProvisioningRequestDialog — operator-created credential (auth plan)', () => {
 	beforeEach(() => {
 		setToken('test-token');
 		resetProvisioningWizardDrafts();
 	});
 	afterEach(() => clearToken());
 
-	it('asks in-dialog (never window.confirm) and discards the created toolkit', async () => {
-		stubDirectoryAndRequest(planRequest());
+	function stubEmptyCredentialList() {
+		worker.use(
+			http.get('/credentials', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+	}
+
+	it('creates a credential, then amends {item_id, resource_id} — never to_id', async () => {
+		const request = authPlanRequest();
+		stubDirectoryAndRequest(request);
+		stubEmptyCredentialList();
+		const toolkits = trackToolkitCalls();
+		let amendBody: unknown;
+		stubSubmitPath(request, { onAmend: (b) => (amendBody = b) });
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Auth chain: the credential step comes first, pre-scoped to the API.
+		expect(await screen.findByText('Connect a credential')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: /Connect credential/ }));
+		await user.click(await screen.findByRole('button', { name: 'Mock create credential' }));
+
+		// Created → rules → review → approve.
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		const amendments = (amendBody as { items: AmendItem[] }).items;
+		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
+		expect(byItem.get('i2')?.resource_id).toBe('cred_created_1');
+		expect(byItem.get('i1')?.resource_id).toBe('cred_created_1');
+		expect(amendments.every((a) => !('to_id' in a))).toBe(true);
+		expect(toolkits.count()).toBe(0);
+	});
+
+	it('asks in-dialog (never window.confirm) and discards the created credential on cancel', async () => {
+		const request = authPlanRequest();
+		stubDirectoryAndRequest(request);
+		stubEmptyCredentialList();
 		let deleted: string | null = null;
 		worker.use(
-			http.post('/toolkits', () =>
-				HttpResponse.json({
-					toolkit: { toolkit_id: 'tk_orphan', name: 'Weather Agent toolkit' },
-					api_key: 'k',
-				}),
-			),
-			http.delete('/toolkits/:id', ({ params }) => {
+			http.delete('/credentials/:id', ({ params }) => {
 				deleted = String(params.id);
 				return new HttpResponse(null, { status: 204 });
 			}),
@@ -212,7 +331,7 @@ describe('ProvisioningRequestDialog — cancel with orphans', () => {
 		renderWithProviders(
 			<ProvisioningRequestDialog
 				open
-				request={planRequest()}
+				request={request}
 				onClose={() => {
 					closed = true;
 				}}
@@ -220,8 +339,9 @@ describe('ProvisioningRequestDialog — cancel with orphans', () => {
 		);
 		const user = userEvent.setup();
 
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByText('Connect a credential');
+		await user.click(screen.getByRole('button', { name: /Connect credential/ }));
+		await user.click(await screen.findByRole('button', { name: 'Mock create credential' }));
 		await screen.findByRole('button', { name: /^Review/ });
 
 		// Cancel the wizard mid-fulfilment → the in-dialog confirmation appears.
@@ -231,82 +351,47 @@ describe('ProvisioningRequestDialog — cancel with orphans', () => {
 
 		await user.click(screen.getByRole('button', { name: /Discard/ }));
 		await waitFor(() => expect(closed).toBe(true));
-		expect(deleted).toBe('tk_orphan');
+		expect(deleted).toBe('cred_created_1');
 	});
 
-	it('"Keep & finish later" closes without deleting anything', async () => {
-		stubDirectoryAndRequest(planRequest());
+	it('"Keep & finish later" keeps the credential and the reopened draft resumes it', async () => {
+		const request = authPlanRequest();
+		stubDirectoryAndRequest(request);
+		stubEmptyCredentialList();
 		let deleteCalls = 0;
 		worker.use(
-			http.post('/toolkits', () =>
-				HttpResponse.json({
-					toolkit: { toolkit_id: 'tk_keep', name: 'Weather Agent toolkit' },
-					api_key: 'k',
-				}),
-			),
-			http.delete('/toolkits/:id', () => {
+			http.delete('/credentials/:id', () => {
 				deleteCalls += 1;
 				return new HttpResponse(null, { status: 204 });
 			}),
 		);
-		let closed = false;
-		renderWithProviders(
-			<ProvisioningRequestDialog
-				open
-				request={planRequest()}
-				onClose={() => {
-					closed = true;
-				}}
-			/>,
-		);
 		const user = userEvent.setup();
 
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
-		await screen.findByRole('button', { name: /^Review/ });
-
-		await user.click(screen.getByRole('button', { name: 'Close' }));
-		await user.click(await screen.findByRole('button', { name: /Keep & finish later/ }));
-		await waitFor(() => expect(closed).toBe(true));
-		expect(deleteCalls).toBe(0);
-	});
-
-	it('resumes the kept draft on reopen instead of creating a second toolkit', async () => {
-		stubDirectoryAndRequest(planRequest());
-		let createCalls = 0;
-		worker.use(
-			http.post('/toolkits', () => {
-				createCalls += 1;
-				return HttpResponse.json({
-					toolkit: { toolkit_id: 'tk_resume', name: 'Weather Agent toolkit' },
-					api_key: 'k',
-				});
-			}),
-		);
-		const user = userEvent.setup();
-
-		// First session: create the toolkit, then "Keep & finish later". The
+		// First session: create the credential, then "Keep & finish later". The
 		// production mount path (AccessRequestDecisionDialog) UNMOUNTS the
 		// wizard on close, so we simulate that with a full unmount.
 		const first = renderWithProviders(
-			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
+			<ProvisioningRequestDialog open request={authPlanRequest()} onClose={() => {}} />,
 		);
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByText('Connect a credential');
+		await user.click(screen.getByRole('button', { name: /Connect credential/ }));
+		await user.click(await screen.findByRole('button', { name: 'Mock create credential' }));
 		await screen.findByRole('button', { name: /^Review/ });
 		await user.click(screen.getByRole('button', { name: 'Close' }));
 		await user.click(await screen.findByRole('button', { name: /Keep & finish later/ }));
+		expect(deleteCalls).toBe(0);
 		first.unmount();
 
 		// Second session for the SAME request: the draft must restore the rules
-		// step with the existing toolkit — never re-run the create step, which
-		// would strand tk_resume and accumulate a second toolkit.
+		// step with the existing credential — never re-run the create step,
+		// which would strand cred_created_1 and accumulate a second credential.
 		renderWithProviders(
-			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
+			<ProvisioningRequestDialog open request={authPlanRequest()} onClose={() => {}} />,
 		);
 		expect(await screen.findByRole('button', { name: /^Review/ })).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: /Create toolkit/i })).not.toBeInTheDocument();
-		expect(createCalls).toBe(1);
+		expect(
+			screen.queryByRole('button', { name: /Connect credential/ }),
+		).not.toBeInTheDocument();
 	});
 });
 
@@ -317,31 +402,18 @@ function compositeRequest(): AccessRequest {
 	const chain = (ref: { vendor: string; name: string }, p: string) => [
 		{
 			id: `${p}1`,
-			resource_type: 'toolkit',
-			action: 'create',
-			status: 'pending',
-			resource_reference: ref,
-		},
-		{
-			id: `${p}2`,
 			resource_type: 'credential',
 			action: 'provision',
 			status: 'pending',
 			resource_reference: { ...ref, security_scheme: 'no_auth' },
 		},
 		{
-			id: `${p}3`,
+			id: `${p}2`,
 			resource_type: 'credential',
 			action: 'bind',
 			status: 'pending',
 			resource_reference: ref,
-		},
-		{
-			id: `${p}4`,
-			resource_type: 'toolkit',
-			action: 'bind',
-			status: 'pending',
-			resource_reference: ref,
+			rules: [{ effect: 'allow', methods: ['GET'] }],
 		},
 	];
 	return {
@@ -383,49 +455,16 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		let created = 0;
 		stubDirectoryAndRequest(request);
 		worker.use(
-			http.post('/toolkits', () => {
-				created += 1;
-				return HttpResponse.json({
-					toolkit: {
-						toolkit_id: `tk_chain_${created}`,
-						name: `Chain toolkit ${created}`,
-					},
-					api_key: 'k',
-				});
-			}),
 			// Both chains are no-auth: the submit path auto-creates a NO_AUTH
 			// credential per fulfilled chain.
-			http.post('/credentials', () =>
-				HttpResponse.json({
+			http.post('/credentials', () => {
+				created += 1;
+				return HttpResponse.json({
 					credential: { credential_id: `cred_noauth_${created}` },
-				}),
-			),
-			http.post('/access-requests/*', async ({ request: httpReq }) => {
-				const url = new URL(httpReq.url);
-				const body = await httpReq.json();
-				if (url.pathname.endsWith(':amend')) {
-					opts?.onAmend?.(body);
-					return HttpResponse.json(request);
-				}
-				if (url.pathname.endsWith(':decide')) {
-					opts?.onDecide?.(body);
-					const decisions = (body as { items: { item_id: string; decision: string }[] })
-						.items;
-					const byId = new Map(decisions.map((d) => [d.item_id, d.decision]));
-					return HttpResponse.json({
-						...request,
-						status: decisions.every((d) => d.decision === 'approved')
-							? 'approved'
-							: 'partially_approved',
-						items: request.items.map((it) => ({
-							...it,
-							status: byId.get(it.id) ?? it.status,
-						})),
-					});
-				}
-				return new HttpResponse(null, { status: 404 });
+				});
 			}),
 		);
+		stubSubmitPath(request, opts);
 		return request;
 	}
 
@@ -436,19 +475,16 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 			onAmend: (b) => (amendBody = b),
 			onDecide: (b) => (decideBody = b),
 		});
+		const toolkits = trackToolkitCalls();
 		renderWithProviders(
 			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
 		);
 		const user = userEvent.setup();
 
-		// Chain 1 (no-auth): toolkit → rules → "Next API".
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		// Chain 1 (no-auth): rules → "Next API". Chain 2: rules → Review.
+		await screen.findByText(/Confirm what the agent can do on/);
 		await user.click(await screen.findByRole('button', { name: /Next API/ }));
-
-		// Chain 2: toolkit → rules → Review.
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByText(/Confirm what the agent can do on/);
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 
 		// Review lists both chains and the extra scope grant. (The APIs also
@@ -461,25 +497,22 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		expect(await screen.findByText('Access granted')).toBeInTheDocument();
 
 		// One amend carrying BOTH chains' bind items, each keyed to its own
-		// toolkit — never cross-wired. The inert placeholders are stamped with
-		// the ids that fulfilled them (audit honesty, #897).
-		const amendments = (
-			amendBody as { items: { item_id: string; to_id?: string; resource_id?: string }[] }
-		).items;
+		// credential — never cross-wired. The inert placeholders are stamped
+		// with the ids that fulfilled them (audit honesty, #897).
+		const amendments = (amendBody as { items: AmendItem[] }).items;
 		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
-		expect(byItem.get('a3')?.to_id).toBe('tk_chain_1');
-		expect(byItem.get('a4')?.resource_id).toBe('tk_chain_1');
-		expect(byItem.get('b3')?.to_id).toBe('tk_chain_2');
-		expect(byItem.get('b4')?.resource_id).toBe('tk_chain_2');
-		expect(byItem.get('a1')?.resource_id).toBe('tk_chain_1');
-		expect(byItem.get('b1')?.resource_id).toBe('tk_chain_2');
 		expect(byItem.get('a2')?.resource_id).toMatch(/^cred_noauth_/);
 		expect(byItem.get('b2')?.resource_id).toMatch(/^cred_noauth_/);
+		expect(byItem.get('a2')?.resource_id).not.toBe(byItem.get('b2')?.resource_id);
+		expect(byItem.get('a1')?.resource_id).toBe(byItem.get('a2')?.resource_id);
+		expect(byItem.get('b1')?.resource_id).toBe(byItem.get('b2')?.resource_id);
+		expect(amendments.every((a) => !('to_id' in a))).toBe(true);
 
 		// One decide approving every pending item, the scope grant included.
 		const decisions = (decideBody as { items: { item_id: string; decision: string }[] }).items;
-		expect(decisions).toHaveLength(9);
+		expect(decisions).toHaveLength(5);
 		expect(decisions.every((d) => d.decision === 'approved')).toBe(true);
+		expect(toolkits.count()).toBe(0);
 	});
 
 	it('skipping a chain denies its items and grants the rest', async () => {
@@ -495,10 +528,9 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		const user = userEvent.setup();
 
 		// Fulfil chain 1, then SKIP chain 2 straight from its first step.
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByText(/Confirm what the agent can do on/);
 		await user.click(await screen.findByRole('button', { name: /Next API/ }));
-		await screen.findByLabelText('Toolkit name');
+		await screen.findByText(/Confirm what the agent can do on/);
 		await user.click(screen.getByRole('button', { name: /Skip this API/ }));
 
 		// Review flags the skipped chain and still allows submitting.
@@ -506,15 +538,15 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
 		expect(await screen.findByText('Access granted')).toBeInTheDocument();
 
-		// Only chain 1 was amended (its placeholders included — never the
+		// Only chain 1 was amended (its placeholder included — never the
 		// skipped chain's)…
-		const amendments = (amendBody as { items: { item_id: string }[] }).items;
-		expect(amendments.map((a) => a.item_id).sort()).toEqual(['a1', 'a2', 'a3', 'a4']);
-		// …and the decide denies exactly chain 2's four items.
+		const amendments = (amendBody as { items: AmendItem[] }).items;
+		expect(amendments.map((a) => a.item_id).sort()).toEqual(['a1', 'a2']);
+		// …and the decide denies exactly chain 2's two items.
 		const decisions = (decideBody as { items: { item_id: string; decision: string }[] }).items;
 		const denied = decisions.filter((d) => d.decision === 'denied').map((d) => d.item_id);
-		expect(denied.sort()).toEqual(['b1', 'b2', 'b3', 'b4']);
-		expect(decisions.filter((d) => d.decision === 'approved')).toHaveLength(5);
+		expect(denied.sort()).toEqual(['b1', 'b2']);
+		expect(decisions.filter((d) => d.decision === 'approved')).toHaveLength(3);
 	});
 
 	it('backing into a skipped chain lets the operator include it again', async () => {
@@ -525,19 +557,17 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		);
 		const user = userEvent.setup();
 
-		// Fulfil chain 1, skip chain 2, then change your mind from review.
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		// Skip chain 2, then change your mind from review.
+		await screen.findByText(/Confirm what the agent can do on/);
 		await user.click(await screen.findByRole('button', { name: /Next API/ }));
-		await screen.findByLabelText('Toolkit name');
+		await screen.findByText(/Confirm what the agent can do on/);
 		await user.click(screen.getByRole('button', { name: /Skip this API/ }));
 		await screen.findByText(/skipped — will be denied/);
 		await user.click(screen.getByRole('button', { name: /Back/ }));
 
 		// The skipped chain's step offers the un-skip affordance; taking it
-		// restores the normal create flow, and fulfilment proceeds as usual.
+		// restores the normal flow, and fulfilment proceeds as usual.
 		await user.click(await screen.findByRole('button', { name: /Include this API/ }));
-		await user.click(await screen.findByRole('button', { name: /Create toolkit/i }));
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 		expect(screen.queryByText(/skipped — will be denied/)).not.toBeInTheDocument();
 
@@ -546,7 +576,7 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 
 		// Nothing is denied — the un-skipped chain was fulfilled and approved.
 		const decisions = (decideBody as { items: { decision: string }[] }).items;
-		expect(decisions).toHaveLength(9);
+		expect(decisions).toHaveLength(5);
 		expect(decisions.every((d) => d.decision === 'approved')).toBe(true);
 	});
 
@@ -557,58 +587,36 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		);
 		const user = userEvent.setup();
 
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
-		await screen.findByRole('button', { name: /Next API/ });
+		// Touch the wizard (skipping mutates chain state) so the draft persists.
+		await screen.findByText(/Confirm what the agent can do on/);
+		await user.click(screen.getByRole('button', { name: /Skip this API/ }));
 
-		// The draft (with the created toolkit id) must be in sessionStorage —
-		// a module-scoped map would not survive the OAuth popup-blocked
-		// same-tab redirect fallback. (The persist effect is passive; wait
-		// for it to flush.)
+		// The draft must be in sessionStorage — a module-scoped map would not
+		// survive the OAuth popup-blocked same-tab redirect fallback. (The
+		// persist effect is passive; wait for it to flush.)
 		await waitFor(() => {
-			expect(sessionStorage.getItem('jentic.provisioningWizardDrafts')).not.toBeNull();
+			expect(sessionStorage.getItem('jentic.provisioningWizardDrafts.v2')).not.toBeNull();
 		});
-		const raw = sessionStorage.getItem('jentic.provisioningWizardDrafts');
+		const raw = sessionStorage.getItem('jentic.provisioningWizardDrafts.v2');
 		const stored = JSON.parse(raw!) as Record<
 			string,
-			{ chains: { key: string; toolkitId: string | null }[] }
+			{ chains: { key: string; skipped: boolean }[] }
 		>;
 		const draft = stored[request.id];
 		expect(draft).toBeDefined();
-		expect(draft.chains[0].toolkitId).toBe('tk_chain_1');
 		expect(draft.chains[0].key).toContain('open-meteo-com');
+		expect(draft.chains[0].skipped).toBe(true);
 	});
 });
 
-/** A single-chain plan whose credential must be operator-provided (api_key). */
-function authPlanRequest(): AccessRequest {
-	const base = planRequest();
-	return {
-		...base,
-		id: 'arq_plan_auth',
-		approve_url: 'https://app.example.test/access-requests/arq_plan_auth',
-		items: base.items.map((it) =>
-			it.action === 'provision'
-				? {
-						...it,
-						resource_reference: {
-							...it.resource_reference,
-							security_scheme: 'api_key',
-						},
-					}
-				: it,
-		),
-	};
-}
-
-describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
+describe('ProvisioningRequestDialog — adopt existing credentials (#826)', () => {
 	beforeEach(() => {
 		setToken('test-token');
 		resetProvisioningWizardDrafts();
 	});
 	afterEach(() => clearToken());
 
-	/** Stub the pickers' list endpoints + the amend/decide submit path. */
+	/** Stub the picker's list endpoint + the amend/decide submit path. */
 	function stubAdoption(
 		request: AccessRequest,
 		opts?: {
@@ -619,37 +627,6 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 	) {
 		stubDirectoryAndRequest(request);
 		worker.use(
-			http.get('/toolkits', () =>
-				HttpResponse.json({
-					data: [
-						{
-							toolkit_id: 'tk_existing',
-							name: 'Ops toolkit',
-							description: null,
-							active: true,
-							created_by: 'usr_admin',
-							created_at: '2026-01-01T00:00:00Z',
-							updated_at: null,
-							credential_count: 1,
-							key_count: 0,
-						},
-						{
-							// Suspended — must never be offered for adoption.
-							toolkit_id: 'tk_suspended',
-							name: 'Suspended toolkit',
-							description: null,
-							active: false,
-							created_by: 'usr_admin',
-							created_at: '2026-01-01T00:00:00Z',
-							updated_at: null,
-							credential_count: 0,
-							key_count: 0,
-						},
-					],
-					has_more: false,
-					next_cursor: null,
-				}),
-			),
 			http.get('/credentials', ({ request: httpReq }) => {
 				opts?.onCredentialQuery?.(new URL(httpReq.url).searchParams.get('vendor'));
 				return HttpResponse.json({
@@ -680,91 +657,51 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 					next_cursor: null,
 				});
 			}),
-			http.post('/credentials', () =>
-				HttpResponse.json({ credential: { credential_id: 'cred_noauth_1' } }),
-			),
-			http.post('/access-requests/*', async ({ request: httpReq }) => {
-				const url = new URL(httpReq.url);
-				const body = await httpReq.json();
-				if (url.pathname.endsWith(':amend')) {
-					opts?.onAmend?.(body);
-					return HttpResponse.json(request);
-				}
-				if (url.pathname.endsWith(':decide')) {
-					opts?.onDecide?.(body);
-					const decisions = (body as { items: { item_id: string; decision: string }[] })
-						.items;
-					const byId = new Map(decisions.map((d) => [d.item_id, d.decision]));
-					return HttpResponse.json({
-						...request,
-						status: 'approved',
-						items: request.items.map((it) => ({
-							...it,
-							status: byId.get(it.id) ?? it.status,
-						})),
-					});
-				}
-				return new HttpResponse(null, { status: 404 });
-			}),
 		);
+		stubSubmitPath(request, opts);
 	}
 
-	it('adopting an existing toolkit skips the create call and amends its id', async () => {
+	it('adopting an existing credential skips the connect flow and amends its id', async () => {
 		let amendBody: unknown;
-		let createCalls = 0;
-		const request = planRequest();
+		const request = authPlanRequest();
 		stubAdoption(request, { onAmend: (b) => (amendBody = b) });
-		worker.use(
-			http.post('/toolkits', () => {
-				createCalls += 1;
-				return HttpResponse.json(
-					{ toolkit: { toolkit_id: 'tk_new', name: 'nope' }, api_key: 'k' },
-					{ status: 201 },
-				);
-			}),
-		);
 		renderWithProviders(
 			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
 		);
 		const user = userEvent.setup();
 
-		// Pick the existing toolkit instead of creating one — selection is
-		// staged, the button commits (no-auth plan: straight to rules).
-		const picker = await screen.findByLabelText(/use an existing toolkit/i);
+		// The credential step offers the vendor-scoped existing credentials;
+		// staging one and committing advances straight to rules — no create
+		// form, no connect flow.
+		const picker = await screen.findByLabelText(/use an existing credential/i);
 		// No satisfaction hint on this request — the nudge must not render.
 		expect(screen.queryByText(/already wired/i)).not.toBeInTheDocument();
-		await user.selectOptions(picker, 'tk_existing');
-		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
+		await user.selectOptions(picker, 'cred_exist');
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 
-		// Review names the adopted toolkit and marks it as pre-existing.
-		expect(await screen.findByText('Ops toolkit')).toBeInTheDocument();
+		// Review names the adopted credential and marks it as pre-existing.
+		expect(await screen.findByText('Weather key')).toBeInTheDocument();
 		expect(screen.getByText('(existing)')).toBeInTheDocument();
 
 		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
 		expect(await screen.findByText('Access granted')).toBeInTheDocument();
 
-		// The binds were amended to the ADOPTED id; nothing was created. The
-		// toolkit:create placeholder is stamped with the REUSED toolkit id so
-		// the approved record reads "fulfilled by tk_existing", not a phantom
-		// create (#897 audit honesty).
-		const amendments = (
-			amendBody as { items: { item_id: string; to_id?: string; resource_id?: string }[] }
-		).items;
+		// The bind was amended to the ADOPTED id; the credential:provision
+		// placeholder records the reused credential (#897 audit honesty).
+		const amendments = (amendBody as { items: AmendItem[] }).items;
 		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
-		expect(byItem.get('i3')?.to_id).toBe('tk_existing');
-		expect(byItem.get('i4')?.resource_id).toBe('tk_existing');
-		expect(byItem.get('i1')?.resource_id).toBe('tk_existing');
-		expect(createCalls).toBe(0);
+		expect(byItem.get('i2')?.resource_id).toBe('cred_exist');
+		expect(byItem.get('i1')?.resource_id).toBe('cred_exist');
 	});
 
-	it('never offers to discard adopted objects on cancel', async () => {
-		const request = planRequest();
+	it('never offers to discard adopted credentials on cancel', async () => {
+		const request = authPlanRequest();
 		stubAdoption(request);
 		let closed = false;
 		let deleteCalls = 0;
 		worker.use(
-			http.delete('/toolkits/:id', () => {
+			http.delete('/credentials/:id', () => {
 				deleteCalls += 1;
 				return new HttpResponse(null, { status: 204 });
 			}),
@@ -780,12 +717,12 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		);
 		const user = userEvent.setup();
 
-		const picker = await screen.findByLabelText(/use an existing toolkit/i);
-		await user.selectOptions(picker, 'tk_existing');
-		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
+		const picker = await screen.findByLabelText(/use an existing credential/i);
+		await user.selectOptions(picker, 'cred_exist');
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await screen.findByRole('button', { name: /^Review/ });
 
-		// Cancel: the wizard created NOTHING this session (the toolkit was
+		// Cancel: the wizard created NOTHING this session (the credential was
 		// adopted), so there are no orphans — close directly, never offering
 		// to delete infrastructure the operator set up outside the wizard.
 		await user.click(screen.getByRole('button', { name: 'Close' }));
@@ -796,49 +733,7 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		expect(deleteCalls).toBe(0);
 	});
 
-	it('adopting an existing credential skips the connect flow and amends its id', async () => {
-		let amendBody: unknown;
-		const request = authPlanRequest();
-		stubAdoption(request, { onAmend: (b) => (amendBody = b) });
-		worker.use(
-			http.post('/toolkits', () =>
-				HttpResponse.json({
-					toolkit: { toolkit_id: 'tk_auth', name: 'Weather Agent toolkit' },
-					api_key: 'k',
-				}),
-			),
-		);
-		renderWithProviders(
-			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
-		);
-		const user = userEvent.setup();
-
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
-
-		// The credential step offers the vendor-scoped existing credentials;
-		// staging one and committing advances straight to rules — no create
-		// form, no connect flow.
-		const picker = await screen.findByLabelText(/use an existing credential/i);
-		await user.selectOptions(picker, 'cred_exist');
-		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
-		await user.click(await screen.findByRole('button', { name: /^Review/ }));
-
-		expect(await screen.findByText('Weather key')).toBeInTheDocument();
-		expect(screen.getByText('(existing)')).toBeInTheDocument();
-
-		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
-		expect(await screen.findByText('Access granted')).toBeInTheDocument();
-
-		const amendments = (amendBody as { items: { item_id: string; resource_id?: string }[] })
-			.items;
-		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
-		expect(byItem.get('i3')?.resource_id).toBe('cred_exist');
-		// The credential:provision placeholder records the reused credential.
-		expect(byItem.get('i2')?.resource_id).toBe('cred_exist');
-	});
-
-	it('slugifies the raw filed vendor and hides inactive artifacts in the pickers', async () => {
+	it('slugifies the raw filed vendor and hides inactive credentials in the picker', async () => {
 		// Agents file references with raw domains ('Open-Meteo.com'); stored
 		// rows carry the slug ('open-meteo-com') and the credential list's
 		// vendor filter is an exact match — an unslugged query would silently
@@ -854,29 +749,10 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 			})),
 		};
 		stubAdoption(request, { onCredentialQuery: (v) => (queriedVendor = v) });
-		worker.use(
-			http.post('/toolkits', () =>
-				HttpResponse.json({
-					toolkit: { toolkit_id: 'tk_auth', name: 'Weather Agent toolkit' },
-					api_key: 'k',
-				}),
-			),
-		);
 		renderWithProviders(
 			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
 		);
-		const user = userEvent.setup();
 
-		// Toolkit picker: the suspended toolkit is never offered.
-		const toolkitPicker = await screen.findByLabelText(/use an existing toolkit/i);
-		expect(within(toolkitPicker).getByRole('option', { name: 'Ops toolkit' })).toBeVisible();
-		expect(
-			within(toolkitPicker).queryByRole('option', { name: 'Suspended toolkit' }),
-		).not.toBeInTheDocument();
-
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
-
-		// Credential picker: queried with the slug, disabled rows filtered out.
 		const credPicker = await screen.findByLabelText(/use an existing credential/i);
 		expect(queriedVendor).toBe('open-meteo-com');
 		expect(within(credPicker).getByRole('option', { name: /Weather key/ })).toBeVisible();
@@ -885,16 +761,17 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		).not.toBeInTheDocument();
 	});
 
-	it('names the wired toolkit, floats it in the picker, and reviews honestly on adopt', async () => {
-		// The backend hint carries WHICH toolkit satisfies the bind
-		// (already_satisfied_by) — the nudge names it and the picker floats it
-		// so the operator isn't left hunting through name-only options.
-		const base = planRequest();
+	it('names the wired credential, floats it in the picker, and reviews honestly on adopt', async () => {
+		// The backend hint carries WHICH credential satisfies the bind
+		// (already_satisfied_by = a CREDENTIAL id now) — the nudge names it and
+		// the picker floats it so the operator isn't left hunting through
+		// name-only options.
+		const base = authPlanRequest();
 		const request = {
 			...base,
 			items: base.items.map((it) =>
-				it.id === 'i4'
-					? { ...it, already_satisfied: true, already_satisfied_by: 'tk_existing' }
+				it.id === 'i2'
+					? { ...it, already_satisfied: true, already_satisfied_by: 'cred_exist' }
 					: it,
 			),
 		};
@@ -905,89 +782,31 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		const user = userEvent.setup();
 
 		const nudge = await screen.findByText(/already wired to/i);
-		expect(nudge).toHaveTextContent('Ops toolkit');
+		expect(nudge).toHaveTextContent('Weather key');
 
-		const picker = await screen.findByLabelText(/use an existing toolkit/i);
+		const picker = await screen.findByLabelText(/use an existing credential/i);
 		const options = within(picker).getAllByRole('option');
-		expect(options[1]).toHaveTextContent(/Ops toolkit — already linked to this agent/);
+		expect(options[1]).toHaveTextContent(/Weather key .* — already linked to this agent/);
 
 		// Adopt it and reach review: the note is the adopted variant, honest
 		// about the rules being updated (an approve REPLACES binding rules —
 		// never "nothing changes").
-		await user.selectOptions(picker, 'tk_existing');
-		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
+		await user.selectOptions(picker, 'cred_exist');
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 		expect(
 			await screen.findByText(/reuses that setup and updates its permission rules/i),
 		).toBeInTheDocument();
 	});
 
-	it('ranks toolkits already serving the chain API first and badges them', async () => {
-		// The canonical #826 manual state (toolkit + credential exist, agent
-		// unbound) satisfies nothing, so the wired-toolkit float never fires —
-		// ranking by the served API (the list's `apis` aggregation) rescues
-		// that exact case: the right toolkit surfaces even from a name-only
-		// list (#890).
-		const request = planRequest();
-		stubDirectoryAndRequest(request);
-		worker.use(
-			http.get('/toolkits', () =>
-				HttpResponse.json({
-					data: [
-						{
-							// Server order puts the non-serving toolkit first: the
-							// ranking, not luck, must float the serving one.
-							toolkit_id: 'tk_unrelated',
-							name: 'Unrelated toolkit',
-							description: null,
-							active: true,
-							created_by: 'usr_admin',
-							created_at: '2026-01-01T00:00:00Z',
-							updated_at: null,
-							credential_count: 1,
-							key_count: 0,
-							apis: [{ api_vendor: 'github-com', api_name: 'rest' }],
-						},
-						{
-							toolkit_id: 'tk_serves',
-							name: 'Weather toolkit',
-							description: null,
-							active: true,
-							created_by: 'usr_admin',
-							created_at: '2026-01-01T00:00:00Z',
-							updated_at: null,
-							credential_count: 1,
-							key_count: 0,
-							apis: [{ api_vendor: 'open-meteo-com', api_name: 'forecast' }],
-						},
-					],
-					has_more: false,
-					next_cursor: null,
-				}),
-			),
-		);
-		renderWithProviders(
-			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
-		);
-
-		const picker = await screen.findByLabelText(/use an existing toolkit/i);
-		const options = within(picker).getAllByRole('option');
-		// [0] is the placeholder; the serving toolkit floats above the rest.
-		// The badge is hedged/fixed-width ("this API", not the chain label):
-		// NULL-name credentials match laxly, and long names would push a long
-		// suffix past the closed control's ellipsis.
-		expect(options[1]).toHaveTextContent(/Weather toolkit — already serves this API/);
-		expect(options[2]).toHaveTextContent('Unrelated toolkit');
-		expect(options[2]).not.toHaveTextContent(/already serves/);
-	});
-
 	it('flags a never-connected OAuth credential and warns before adoption', async () => {
 		// The adopt picker must not blindly trust the operator's choice: a
 		// never-signed-in OAuth credential would only fail at execute time. The
-		// redacted listing carries the derived connect state, so the
-		// picker warns BEFORE the pick is committed (#890).
+		// redacted listing carries the derived connect state, so the picker
+		// warns BEFORE the pick is committed (#890).
 		const request = authPlanRequest();
-		stubAdoption(request);
+		stubDirectoryAndRequest(request);
+		stubSubmitPath(request);
 		worker.use(
 			http.get('/credentials', () =>
 				HttpResponse.json({
@@ -1013,20 +832,11 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 					next_cursor: null,
 				}),
 			),
-			http.post('/toolkits', () =>
-				HttpResponse.json({
-					toolkit: { toolkit_id: 'tk_auth', name: 'Weather Agent toolkit' },
-					api_key: 'k',
-				}),
-			),
 		);
 		renderWithProviders(
 			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
 		);
 		const user = userEvent.setup();
-
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
 
 		const picker = await screen.findByLabelText(/use an existing credential/i);
 		const options = within(picker).getAllByRole('option');
@@ -1049,28 +859,27 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		expect(screen.queryByText(/reused as-is/i)).not.toBeInTheDocument();
 	});
 
-	it('offers a retry instead of silently collapsing when the toolkit list fails', async () => {
+	it('offers a retry instead of silently collapsing when the credential list fails', async () => {
 		// The nudge may be telling the operator to adopt — a failed fetch must
 		// say so and offer a way out, not silently hide the picker.
-		const request = planRequest();
+		const request = authPlanRequest();
 		stubDirectoryAndRequest(request);
 		let failures = 0;
 		worker.use(
-			http.get('/toolkits', () => {
+			http.get('/credentials', () => {
 				failures += 1;
 				if (failures === 1) return new HttpResponse(null, { status: 500 });
 				return HttpResponse.json({
 					data: [
 						{
-							toolkit_id: 'tk_existing',
-							name: 'Ops toolkit',
-							description: null,
+							credential_id: 'cred_exist',
+							name: 'Weather key',
+							type: 'api_key',
+							provider: 'manual',
 							active: true,
-							created_by: 'usr_admin',
+							api: { vendor: 'open-meteo-com', name: 'forecast', version: null },
 							created_at: '2026-01-01T00:00:00Z',
 							updated_at: null,
-							credential_count: 1,
-							key_count: 0,
 						},
 					],
 					has_more: false,
@@ -1084,10 +893,58 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		const user = userEvent.setup();
 
 		expect(
-			await screen.findByText(/couldn.t load your existing toolkits/i),
+			await screen.findByText(/couldn.t load your existing credentials/i),
 		).toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: 'Retry' }));
-		expect(await screen.findByLabelText(/use an existing toolkit/i)).toBeInTheDocument();
+		expect(await screen.findByLabelText(/use an existing credential/i)).toBeInTheDocument();
+	});
+});
+
+describe('ProvisioningRequestDialog — shared rule sets', () => {
+	beforeEach(() => {
+		setToken('test-token');
+		resetProvisioningWizardDrafts();
+	});
+	afterEach(() => clearToken());
+
+	it('shows the rule-set pointer read-only and amends without inline rules', async () => {
+		// A bind carrying `rule_set_id` is governed by the shared set (mutually
+		// exclusive with inline rules): the wizard must neither open the rule
+		// editor nor send `rules` in the amendment — that would detach the set.
+		const base = planRequest();
+		const request = {
+			...base,
+			items: base.items.map((it) =>
+				it.id === 'i2' ? { ...it, rules: null, rule_set_id: 'prs_shared_01' } : it,
+			),
+		};
+		stubDirectoryAndRequest(request);
+		let amendBody: unknown;
+		worker.use(
+			http.post('/credentials', () =>
+				HttpResponse.json({ credential: { credential_id: 'cred_noauth_9' } }),
+			),
+		);
+		stubSubmitPath(request, { onAmend: (b) => (amendBody = b) });
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// The rules step shows the shared-set panel instead of the editor.
+		expect(await screen.findByText(/governed by a shared permission rule set/i)).toBeVisible();
+		expect(screen.getByText('prs_shared_01')).toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /^Review/ }));
+		expect(await screen.findByText(/shared rule set/)).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		const amendments = (amendBody as { items: AmendItem[] }).items;
+		const bind = amendments.find((a) => a.item_id === 'i2')!;
+		expect(bind.resource_id).toBe('cred_noauth_9');
+		expect('rules' in bind).toBe(false);
+		expect('to_id' in bind).toBe(false);
 	});
 });
 
@@ -1098,43 +955,21 @@ describe('ProvisioningRequestDialog — already-in-place hints (#826)', () => {
 	});
 	afterEach(() => clearToken());
 
-	/** A composite whose chain-1 toolkit:bind and scope extra are already satisfied. */
-	function satisfiedComposite(): AccessRequest {
-		const request = compositeRequest();
-		return {
-			...request,
-			items: request.items.map((it) => {
-				if (it.id === 'a4' || it.id === 's1') return { ...it, already_satisfied: true };
-				return it;
-			}),
-		};
-	}
-
-	it('nudges towards adopting when the agent is already wired to the API', async () => {
-		stubDirectoryAndRequest(satisfiedComposite());
-		renderWithProviders(
-			<ProvisioningRequestDialog open request={satisfiedComposite()} onClose={() => {}} />,
-		);
-
-		// The fresh GET carries `already_satisfied` on chain 1's toolkit:bind:
-		// the toolkit step points at the existing wiring before the operator
-		// mints a duplicate toolkit.
-		expect(await screen.findByText(/already wired to a toolkit serving/i)).toBeInTheDocument();
-	});
-
 	it('marks satisfied chains and extras on the review step', async () => {
-		const request = satisfiedComposite();
+		// Chain 1's credential:bind and the scope extra are already satisfied.
+		const request = {
+			...compositeRequest(),
+			items: compositeRequest().items.map((it) =>
+				it.id === 'a2' || it.id === 's1' ? { ...it, already_satisfied: true } : it,
+			),
+		};
 		stubDirectoryAndRequest(request);
 		let created = 0;
 		worker.use(
-			http.post('/toolkits', () => {
+			http.post('/credentials', () => {
 				created += 1;
 				return HttpResponse.json({
-					toolkit: {
-						toolkit_id: `tk_chain_${created}`,
-						name: `Chain toolkit ${created}`,
-					},
-					api_key: 'k',
+					credential: { credential_id: `cred_noauth_${created}` },
 				});
 			}),
 		);
@@ -1144,19 +979,17 @@ describe('ProvisioningRequestDialog — already-in-place hints (#826)', () => {
 		const user = userEvent.setup();
 
 		// Walk both no-auth chains to reach review.
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByText(/Confirm what the agent can do on/);
 		await user.click(await screen.findByRole('button', { name: /Next API/ }));
-		await screen.findByLabelText('Toolkit name');
-		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByText(/Confirm what the agent can do on/);
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 
-		// Chain 1 carries the existing-binding note — the operator created a
-		// NEW toolkit despite the detected wiring, so the note is honest about
-		// binding it alongside the existing setup. The satisfied scope grant
-		// is labelled as already in place.
+		// Chain 1 carries the existing-binding note — the operator proceeds
+		// with a NEW (auto-created) credential despite the detected wiring, so
+		// the note is honest about binding it alongside the existing setup.
+		// The satisfied scope grant is labelled as already in place.
 		expect(
-			await screen.findByText(/already has a toolkit wired for this API/i),
+			await screen.findByText(/already has a credential wired for this API/i),
 		).toBeInTheDocument();
 		expect(screen.getByText(/alongside that existing setup/i)).toBeInTheDocument();
 		expect(screen.getByText(/already in place — approving records it/i)).toBeInTheDocument();

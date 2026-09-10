@@ -1,13 +1,14 @@
 /**
  * AccessRequestDecisionDialog — routes an access request to the right decision UI.
  *
- * A *provisioning plan* (a request carrying `toolkit:create` / `credential:provision`
- * intents) must be decided through the fulfilment wizard, which creates the real
- * toolkit + credential and wires them before approving. Approving a plan through
- * the plain approve/deny dialog leaves the bind items unfulfilled and the backend
- * denies them (the setup is a no-op). Any surface that lets an operator decide a
- * request (dashboard queue, pending card, agent card, the rail) should open THIS
- * wrapper so the plan-vs-plain routing happens in one place.
+ * A *provisioning plan* (a request carrying `credential:provision` intents)
+ * must be decided through the fulfilment wizard, which creates the real
+ * credential and binds the agent to it before approving. Approving a plan
+ * through the plain approve/deny dialog leaves the bind items unfulfilled and
+ * the backend denies them (the setup is a no-op). Any surface that lets an
+ * operator decide a request (dashboard queue, pending card, agent card, the
+ * rail) should open THIS wrapper so the plan-vs-plain routing happens in one
+ * place.
  *
  * Callers that already hold the full request (list pages) pass `request`; the
  * routing is then synchronous. Event-driven callers (the rail) only carry the
