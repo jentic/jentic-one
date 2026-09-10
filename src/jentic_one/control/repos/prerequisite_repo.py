@@ -265,3 +265,24 @@ class PrerequisiteRepository:
                 {"credential_id": credential_id, "limit": limit},
             )
         return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
+
+    @staticmethod
+    async def get_agent_credential_binding(
+        session: AsyncSession, *, agent_id: str, credential_id: str
+    ) -> tuple[str, bool] | None:
+        """Return ``(binding_id, suspended)`` for a direct binding, or ``None``.
+
+        Existence check for the per-binding permission endpoints (theme 5
+        phase 1): the binding row lives in the admin DB while the rules live
+        in the control DB, so the rules endpoints bridge the same seam the
+        reverse lookup above does.
+        """
+        result = await session.execute(
+            text(
+                "SELECT id, suspended FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
+            ),
+            {"agent_id": agent_id, "credential_id": credential_id},
+        )
+        row = result.fetchone()
+        return (str(row[0]), bool(row[1])) if row is not None else None

@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **188**._
+_Total endpoints: **192**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -231,7 +231,7 @@ _Total endpoints: **188**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (75)
+## Any authenticated actor (79)
 
 
 ### `access-requests`
@@ -295,6 +295,10 @@ _Total endpoints: **188**._
 | GET | `/credentials/{credential_id}` | `credentials:read`, `owner:credentials:read` | any | Get credential |
 | PATCH | `/credentials/{credential_id}` | `credentials:write` | any | Update or rotate credential |
 | GET | `/credentials/{credential_id}/agents` | `credentials:read`, `owner:credentials:read` | any | List agents bound to credential |
+| GET | `/credentials/{credential_id}/agents/{agent_id}/permissions` | `credentials:read`, `owner:credentials:read` | any | List binding permission rules |
+| PATCH | `/credentials/{credential_id}/agents/{agent_id}/permissions` | `credentials:write` | any | Patch binding permission rules |
+| PUT | `/credentials/{credential_id}/agents/{agent_id}/permissions` | `credentials:write` | any | Replace binding permission rules |
+| POST | `/credentials/{credential_id}/agents/{agent_id}/permissions:test` | `credentials:read`, `owner:credentials:read` | any | Dry-run permission evaluation |
 | POST | `/credentials/{credential_id}/connect` | `credentials:write` | any | Begin OAuth connect flow |
 
 ### `jobs`

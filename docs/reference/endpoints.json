@@ -2260,6 +2260,110 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listAgentCredentialPermissions",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/permissions",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "List binding permission rules",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "patchAgentCredentialPermissions",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/permissions",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Patch binding permission rules",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PUT",
+      "operation_id": "replaceAgentCredentialPermissions",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/permissions",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Replace binding permission rules",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "POST",
+      "operation_id": "testAgentCredentialPermissions",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/permissions:test",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "Dry-run permission evaluation",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
         "credentials:write": [
           "credentials:read"
         ]
@@ -5361,5 +5465,5 @@
     ],
     "total": 33
   },
-  "total": 188
+  "total": 192
 }

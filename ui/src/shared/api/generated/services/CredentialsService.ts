@@ -14,9 +14,14 @@ import type { CredentialAgentListResponse } from '../models/CredentialAgentListR
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
+import type { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema } from '../models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
 import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
 import type { OAuth2UpdateRequest } from '../models/OAuth2UpdateRequest';
+import type { PermissionRuleListResponse } from '../models/PermissionRuleListResponse';
+import type { PermissionsPatchRequest } from '../models/PermissionsPatchRequest';
+import type { PermissionTestRequest } from '../models/PermissionTestRequest';
+import type { PermissionTestResponse } from '../models/PermissionTestResponse';
 import type { ProviderDiscoveryResponse } from '../models/ProviderDiscoveryResponse';
 import type { Sigv4CreateRequest } from '../models/Sigv4CreateRequest';
 import type { Sigv4UpdateRequest } from '../models/Sigv4UpdateRequest';
@@ -270,6 +275,146 @@ export class CredentialsService {
                 'cursor': cursor,
                 'limit': limit,
             },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * List binding permission rules
+     * List the ordered PBAC rules for a direct `(agent, credential)` binding.
+     * @returns PermissionRuleListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listAgentCredentialPermissions({
+        credentialId,
+        agentId,
+    }: {
+        credentialId: string,
+        agentId: string,
+    }): CancelablePromise<PermissionRuleListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/credentials/{credential_id}/agents/{agent_id}/permissions',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Patch binding permission rules
+     * Additively add and/or remove permission rules on a binding.
+     * @returns PermissionRuleListResponse Successful Response
+     * @throws ApiError
+     */
+    public static patchAgentCredentialPermissions({
+        credentialId,
+        agentId,
+        requestBody,
+    }: {
+        credentialId: string,
+        agentId: string,
+        requestBody: PermissionsPatchRequest,
+    }): CancelablePromise<PermissionRuleListResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/credentials/{credential_id}/agents/{agent_id}/permissions',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Replace binding permission rules
+     * Replace the full set of permission rules for a binding (idempotent PUT).
+     * @returns PermissionRuleListResponse Successful Response
+     * @throws ApiError
+     */
+    public static replaceAgentCredentialPermissions({
+        credentialId,
+        agentId,
+        requestBody,
+    }: {
+        credentialId: string,
+        agentId: string,
+        requestBody: Array<jentic_one__control__web__schemas__toolkits__PermissionRuleSchema>,
+    }): CancelablePromise<PermissionRuleListResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/credentials/{credential_id}/agents/{agent_id}/permissions',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Dry-run permission evaluation
+     * Answer "what would the broker do for this request?" without calling upstream.
+     *
+     * Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+     * binding's rules are one ordered first-match-wins list, so the result is
+     * exactly this binding's policy. Default-deny when nothing matches.
+     * @returns PermissionTestResponse Successful Response
+     * @throws ApiError
+     */
+    public static testAgentCredentialPermissions({
+        credentialId,
+        agentId,
+        requestBody,
+    }: {
+        credentialId: string,
+        agentId: string,
+        requestBody: PermissionTestRequest,
+    }): CancelablePromise<PermissionTestResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/credentials/{credential_id}/agents/{agent_id}/permissions:test',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

@@ -24,6 +24,7 @@ from jentic_one.control.services.access_requests.errors import (
     UnsupportedScopeGrantError,
 )
 from jentic_one.control.services.credentials.errors import (
+    AgentBindingNotFoundError,
     CredentialNotFoundError,
     ImmutableFieldError,
     InvalidCredentialInputError,
@@ -51,6 +52,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ImmutableFieldError: (409, "immutable_field"),
     UnsupportedProviderForTypeError: (422, "unsupported_provider_for_type"),
     InvalidCredentialInputError: (400, "invalid_credential_input"),
+    AgentBindingNotFoundError: (404, "agent_binding_not_found"),
 }
 
 credential_service_error_handler = make_service_error_handler(_ERROR_MAP)

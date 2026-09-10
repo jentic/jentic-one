@@ -14174,6 +14174,343 @@ paths:
       summary: List agents bound to credential
       tags:
       - Credentials
+  /credentials/{credential_id}/agents/{agent_id}/permissions:
+    get:
+      description: List the ordered PBAC rules for a direct `(agent, credential)` binding.
+      operationId: listAgentCredentialPermissions
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRuleListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List binding permission rules
+      tags:
+      - Credentials
+    patch:
+      description: Additively add and/or remove permission rules on a binding.
+      operationId: patchAgentCredentialPermissions
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PermissionsPatchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRuleListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Patch binding permission rules
+      tags:
+      - Credentials
+    put:
+      description: Replace the full set of permission rules for a binding (idempotent PUT).
+      operationId: replaceAgentCredentialPermissions
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              items:
+                $ref: '#/components/schemas/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema'
+              maxItems: 100
+              title: Body
+              type: array
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRuleListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Replace binding permission rules
+      tags:
+      - Credentials
+  /credentials/{credential_id}/agents/{agent_id}/permissions:test:
+    post:
+      description: |-
+        Answer "what would the broker do for this request?" without calling upstream.
+
+        Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+        binding's rules are one ordered first-match-wins list, so the result is
+        exactly this binding's policy. Default-deny when nothing matches.
+      operationId: testAgentCredentialPermissions
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PermissionTestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionTestResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Dry-run permission evaluation
+      tags:
+      - Credentials
   /credentials/{credential_id}/connect:
     post:
       description: Initiate the OAuth connect flow for a credential.

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import structlog
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import Field
 
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.services.credentials.connect_service import (
     ConnectFlowError,
     ConnectService,
@@ -43,6 +47,14 @@ from jentic_one.control.web.schemas.credentials import (
     CredentialUpdateRequest,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
+)
+from jentic_one.control.web.schemas.toolkits import (
+    PermissionRuleListResponse,
+    PermissionRuleReadSchema,
+    PermissionRuleSchema,
+    PermissionsPatchRequest,
+    PermissionTestRequest,
+    PermissionTestResponse,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
@@ -328,6 +340,125 @@ async def list_credential_agents(
         ],
         has_more=has_more,
         next_cursor=next_cursor,
+    )
+
+
+# --- Per-binding permission rules (theme 5 phase 1) ---
+
+
+def _to_permission_rule(rule: AgentPermissionRule) -> PermissionRuleReadSchema:
+    return PermissionRuleReadSchema.model_validate(
+        {
+            "effect": rule.effect,
+            "methods": rule.methods,
+            "path": rule.path,
+            "match_mode": rule.match_mode,
+            "operations": rule.operations,
+            "_system": rule.is_system,
+            "_comment": rule.comment,
+        }
+    )
+
+
+@router.get(
+    "/credentials/{credential_id}/agents/{agent_id}/permissions",
+    operation_id="listAgentCredentialPermissions",
+    summary="List binding permission rules",
+    responses=not_found(),
+)
+async def list_agent_permissions(
+    credential_id: str,
+    agent_id: str,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionRuleListResponse:
+    """List the ordered PBAC rules for a direct `(agent, credential)` binding."""
+    rules = await svc.list_agent_permissions(credential_id, agent_id, identity=identity)
+    return PermissionRuleListResponse(data=[_to_permission_rule(r) for r in rules])
+
+
+@router.put(
+    "/credentials/{credential_id}/agents/{agent_id}/permissions",
+    operation_id="replaceAgentCredentialPermissions",
+    summary="Replace binding permission rules",
+    responses=not_found(),
+)
+async def replace_agent_permissions(
+    credential_id: str,
+    agent_id: str,
+    body: Annotated[list[PermissionRuleSchema], Field(max_length=100)],
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionRuleListResponse:
+    """Replace the full set of permission rules for a binding (idempotent PUT)."""
+    rules_data = [r.model_dump(exclude_none=True) for r in body]
+    rules = await svc.replace_agent_permissions(
+        credential_id, agent_id, rules_data, identity=identity
+    )
+    return PermissionRuleListResponse(data=[_to_permission_rule(r) for r in rules])
+
+
+@router.patch(
+    "/credentials/{credential_id}/agents/{agent_id}/permissions",
+    operation_id="patchAgentCredentialPermissions",
+    summary="Patch binding permission rules",
+    responses=not_found(),
+)
+async def patch_agent_permissions(
+    credential_id: str,
+    agent_id: str,
+    body: PermissionsPatchRequest,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionRuleListResponse:
+    """Additively add and/or remove permission rules on a binding."""
+    add_data = None
+    if body.add:
+        add_data = [r.model_dump(exclude_none=True) for r in body.add]
+    rules = await svc.patch_agent_permissions(
+        credential_id, agent_id, identity=identity, add=add_data, remove=body.remove
+    )
+    return PermissionRuleListResponse(data=[_to_permission_rule(r) for r in rules])
+
+
+@router.post(
+    "/credentials/{credential_id}/agents/{agent_id}/permissions:test",
+    operation_id="testAgentCredentialPermissions",
+    summary="Dry-run permission evaluation",
+    responses=not_found(),
+)
+async def test_agent_permissions(
+    credential_id: str,
+    agent_id: str,
+    body: PermissionTestRequest,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionTestResponse:
+    """Answer "what would the broker do for this request?" without calling upstream.
+
+    Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+    binding's rules are one ordered first-match-wins list, so the result is
+    exactly this binding's policy. Default-deny when nothing matches.
+    """
+    result = await svc.test_agent_permissions(
+        credential_id,
+        agent_id,
+        method=body.method,
+        path=body.path,
+        operation_id=body.operation_id,
+        identity=identity,
+    )
+    return PermissionTestResponse(
+        allowed=result.allowed,
+        matched=result.matched,
+        effect=result.effect,
+        rule_index=result.rule_index,
+        credential_id=result.credential_id,
+        is_system=result.is_system,
     )
 
 

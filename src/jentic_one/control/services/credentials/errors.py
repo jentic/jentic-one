@@ -39,3 +39,12 @@ class InvalidCredentialInputError(CredentialServiceError):
 
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
+
+
+class AgentBindingNotFoundError(CredentialServiceError):
+    """Raised when a direct agent↔credential binding does not exist (theme 5 phase 1)."""
+
+    def __init__(self, credential_id: str, agent_id: str) -> None:
+        super().__init__(f"Credential '{credential_id}' has no binding for agent '{agent_id}'")
+        self.credential_id = credential_id
+        self.agent_id = agent_id

@@ -404,3 +404,148 @@ def test_list_credential_agents_wrong_scope_is_403(
     credential_id = _create_api_key(cred_writer_client)
     resp = wrong_scope_client.get(f"/credentials/{credential_id}/agents")
     assert resp.status_code == 403
+
+
+# --- Per-binding permission rules (theme 5 phase 1) ---
+
+
+def test_agent_permissions_lifecycle(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """PUT replaces the ordered list, GET reads it back, PATCH adds/removes."""
+    credential_id, (agent_id, _) = bound_agents
+    base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+
+    # A fresh binding has no rules — default-deny with nothing to show.
+    assert cred_writer_client.get(base).json() == {"data": []}
+
+    # PUT an ordered list: deny DELETE first, then allow the rest.
+    rules = [
+        {"effect": "deny", "methods": ["DELETE"], "path": ".*"},
+        {"effect": "allow", "methods": ["GET", "POST"], "path": "/v1/.*"},
+    ]
+    resp = cred_writer_client.put(base, json=rules)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    assert [(r["effect"], r["methods"]) for r in body] == [
+        ("deny", ["DELETE"]),
+        ("allow", ["GET", "POST"]),
+    ]
+
+    # PUT is idempotent replacement, not append.
+    resp = cred_writer_client.put(base, json=rules)
+    assert resp.status_code == 200
+    assert len(resp.json()["data"]) == 2
+
+    # PATCH: remove the deny (index 0), add a narrower one at the end.
+    resp = cred_writer_client.patch(
+        base,
+        json={
+            "remove": [0],
+            "add": [{"effect": "deny", "methods": ["DELETE"], "path": "/v1/payments/.*"}],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    assert [(r["effect"], r["path"]) for r in body] == [
+        ("allow", "/v1/.*"),
+        ("deny", "/v1/payments/.*"),
+    ]
+
+
+def test_agent_permissions_test_endpoint(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """:test evaluates the binding's own ordered list — first match wins,
+    default-deny on no match, condition-less allow rejected at authoring."""
+    credential_id, (agent_id, _) = bound_agents
+    base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+
+    # A condition-less allow is rejected at the schema boundary — the broker's
+    # evaluation-time skip for such rules can therefore only be hit by legacy
+    # rows, and an authored blanket grant never enters the list.
+    resp = cred_writer_client.put(base, json=[{"effect": "allow"}])
+    assert resp.status_code == 422
+
+    resp = cred_writer_client.put(
+        base,
+        json=[
+            {"effect": "deny", "methods": ["DELETE"], "path": ".*"},
+            {"effect": "allow", "methods": ["GET"], "path": "/v1/.*"},
+        ],
+    )
+    assert resp.status_code == 200, resp.text
+
+    # First-match-wins deny.
+    got = cred_writer_client.post(
+        f"{base}:test", json={"method": "delete", "path": "/v1/payments/p_1"}
+    ).json()
+    assert got["allowed"] is False
+    assert got["matched"] is True
+    assert got["effect"] == "deny"
+    assert got["rule_index"] == 0
+    assert got["credential_id"] == credential_id
+
+    # Allow via the second rule.
+    got = cred_writer_client.post(f"{base}:test", json={"method": "GET", "path": "/v1/ok"}).json()
+    assert got == {
+        "allowed": True,
+        "matched": True,
+        "effect": "allow",
+        "rule_index": 1,
+        "credential_id": credential_id,
+        "is_system": False,
+    }
+
+    # No rule matches → default-deny, nothing to attribute.
+    got = cred_writer_client.post(f"{base}:test", json={"method": "GET", "path": "/other"}).json()
+    assert got == {
+        "allowed": False,
+        "matched": False,
+        "effect": None,
+        "rule_index": None,
+        "credential_id": None,
+        "is_system": None,
+    }
+
+
+def test_agent_permissions_unbound_agent_is_404(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """The binding must exist on both axes — a real credential with no binding
+    for this agent is a 404 agent_binding_not_found."""
+    credential_id, _ = bound_agents
+    resp = cred_writer_client.get(
+        f"/credentials/{credential_id}/agents/agnt_never_bound/permissions"
+    )
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "agent_binding_not_found"
+
+
+def test_agent_permissions_unknown_credential_is_404(cred_writer_client: TestClient) -> None:
+    resp = cred_writer_client.get("/credentials/cred_nonexistent/agents/agnt_whatever/permissions")
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+
+
+def test_agent_permissions_owner_gated(
+    bound_orphan_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """A caller who cannot see the credential gets the same uniform 404 on the
+    rules endpoints as everywhere else — a binding's policy is exactly as
+    sensitive as the credential it governs."""
+    credential_id, (agent_id, _) = bound_agents
+    resp = bound_orphan_client.get(f"/credentials/{credential_id}/agents/{agent_id}/permissions")
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+
+
+def test_agent_permissions_write_needs_write_scope(
+    delegated_agent_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """owner:credentials:read admits reads but never writes — PUT/PATCH require
+    credentials:write."""
+    credential_id, (agent_id, _) = bound_agents
+    base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+    assert delegated_agent_client.put(base, json=[]).status_code == 403
+    assert delegated_agent_client.patch(base, json={"remove": [0]}).status_code == 403

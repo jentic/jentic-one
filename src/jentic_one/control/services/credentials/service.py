@@ -7,8 +7,10 @@ from typing import Any
 
 import structlog
 
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import (
+    AgentPermissionRuleRepository,
     BasicCredentialRepository,
     CredentialRepository,
     CustomerAPIKeyRepository,
@@ -22,6 +24,7 @@ from jentic_one.control.repos.prerequisite_repo import (
 )
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import (
+    AgentBindingNotFoundError,
     CredentialNotFoundError,
     ImmutableFieldError,
     InvalidCredentialInputError,
@@ -50,6 +53,7 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     Sigv4Redacted,
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
+from jentic_one.control.services.toolkits.schemas.permission_test import PermissionTestResult
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
@@ -59,6 +63,7 @@ from jentic_one.shared.models.api_identity import CredentialScope, canonical_cre
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.scopes import ORG_ADMIN
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -390,6 +395,177 @@ class CredentialService:
             next_cursor = encode_cursor(last.bound_at, last.binding_id)
 
         return rows, has_more, next_cursor
+
+    # --- Per-binding permission rules (theme 5 phase 1) ---
+
+    async def _require_visible_binding(
+        self, credential_id: str, agent_id: str, *, identity: Identity
+    ) -> None:
+        """Gate the per-binding rules endpoints on both axes (hard problems 7/9).
+
+        The caller must see the credential (same filters as ``get`` — a miss
+        is a uniform 404 that never confirms existence), and the direct
+        ``(agent, credential)`` binding must exist (admin-DB row; the rules
+        themselves live control-side, so this is the cross-DB seam).
+        """
+        access_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(
+                session, credential_id, filters=access_filters
+            )
+            if credential is None:
+                raise CredentialNotFoundError(credential_id)
+        async with self._ctx.admin_db.session() as session:
+            binding = await PrerequisiteRepository.get_agent_credential_binding(
+                session, agent_id=agent_id, credential_id=credential_id
+            )
+        if binding is None:
+            raise AgentBindingNotFoundError(credential_id, agent_id)
+
+    async def _record_rules_change(
+        self, credential_id: str, agent_id: str, *, identity: Identity, reason: str
+    ) -> None:
+        """Audit + telemetry for a rules mutation (mirrors the toolkit path)."""
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.CREDENTIAL_BINDING,
+            target_id=credential_id,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            target_parent_id=agent_id,
+            reason=reason,
+            origin=identity.origin.value,
+        )
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.AGENT_PERMISSION_RULE_SET,
+                    severity=EventSeverity.INFO,
+                    summary=(
+                        f"Permission rules set on agent {agent_id} for credential {credential_id}"
+                    ),
+                    created_by=identity.sub,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                )
+        except Exception:
+            logger.warning(
+                "telemetry_emit_failed",
+                event_type=EventType.AGENT_PERMISSION_RULE_SET,
+                exc_info=True,
+            )
+
+    async def list_agent_permissions(
+        self, credential_id: str, agent_id: str, *, identity: Identity
+    ) -> list[AgentPermissionRule]:
+        """List the ordered PBAC rules for a direct ``(agent, credential)`` binding."""
+        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.session() as session:
+            return await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+
+    async def replace_agent_permissions(
+        self,
+        credential_id: str,
+        agent_id: str,
+        rules: list[dict[str, object]],
+        *,
+        identity: Identity,
+    ) -> list[AgentPermissionRule]:
+        """Replace the full user-rule list for a binding (idempotent PUT)."""
+        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.transaction() as session:
+            result = await AgentPermissionRuleRepository.replace_user_rules(
+                session, agent_id, credential_id, rules, created_by=identity.sub
+            )
+        await self._record_rules_change(
+            credential_id, agent_id, identity=identity, reason="replace permission rules"
+        )
+        return result
+
+    async def patch_agent_permissions(
+        self,
+        credential_id: str,
+        agent_id: str,
+        *,
+        identity: Identity,
+        add: list[dict[str, object]] | None = None,
+        remove: list[int] | None = None,
+    ) -> list[AgentPermissionRule]:
+        """Additively add and/or remove user rules on a binding."""
+        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.transaction() as session:
+            result = await AgentPermissionRuleRepository.patch_rules(
+                session, agent_id, credential_id, add=add, remove=remove, created_by=identity.sub
+            )
+        await self._record_rules_change(
+            credential_id, agent_id, identity=identity, reason="patch permission rules"
+        )
+        return result
+
+    async def test_agent_permissions(
+        self,
+        credential_id: str,
+        agent_id: str,
+        *,
+        method: str,
+        path: str,
+        operation_id: str | None,
+        identity: Identity,
+    ) -> PermissionTestResult:
+        """Dry-run permission evaluation for a ``(method, path, operation_id)`` triple.
+
+        Unlike the toolkit ``:test`` there is **no vendor pooling**: the direct
+        binding's rules are a single ordered first-match-wins list, which is
+        the point of the per-binding model. Default-deny when nothing matches.
+        The broker's condition-less-``allow`` skip is honoured so a bare
+        ``allow`` with no constraints doesn't unlock a dry-run any more than
+        it unlocks a real request.
+        """
+        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.session() as session:
+            rules = await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+
+        method_upper = method.upper()
+        for idx, rule in enumerate(rules):
+            rule_methods = rule.methods
+            rule_path = rule.path
+            rule_ops = rule.operations
+            is_condition_less = rule_methods is None and rule_path is None and rule_ops is None
+            if is_condition_less and rule.effect.lower() == "allow":
+                continue
+            if rule_methods is not None:
+                methods_set = {m.upper() for m in rule_methods}
+                if method_upper not in methods_set:
+                    continue
+            if rule_path is not None:
+                matcher = compile_matcher(rule_path, str(rule.match_mode or "regex"))
+                if matcher is not None and not matcher.matches(path):
+                    continue
+            if rule_ops is not None and (operation_id is None or operation_id not in rule_ops):
+                continue
+            return PermissionTestResult(
+                allowed=rule.effect.lower() == "allow",
+                matched=True,
+                effect=rule.effect,
+                rule_index=idx,
+                credential_id=credential_id,
+                is_system=rule.is_system,
+            )
+        return PermissionTestResult(
+            allowed=False,
+            matched=False,
+            effect=None,
+            rule_index=None,
+            credential_id=None,
+            is_system=None,
+        )
 
     async def list_all(
         self,
