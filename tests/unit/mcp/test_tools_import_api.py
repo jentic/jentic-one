@@ -30,6 +30,10 @@ from jentic_one.registry.services.errors import (
     OverlaySupersedeForbiddenError,
     RevisionStateConflictError,
 )
+from jentic_one.registry.services.import_service import (
+    ALL_SOURCES_FAILED_PREFIX_TEMPLATE,
+    SOURCE_FAILURE_PREFIX_TEMPLATE,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
 from jentic_one.shared.jobs.worker import _ERROR_MAX_LEN
@@ -41,14 +45,39 @@ _NOW = datetime(2026, 9, 10, tzinfo=UTC)
 def _real_duplicate_job_error() -> str:
     """``job.error`` exactly as the worker writes it for a duplicate ingest.
 
-    The construction is the real pipeline, end to end: ``ImportHandler``
-    wraps the per-source failure as ``IngestJobError("all 1 import source(s)
-    failed: source[0]: " + DuplicateRevisionError().message)``
+    The construction is the real pipeline, end to end: ``ImportHandler`` wraps
+    the per-source failure with its own (imported, never hand-copied) wrapper
+    templates around ``DuplicateRevisionError().message``
     (``import_service.py``), and the worker's requeue/terminal writes truncate
     it to ``_ERROR_MAX_LEN`` (``worker.py``). Fixtures use this — never a
-    hand-crafted string — so a reword on either side breaks the tests.
+    hand-crafted string — so a reword on either side (or a wrapper that grows
+    past the truncation point) breaks the tests.
     """
-    wrapped = "all 1 import source(s) failed: source[0]: " + DuplicateRevisionError().message
+    wrapped = (
+        ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=1)
+        + SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=0)
+        + DuplicateRevisionError().message
+    )
+    return wrapped[:_ERROR_MAX_LEN]
+
+
+def _multi_source_duplicate_job_error() -> str:
+    """A MULTI-source ``job.error``: source[0] duplicate, source[1] genuine.
+
+    ``POST /apis`` enqueues multi-source ``JobKind.IMPORT`` jobs; when one
+    source hits the duplicate but another genuinely fails, the whole job
+    dead-letters with the duplicate fragment inside the truncated error. The
+    remap must NOT fire on it — reporting already_imported would mask
+    source[1]'s failure.
+    """
+    wrapped = (
+        ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=2)
+        + SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=0)
+        + DuplicateRevisionError().message
+        + "; "
+        + SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=1)
+        + "spec fetch failed"
+    )
     return wrapped[:_ERROR_MAX_LEN]
 
 
@@ -341,6 +370,34 @@ async def test_hung_poll_trips_the_hard_ceiling_and_maps_to_the_poll_failure_arm
     assert "timed out" in payload["error"]
 
 
+async def test_hung_filing_trips_the_hard_ceiling_as_a_retryable_transport_lapse(
+    services: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ceiling wraps the FILING leg too (its catalog read can lazily
+    refresh the upstream manifest, bounded only by ingest.fetch_timeout_s).
+    A lapse there has no job_id yet and whether the enqueue committed is
+    unknowable: a retryable TRANSPORT_ERROR ("may or may not have been
+    filed") — a re-import converges, so retrying is safe — never the
+    INTERNAL_ERROR mid-poll arm and never a job_id it does not have."""
+    monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_BUDGET_SECONDS", 0.01)
+    monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_GRACE_SECONDS", 0.02)
+
+    async def _hang(self: Any, api_id: str, identity: Identity) -> str:
+        await asyncio.Event().wait()  # never set — a filing that never returns
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(_FakeCatalogService, "import_entry", _hang)
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    assert result.is_error, "a filing lapse must never look like a clean filing"
+    payload = _payload(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert "may or may not have been filed" in payload["error"]
+    assert payload["retryable"] is True
+    assert payload["next_tool"] == "search_catalog"
+    assert "job_id" not in payload, "no job_id exists at filing time"
+
+
 # ── failed-job arm (Go: FailedJobIsSoftError; DEAD_LETTER is terminal) ───────
 
 
@@ -362,12 +419,15 @@ async def test_failed_job_is_internal_error_with_job_extras(services: None, term
 
 
 def test_duplicate_fragment_pins_the_real_worker_error_message() -> None:
-    """Couples ``_DUPLICATE_CONTENT_FRAGMENT`` to the real ``job.error``: the
-    ``ImportHandler`` wrapper around ``DuplicateRevisionError().message``,
-    truncated to the worker's ``_ERROR_MAX_LEN``. A reword of the exception
-    message (or a wrapper change that pushes the fragment past the truncation
-    point) fails here first, not in production."""
-    assert tools_mod._DUPLICATE_CONTENT_FRAGMENT in _real_duplicate_job_error()
+    """Couples the remap's two keys to the real ``job.error``: the
+    ``ImportHandler`` wrapper templates around
+    ``DuplicateRevisionError().message``, truncated to the worker's
+    ``_ERROR_MAX_LEN``. A reword of the exception message, a wrapper change
+    that pushes the fragment past the truncation point, or a prefix drift
+    that unkeys the single-source gate fails here first, not in production."""
+    error = _real_duplicate_job_error()
+    assert tools_mod._DUPLICATE_CONTENT_FRAGMENT in error
+    assert error.startswith(tools_mod._SINGLE_SOURCE_IMPORT_FAILURE_PREFIX)
 
 
 async def test_duplicate_content_short_circuits_on_a_non_terminal_requeued_job(
@@ -452,6 +512,45 @@ async def test_execution_jobs_never_trip_the_duplicate_detection(services: None)
     assert payload["kind"] == "execution"
 
 
+async def test_multi_source_dead_letter_keeps_its_generic_payload_on_the_poll_side(
+    services: None,
+) -> None:
+    """A 2-source import (POST /apis files those) where source[0] hit the
+    duplicate but source[1] genuinely failed must NOT be remapped to
+    already_imported — the remap is gated on the single-source wrapper, so
+    the honest dead-letter payload (with source[1]'s failure) survives."""
+    error = _multi_source_duplicate_job_error()
+    assert tools_mod._DUPLICATE_CONTENT_FRAGMENT in error, "the masking premise"
+    _FakeJobService.statuses = [_job("dead_letter", error=error)]
+    env = _env(["jobs:read"])
+    result = await dispatch_tool_call(env, "get_execution_result", {"job_id": "job_9"})
+    assert not result.is_error
+    payload = _payload(result)
+    assert payload["status"] == "dead_letter", "a partial duplicate must not mask the failure"
+    assert payload["error"] == error
+    assert "note" not in payload
+
+
+async def test_multi_source_dead_letter_never_short_circuits_the_import_tracker(
+    services: None,
+) -> None:
+    """Defense in depth on import_api's own tracker: its filing leg
+    (CatalogService.import_entry) always enqueues exactly one source, so a
+    multi-source error should be unreachable there — but the same
+    single-source gate rides the tracker, so a future multi-source filing
+    would surface the honest failed-job arm, never already_imported."""
+    _FakeJobService.statuses = [_job("dead_letter", error=_multi_source_duplicate_job_error())]
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    assert result.is_error, "a partial duplicate is a failure, not a convergence"
+    payload = _payload(result)
+    assert payload["error_code"] == "INTERNAL_ERROR"
+    assert payload["job_status"] == "dead_letter"
+    # source[1]'s own text sits past the 128-char truncation point; what must
+    # survive is the honest multi-source failure, never an already_imported remap.
+    assert ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=2) in payload["error"]
+
+
 # ── promote-leg softness ─────────────────────────────────────────────────────
 
 
@@ -495,7 +594,8 @@ async def test_promote_state_conflict_is_a_soft_map_entry(services: None) -> Non
     assert not result.is_error
     promoted = _payload(result)["promoted"]
     assert promoted["rev_1"].startswith("promote failed: ")
-    assert "promote" in promoted["rev_1"]
+    assert "imported" in promoted["rev_1"], "the conflict's actual state must reach the map"
+    assert "draft" in promoted["rev_1"], "…and the state promote expected"
 
 
 async def test_non_draft_revisions_map_to_their_state_verbatim(services: None) -> None:
