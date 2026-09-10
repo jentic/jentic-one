@@ -1256,6 +1256,7 @@ components:
       - access_request
       - toolkit_key
       - credential_binding
+      - permission_rule_set
       - session
       - provider_config
       - oauth_client
@@ -5307,6 +5308,142 @@ components:
       required:
       - token
       title: RevokeRequest
+      type: object
+    RuleSetCreateRequest:
+      description: Create a shared permission rule set (theme 5 phase 1, Q-04).
+      properties:
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          description: Unique human-readable name.
+          maxLength: 255
+          title: Name
+          type: string
+        rules:
+          description: Initial ordered rule list (first-match-wins, default-deny).
+          items:
+            $ref: '#/components/schemas/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema'
+          maxItems: 100
+          title: Rules
+          type: array
+      required:
+      - name
+      title: RuleSetCreateRequest
+      type: object
+    RuleSetListResponse:
+      description: Paginated list of rule sets.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/RuleSetSummaryResponse'
+          title: Data
+          type: array
+        has_more:
+          title: Has More
+          type: boolean
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - data
+      - has_more
+      title: RuleSetListResponse
+      type: object
+    RuleSetResponse:
+      description: Rule set detail — the ordered rules plus its referencing-binding count.
+      properties:
+        binding_count:
+          description: How many agent-credential bindings currently point at this set.
+          title: Binding Count
+          type: integer
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        name:
+          title: Name
+          type: string
+        rule_set_id:
+          title: Rule Set Id
+          type: string
+        rules:
+          items:
+            $ref: '#/components/schemas/PermissionRuleReadSchema'
+          title: Rules
+          type: array
+      required:
+      - rule_set_id
+      - name
+      - rules
+      - binding_count
+      - created_at
+      title: RuleSetResponse
+      type: object
+    RuleSetSummaryResponse:
+      description: Rule set list entry.
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        name:
+          title: Name
+          type: string
+        rule_count:
+          title: Rule Count
+          type: integer
+        rule_set_id:
+          title: Rule Set Id
+          type: string
+      required:
+      - rule_set_id
+      - name
+      - rule_count
+      - created_at
+      title: RuleSetSummaryResponse
+      type: object
+    RuleSetUpdateRequest:
+      description: Rename or re-describe a rule set.
+      properties:
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          anyOf:
+          - maxLength: 255
+            type: string
+          - type: 'null'
+          title: Name
+      title: RuleSetUpdateRequest
       type: object
     RuntimeConfig:
       description: Optional per-upstream-call overrides.
@@ -17436,6 +17573,465 @@ paths:
       summary: Token Endpoint
       tags:
       - OAuth
+  /permission-rule-sets:
+    get:
+      description: List shared rule sets with per-set rule counts (cursor-paginated).
+      operationId: listPermissionRuleSets
+      parameters:
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSetListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List permission rule sets
+      tags:
+      - Permission Rule Sets
+    post:
+      description: |-
+        Create a named, shareable ordered rule list (theme 5 rule grouping).
+
+        N agent-credential bindings can point at one set, so `permissions:test`
+        and "revoke this operation everywhere" stay single-place edits.
+      operationId: createPermissionRuleSet
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleSetCreateRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSetResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Conflict
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Create permission rule set
+      tags:
+      - Permission Rule Sets
+  /permission-rule-sets/{rule_set_id}:
+    delete:
+      description: Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+      operationId: deletePermissionRuleSet
+      parameters:
+      - in: path
+        name: rule_set_id
+        required: true
+        schema:
+          title: Rule Set Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Conflict
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Delete permission rule set
+      tags:
+      - Permission Rule Sets
+    get:
+      description: Get a rule set with its ordered rules and referencing-binding count.
+      operationId: getPermissionRuleSet
+      parameters:
+      - in: path
+        name: rule_set_id
+        required: true
+        schema:
+          title: Rule Set Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSetResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Get permission rule set
+      tags:
+      - Permission Rule Sets
+    patch:
+      description: Rename or re-describe a rule set (creator or org admin).
+      operationId: updatePermissionRuleSet
+      parameters:
+      - in: path
+        name: rule_set_id
+        required: true
+        schema:
+          title: Rule Set Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleSetUpdateRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSetResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Update permission rule set
+      tags:
+      - Permission Rule Sets
+  /permission-rule-sets/{rule_set_id}/rules:
+    put:
+      description: |-
+        Replace the set's full ordered rule list (idempotent PUT).
+
+        Every binding pointing at the set picks the new list up at once — the
+        single-place edit rule grouping exists for.
+      operationId: replacePermissionRuleSetRules
+      parameters:
+      - in: path
+        name: rule_set_id
+        required: true
+        schema:
+          title: Rule Set Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              items:
+                $ref: '#/components/schemas/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema'
+              maxItems: 100
+              title: Body
+              type: array
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRuleListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Replace rule set rules
+      tags:
+      - Permission Rule Sets
   /permissions:
     get:
       description: List the permission catalogue visible to the caller.

@@ -164,6 +164,7 @@ const (
 	AuditTargetTypeOrganisation      AuditTargetType = "organisation"
 	AuditTargetTypeOverlay           AuditTargetType = "overlay"
 	AuditTargetTypePermission        AuditTargetType = "permission"
+	AuditTargetTypePermissionRuleSet AuditTargetType = "permission_rule_set"
 	AuditTargetTypeProviderConfig    AuditTargetType = "provider_config"
 	AuditTargetTypeRevision          AuditTargetType = "revision"
 	AuditTargetTypeServiceAccount    AuditTargetType = "service_account"
@@ -206,6 +207,8 @@ func (e AuditTargetType) Valid() bool {
 	case AuditTargetTypeOverlay:
 		return true
 	case AuditTargetTypePermission:
+		return true
+	case AuditTargetTypePermissionRuleSet:
 		return true
 	case AuditTargetTypeProviderConfig:
 		return true
@@ -2974,6 +2977,52 @@ type RevokeRequest struct {
 	TokenTypeHint *string `json:"token_type_hint,omitempty"`
 }
 
+// RuleSetCreateRequest Create a shared permission rule set (theme 5 phase 1, Q-04).
+type RuleSetCreateRequest struct {
+	Description *string `json:"description,omitempty"`
+
+	// Name Unique human-readable name.
+	Name string `json:"name"`
+
+	// Rules Initial ordered rule list (first-match-wins, default-deny).
+	Rules *[]JenticOneControlWebSchemasToolkitsPermissionRuleSchema `json:"rules,omitempty"`
+}
+
+// RuleSetListResponse Paginated list of rule sets.
+type RuleSetListResponse struct {
+	Data       []RuleSetSummaryResponse `json:"data"`
+	HasMore    bool                     `json:"has_more"`
+	NextCursor *string                  `json:"next_cursor,omitempty"`
+}
+
+// RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
+type RuleSetResponse struct {
+	// BindingCount How many agent-credential bindings currently point at this set.
+	BindingCount int                        `json:"binding_count"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	CreatedBy    *string                    `json:"created_by,omitempty"`
+	Description  *string                    `json:"description,omitempty"`
+	Name         string                     `json:"name"`
+	RuleSetId    string                     `json:"rule_set_id"`
+	Rules        []PermissionRuleReadSchema `json:"rules"`
+}
+
+// RuleSetSummaryResponse Rule set list entry.
+type RuleSetSummaryResponse struct {
+	CreatedAt   time.Time `json:"created_at"`
+	CreatedBy   *string   `json:"created_by,omitempty"`
+	Description *string   `json:"description,omitempty"`
+	Name        string    `json:"name"`
+	RuleCount   int       `json:"rule_count"`
+	RuleSetId   string    `json:"rule_set_id"`
+}
+
+// RuleSetUpdateRequest Rename or re-describe a rule set.
+type RuleSetUpdateRequest struct {
+	Description *string `json:"description,omitempty"`
+	Name        *string `json:"name,omitempty"`
+}
+
 // RuntimeConfig Optional per-upstream-call overrides.
 type RuntimeConfig struct {
 	Headers     *map[string]string `json:"headers,omitempty"`
@@ -3849,6 +3898,15 @@ type TokenEndpointFormdataBody struct {
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty"`
 }
 
+// ListPermissionRuleSetsParams defines parameters for ListPermissionRuleSets.
+type ListPermissionRuleSetsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ReplacePermissionRuleSetRulesJSONBody defines parameters for ReplacePermissionRuleSetRules.
+type ReplacePermissionRuleSetRulesJSONBody = []JenticOneControlWebSchemasToolkitsPermissionRuleSchema
+
 // ListServiceAccountsParams defines parameters for ListServiceAccounts.
 type ListServiceAccountsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -4018,6 +4076,15 @@ type TokenEndpointJSONRequestBody TokenEndpointJSONBody
 
 // TokenEndpointFormdataRequestBody defines body for TokenEndpoint for application/x-www-form-urlencoded ContentType.
 type TokenEndpointFormdataRequestBody TokenEndpointFormdataBody
+
+// CreatePermissionRuleSetJSONRequestBody defines body for CreatePermissionRuleSet for application/json ContentType.
+type CreatePermissionRuleSetJSONRequestBody = RuleSetCreateRequest
+
+// UpdatePermissionRuleSetJSONRequestBody defines body for UpdatePermissionRuleSet for application/json ContentType.
+type UpdatePermissionRuleSetJSONRequestBody = RuleSetUpdateRequest
+
+// ReplacePermissionRuleSetRulesJSONRequestBody defines body for ReplacePermissionRuleSetRules for application/json ContentType.
+type ReplacePermissionRuleSetRulesJSONRequestBody = ReplacePermissionRuleSetRulesJSONBody
 
 // RegisterEndpointJSONRequestBody defines body for RegisterEndpoint for application/json ContentType.
 type RegisterEndpointJSONRequestBody = RegisterRequest
@@ -6769,6 +6836,93 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpointWithFormdataBody(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPermissionRuleSets List permission rule sets
+	//
+	// List shared rule sets with per-set rule counts (cursor-paginated).
+	//
+	// Corresponds with GET /permission-rule-sets (the `ListPermissionRuleSets` operationId).
+	ListPermissionRuleSets(ctx context.Context, params *ListPermissionRuleSetsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePermissionRuleSetWithBody Create permission rule set
+	//
+	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	//
+	// N agent-credential bindings can point at one set, so `permissions:test`
+	// and "revoke this operation everywhere" stay single-place edits.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+	CreatePermissionRuleSetWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePermissionRuleSet Create permission rule set
+	//
+	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	//
+	// N agent-credential bindings can point at one set, so `permissions:test`
+	// and "revoke this operation everywhere" stay single-place edits.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+	CreatePermissionRuleSet(ctx context.Context, body CreatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePermissionRuleSet Delete permission rule set
+	//
+	// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+	//
+	// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
+	DeletePermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPermissionRuleSet Get permission rule set
+	//
+	// Get a rule set with its ordered rules and referencing-binding count.
+	//
+	// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
+	GetPermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePermissionRuleSetWithBody Update permission rule set
+	//
+	// Rename or re-describe a rule set (creator or org admin).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+	UpdatePermissionRuleSetWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePermissionRuleSet Update permission rule set
+	//
+	// Rename or re-describe a rule set (creator or org admin).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+	UpdatePermissionRuleSet(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplacePermissionRuleSetRulesWithBody Replace rule set rules
+	//
+	// Replace the set's full ordered rule list (idempotent PUT).
+	//
+	// Every binding pointing at the set picks the new list up at once — the
+	// single-place edit rule grouping exists for.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+	ReplacePermissionRuleSetRulesWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplacePermissionRuleSetRules Replace rule set rules
+	//
+	// Replace the set's full ordered rule list (idempotent PUT).
+	//
+	// Every binding pointing at the set picks the new list up at once — the
+	// single-place edit rule grouping exists for.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+	ReplacePermissionRuleSetRules(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPermissions List Permissions
 	//
@@ -11093,6 +11247,183 @@ func (c *Client) TokenEndpoint(ctx context.Context, body TokenEndpointJSONReques
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 func (c *Client) TokenEndpointWithFormdataBody(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewTokenEndpointRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPermissionRuleSets List permission rule sets
+//
+// List shared rule sets with per-set rule counts (cursor-paginated).
+//
+// Corresponds with GET /permission-rule-sets (the `ListPermissionRuleSets` operationId).
+func (c *Client) ListPermissionRuleSets(ctx context.Context, params *ListPermissionRuleSetsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPermissionRuleSetsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePermissionRuleSetWithBody Create permission rule set
+//
+// Create a named, shareable ordered rule list (theme 5 rule grouping).
+//
+// N agent-credential bindings can point at one set, so `permissions:test`
+// and "revoke this operation everywhere" stay single-place edits.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+func (c *Client) CreatePermissionRuleSetWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePermissionRuleSetRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePermissionRuleSet Create permission rule set
+//
+// Create a named, shareable ordered rule list (theme 5 rule grouping).
+//
+// N agent-credential bindings can point at one set, so `permissions:test`
+// and "revoke this operation everywhere" stay single-place edits.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+func (c *Client) CreatePermissionRuleSet(ctx context.Context, body CreatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePermissionRuleSetRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePermissionRuleSet Delete permission rule set
+//
+// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+//
+// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
+func (c *Client) DeletePermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePermissionRuleSetRequest(c.Server, ruleSetId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPermissionRuleSet Get permission rule set
+//
+// Get a rule set with its ordered rules and referencing-binding count.
+//
+// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
+func (c *Client) GetPermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPermissionRuleSetRequest(c.Server, ruleSetId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePermissionRuleSetWithBody Update permission rule set
+//
+// Rename or re-describe a rule set (creator or org admin).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+func (c *Client) UpdatePermissionRuleSetWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePermissionRuleSetRequestWithBody(c.Server, ruleSetId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePermissionRuleSet Update permission rule set
+//
+// Rename or re-describe a rule set (creator or org admin).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+func (c *Client) UpdatePermissionRuleSet(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePermissionRuleSetRequest(c.Server, ruleSetId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplacePermissionRuleSetRulesWithBody Replace rule set rules
+//
+// Replace the set's full ordered rule list (idempotent PUT).
+//
+// Every binding pointing at the set picks the new list up at once — the
+// single-place edit rule grouping exists for.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+func (c *Client) ReplacePermissionRuleSetRulesWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplacePermissionRuleSetRulesRequestWithBody(c.Server, ruleSetId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplacePermissionRuleSetRules Replace rule set rules
+//
+// Replace the set's full ordered rule list (idempotent PUT).
+//
+// Every binding pointing at the set picks the new list up at once — the
+// single-place edit rule grouping exists for.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+func (c *Client) ReplacePermissionRuleSetRules(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplacePermissionRuleSetRulesRequest(c.Server, ruleSetId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -19718,6 +20049,274 @@ func NewTokenEndpointRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewListPermissionRuleSetsRequest constructs an http.Request for the ListPermissionRuleSets method
+func NewListPermissionRuleSetsRequest(server string, params *ListPermissionRuleSetsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePermissionRuleSetRequest calls the generic CreatePermissionRuleSet builder with application/json body
+func NewCreatePermissionRuleSetRequest(server string, body CreatePermissionRuleSetJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePermissionRuleSetRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreatePermissionRuleSetRequestWithBody constructs an http.Request for the CreatePermissionRuleSet method, with any body, and a specified content type
+func NewCreatePermissionRuleSetRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeletePermissionRuleSetRequest constructs an http.Request for the DeletePermissionRuleSet method
+func NewDeletePermissionRuleSetRequest(server string, ruleSetId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rule_set_id", ruleSetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetPermissionRuleSetRequest constructs an http.Request for the GetPermissionRuleSet method
+func NewGetPermissionRuleSetRequest(server string, ruleSetId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rule_set_id", ruleSetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdatePermissionRuleSetRequest calls the generic UpdatePermissionRuleSet builder with application/json body
+func NewUpdatePermissionRuleSetRequest(server string, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdatePermissionRuleSetRequestWithBody(server, ruleSetId, "application/json", bodyReader)
+}
+
+// NewUpdatePermissionRuleSetRequestWithBody constructs an http.Request for the UpdatePermissionRuleSet method, with any body, and a specified content type
+func NewUpdatePermissionRuleSetRequestWithBody(server string, ruleSetId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rule_set_id", ruleSetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReplacePermissionRuleSetRulesRequest calls the generic ReplacePermissionRuleSetRules builder with application/json body
+func NewReplacePermissionRuleSetRulesRequest(server string, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplacePermissionRuleSetRulesRequestWithBody(server, ruleSetId, "application/json", bodyReader)
+}
+
+// NewReplacePermissionRuleSetRulesRequestWithBody constructs an http.Request for the ReplacePermissionRuleSetRules method, with any body, and a specified content type
+func NewReplacePermissionRuleSetRulesRequestWithBody(server string, ruleSetId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rule_set_id", ruleSetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets/%s/rules", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListPermissionsRequest constructs an http.Request for the ListPermissions method
 func NewListPermissionsRequest(server string) (*http.Request, error) {
 	var err error
@@ -23996,6 +24595,99 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpointWithFormdataBodyWithResponse(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
+
+	// ListPermissionRuleSetsWithResponse List permission rule sets
+	//
+	// List shared rule sets with per-set rule counts (cursor-paginated).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /permission-rule-sets (the `ListPermissionRuleSets` operationId).
+	ListPermissionRuleSetsWithResponse(ctx context.Context, params *ListPermissionRuleSetsParams, reqEditors ...RequestEditorFn) (*ListPermissionRuleSetsHTTPResp, error)
+
+	// CreatePermissionRuleSetWithBodyWithResponse Create permission rule set
+	//
+	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	//
+	// N agent-credential bindings can point at one set, so `permissions:test`
+	// and "revoke this operation everywhere" stay single-place edits.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+	CreatePermissionRuleSetWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePermissionRuleSetHTTPResp, error)
+
+	// CreatePermissionRuleSetWithResponse Create permission rule set
+	//
+	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	//
+	// N agent-credential bindings can point at one set, so `permissions:test`
+	// and "revoke this operation everywhere" stay single-place edits.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+	CreatePermissionRuleSetWithResponse(ctx context.Context, body CreatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePermissionRuleSetHTTPResp, error)
+
+	// DeletePermissionRuleSetWithResponse Delete permission rule set
+	//
+	// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
+	DeletePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*DeletePermissionRuleSetHTTPResp, error)
+
+	// GetPermissionRuleSetWithResponse Get permission rule set
+	//
+	// Get a rule set with its ordered rules and referencing-binding count.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
+	GetPermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*GetPermissionRuleSetHTTPResp, error)
+
+	// UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
+	//
+	// Rename or re-describe a rule set (creator or org admin).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+	UpdatePermissionRuleSetWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error)
+
+	// UpdatePermissionRuleSetWithResponse Update permission rule set
+	//
+	// Rename or re-describe a rule set (creator or org admin).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+	UpdatePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error)
+
+	// ReplacePermissionRuleSetRulesWithBodyWithResponse Replace rule set rules
+	//
+	// Replace the set's full ordered rule list (idempotent PUT).
+	//
+	// Every binding pointing at the set picks the new list up at once — the
+	// single-place edit rule grouping exists for.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+	ReplacePermissionRuleSetRulesWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error)
+
+	// ReplacePermissionRuleSetRulesWithResponse Replace rule set rules
+	//
+	// Replace the set's full ordered rule list (idempotent PUT).
+	//
+	// Every binding pointing at the set picks the new list up at once — the
+	// single-place edit rule grouping exists for.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+	ReplacePermissionRuleSetRulesWithResponse(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error)
 
 	// ListPermissionsWithResponse List Permissions
 	//
@@ -35606,6 +36298,539 @@ func (r TokenEndpointHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListPermissionRuleSetsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RuleSetListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPermissionRuleSetsHTTPResp) GetJSON200() *RuleSetListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPermissionRuleSetsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPermissionRuleSetsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPermissionRuleSetsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPermissionRuleSetsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePermissionRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *RuleSetResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePermissionRuleSetHTTPResp) GetJSON201() *RuleSetResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePermissionRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePermissionRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePermissionRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePermissionRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePermissionRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePermissionRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePermissionRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePermissionRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePermissionRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPermissionRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RuleSetResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPermissionRuleSetHTTPResp) GetJSON200() *RuleSetResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPermissionRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPermissionRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPermissionRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPermissionRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdatePermissionRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RuleSetResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetJSON200() *RuleSetResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdatePermissionRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdatePermissionRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdatePermissionRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdatePermissionRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReplacePermissionRuleSetRulesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PermissionRuleListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetJSON200() *PermissionRuleListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplacePermissionRuleSetRulesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplacePermissionRuleSetRulesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplacePermissionRuleSetRulesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListPermissionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -42822,6 +44047,153 @@ func (c *ClientWithResponses) TokenEndpointWithFormdataBodyWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseTokenEndpointHTTPResp(rsp)
+}
+
+// ListPermissionRuleSetsWithResponse List permission rule sets
+//
+// List shared rule sets with per-set rule counts (cursor-paginated).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /permission-rule-sets (the `ListPermissionRuleSets` operationId).
+func (c *ClientWithResponses) ListPermissionRuleSetsWithResponse(ctx context.Context, params *ListPermissionRuleSetsParams, reqEditors ...RequestEditorFn) (*ListPermissionRuleSetsHTTPResp, error) {
+	rsp, err := c.ListPermissionRuleSets(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPermissionRuleSetsHTTPResp(rsp)
+}
+
+// CreatePermissionRuleSetWithBodyWithResponse Create permission rule set
+//
+// Create a named, shareable ordered rule list (theme 5 rule grouping).
+//
+// N agent-credential bindings can point at one set, so `permissions:test`
+// and "revoke this operation everywhere" stay single-place edits.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+func (c *ClientWithResponses) CreatePermissionRuleSetWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.CreatePermissionRuleSetWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePermissionRuleSetHTTPResp(rsp)
+}
+
+// CreatePermissionRuleSetWithResponse Create permission rule set
+//
+// Create a named, shareable ordered rule list (theme 5 rule grouping).
+//
+// N agent-credential bindings can point at one set, so `permissions:test`
+// and "revoke this operation everywhere" stay single-place edits.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+func (c *ClientWithResponses) CreatePermissionRuleSetWithResponse(ctx context.Context, body CreatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.CreatePermissionRuleSet(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePermissionRuleSetHTTPResp(rsp)
+}
+
+// DeletePermissionRuleSetWithResponse Delete permission rule set
+//
+// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
+func (c *ClientWithResponses) DeletePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*DeletePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.DeletePermissionRuleSet(ctx, ruleSetId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePermissionRuleSetHTTPResp(rsp)
+}
+
+// GetPermissionRuleSetWithResponse Get permission rule set
+//
+// Get a rule set with its ordered rules and referencing-binding count.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
+func (c *ClientWithResponses) GetPermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*GetPermissionRuleSetHTTPResp, error) {
+	rsp, err := c.GetPermissionRuleSet(ctx, ruleSetId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPermissionRuleSetHTTPResp(rsp)
+}
+
+// UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
+//
+// Rename or re-describe a rule set (creator or org admin).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+func (c *ClientWithResponses) UpdatePermissionRuleSetWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.UpdatePermissionRuleSetWithBody(ctx, ruleSetId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePermissionRuleSetHTTPResp(rsp)
+}
+
+// UpdatePermissionRuleSetWithResponse Update permission rule set
+//
+// Rename or re-describe a rule set (creator or org admin).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+func (c *ClientWithResponses) UpdatePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.UpdatePermissionRuleSet(ctx, ruleSetId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePermissionRuleSetHTTPResp(rsp)
+}
+
+// ReplacePermissionRuleSetRulesWithBodyWithResponse Replace rule set rules
+//
+// Replace the set's full ordered rule list (idempotent PUT).
+//
+// Every binding pointing at the set picks the new list up at once — the
+// single-place edit rule grouping exists for.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+func (c *ClientWithResponses) ReplacePermissionRuleSetRulesWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error) {
+	rsp, err := c.ReplacePermissionRuleSetRulesWithBody(ctx, ruleSetId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplacePermissionRuleSetRulesHTTPResp(rsp)
+}
+
+// ReplacePermissionRuleSetRulesWithResponse Replace rule set rules
+//
+// Replace the set's full ordered rule list (idempotent PUT).
+//
+// Every binding pointing at the set picks the new list up at once — the
+// single-place edit rule grouping exists for.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+func (c *ClientWithResponses) ReplacePermissionRuleSetRulesWithResponse(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error) {
+	rsp, err := c.ReplacePermissionRuleSetRules(ctx, ruleSetId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplacePermissionRuleSetRulesHTTPResp(rsp)
 }
 
 // ListPermissionsWithResponse List Permissions
@@ -52839,6 +54211,452 @@ func ParseTokenEndpointHTTPResp(rsp *http.Response) (*TokenEndpointHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPermissionRuleSetsHTTPResp parses an HTTP response from a ListPermissionRuleSetsWithResponse call
+func ParseListPermissionRuleSetsHTTPResp(rsp *http.Response) (*ListPermissionRuleSetsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPermissionRuleSetsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RuleSetListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePermissionRuleSetHTTPResp parses an HTTP response from a CreatePermissionRuleSetWithResponse call
+func ParseCreatePermissionRuleSetHTTPResp(rsp *http.Response) (*CreatePermissionRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePermissionRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest RuleSetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePermissionRuleSetHTTPResp parses an HTTP response from a DeletePermissionRuleSetWithResponse call
+func ParseDeletePermissionRuleSetHTTPResp(rsp *http.Response) (*DeletePermissionRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePermissionRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPermissionRuleSetHTTPResp parses an HTTP response from a GetPermissionRuleSetWithResponse call
+func ParseGetPermissionRuleSetHTTPResp(rsp *http.Response) (*GetPermissionRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPermissionRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RuleSetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdatePermissionRuleSetHTTPResp parses an HTTP response from a UpdatePermissionRuleSetWithResponse call
+func ParseUpdatePermissionRuleSetHTTPResp(rsp *http.Response) (*UpdatePermissionRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdatePermissionRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RuleSetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReplacePermissionRuleSetRulesHTTPResp parses an HTTP response from a ReplacePermissionRuleSetRulesWithResponse call
+func ParseReplacePermissionRuleSetRulesHTTPResp(rsp *http.Response) (*ReplacePermissionRuleSetRulesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplacePermissionRuleSetRulesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PermissionRuleListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
