@@ -29,6 +29,9 @@ from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
+from jentic_one.wiring import (
+    install_control_catalog_auto_importer as _install_control_catalog_auto_importer,
+)
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
     # Auth reaches the control DB read-only to resolve toolkit-binding names for
@@ -84,10 +87,20 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
             _install_auth_verifier(app, ctx)
         if surface == "broker" and ctx.is_db_allowed("registry"):
             _install_broker_registry_resolver(app, ctx)
+        # Standalone control: enable catalog auto-import only when the process
+        # has registry-DB access (MCP-enabled configs widen the DB deps). A
+        # process without registry DB can't reach the catalog manifest anyway.
+        if surface == "control" and ctx.is_db_allowed("registry"):
+            _install_control_catalog_auto_importer(app, ctx)
         return app
     app = create_combined_app(ctx, apps, container=container)
     if "broker" in apps and ctx.is_db_allowed("registry"):
         _install_broker_registry_resolver(app, ctx)
+    # Combined shape: install the auto-importer whenever control ships in the
+    # same process as the registry, so a connect finishing in this process can
+    # kick off an import in the same process too.
+    if "control" in apps and ctx.is_db_allowed("registry"):
+        _install_control_catalog_auto_importer(app, ctx)
     return app
 
 

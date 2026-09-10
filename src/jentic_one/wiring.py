@@ -7,10 +7,13 @@ only scan the surface packages (``broker``, ``registry``, ``admin``, ``control``
 
 Its jobs are injecting a concrete ``RegistryResolverProtocol`` (the registry's
 in-process ``RegistryService``) onto the broker app, so the broker can resolve
-upstream URLs to operations without importing ``jentic_one.registry`` — and
-carrying the ``/mcp`` mount (``jentic_one.mcp``) onto control-plane app shapes
-via the container seam (phase 3). Swapping an implementation later (e.g. an
-HTTP-backed resolver) is a change here only — the surfaces are unaffected.
+upstream URLs to operations without importing ``jentic_one.registry``; a
+``CatalogAutoImportProtocol`` onto the control-plane app so the connect flow can
+auto-import a vendor's OpenAPI spec after a credential connects (broker requires
+a registered API before it can route); and the ``/mcp`` mount
+(``jentic_one.mcp``) onto control-plane app shapes via the container seam
+(phase 3). Swapping an implementation later (e.g. an HTTP-backed resolver) is a
+change here only — the surfaces are unaffected.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import replace
 
+import structlog
 from fastapi import FastAPI
 
 from jentic_one.mcp.installer import (
@@ -25,12 +29,17 @@ from jentic_one.mcp.installer import (
     install_mcp_mount,
     mcp_lifespan,
 )
+from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.models.actors import ActorType, actor_type_from_id
 from jentic_one.shared.web.container import AppContainer
+
+_logger = structlog.get_logger(__name__)
 
 
 class InProcessRegistryResolver:
@@ -74,6 +83,65 @@ class InProcessRegistryResolver:
 def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
     """Inject the in-process registry resolver onto the broker app state."""
     app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db)
+
+
+class InProcessCatalogAutoImporter:
+    """Registry-backed ``CatalogAutoImportProtocol`` implementation.
+
+    Delegates to :class:`CatalogService`. Idempotent (skips when the entry is
+    already registered) and best-effort (swallows every failure — the connect
+    flow keeps working even if the catalog manifest is unreachable, the vendor
+    slug isn't in the manifest, or the job store is temporarily wedged). The
+    operator retains the manual ``POST /catalog/{api_id}:import`` escape hatch.
+
+    Actor attribution: the ``initiator_actor_id`` is threaded through as the
+    identity ``sub`` and its ``actor_type`` is derived from the id prefix
+    (``usr_`` / ``agnt_`` / ``sva_``), so audit + job telemetry attribute the
+    (re-)import to whoever finished the connect. The service method itself
+    does not enforce ``catalog:import`` scope; the router does, and we do not
+    go through the router.
+    """
+
+    def __init__(self, ctx: Context) -> None:
+        self._ctx = ctx
+
+    async def ensure_imported(self, *, api_id: str, initiator_actor_id: str) -> str | None:
+        try:
+            svc = CatalogService(self._ctx)
+            entry = await svc.get(api_id)
+            if entry.registered:
+                return None
+            try:
+                actor_type = actor_type_from_id(initiator_actor_id)
+            except ValueError:
+                actor_type = ActorType.USER
+            identity = Identity(sub=initiator_actor_id, actor_type=actor_type)
+            job_id = await svc.import_entry(api_id, identity)
+            _logger.info(
+                "catalog_auto_import.enqueued",
+                api_id=api_id,
+                job_id=job_id,
+                initiator=initiator_actor_id,
+            )
+            return job_id
+        except CatalogEntryNotFoundError:
+            # The vendor's canonical slug isn't in the public catalog manifest.
+            # Nothing to auto-import — the operator can wire a private registry
+            # entry manually.
+            _logger.info("catalog_auto_import.skipped.not_in_manifest", api_id=api_id)
+            return None
+        except Exception:
+            _logger.warning("catalog_auto_import.failed", api_id=api_id, exc_info=True)
+            return None
+
+
+def install_control_catalog_auto_importer(app: FastAPI, ctx: Context) -> None:
+    """Inject the catalog auto-importer onto the combined/control app state.
+
+    Only meaningful when the process serves control AND has registry-DB access
+    (the catalog reads live in the registry DB). The caller guards the call.
+    """
+    app.state.catalog_auto_importer = InProcessCatalogAutoImporter(ctx)
 
 
 def build_default_container(ctx: Context) -> AppContainer:
