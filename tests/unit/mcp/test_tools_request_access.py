@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from mcp.shared.exceptions import MCPError
+from structlog.testing import capture_logs
 
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.control.services.access_requests.errors import (
@@ -176,6 +177,10 @@ async def test_no_target_and_no_request_id_is_invalid_params(service: None) -> N
         {"request_id": "acr_1", "toolkits": ["acme/pets"]},
         {"request_id": "acr_1", "reason": "please"},
         {"request_id": "acr_1", "auth": ["bearer"]},
+        # A whitespace-only stray still marks the call confused: Go probes the
+        # RAW lists (len(opts.auths) > 0) before any cleaning — never a
+        # silent poll.
+        {"request_id": "acr_1", "auth": [" "]},
         {"request_id": "acr_1", "rules_json": [{"effect": "allow"}]},
         {"request_id": "acr_1", "provision": ["acme/pets"]},
     ],
@@ -279,6 +284,9 @@ async def test_pydantic_validation_rejects_mis_shaped_rules(service: None) -> No
                 "rules_json": [{"effect": "shrug", "path": ".*"}],
             },
         )
+    message = str(err.value)
+    assert "\n" not in message, "one line: the first error's loc/msg, not the pydantic dump"
+    assert "errors.pydantic.dev" not in message
     assert _FakeAccessRequestService.filed == [], "validation must refuse before filing"
 
 
@@ -395,7 +403,9 @@ async def test_poll_arm_unknown_id_is_resolve_failed_with_self_pointer(service: 
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "RESOLVE_FAILED"
-    assert "acr_nope" in payload["error"]
+    # Byte-identical with Go's %q rendering — the envelope contract aims for
+    # the same spellings across the two doors.
+    assert payload["error"] == 'access request "acr_nope" not found'
     assert "re-check the request id" in payload["actionable_step"].lower()
     assert payload["next_tool"] == "request_access"
 
@@ -574,9 +584,29 @@ async def test_denied_scope_grant_never_reads_as_granted(service: None) -> None:
 )
 def test_absolutize_approve_url_posture(stored: str, want: str) -> None:
     """Scheme-relative would resolve onto a FOREIGN host → cleared; only
-    rooted paths absolutize; an already-absolute URL wins over env.base_url
-    (the two canonical-base knobs can disagree)."""
+    rooted paths absolutize (deliberately stricter than Go, which resolves
+    non-rooted relatives against the base); an already-absolute URL wins over
+    env.base_url (the two canonical-base knobs can disagree)."""
     assert absolutize_approve_url("https://control.example", stored) == want
+
+
+@pytest.mark.parametrize("stored", ["//evil.example/console/x", "not-rooted/path"])
+def test_clearing_a_non_empty_approve_url_logs_a_warning(stored: str) -> None:
+    """Clearing must never be silent: a non-rooted stored URL means
+    ``control.access_requests.canonical_base_url`` is misconfigured, and the
+    warning is what makes that diagnosable."""
+    with capture_logs() as logs:
+        assert absolutize_approve_url("https://control.example", stored) == ""
+    assert [log["event"] for log in logs] == ["approve_url_cleared"]
+    assert logs[0]["approve_url"] == stored
+
+
+def test_empty_approve_url_clears_without_a_warning() -> None:
+    """The unset-knob default stores a rooted relative, and a missing value
+    is nothing to diagnose — no log noise."""
+    with capture_logs() as logs:
+        assert absolutize_approve_url("https://control.example", "") == ""
+    assert logs == []
 
 
 async def test_poll_result_keeps_an_absolute_stored_approve_url(service: None) -> None:

@@ -280,6 +280,16 @@ def test_has_filing_params_sees_strays_without_targets() -> None:
     assert not AccessRequestOptions().has_filing_params()
 
 
+def test_has_filing_params_probes_raw_stray_values() -> None:
+    """Go checks the RAW lists (``len(opts.auths) > 0``, before any cleaning):
+    a whitespace-only stray auth/rules_json still marks the call as a filing
+    attempt — the poll arm must reject it as "not both", never silently poll.
+    target_count() keeps counting CLEANED values (the same Go asymmetry)."""
+    assert AccessRequestOptions(auths=[" "]).has_filing_params()
+    assert AccessRequestOptions(rules_jsons=[" "]).has_filing_params()
+    assert AccessRequestOptions(toolkits=[" "]).target_count() == 0
+
+
 # ── validation parity: compose() output round-trips the REST schemas ─────────
 
 

@@ -32,6 +32,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import mcp.types as mcp_types
+import structlog
 from jentic.problem_details import Forbidden, Unauthorized
 from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
@@ -100,6 +101,8 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
 
 _INVALID_PARAMS = mcp_types.INVALID_PARAMS
+
+logger = structlog.get_logger()
 
 
 @dataclass(frozen=True)
@@ -1117,20 +1120,33 @@ def absolutize_approve_url(base_url: str, approve_url: str) -> str:
 
     The service stores ``{control.access_requests.canonical_base_url}/…``,
     which is RELATIVE (a rooted path) when that knob is unset (default ``""``).
-    Mirrors Go's ``absolutizeApproveURL`` refusal posture: an already-absolute
-    URL passes through (the stored canonical base wins over ``env.base_url``
-    when the two knobs disagree), a scheme-relative ``//host/…`` value would
-    resolve onto a FOREIGN host and is cleared, and only rooted paths are
-    absolutizable — anything else is cleared rather than relayed as a
-    dead/hijackable link.
+    An already-absolute URL passes through (the stored canonical base wins
+    over ``env.base_url`` when the two knobs disagree), and a scheme-relative
+    ``//host/…`` value would resolve onto a FOREIGN host and is cleared —
+    both exactly like Go's ``absolutizeApproveURL``. For non-rooted relatives
+    this port is deliberately STRICTER than Go: Go resolves them against the
+    base (``ResolveReference``), we clear them — such a value can only come
+    from a misconfigured ``control.access_requests.canonical_base_url``, and
+    resolving it would mint a plausible-looking but wrong link. Each cleared
+    non-empty value logs a warning so the misconfiguration is diagnosable.
     """
     if not approve_url:
         return ""
     if approve_url.startswith("//"):
+        logger.warning(
+            "approve_url_cleared",
+            approve_url=approve_url,
+            reason="scheme-relative URL would resolve onto a foreign host",
+        )
         return ""
     if urlparse(approve_url).scheme:
         return approve_url
     if not approve_url.startswith("/"):
+        logger.warning(
+            "approve_url_cleared",
+            approve_url=approve_url,
+            reason="not a rooted path; check control.access_requests.canonical_base_url",
+        )
         return ""
     return base_url.rstrip("/") + approve_url
 
@@ -1294,7 +1310,7 @@ async def handle_request_access(
             # earlier request_access result (self-pointer).
             raise ToolError(
                 CODE_RESOLVE_FAILED,
-                f"access request {request_id!r} not found",
+                f'access request "{request_id}" not found',
                 actionable="Re-check the request id — it is the `id` in the "
                 "request_access result that filed it — and call request_access "
                 "again with the exact value.",
@@ -1328,7 +1344,13 @@ async def handle_request_access(
             {"reason": opts.reason or None, "items": items}
         )
     except ValidationError as exc:
-        raise invalid_params(f"invalid access-request items: {exc}") from None
+        # Compacted to the first error's loc/msg: pydantic's full rendering is
+        # a multi-line dump with errors.pydantic.dev links — noise for a
+        # model, and the first failing location is deterministic. Only the
+        # caller's own input is echoed.
+        first = exc.errors()[0]
+        loc = ".".join(str(part) for part in first["loc"])
+        raise invalid_params(f"invalid access-request items: {loc}: {first['msg']}") from None
 
     svc = AccessRequestService(env.ctx)
     try:

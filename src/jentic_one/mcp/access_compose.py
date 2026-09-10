@@ -78,13 +78,13 @@ class AccessRequestOptions:
 
     def has_filing_params(self) -> bool:
         """Whether ANY filing parameter rides the call — the poll-arm
-        exclusivity check (a stray reason/auth/rules_json counts too)."""
-        return bool(
-            self.target_count()
-            or self.reason
-            or clean_values(self.auths)
-            or clean_values(self.rules_jsons)
-        )
+        exclusivity check (a stray reason/auth/rules_json counts too).
+        ``auths``/``rules_jsons`` are probed RAW, exactly like Go
+        (``mcp_access.go`` checks ``len(opts.auths) > 0`` before any
+        cleaning): a whitespace-only stray is still a confused call, never
+        noise to drop into a silent poll. ``target_count()`` keeps counting
+        cleaned values — the same asymmetry as the Go original."""
+        return bool(self.target_count() or self.reason or self.auths or self.rules_jsons)
 
     def compose(self) -> list[dict[str, Any]]:
         """Build the full item list in fulfilment order (Go: ``compose()``).

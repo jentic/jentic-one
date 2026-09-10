@@ -141,9 +141,9 @@ def soft_error_result(ctx: Context, err: ToolError) -> mcp_types.CallToolResult:
         next_tool = _DEFAULT_NEXT_TOOL
     # Lane-aware pointer filter (#1254): only emit a ``next_tool`` the caller
     # can actually see in THIS mount's ``tools/list``. Handlers keep raising
-    # the shared stdio pointer spellings (``get_started``, ``request_access``,
-    # …) so the contract never forks — the projection onto the served subset
-    # happens here, at the one seam every soft error renders through.
+    # the shared stdio pointer spellings (e.g. ``get_started``) so the
+    # contract never forks — the projection onto the served subset happens
+    # here, at the one seam every soft error renders through.
     if next_tool in SERVED_TOOLS:
         payload["next_tool"] = next_tool
     for key, value in (err.extra or {}).items():
