@@ -57,8 +57,8 @@ def test_default_get_started_pointer_is_dropped_on_this_lane(code: str) -> None:
 
 @pytest.mark.parametrize("pointer", [*sorted(set(load_spec()) - set(SERVED_TOOLS)), "made_up_tool"])
 def test_unserved_explicit_pointers_are_dropped_on_this_lane(pointer: str) -> None:
-    """An explicit pointer at a tool outside SERVED_TOOLS (the stdio-only
-    trio today, or anything unknown) is stripped at render time."""
+    """An explicit pointer at a tool outside SERVED_TOOLS (``get_started``
+    today, or anything unknown) is stripped at render time."""
     err = ToolError(CODE_TRANSPORT_ERROR, "boom", next_tool=pointer)
     payload = _payload(soft_error_result(_ctx(), err))
     assert "next_tool" not in payload
