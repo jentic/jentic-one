@@ -172,6 +172,29 @@ class PrerequisiteRepository:
         return [row[0] for row in result.fetchall()]
 
     @staticmethod
+    async def list_credential_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
+        """Return the credential ids the agent is directly and actively bound to.
+
+        The direct-binding analogue of ``list_toolkit_ids_for_agent`` above
+        (theme 5 phase 1): an agent must be able to read a credential it is
+        bound to even when it owns nothing — same orphaned-agent rationale as
+        issues #665/#682, minus the toolkit hop. Suspended bindings grant no
+        visibility: a suspension is a cut-off, so the agent keeps seeing the
+        binding (with its flag) in ``/me`` but loses the widened read of the
+        credential itself until resumed. Runs against an admin session and
+        returns plain ids for ``build_access_filters`` (the control scoping
+        module must not import admin ORM models or query across databases).
+        """
+        result = await session.execute(
+            text(
+                "SELECT credential_id FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND suspended = false"
+            ),
+            {"agent_id": agent_id},
+        )
+        return [row[0] for row in result.fetchall()]
+
+    @staticmethod
     async def delete_agent_toolkit_bindings_for_toolkit(
         session: AsyncSession, *, toolkit_id: str
     ) -> int:

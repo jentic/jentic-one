@@ -21,6 +21,7 @@ from sqlalchemy import text
 from jentic_one.admin.repos import AgentCredentialBindingRepository
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorType
 from tests.web.control.conftest import _build_app, _effective
 
 pytestmark = pytest.mark.integration
@@ -879,3 +880,51 @@ def test_rule_set_attach_needs_write_scope(
     base = f"/credentials/{credential_id}/agents/{agent_id}/rule-set"
     assert delegated_agent_client.put(base, json={"rule_set_id": "prs_x"}).status_code == 403
     assert delegated_agent_client.delete(base).status_code == 403
+
+
+# --- Direct-binding visibility widening (theme 5 phase 1) ---
+
+
+def _agent_client(web_context: Context, agent_id: str) -> TestClient:
+    """A bound-but-orphaned agent identity (owns nothing, delegated read only).
+
+    Mirrors BOUND_ORPHAN_IDENTITY in conftest: it passes the route gate via
+    owner:credentials:read, so any credential it can actually read must owe
+    that visibility purely to its own direct binding.
+    """
+    identity = Identity(
+        sub=agent_id,
+        email=f"{agent_id}@test.local",
+        permissions=["owner:credentials:read"],
+        actor_type=ActorType.AGENT,
+        parent_actor_id=None,
+    )
+    return TestClient(_build_app(web_context, identity))
+
+
+async def test_direct_binding_widens_credential_visibility(
+    cred_writer_client: TestClient,
+    web_context: Context,
+    bound_agents: tuple[str, list[str]],
+) -> None:
+    """An agent with an active direct binding can read the bound credential it
+    doesn't own (get + list); a suspended binding grants no visibility — the
+    cut-off cuts credential reads too, not just execution."""
+    credential_id, (active_id, suspended_id) = bound_agents
+
+    with _agent_client(web_context, active_id) as client:
+        resp = client.get(f"/credentials/{credential_id}")
+        assert resp.status_code == 200, resp.text
+        listed = client.get("/credentials").json()
+        assert credential_id in {c["credential_id"] for c in listed["data"]}
+
+    with _agent_client(web_context, suspended_id) as client:
+        resp = client.get(f"/credentials/{credential_id}")
+        assert resp.status_code == 404
+        assert resp.json()["type"] == "credential_not_found"
+        listed = client.get("/credentials").json()
+        assert credential_id not in {c["credential_id"] for c in listed["data"]}
+
+    # And an agent with no binding at all sees nothing (unchanged baseline).
+    with _agent_client(web_context, "agnt_never_bound") as client:
+        assert client.get(f"/credentials/{credential_id}").status_code == 404

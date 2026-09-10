@@ -103,6 +103,23 @@ class CredentialService:
                 session, agent_id=identity.sub
             )
 
+    async def _bound_credential_ids(self, identity: Identity) -> list[str]:
+        """Credential ids the caller is directly bound to (theme 5 phase 1).
+
+        The direct-binding analogue of ``_bound_toolkit_ids``: an agent must be
+        able to read a credential it is actively bound to even when it owns
+        nothing (issues #665/#682, minus the toolkit hop). Suspended bindings
+        grant no visibility — a cut-off cuts reads of the credential too, while
+        the binding row itself stays visible in ``/me``. ``org:admin`` is
+        unrestricted already, so skip the lookup.
+        """
+        if ORG_ADMIN in identity.permissions or not identity.sub:
+            return []
+        async with self._ctx.admin_db.session() as session:
+            return await PrerequisiteRepository.list_credential_ids_for_agent(
+                session, agent_id=identity.sub
+            )
+
     def list_providers(self) -> list[ProviderDiscoveryEntry]:
         """Return discovery metadata for all configured providers."""
         provider_configs = self._ctx.config.credentials.providers
@@ -347,6 +364,7 @@ class CredentialService:
             identity,
             Credential,
             bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -377,6 +395,7 @@ class CredentialService:
             identity,
             Credential,
             bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -424,6 +443,7 @@ class CredentialService:
             identity,
             Credential,
             bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -839,6 +859,7 @@ class CredentialService:
             identity,
             Credential,
             bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
 
