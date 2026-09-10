@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -61,9 +62,18 @@ class CredentialInjector(Protocol):
         api_version: str,
         identity: Identity,
         credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
     ) -> InjectedAuth:
-        """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path."""
+        """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path.
+
+        ``allowed_credential_ids`` is the direct-binding injection boundary
+        (theme-5 Q-02): when not ``None``, only these credential ids may
+        resolve (an empty set denies all). ``credential_id`` pins the exact
+        credential selected at the web edge so the async worker replays the
+        same selection.
+        """
         ...
 
 

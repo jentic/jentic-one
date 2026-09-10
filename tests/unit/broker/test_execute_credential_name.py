@@ -57,7 +57,14 @@ async def test_credential_name_none_when_header_absent(monkeypatch: pytest.Monke
     )
 
     def fake_resolver(ctx: Any) -> MagicMock:
-        async def _resolve(*, api: Any, caller: str, credential_name: str | None = None) -> Any:
+        async def _resolve(
+            *,
+            api: Any,
+            caller: str,
+            credential_name: str | None = None,
+            credential_id: str | None = None,
+            allowed_credential_ids: Any = None,
+        ) -> Any:
             captured["credential_name"] = credential_name
             return await original_resolve(api=api, caller=caller, credential_name=credential_name)
 
@@ -107,7 +114,14 @@ async def test_credential_name_forwarded_when_header_present(
     )
 
     def fake_resolver(ctx: Any) -> MagicMock:
-        async def _resolve(*, api: Any, caller: str, credential_name: str | None = None) -> Any:
+        async def _resolve(
+            *,
+            api: Any,
+            caller: str,
+            credential_name: str | None = None,
+            credential_id: str | None = None,
+            allowed_credential_ids: Any = None,
+        ) -> Any:
             captured["credential_name"] = credential_name
             return await original_resolve(api=api, caller=caller, credential_name=credential_name)
 
