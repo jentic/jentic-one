@@ -52,6 +52,7 @@ from jentic_one.mcp.envelopes import (
     CODE_INTERNAL_ERROR,
     CODE_NOT_AUTHENTICATED,
     CODE_RESOLVE_FAILED,
+    CODE_TRANSPORT_ERROR,
     SCHEMA_VERSION,
     ToolError,
     soft_error_result,
@@ -66,6 +67,10 @@ from jentic_one.registry.services.errors import (
     OperationNotFoundError,
     OverlaySupersedeForbiddenError,
     SearchUnavailableError,
+)
+from jentic_one.registry.services.import_service import (
+    ALL_SOURCES_FAILED_PREFIX_TEMPLATE,
+    SOURCE_FAILURE_PREFIX_TEMPLATE,
 )
 from jentic_one.registry.services.inspect.models import SUMMARY_LOAD_OPTIONS
 from jentic_one.registry.services.inspect.service import InspectService
@@ -538,10 +543,12 @@ _IMPORT_API_PARAMS = [ParamSpec("api_id", "string", ("id", "api"))]
 _IMPORT_WAIT_BUDGET_SECONDS = 15.0
 
 #: Grace on top of the wait budget for the hard per-leg ceiling
-#: (``asyncio.timeout`` around the whole track-and-promote tail). The budget
-#: alone only gates BETWEEN polls — a single hung poll / result fetch /
-#: promote would hold the ASGI request open indefinitely; the ceiling turns
-#: that into the poll-failure arm (unknown state, never "still running").
+#: (``asyncio.timeout`` around the filing call + the whole track-and-promote
+#: tail). The budget alone only gates BETWEEN polls — a single hung poll /
+#: result fetch / promote would hold the ASGI request open indefinitely — and
+#: the filing leg's catalog read can lazily refresh the upstream manifest
+#: (bounded only by ``ingest.fetch_timeout_s``, ~30s default). The ceiling
+#: turns either into a soft error (unknown state, never "still running").
 _IMPORT_WAIT_GRACE_SECONDS = 5.0
 
 #: In-process poll cadence for the job tracker: the first poll is immediate,
@@ -556,10 +563,28 @@ _IMPORT_POLL_MAX_SECONDS = 2.0
 #: only the message head survives: match this fragment, never the full message.
 _DUPLICATE_CONTENT_FRAGMENT = "identical content already exists"
 
+#: The exact ``job.error`` head of a SINGLE-source import whose one source
+#: failed (``ImportHandler``'s wrapper templates rendered for one source):
+#: ``"all 1 import source(s) failed: source[0]: "``. The duplicate-content
+#: remap keys on it because only a job whose ENTIRE failure is the duplicate
+#: may report ``already_imported``: ``POST /apis`` enqueues multi-source
+#: ``JobKind.IMPORT`` jobs, and on those a duplicate source[0] must never mask
+#: a genuine source[1] failure. ``CatalogService.import_entry`` (import_api's
+#: filing leg) always files exactly one source, so the import_api tracker can
+#: never see a multi-source job — the gate rides there too as defense in depth.
+_SINGLE_SOURCE_IMPORT_FAILURE_PREFIX = ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(
+    count=1
+) + SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=0)
+
 #: Job statuses that end the tracking loop (Go: ``catJobCompleted`` /
 #: ``catJobFailed`` / ``catJobCancelled`` / ``catJobDeadLetter`` — dead_letter
 #: IS terminal: the worker's retry-backoff ladder parks poison jobs there).
 _JOB_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "dead_letter"})
+
+#: the one non-failure terminal status: its result document rides the poll
+#: payload, and its residual ``job.error`` (never cleared by the worker) is
+#: exempt from the duplicate-content remap.
+_JOB_COMPLETED = "completed"
 
 #: the job kind the catalog import loop rides (``JobKind.IMPORT``).
 _JOB_KIND_IMPORT = "import"
@@ -607,6 +632,25 @@ def _already_imported_payload(job_id: str) -> dict[str, Any]:
     }
 
 
+def _is_single_source_duplicate_failure(error: str | None) -> bool:
+    """True when a job's ENTIRE failure is the duplicate-content collision.
+
+    Keys on the single-source wrapper head (``all 1 import source(s) failed:
+    source[0]: ``) AND the duplicate fragment: a multi-source job (``POST
+    /apis`` enqueues those) whose source[0] hit the duplicate can still carry a
+    genuine source[1] failure inside the truncated ``job.error`` — remapping it
+    to ``already_imported`` would mask that failure, so only the single-source
+    rendering qualifies. Both halves survive the worker's 128-char truncation
+    (the wrapper is ~43 chars, the fragment heads the duplicate message —
+    pinned end-to-end by the fragment test).
+    """
+    return bool(
+        error
+        and error.startswith(_SINGLE_SOURCE_IMPORT_FAILURE_PREFIX)
+        and _DUPLICATE_CONTENT_FRAGMENT in error
+    )
+
+
 async def _track_import_job(ctx: Context, job_id: str) -> tuple[JobView, bool]:
     """Poll the import job briefly; returns ``(job, duplicate_content)``.
 
@@ -632,7 +676,7 @@ async def _track_import_job(ctx: Context, job_id: str) -> tuple[JobView, bool]:
     delay = _IMPORT_POLL_STEP_SECONDS  # the first poll is immediate; back off from the step
     while True:
         job = await svc.get_by_id(job_id)
-        if job.status != _JOB_COMPLETED and job.error and _DUPLICATE_CONTENT_FRAGMENT in job.error:
+        if job.status != _JOB_COMPLETED and _is_single_source_duplicate_failure(job.error):
             return job, True
         if job.status in _JOB_TERMINAL_STATUSES or time.monotonic() >= deadline:
             return job, False
@@ -718,8 +762,75 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
     _require_db(env.ctx, "registry", "the catalog")
     _require_db(env.ctx, "admin", "import job tracking")
 
+    job_id: str | None = None
     try:
-        job_id = await CatalogService(env.ctx).import_entry(api_id, env.identity)
+        # The hard per-leg ceiling, from the filing call onward. Two legs need
+        # it: the filing leg's catalog read can lazily refresh the upstream
+        # manifest (bounded only by ``ingest.fetch_timeout_s``, ~30s default),
+        # and the wait budget in the tail only gates BETWEEN polls — a hung
+        # poll / result fetch / promote would hold the ASGI request open
+        # indefinitely. One ceiling over both bounds the whole request inside
+        # typical MCP client tool timeouts.
+        async with asyncio.timeout(_IMPORT_WAIT_BUDGET_SECONDS + _IMPORT_WAIT_GRACE_SECONDS):
+            job_id = await _file_import(env, api_id)
+
+            try:
+                require_scopes(env.identity, ["jobs:read"])
+            except ToolError:
+                # In-process tracking rides the same jobs:read gate the Go
+                # client's poll leg does (GET /jobs/{id}). Absent the scope,
+                # degrade to the filed-{job_id, status} envelope — NOT an
+                # error: the filing succeeded, only the courtesy tracking is
+                # off the table (REST parity: the poll would have been
+                # refused, the import would not). Both scopes ride
+                # DEFAULT_AGENT_SCOPES, so defaults are unaffected.
+                return tool_result(
+                    env.ctx,
+                    {"schema_version": SCHEMA_VERSION, "job_id": job_id, "status": "queued"},
+                )
+
+            return await _finish_import(env, api_id, job_id)
+    except TimeoutError as exc:
+        if job_id is None:
+            # The ceiling lapsed inside the FILING leg: whether the enqueue
+            # committed is unknowable from here (the lapse may have hit the
+            # lazy manifest refresh before it, or the enqueue itself). A
+            # re-import converges either way — the backend de-duplicates
+            # identical content — so this is a retryable transport-class
+            # lapse (Go's transportSoftError posture), never "stop, bug".
+            raise ToolError(
+                CODE_TRANSPORT_ERROR,
+                f"filing the import of {api_id} timed out — the import may or may not "
+                "have been filed",
+                actionable="Re-calling import_api with the same api_id is safe "
+                "(re-importing converges), or re-check the entry with search_catalog "
+                "first.",
+                next_tool="search_catalog",
+                extra={"retryable": True},
+            ) from exc
+        # The ceiling lapsed in the tracking tail: maps to the poll-failure
+        # arm — the job's state is UNKNOWN (a leg hung mid-flight), never a
+        # clean "still running".
+        raise ToolError(
+            CODE_INTERNAL_ERROR,
+            f"import of {api_id} was filed as job {job_id}, but tracking it timed out mid-poll",
+            actionable="The job's state is unknown — prefer polling this job with "
+            "get_execution_result (using the job_id in this result) over re-importing "
+            "(a re-import of the same api_id converges, but files a fresh job).",
+            next_tool="get_execution_result",
+            extra={"job_id": job_id},
+        ) from exc
+
+
+async def _file_import(env: CallEnv, api_id: str) -> str:
+    """The filing leg: POST /catalog/{api_id}:import in-process, error-mapped.
+
+    Runs under the caller's hard ceiling — ``import_entry``'s catalog read can
+    lazily refresh the upstream manifest (``_refresh_if_stale``), a fetch
+    bounded only by ``ingest.fetch_timeout_s``.
+    """
+    try:
+        return await CatalogService(env.ctx).import_entry(api_id, env.identity)
     except CatalogEntryNotFoundError:
         raise ToolError(
             CODE_RESOLVE_FAILED,
@@ -742,38 +853,6 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
     except CatalogUnavailableError as exc:
         raise ToolError(CODE_INTERNAL_ERROR, f"catalog not available: {exc}") from None
 
-    try:
-        require_scopes(env.identity, ["jobs:read"])
-    except ToolError:
-        # In-process tracking rides the same jobs:read gate the Go client's
-        # poll leg does (GET /jobs/{id}). Absent the scope, degrade to the
-        # filed-{job_id, status} envelope — NOT an error: the filing
-        # succeeded, only the courtesy tracking is off the table (REST
-        # parity: the poll would have been refused, the import would not).
-        # Both scopes ride DEFAULT_AGENT_SCOPES, so defaults are unaffected.
-        return tool_result(
-            env.ctx,
-            {"schema_version": SCHEMA_VERSION, "job_id": job_id, "status": "queued"},
-        )
-
-    try:
-        # The hard per-leg ceiling: the wait budget only gates BETWEEN polls —
-        # a hung poll / result fetch / promote inside the tail would hold the
-        # ASGI request open indefinitely without it.
-        async with asyncio.timeout(_IMPORT_WAIT_BUDGET_SECONDS + _IMPORT_WAIT_GRACE_SECONDS):
-            return await _finish_import(env, api_id, job_id)
-    except TimeoutError as exc:
-        # The ceiling lapse maps to the poll-failure arm: the job's state is
-        # UNKNOWN (a leg hung mid-flight) — never a clean "still running".
-        raise ToolError(
-            CODE_INTERNAL_ERROR,
-            f"import of {api_id} was filed as job {job_id}, but tracking it timed out mid-poll",
-            actionable="The job's state is unknown — do not re-import; poll this job "
-            "with get_execution_result using the job_id in this result.",
-            next_tool="get_execution_result",
-            extra={"job_id": job_id},
-        ) from exc
-
 
 async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.CallToolResult:
     """The track-and-promote tail of import_api (runs under the hard ceiling)."""
@@ -788,8 +867,9 @@ async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.Ca
         raise ToolError(
             CODE_INTERNAL_ERROR,
             f"import of {api_id} was filed as job {job_id}, but polling the job failed: {exc}",
-            actionable="The job's state is unknown — do not re-import; poll this job "
-            "with get_execution_result using the job_id in this result.",
+            actionable="The job's state is unknown — prefer polling this job with "
+            "get_execution_result (using the job_id in this result) over re-importing "
+            "(a re-import of the same api_id converges, but files a fresh job).",
             next_tool="get_execution_result",
             extra={"job_id": job_id},
         ) from exc
@@ -958,9 +1038,6 @@ def _header_kvs(obj: dict[str, Any] | None) -> list[tuple[str, str]]:
 
 _GET_EXECUTION_RESULT_PARAMS = [ParamSpec("job_id", "string", ("id", "job"))]
 
-#: the terminal state whose result document rides the poll payload.
-_JOB_COMPLETED = "completed"
-
 
 async def handle_get_execution_result(
     env: CallEnv, arguments: dict[str, Any]
@@ -990,13 +1067,15 @@ async def handle_get_execution_result(
     if (
         job.kind == _JOB_KIND_IMPORT
         and job.status != _JOB_COMPLETED
-        and job.error
-        and _DUPLICATE_CONTENT_FRAGMENT in job.error
+        and _is_single_source_duplicate_failure(job.error)
     ):
         # The same duplicate-content short-circuit import_api makes: a
         # duplicate import job polled here reports already_imported (the
         # content is present — possibly a lost concurrent race), never a
         # scary dead_letter after the worker burns its retry backoff.
+        # Gated on the single-source wrapper: a multi-source job (POST /apis)
+        # whose failure is only PARTLY the duplicate keeps its honest
+        # dead-letter payload — see _is_single_source_duplicate_failure.
         # COMPLETED jobs are exempt: the worker never clears job.error, so a
         # job that failed once with the duplicate message and succeeded on a
         # later attempt carries the stale fragment — its completed result is
