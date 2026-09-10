@@ -15,16 +15,16 @@ import type { CapabilitiesUrlsResponse } from './CapabilitiesUrlsResponse';
 export type CapabilitiesResponse = {
     auth: CapabilitiesAuthResponse;
     /**
-     * Shape version of this document; clients hard-fail on versions they do not understand.
+     * Shape version of this document, bumped only when a field is removed, renamed, or retyped. New keys appear without a bump — ignore unknown keys; hard-fail only on a version you do not understand.
      */
     capabilities_version: number;
     /**
-     * Deployment feature flags. OSS ships 'mcp'; downstream packages may contribute additional keys (additive — never overriding built-ins).
+     * Deployment feature flags. OSS ships 'mcp'; downstream packages may contribute additional boolean flags (additive — never overriding built-ins).
      */
-    features: Record<string, any>;
+    features: Record<string, boolean>;
     instance: CapabilitiesInstanceResponse;
     /**
-     * The control-plane surfaces this deployment serves (sorted), e.g. ['admin', 'auth', 'control', 'registry'].
+     * The control-plane surfaces served by the process answering this request (sorted), e.g. ['admin', 'auth', 'control', 'registry']. On a split deployment each tier reports only its own surfaces — a capability absent here may be served by a sibling tier.
      */
     surfaces: Array<string>;
     urls: CapabilitiesUrlsResponse;

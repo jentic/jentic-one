@@ -160,7 +160,10 @@ export class DiscoveryService {
      * which sign-in methods this deployment supports, where its broker is,
      * which surfaces are mounted, and which optional features are enabled,
      * instead of probe-and-guess across ``/instance``, ``/auth/idp``, and the
-     * RFC 8414 document.
+     * RFC 8414 document. The body is deterministic for a given config, so it
+     * carries an ``ETag`` and honours ``If-None-Match`` (304) — every client
+     * fetches this before sign-in, and a fleet restart should revalidate, not
+     * re-download.
      * @returns CapabilitiesResponse Successful Response
      * @throws ApiError
      */

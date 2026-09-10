@@ -994,11 +994,11 @@ class ServerConfig(BaseModel):
     ``local``; the hosted platform sets ``remote`` in its own config."""
     advertised_broker_url: str = ""
     """Client-reachable broker base URL published by ``GET /capabilities``
-    (``urls.broker``). Empty (the default) falls back to ``server.mcp.broker_url``
-    — correct for the local install topology, where the deployment's own
-    control-plane→broker URL is exactly what a client should use. Split/compose
-    deployments whose internal broker URL (e.g. ``http://broker:8100``) is not
-    reachable from clients set this to the broker's public URL."""
+    (``urls.broker``). Empty (the default) publishes ``null`` — the deployment's
+    internal control-plane→broker URL (``server.mcp.broker_url``, e.g.
+    ``http://broker:8100``) is topology-private and never published on the
+    unauthenticated document. Set this to the broker's public http(s) URL to
+    let clients discover where to route data-plane traffic."""
     mcp: McpConfig = Field(default_factory=McpConfig)
 
 

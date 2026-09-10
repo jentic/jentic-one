@@ -515,7 +515,9 @@ def create_surface_app(
         # Same opt-out as /instance: the broker data plane never mounts it.
         # COMMON_ERROR_RESPONSES because it is Discovery-tagged (not System):
         # business operations must document the standard error envelope.
-        app.include_router(get_capabilities_router(enabled_apps), responses=COMMON_ERROR_RESPONSES)
+        app.include_router(
+            get_capabilities_router(ctx, enabled_apps), responses=COMMON_ERROR_RESPONSES
+        )
         # Running/latest version so the signed-in SPA can show the current
         # version and an update banner. Authenticated (any valid session; not
         # published unauthenticated). The latest release is resolved server-side
@@ -658,7 +660,7 @@ def create_combined_app(
     # Public deployment self-description (auth methods, broker URL, surface
     # composition, feature flags) so a client can onboard from one URL.
     # COMMON_ERROR_RESPONSES because it is Discovery-tagged (not System).
-    root.include_router(get_capabilities_router(set(apps)), responses=COMMON_ERROR_RESPONSES)
+    root.include_router(get_capabilities_router(ctx, set(apps)), responses=COMMON_ERROR_RESPONSES)
 
     # Running/latest version so the signed-in SPA can show the current version
     # and an update banner. Authenticated (any valid session). The latest release
