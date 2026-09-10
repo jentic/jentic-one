@@ -17647,6 +17647,8 @@ paths:
       security:
       - BearerAuth: []
       summary: List permission rule sets
+      tags:
+      - Permission Rule Sets
     post:
       description: |-
         Create a named, shareable ordered rule list (theme 5 rule grouping).
@@ -17719,6 +17721,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Create permission rule set
+      tags:
+      - Permission Rule Sets
   /permission-rule-sets/{rule_set_id}:
     delete:
       description: Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
@@ -17792,6 +17796,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Delete permission rule set
+      tags:
+      - Permission Rule Sets
     get:
       description: Get a rule set with its ordered rules and referencing-binding count.
       operationId: getPermissionRuleSet
@@ -17861,6 +17867,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Get permission rule set
+      tags:
+      - Permission Rule Sets
     patch:
       description: Rename or re-describe a rule set (creator or org admin).
       operationId: updatePermissionRuleSet
@@ -17936,6 +17944,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Update permission rule set
+      tags:
+      - Permission Rule Sets
   /permission-rule-sets/{rule_set_id}/rules:
     put:
       description: |-
@@ -18020,6 +18030,8 @@ paths:
       security:
       - BearerAuth: []
       summary: Replace rule set rules
+      tags:
+      - Permission Rule Sets
   /permissions:
     get:
       description: List the permission catalogue visible to the caller.
