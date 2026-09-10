@@ -77,15 +77,21 @@ auth:
         - "https://jentic.example.com/app/auth/callback"
 
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
-# WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
-# var — fill it here and treat the whole file as a secret. Generate material:
+# WRITES. Keep the key material out of this file in production: point each
+# entry at a secret file (docker/k8s secret mount, systemd LoadCredential —
+# readable only by the server user, 0600) with `material_file`, or name an
+# environment variable holding it with `material_env`. Inline `material` also
+# works (vault-templated files) — then treat the whole file as a secret.
+# Exactly one source per entry. Generate material:
 #   python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
 credentials:
   encryption:
     active_id: v1
     entries:
       - id: v1
-        material: CHANGE_ME   # pragma: allowlist secret
+        material_file: /run/secrets/jentic-encryption-key
+        # or:  material_env: JENTIC_ENCRYPTION_KEY_V1
+        # or:  material: CHANGE_ME   # pragma: allowlist secret
 
 # Shared-state backend for cross-process coordination. The default (memory)
 # keeps rate limiters, consent handles, and circuit state per-process — fine

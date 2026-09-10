@@ -38,8 +38,10 @@ Jentic One is designed so that **credentials never leave the data plane**:
   Broker at execution time. They are never returned to callers, never logged in
   cleartext, and never exposed to the agent.
 - The credential-at-rest encryption keyset is **required** and must be supplied
-  by the operator (environment variable or secret manager). Never commit a real
-  key to source control.
+  by the operator — point an entry at a secret file (docker/k8s secret mount,
+  systemd `LoadCredential`) with `material_file`, or at a secret-manager-injected
+  environment variable with `material_env`. Never commit a real key to source
+  control.
 - Access is governed by fine-grained, per-binding permissions, and every
   execution is written to an append-only audit log.
 - Jentic One does **not** send telemetry by default. Anonymous product telemetry

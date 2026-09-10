@@ -106,9 +106,14 @@ warrants:
    private network; put an authenticated reverse proxy or VPN in front. Operators
    and the CLI connect over that private route — never a public port.
 2. **Run as a dedicated, unprivileged (non-root) user.**
-3. **Keep the encryption key out of files on disk** — inject it at runtime via
-   an environment variable or secret manager, and store it outside the database.
-   Never commit a real key.
+3. **Keep the encryption key out of the config file and out of the process
+   environment.** Point each keyset entry at a secret file with
+   `credentials.encryption.entries[].material_file` — a docker/k8s secret
+   mount or a systemd `LoadCredential` path, owned by the server user and
+   mode `0600` (the server warns at boot if the file is group/other-readable)
+   — or name an environment variable holding it with `material_env` when a
+   secret manager injects it at runtime. Must be a regular file (pipes are
+   rejected). Never commit a real key.
 4. **Never hand the agent a long-lived secret.** Jentic One is built for this:
    agents get short-lived, scoped tokens; the real credential stays in the
    Broker.
@@ -121,6 +126,44 @@ warrants:
    recorded — ship it somewhere durable.
 9. **Rotate the encryption keyset** on a schedule (the keyset supports multiple
    versioned entries with an `active_id` for do-and-revoke rotation).
+
+### Feeding the encryption key with `material_file` — two worked patterns
+
+systemd (`LoadCredential` places the secret on a private tmpfs, readable only
+by the unit):
+
+```ini
+# jentic-one.service
+[Service]
+LoadCredential=enc-key:/etc/credstore/jentic-enc-key
+```
+
+```yaml
+# jentic-one.yaml
+credentials:
+  encryption:
+    active_id: v1
+    entries:
+      - id: v1
+        material_file: /run/credentials/jentic-one.service/enc-key
+```
+
+Kubernetes (a projected Secret volume; the mounted file is a symlink to a
+regular file, which is supported):
+
+```yaml
+volumes:
+  - name: enc-key
+    secret:
+      secretName: jentic-encryption-key
+      defaultMode: 0o400
+# container: volumeMounts: [{name: enc-key, mountPath: /var/run/secrets/jentic}]
+# config:    material_file: /var/run/secrets/jentic/enc-key
+```
+
+`material_file` must point at a regular file — pipes and `/dev/fd` sources are
+rejected at config validation, because configuration can be loaded more than
+once per process and a pipe cannot be re-read.
 
 ## Sandboxing the agent (Axis A)
 
@@ -191,7 +234,9 @@ Before pointing Jentic One at production credentials:
       authenticated proxy) — provisioned agents/services run inside the network;
       operators use the CLI over the VPN. No public Jentic One port.
 - [ ] Jentic One runs as a **dedicated non-root user** (or hardened/rootless container).
-- [ ] The **encryption keyset is injected via env/secret manager**, not committed;
+- [ ] The **encryption keyset is not committed**: each entry uses
+      `material_file` (secret mount / systemd `LoadCredential`, mode `0600`) or
+      `material_env` (secret-manager-injected variable);
       generate a real 32-byte key:
       `python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`.
 - [ ] `admin.auth.jwt_secret` and other placeholder secrets are set to real values.
