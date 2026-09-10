@@ -227,6 +227,18 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "Permission Rule Sets",
+        "description": (
+            "Part of the **Core / Access** bounded context — a `PermissionRuleSet` is a "
+            "named, shareable ordered rule list (first-match-wins, default-deny) that many "
+            "direct agent↔credential bindings can point at via their `rule_set_id`, so a "
+            "policy edit or `permissions:test` stays a single-place operation. A binding "
+            "with no `rule_set_id` uses its own inline rules instead. Rule sets carry "
+            "policy, not secrets; deleting one that bindings still reference is refused "
+            "(409 `rule_set_in_use`)."
+        ),
+    },
+    {
         "name": "Toolkits",
         "description": (
             "Part of the **Core / Access** bounded context — a `Toolkit` is a scoped bundle "

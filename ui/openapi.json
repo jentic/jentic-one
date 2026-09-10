@@ -40850,6 +40850,10 @@
       "name": "Credentials"
     },
     {
+      "description": "Part of the **Core / Access** bounded context — a `PermissionRuleSet` is a named, shareable ordered rule list (first-match-wins, default-deny) that many direct agent↔credential bindings can point at via their `rule_set_id`, so a policy edit or `permissions:test` stays a single-place operation. A binding with no `rule_set_id` uses its own inline rules instead. Rule sets carry policy, not secrets; deleting one that bindings still reference is refused (409 `rule_set_in_use`).",
+      "name": "Permission Rule Sets"
+    },
+    {
       "description": "Part of the **Core / Access** bounded context — a `Toolkit` is a scoped bundle of credentials and permissions issued to an agent or service. This tag covers **toolkit lifecycle**: list, create, read, update, delete. Sub-resources (keys, credential bindings, per-binding permission rules) live under the sibling tags `Toolkit Keys`, `Toolkit Credentials`, and `Toolkit Permissions`.\n\nTwo distinct values are involved: the **toolkit ID** is `tk_…` (public; appears in URLs, logs, and `Jentic-Toolkit-Id` headers), and the **toolkit secret** is `jntc_live_…` (private; the plaintext API key shown exactly once at toolkit creation or when a new key is issued).",
       "name": "Toolkits"
     },
