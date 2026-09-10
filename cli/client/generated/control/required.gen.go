@@ -249,6 +249,7 @@ func (RegisterResponse) RequiredFields() []string {
 }
 func (RegistrationStatusResponse) RequiredFields() []string { return []string{"client_id", "status"} }
 func (RevokeRequest) RequiredFields() []string              { return []string{"token"} }
+func (RuleSetAttachRequest) RequiredFields() []string       { return []string{"rule_set_id"} }
 func (RuleSetCreateRequest) RequiredFields() []string       { return []string{"name"} }
 func (RuleSetListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }
 func (RuleSetResponse) RequiredFields() []string {
