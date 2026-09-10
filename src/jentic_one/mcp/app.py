@@ -115,10 +115,18 @@ MCP_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
 #:
 #: In SDK 2.1.1 every ``resources/read`` dispatches to the ONE handler
 #: (there is no per-resource routing), so a future non-public resource would
-#: need a NEW handler arm here — no finite probe battery can prove such an
-#: arm doesn't exist, so a new arm is exactly what code review plus this
-#: comment must catch: if you are adding one, take ``resources/read`` back
-#: OFF this whitelist first and re-review the pre-auth door.
+#: need a NEW handler arm — no finite probe battery can prove such an arm
+#: doesn't exist, so a new arm is exactly what code review plus this comment
+#: must catch: if you are adding one, take ``resources/read`` back OFF this
+#: whitelist first and re-review the pre-auth door. The arm has THREE doors,
+#: not one: here in ``build_mcp_server`` (the delegation pin catches that),
+#: inside ``read_skill_resource`` itself (``resources.py`` — a third resolver
+#: arm passes both the pin and every probe, so review must watch that module
+#: with the same eyes), or via the SDK's
+#: ``Server.add_request_handler("resources/read", …)``, which replaces the
+#: registered handler after ``build_mcp_server`` returns and bypasses this
+#: module entirely (``tests/arch/test_mcp_handler_registration.py`` pins that
+#: nothing under ``src/`` calls it).
 PRE_AUTH_METHODS = frozenset(
     {
         "initialize",

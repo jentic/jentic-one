@@ -110,6 +110,10 @@ def test_resources_list_is_the_shipped_set_plus_index() -> None:
         assert resp.status_code == 200
         result = resp.json()["result"]
         assert "nextCursor" not in result  # no pagination, ever
+        uris = [r["uri"] for r in result["resources"]]
+        # Keying by URI below would silently dedupe — assert no duplicates
+        # first (a shipped ``index.md`` would list ``skill://index`` twice).
+        assert len(uris) == len(set(uris))
         listed = {r["uri"]: r for r in result["resources"]}
         assert set(listed) == _SERVED_URIS
 
@@ -138,6 +142,15 @@ def test_resource_templates_stay_empty() -> None:
         resp = client.post("/mcp", json=_rpc("resources/templates/list"), headers=_ACCEPT)
         assert resp.status_code == 200
         assert resp.json()["result"]["resourceTemplates"] == []
+
+
+def test_index_never_enters_the_shipped_set() -> None:
+    """``skill://index`` is minted by the resources module, never shipped as a
+    document: ``read_skill_resource`` matches ``SKILL_INDEX_URI`` before the
+    name arm, so a future ``content/index.md`` would be listed as a document
+    yet silently shadowed by the manifest on every read. Fail loudly here
+    instead — rename any such document before shipping it."""
+    assert "index" not in shipped_skill_names()
 
 
 # --- resources/read: documents (bytes + provenance, HTTP-route parity) -------
@@ -188,6 +201,11 @@ def test_read_index_is_the_http_manifest_at_the_same_base() -> None:
             doc = _read_contents(client, SKILL_URI_SCHEME + row["name"])
             digest = hashlib.sha256(doc["text"].encode("utf-8")).hexdigest()
             assert row["sha256"] == digest
+            # The row's version and the document read's ``_meta`` version are
+            # computed by two independent ``get("version") or "1"`` copies
+            # (``skills_index_rows`` / ``read_skill_resource``) — cross-pin
+            # them so neither default can drift from the other.
+            assert doc["_meta"][META_VERSION_KEY] == row["version"]
 
 
 # --- D4 layer 1: resolver characterization (the proof) -----------------------
@@ -243,6 +261,12 @@ def test_on_read_resource_is_a_bare_delegation_to_the_resolver() -> None:
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
     assert call.func.id == "read_skill_resource"
+    # The delegated argument is pinned too: the first argument must be the
+    # request's own ``params.uri`` — a hardcoded URI (or anything else) would
+    # otherwise pass the "bare delegation" pin while routing reads elsewhere.
+    uri_arg = call.args[0]
+    assert isinstance(uri_arg, ast.Attribute) and uri_arg.attr == "uri"
+    assert isinstance(uri_arg.value, ast.Name) and uri_arg.value.id == "params"
 
 
 # --- D4 layer 3: the probe battery, credential-less AND with a bearer --------

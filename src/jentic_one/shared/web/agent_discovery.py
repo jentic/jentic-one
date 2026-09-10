@@ -67,9 +67,12 @@ ONBOARDING_SKILL = "jentic"
 MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 
 #: Agent Skills ``name`` grammar (Anthropic spec): 1-64 chars, lowercase
-#: alphanumerics and single interior hyphens, no leading/trailing hyphen. Kept
-#: as an independent constant here (not imported from ``tools``) so the runtime
-#: backend has no dependency on the un-shipped repo-root ``tools`` package.
+#: alphanumerics and interior hyphens, no leading/trailing hyphen. The regex
+#: does permit consecutive interior hyphens (``a--b``) — that's fine: the
+#: grammar only pre-filters shapes, and the ``shipped_skill_names()``
+#: allowlist is the real serving gate. Kept as an independent constant here
+#: (not imported from ``tools``) so the runtime backend has no dependency on
+#: the un-shipped repo-root ``tools`` package.
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 
 #: Reference-file *stem* grammar (the filename minus ``.md``): the skill-name

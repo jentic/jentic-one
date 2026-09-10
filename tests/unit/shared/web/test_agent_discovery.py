@@ -449,6 +449,9 @@ def test_llms_txt_config_only_enablement_does_not_advertise(
 
     assert "http://testserver/mcp" not in body
     assert "Streamable HTTP endpoint" not in body
+    # The skill-resources sentence rides the enabled arm only — this app
+    # serves no resource surface to advertise.
+    assert "skill set as MCP resources" not in body
     assert "serves no MCP server today" in body
 
 
@@ -470,6 +473,7 @@ def test_llms_txt_auth_standalone_never_advertises_the_endpoint(
     assert "http://testserver/mcp" not in body
     assert "Streamable HTTP endpoint" not in body
     assert "mcp-remote" not in body
+    assert "skill set as MCP resources" not in body
     # The disabled arm's probe-misdiagnosis wording stays.
     assert "serves no MCP server today" in body
 
@@ -477,11 +481,13 @@ def test_llms_txt_auth_standalone_never_advertises_the_endpoint(
 def test_llms_txt_disabled_arm_never_mentions_the_endpoint_url(client: TestClient) -> None:
     """The disabled arm is silent about the endpoint: no URL-shaped `/mcp`
     advertisement an agent could wire an entry to (the path only appears in
-    the probe-misdiagnosis explanation)."""
+    the probe-misdiagnosis explanation), and no skill-resources sentence for
+    a resource surface this arm does not serve."""
     body = client.get(LLMS_TXT_PATH).text
     assert "http://testserver/mcp" not in body
     assert "Streamable HTTP endpoint" not in body
     assert "mcp-remote" not in body
+    assert "skill set as MCP resources" not in body
 
 
 #: The pre-phase-3 MCP paragraph, verbatim from the base branch's
