@@ -21,7 +21,6 @@ import (
 // Defines values for AccessRequestItemRequestAction.
 const (
 	Bind      AccessRequestItemRequestAction = "bind"
-	Create    AccessRequestItemRequestAction = "create"
 	Grant     AccessRequestItemRequestAction = "grant"
 	Provision AccessRequestItemRequestAction = "provision"
 )
@@ -30,8 +29,6 @@ const (
 func (e AccessRequestItemRequestAction) Valid() bool {
 	switch e {
 	case Bind:
-		return true
-	case Create:
 		return true
 	case Grant:
 		return true
@@ -46,7 +43,6 @@ func (e AccessRequestItemRequestAction) Valid() bool {
 const (
 	AccessRequestItemRequestResourceTypeCredential AccessRequestItemRequestResourceType = "credential"
 	AccessRequestItemRequestResourceTypeScope      AccessRequestItemRequestResourceType = "scope"
-	AccessRequestItemRequestResourceTypeToolkit    AccessRequestItemRequestResourceType = "toolkit"
 )
 
 // Valid indicates whether the value is a known member of the AccessRequestItemRequestResourceType enum.
@@ -55,8 +51,6 @@ func (e AccessRequestItemRequestResourceType) Valid() bool {
 	case AccessRequestItemRequestResourceTypeCredential:
 		return true
 	case AccessRequestItemRequestResourceTypeScope:
-		return true
-	case AccessRequestItemRequestResourceTypeToolkit:
 		return true
 	default:
 		return false
@@ -950,21 +944,22 @@ type AccessRequestFileRequest struct {
 // AccessRequestItemRequest A single line-item in a file request.
 //
 // **Permission rules:** Rules control which upstream API operations the broker
-// allows through a credential binding. They are enforced per (toolkit_id,
-// credential_id) pair, so they can only be attached to credential:bind items —
-// not toolkit:bind or scope:grant. You do not need toolkits:write scope to set
-// rules; include them directly on the credential:bind item when filing the
-// access request, and the approver's decision persists them on the binding.
+// allows through a direct agent↔credential binding. They are enforced per
+// (agent, credential) pair, so they can only be attached to credential:bind
+// items — not scope:grant. Include them (or a shared “rule_set_id“)
+// directly on the credential:bind item when filing the access request, and
+// the approver's decision persists them on the binding.
 type AccessRequestItemRequest struct {
 	Action            AccessRequestItemRequestAction       `json:"action"`
 	ResourceId        *string                              `json:"resource_id,omitempty"`
 	ResourceReference *map[string]interface{}              `json:"resource_reference,omitempty"`
 	ResourceType      AccessRequestItemRequestResourceType `json:"resource_type"`
 
+	// RuleSetId Shared permission rule set for the binding (credential:bind only), as an alternative to inline rules. While attached, the set's ordered list is the binding's effective policy.
+	RuleSetId *string `json:"rule_set_id,omitempty"`
+
 	// Rules Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{"effect": "allow", "path": ".*"}].
-	Rules  *[]JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema `json:"rules,omitempty"`
-	ToId   *string                                                         `json:"to_id,omitempty"`
-	ToType *string                                                         `json:"to_type,omitempty"`
+	Rules *[]JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema `json:"rules,omitempty"`
 }
 
 // AccessRequestItemRequestAction defines model for AccessRequestItemRequest.Action.
@@ -977,25 +972,28 @@ type AccessRequestItemRequestResourceType string
 type AccessRequestItemResponse struct {
 	Action string `json:"action"`
 
-	// AlreadySatisfied Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind, toolkit:bind, and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous toolkit reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). Toolkit REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a toolkit this caller cannot see'; explicit-id targets are probed directly.
+	// AlreadySatisfied Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous credential reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). API REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a credential this caller cannot see'; explicit-id targets are probed directly.
 	AlreadySatisfied *bool `json:"already_satisfied,omitempty"`
 
-	// AlreadySatisfiedBy For a satisfied toolkit:bind, the id of the toolkit the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
-	AlreadySatisfiedBy *string                   `json:"already_satisfied_by,omitempty"`
-	AppliedEffects     *map[string]interface{}   `json:"applied_effects,omitempty"`
-	CredentialName     *string                   `json:"credential_name,omitempty"`
-	DecidedAt          *time.Time                `json:"decided_at,omitempty"`
-	DecidedBy          *string                   `json:"decided_by,omitempty"`
-	DecisionReason     *string                   `json:"decision_reason,omitempty"`
-	Id                 string                    `json:"id"`
-	ResourceId         *string                   `json:"resource_id,omitempty"`
-	ResourceReference  *map[string]interface{}   `json:"resource_reference,omitempty"`
-	ResourceType       string                    `json:"resource_type"`
-	Rules              *[]map[string]interface{} `json:"rules,omitempty"`
-	Status             string                    `json:"status"`
-	ToId               *string                   `json:"to_id,omitempty"`
-	ToType             *string                   `json:"to_type,omitempty"`
-	ToolkitName        *string                   `json:"toolkit_name,omitempty"`
+	// AlreadySatisfiedBy For a satisfied credential:bind, the id of the credential the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
+	AlreadySatisfiedBy *string                 `json:"already_satisfied_by,omitempty"`
+	AppliedEffects     *map[string]interface{} `json:"applied_effects,omitempty"`
+	CredentialName     *string                 `json:"credential_name,omitempty"`
+	DecidedAt          *time.Time              `json:"decided_at,omitempty"`
+	DecidedBy          *string                 `json:"decided_by,omitempty"`
+	DecisionReason     *string                 `json:"decision_reason,omitempty"`
+	Id                 string                  `json:"id"`
+	ResourceId         *string                 `json:"resource_id,omitempty"`
+	ResourceReference  *map[string]interface{} `json:"resource_reference,omitempty"`
+	ResourceType       string                  `json:"resource_type"`
+
+	// RuleSetId Shared permission rule set attached to a credential:bind item, as an alternative policy carrier to inline rules.
+	RuleSetId   *string                   `json:"rule_set_id,omitempty"`
+	Rules       *[]map[string]interface{} `json:"rules,omitempty"`
+	Status      string                    `json:"status"`
+	ToId        *string                   `json:"to_id,omitempty"`
+	ToType      *string                   `json:"to_type,omitempty"`
+	ToolkitName *string                   `json:"toolkit_name,omitempty"`
 }
 
 // AccessRequestListResponse Paginated list of access requests.
@@ -1113,8 +1111,8 @@ type AgentScopesResponse struct {
 type AmendItemSchema struct {
 	ItemId     string                                                          `json:"item_id"`
 	ResourceId *string                                                         `json:"resource_id,omitempty"`
+	RuleSetId  *string                                                         `json:"rule_set_id,omitempty"`
 	Rules      *[]JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema `json:"rules,omitempty"`
-	ToId       *string                                                         `json:"to_id,omitempty"`
 }
 
 // AmendRequest Request body for the :amend verb.
