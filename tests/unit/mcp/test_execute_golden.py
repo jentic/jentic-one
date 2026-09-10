@@ -335,3 +335,23 @@ async def test_ipv6_loopback_broker_stays_allowed(broker) -> None:
     env = make_env("http://[::1]:8100")
     result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
     assert not result.is_error, result.content
+
+
+async def test_unreachable_broker_envelope_carries_no_dangling_pointer(broker) -> None:
+    """#1254: with the broker down, the TRANSPORT_ERROR envelope must not
+    point at ``get_started`` — that tool is absent from this lane's
+    tools/list, so the pointer was an undiscoverable dead end exactly when
+    the model was looking for recovery. The retryable hint still rides."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("All connection attempts failed")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert payload["retryable"] is True
+    assert "next_tool" not in payload

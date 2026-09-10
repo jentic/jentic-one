@@ -28,6 +28,7 @@ import { ClientsTable, type ClientAction } from '@/modules/settings/components/C
 import { ApprovalQueue, type QueueFilter } from '@/modules/settings/components/ApprovalQueue';
 import { ClientDetailSheet } from '@/modules/settings/components/ClientDetailSheet';
 import { ClientFormSheet } from '@/modules/settings/components/ClientFormSheet';
+import { McpConnectCard } from '@/modules/settings/components/McpConnectCard';
 import {
 	DeactivateConfirmDialog,
 	RotateConfirmDialog,
@@ -171,17 +172,22 @@ export function OAuthClientsSection({
 			)}
 
 			{activeTab === 'clients' && (
-				<ClientsTable
-					clients={clientsQuery.data}
-					isLoading={clientsQuery.isLoading}
-					isFetching={clientsQuery.isFetching}
-					error={clientsQuery.error}
-					onRefresh={(): void => void clientsQuery.refetch()}
-					onOpenDetail={openDetail}
-					onAction={handleAction}
-					onCreate={(): void => onCreateOpenChange(true)}
-					pendingId={pendingId}
-				/>
+				<div className="space-y-4">
+					{/* Deployment-level MCP pointer (#1249) — MCP clients using
+					    interactive OAuth register into exactly this roster. */}
+					<McpConnectCard />
+					<ClientsTable
+						clients={clientsQuery.data}
+						isLoading={clientsQuery.isLoading}
+						isFetching={clientsQuery.isFetching}
+						error={clientsQuery.error}
+						onRefresh={(): void => void clientsQuery.refetch()}
+						onOpenDetail={openDetail}
+						onAction={handleAction}
+						onCreate={(): void => onCreateOpenChange(true)}
+						pendingId={pendingId}
+					/>
+				</div>
 			)}
 
 			{/* Sheets are mounted persistently (dialog-state rule): a casual

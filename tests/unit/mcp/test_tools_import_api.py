@@ -220,17 +220,21 @@ def test_umbrella_api_id_with_literal_slash_stays_accepted() -> None:
 # ── scope gate (Go: 403PointsAtRequestAccessForScope) ────────────────────────
 
 
-async def test_missing_scope_is_broker_denied_pointing_at_request_access(
+async def test_missing_scope_is_broker_denied_with_the_pointer_lane_filtered(
     services: None,
 ) -> None:
-    """The same gate as POST /catalog/{api_id}:import (catalog:import); the
-    403 points at request_access even though PR B hasn't landed yet — the
-    pinned description already does, and the pointer is the contract."""
+    """The same gate as POST /catalog/{api_id}:import (catalog:import). The
+    handler raises the shared ``request_access`` pointer spelling (the
+    contract — the pinned description names it), but #1254's lane-aware
+    render filter drops it because this mount doesn't serve request_access
+    yet: no dangling pointer reaches the wire. When PR B flips
+    request_access into SERVED_TOOLS, the pointer resurfaces with no handler
+    change — update this assertion then."""
     result = await dispatch_tool_call(_env([]), "import_api", {"api_id": "googleapis.com/sheets"})
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    assert payload["next_tool"] == "request_access"
+    assert "next_tool" not in payload  # request_access unserved → filtered (#1254)
     assert "catalog:import" in payload["error"]
     assert "catalog:import" in payload["actionable_step"]
     assert _FakeCatalogService.filed == []

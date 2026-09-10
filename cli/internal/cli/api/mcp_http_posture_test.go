@@ -53,6 +53,7 @@ func TestResolveMCPBindPosture(t *testing.T) {
 		{"loopback without token refuses", mcpHTTPOptions{listen: "127.0.0.1:9999"}, "--token-file"},
 		{"loopback with token serves", mcpHTTPOptions{listen: "127.0.0.1:9999", tokenFile: token}, ""},
 		{"loopback opt-out serves tokenless", mcpHTTPOptions{listen: "localhost:9999", allowUnauthenticated: true}, ""},
+		{"loopback token + opt-out is a refused contradiction", mcpHTTPOptions{listen: "127.0.0.1:9999", tokenFile: token, allowUnauthenticated: true}, "contradictory"},
 		{"non-loopback never serves unauthenticated", mcpHTTPOptions{listen: "10.0.0.5:9999", allowNonLoopback: true, tlsCert: "c.pem", tlsKey: "k.pem", tokenFile: token, allowUnauthenticated: true}, "loopback-only"},
 		{"half a TLS pair refuses", mcpHTTPOptions{listen: "127.0.0.1:9999", tokenFile: token, tlsCert: "c.pem"}, "together"},
 		{"unix socket serves credential-less", mcpHTTPOptions{socket: "/tmp/x.sock"}, ""},

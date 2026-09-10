@@ -11,7 +11,9 @@ import {
 	OAuthService,
 	PermissionsService,
 	sharedQueryKeys,
+	SystemService,
 	type AuditResponse,
+	type InstanceIdentityResponse,
 	type OAuthClientCreateResponse,
 	type OAuthClientResponse,
 	type OAuthClientRotateSecretResponse,
@@ -40,6 +42,25 @@ const QUEUE_KEY = [...QUERY_KEY, 'queue'] as const;
 // (every client mutation + every live `oauth_client.*`/`oauth_grant.*` event
 // sweeps `oauthClientsRoot`) doesn't pointlessly refetch `GET /permissions`.
 const PERMISSIONS_KEY = ['settings-oauth-permissions'] as const;
+
+// Instance identity is deployment metadata, not client data — own root for
+// the same fan-out reason as the permission catalogue above.
+const INSTANCE_KEY = ['settings-instance-identity'] as const;
+
+/**
+ * The instance's self-described identity (`GET /instance`, unauthenticated):
+ * the deployment's canonical base URL and whether the daemon-native HTTP MCP
+ * endpoint is enabled — everything the "Connect an MCP client" card (#1249)
+ * can honestly derive. A thin sibling of the agents module's hook over the
+ * same generated service (modules never import each other — boundary rule).
+ */
+export function useInstanceIdentity() {
+	return useQuery<InstanceIdentityResponse>({
+		queryKey: INSTANCE_KEY,
+		queryFn: () => SystemService.getInstance(),
+		staleTime: 5 * 60 * 1000,
+	});
+}
 
 export function usePermissionCatalogue() {
 	return useQuery<PermissionResponse[]>({

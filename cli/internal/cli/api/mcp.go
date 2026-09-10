@@ -107,7 +107,7 @@ func newMCPCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.http.allowNonLoopback, "allow-non-loopback", false,
 		"explicitly allow a non-loopback --listen bind (still refuses without --tls-cert/--tls-key and --token-file)")
 	cmd.Flags().BoolVar(&opts.http.allowUnauthenticated, "allow-unauthenticated", false,
-		"serve loopback --listen without a token — every local user may then act as this context; loopback-only")
+		"serve loopback --listen without a token — every local user may then act as this context; loopback-only, mutually exclusive with --token-file")
 	cmd.Flags().StringSliceVar(&opts.http.allowOrigins, "allow-origin", nil,
 		"Origin values allowed on --http requests besides loopback (repeatable); anything else is refused with 403")
 	cmd.Flags().IntSliceVar(&opts.http.allowUIDs, "allow-uid", nil,
