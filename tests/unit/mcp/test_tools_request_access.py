@@ -109,7 +109,12 @@ def _view(
 
 
 class _FakeAccessRequestService:
-    """AccessRequestService stand-in: scripted file()/get() outcomes."""
+    """AccessRequestService stand-in: scripted file()/get() outcomes.
+
+    ``decide``/``amend`` exist only to PIN that the handler surface never
+    reaches them (Go: TestMCPRequestAccess_NeverSelfApproves) — they ledger
+    the call and raise.
+    """
 
     filed: ClassVar[list[dict[str, Any]]] = []
     file_result: ClassVar[AccessRequestView | None] = None
@@ -117,9 +122,18 @@ class _FakeAccessRequestService:
     get_results: ClassVar[dict[str, AccessRequestView]] = {}
     get_error: ClassVar[Exception | None] = None
     gets: ClassVar[list[str]] = []
+    decided: ClassVar[list[str]] = []
 
     def __init__(self, ctx: Any) -> None:
         self._ctx = ctx
+
+    async def decide(self, *args: Any, **kwargs: Any) -> Any:
+        _FakeAccessRequestService.decided.append("decide")
+        raise AssertionError("request_access must never decide — approving is a human action")
+
+    async def amend(self, *args: Any, **kwargs: Any) -> Any:
+        _FakeAccessRequestService.decided.append("amend")
+        raise AssertionError("request_access must never amend — approving is a human action")
 
     async def file(
         self,
@@ -156,6 +170,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeAccessRequestService.get_results = {}
     _FakeAccessRequestService.get_error = None
     _FakeAccessRequestService.gets = []
+    _FakeAccessRequestService.decided = []
     monkeypatch.setattr(tools_mod, "AccessRequestService", _FakeAccessRequestService)
 
 
@@ -272,11 +287,60 @@ async def test_filing_absolutizes_the_relative_approve_url(service: None) -> Non
     assert payload["approve_url"] == "https://auth.example.com/access-requests/acr_1"
 
 
+_PROVISION_CHAIN = [
+    ("toolkit", "create"),
+    ("credential", "provision"),
+    ("credential", "bind"),
+    ("toolkit", "bind"),
+]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_kinds"),
+    [
+        pytest.param({"provisions": ["a.com/api"]}, _PROVISION_CHAIN, id="provisions->provision"),
+        pytest.param({"toolkit": ["a.com/api"]}, [("toolkit", "bind")], id="toolkit->toolkits"),
+        pytest.param({"toolkit_id": ["tk_1"]}, [("toolkit", "bind")], id="toolkit_id->toolkit_ids"),
+        pytest.param({"scope": ["catalog:import"]}, [("scope", "grant")], id="scope->scopes"),
+        pytest.param(
+            {"provisions": ["a.com/api"], "auths": ["api_key"]},
+            _PROVISION_CHAIN,
+            id="auths->auth",
+        ),
+        pytest.param(
+            {"provisions": ["a.com/api"], "rules": [{"effect": "allow", "path": ".*"}]},
+            _PROVISION_CHAIN,
+            id="rules->rules_json",
+        ),
+    ],
+)
+async def test_filing_alias_spellings_reach_their_canonical_params(
+    service: None, arguments: dict[str, Any], expected_kinds: list[tuple[str, str]]
+) -> None:
+    """The full alias table (Go: ``requestAccessParams``): each alias
+    round-trips to its canonical parameter and files the same items the
+    canonical spelling would (the ``id`` alias is pinned by the poll-arm
+    test)."""
+    result = await dispatch_tool_call(_env(), "request_access", arguments)
+    assert not result.is_error, result.content
+    (call,) = _FakeAccessRequestService.filed
+    assert [(i["resource_type"], i["action"]) for i in call["items"]] == expected_kinds
+    if "auths" in arguments:
+        assert call["items"][1]["resource_reference"]["security_scheme"] == "api_key"
+    if "rules" in arguments:
+        # The REST round-trip may ENRICH (rule defaults like match_mode) but
+        # the aliased value must arrive on the bind item intact.
+        (filed_rule,) = call["items"][2]["rules"]
+        assert {k: filed_rule[k] for k in ("effect", "path")} == {"effect": "allow", "path": ".*"}
+
+
 async def test_pydantic_validation_rejects_mis_shaped_rules(service: None) -> None:
     """Validation parity: composed items round-trip the REST schemas, so a
     rules_json whose rules are mis-shaped (a bad effect) is invalid_params —
-    it must never reach file() with less validation than REST applies."""
-    with pytest.raises(MCPError, match="invalid access-request items"):
+    it must never reach file() with less validation than REST applies. The
+    message is compacted to the first error's loc/msg, never pydantic's
+    multi-line dump with docs links."""
+    with pytest.raises(MCPError, match="invalid access-request items") as err:
         await tools_mod.handle_request_access(
             _env(),
             {
@@ -643,3 +707,18 @@ async def test_no_scope_gate_on_filing(service: None) -> None:
     result = await dispatch_tool_call(_env([]), "request_access", {"toolkits": ["acme/pets"]})
     assert not result.is_error, "filing is not scope-gated on the REST route it fronts"
     assert len(_FakeAccessRequestService.filed) == 1
+
+
+# ── the handler never approves (Go: TestMCPRequestAccess_NeverSelfApproves) ──
+
+
+async def test_handler_never_decides_or_amends(service: None) -> None:
+    """The handler surface files and polls — deciding is a HUMAN action in
+    the dashboard. The fake's decide()/amend() raise if reached; the ledger
+    staying empty across both arms pins that they never are."""
+    _FakeAccessRequestService.get_results["acr_1"] = _view("pending")
+    filed = await dispatch_tool_call(_env(), "request_access", {"toolkits": ["acme/pets"]})
+    assert not filed.is_error
+    polled = await dispatch_tool_call(_env(), "request_access", {"request_id": "acr_1"})
+    assert not polled.is_error
+    assert _FakeAccessRequestService.decided == []
