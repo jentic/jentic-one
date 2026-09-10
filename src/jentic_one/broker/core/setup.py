@@ -6,13 +6,15 @@ from fastapi import FastAPI, Request
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.repos import (
+    AgentRuleEvaluator,
     ApiKeyResolver,
+    CredentialBindingResolver,
     InProcessTokenResolver,
     RuleEvaluator,
-    ToolkitBindingChecker,
     ToolkitBindingResolver,
     ToolkitKeyResolver,
 )
+from jentic_one.broker.repos.caching_credential_deriver import CachingCredentialDeriver
 from jentic_one.broker.repos.caching_toolkit_deriver import CachingToolkitDeriver
 from jentic_one.broker.services.auth import (
     CompositeTokenValidator,
@@ -22,7 +24,7 @@ from jentic_one.broker.services.auth import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.jwt_verification import TrustedIssuerVerifier
-from jentic_one.shared.broker.protocols import ToolkitDeriverProtocol
+from jentic_one.shared.broker.protocols import CredentialDeriverProtocol, ToolkitDeriverProtocol
 from jentic_one.shared.config import BrokerConfig
 from jentic_one.shared.context import Context
 
@@ -69,16 +71,34 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
     )
     app.state.broker_token_validator = triple
     app.state.broker_api_key_resolver = api_key_resolver
-    app.state.broker_binding_checker = ToolkitBindingChecker(ctx.admin_db)
     app.state.broker_rule_evaluator = RuleEvaluator(
         ctx.control_db,
         cache_ttl_seconds=ctx.config.broker.rule_cache_ttl_s,
+        max_entries=ctx.config.broker.rule_cache_max_entries,
     )
     deriver: ToolkitDeriverProtocol = ToolkitBindingResolver(ctx.admin_db, ctx.control_db)
     toolkit_cache_ttl_s = ctx.config.broker.toolkit_cache_ttl_s
     if toolkit_cache_ttl_s > 0:
         deriver = CachingToolkitDeriver(deriver, cache_ttl_seconds=toolkit_cache_ttl_s)
     app.state.broker_toolkit_deriver = deriver
+
+    # Direct-binding path (theme-5 Phase 2). Wired unconditionally — the
+    # components are inert until ``broker.direct_bindings_enabled`` flips the
+    # execute handler onto them — sharing the toolkit path's cache TTLs so the
+    # two paths have identical staleness bounds during the cutover.
+    app.state.broker_agent_rule_evaluator = AgentRuleEvaluator(
+        ctx.control_db,
+        cache_ttl_seconds=ctx.config.broker.rule_cache_ttl_s,
+        max_entries=ctx.config.broker.rule_cache_max_entries,
+    )
+    credential_deriver: CredentialDeriverProtocol = CredentialBindingResolver(
+        ctx.admin_db, ctx.control_db
+    )
+    if toolkit_cache_ttl_s > 0:
+        credential_deriver = CachingCredentialDeriver(
+            credential_deriver, cache_ttl_seconds=toolkit_cache_ttl_s
+        )
+    app.state.broker_credential_deriver = credential_deriver
 
     async def _verify_token(token: str, request: Request) -> Identity:
         return await triple.validate(token)

@@ -701,7 +701,8 @@ export async function fetchActorUsageDetail(
 export interface ActorExecutionEntity {
 	id: string;
 	status: string;
-	toolkitId: string;
+	/** Nullable-legacy: direct-binding executions carry no toolkit. */
+	toolkitId: string | null;
 	toolkitName: string | null;
 	operationId: string | null;
 	durationMs: number | null;
@@ -726,7 +727,7 @@ export async function fetchActorExecutions(
 			items: res.data.map((r) => ({
 				id: r.execution_id,
 				status: r.status,
-				toolkitId: r.toolkit_id,
+				toolkitId: r.toolkit_id ?? null,
 				toolkitName: r.toolkit_name ?? null,
 				operationId: r.operation_id ?? null,
 				durationMs: r.duration_ms ?? null,

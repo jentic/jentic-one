@@ -12,6 +12,7 @@ call-sites get identical problem+json semantics.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
 
 import structlog
 
@@ -23,6 +24,7 @@ from jentic_one.broker.core.exceptions import (
     CredentialUndecryptableError,
     ErrorOrigin,
     InvalidCredentialNameError,
+    ambiguous_credential_binding_directive,
 )
 from jentic_one.broker.core.exceptions import (
     CredentialNotProvisionedError as DomainCredentialNotProvisionedError,
@@ -30,13 +32,14 @@ from jentic_one.broker.core.exceptions import (
 from jentic_one.broker.core.injection import inject_auth
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
+    CredentialIdNotFoundError,
     CredentialNameNotFoundError,
     CredentialNotProvisionedError,
     RefreshInvalidGrantError,
     RefreshTransientError,
 )
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
-from jentic_one.broker.services.credentials.resolver import CredentialResolver
+from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import DecryptionError
@@ -73,7 +76,10 @@ class CredentialService:
         api_version: str,
         identity: Identity,
         credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
+        preresolved: ResolvedCredential | None = None,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -82,22 +88,43 @@ class CredentialService:
         exceptions (424/409/401/502) so both call-sites render identical
         problem+json.
 
+        ``credential_id`` / ``allowed_credential_ids`` are the direct-binding
+        path (theme-5 Phase 2): the allowed set is the **injection boundary**
+        (Q-02 — only credentials the caller is bound to may resolve; ``None``
+        keeps the legacy unfiltered behaviour, an empty set denies all), and the
+        id is the authoritative ``Jentic-Credential-Id`` tie-breaker. When the
+        boundary is active an ambiguity maps to ``ambiguous_credential_binding``
+        (candidates are the caller's own bound credentials) instead of the
+        legacy ``ambiguous_credential``.
+
         ``trace_id`` is stamped onto the ``CREDENTIAL_ACCESSED`` audit event so
         an operator inspecting an execution can join the credential-use record
         back to the specific execution that triggered it (#740). Optional so
         non-execution call-sites (bind-time probes, service accounts) don't
         have to fabricate one. A malformed value degrades to an uncorrelated
         event rather than failing the injection (#903).
+
+        ``preresolved`` short-circuits resolution: the sync router's direct
+        path already ran :meth:`select` (it needed the credential id for rule
+        evaluation *before* any secret is decrypted), so injection reuses that
+        result instead of resolving twice.
         """
         if not api_vendor:
             return _EMPTY
 
         api = APIReference(vendor=api_vendor, name=api_name or "", version=api_version or "")
-        try:
-            resolved = await CredentialResolver(self._ctx).resolve(
-                api=api, caller=identity.sub, credential_name=credential_name
+        resolved = (
+            preresolved
+            if preresolved is not None
+            else await self._resolve_mapped(
+                api,
+                identity,
+                credential_name=credential_name,
+                credential_id=credential_id,
+                allowed_credential_ids=allowed_credential_ids,
             )
-
+        )
+        try:
             try:
                 access_token: str | None = None
                 if resolved.wire_type == CredentialType.OAUTH2:
@@ -179,24 +206,15 @@ class CredentialService:
                 signing=result.signing,
             )
         except CredentialNotProvisionedError as exc:
+            # Defensive: resolve-phase mapping lives in ``_resolve_mapped``; kept
+            # here so a downstream raise (e.g. an unknown wire type surfacing
+            # late) still renders the canonical 424 instead of a 500.
             await self._emit_credential_failure(
                 type=EventType.CREDENTIAL_NOT_PROVISIONED,
                 summary=f"No credential provisioned for '{api.vendor}'",
                 identity=identity,
             )
             raise self._not_provisioned(api, identity) from exc
-        except CredentialNameNotFoundError as exc:
-            raise InvalidCredentialNameError(
-                detail=str(exc),
-                type="credential_name_not_found",
-                extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
-            ) from exc
-        except AmbiguousCredentialError as exc:
-            raise AmbiguousMatchError(
-                detail=str(exc),
-                type="ambiguous_credential",
-                extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
-            ) from exc
         except RefreshInvalidGrantError as exc:
             # Jentic-side auth failure: our OAuth refresh against the token
             # endpoint was rejected (invalid_grant). The auth source rides as a
@@ -224,6 +242,106 @@ class CredentialService:
         except RefreshTransientError as exc:
             raise CredentialRefreshTransientError(
                 detail=str(exc), type="refresh_transient_error", origin=ErrorOrigin.UPSTREAM
+            ) from exc
+
+    async def select(
+        self,
+        *,
+        api_vendor: str,
+        api_name: str,
+        api_version: str,
+        identity: Identity,
+        credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Collection[str] | None = None,
+    ) -> ResolvedCredential | None:
+        """Resolve-only credential selection — no refresh, decrypt, or audit.
+
+        The direct-binding path (theme-5 Phase 2) must know *which* credential
+        was selected **before** permission rules can be evaluated (rules are
+        keyed on the ``(agent, credential)`` binding) — and enforcement must
+        happen before any secret is touched or a ``CREDENTIAL_ACCESSED`` audit
+        event fires. This runs the same resolution + error mapping as
+        :meth:`inject` and returns the resolved metadata; pass it back to
+        :meth:`inject` as ``preresolved`` to avoid resolving twice.
+
+        Returns ``None`` when the API tuple has no vendor (no credential path).
+        """
+        if not api_vendor:
+            return None
+        api = APIReference(vendor=api_vendor, name=api_name or "", version=api_version or "")
+        return await self._resolve_mapped(
+            api,
+            identity,
+            credential_name=credential_name,
+            credential_id=credential_id,
+            allowed_credential_ids=allowed_credential_ids,
+        )
+
+    async def _resolve_mapped(
+        self,
+        api: APIReference,
+        identity: Identity,
+        *,
+        credential_name: str | None,
+        credential_id: str | None,
+        allowed_credential_ids: Collection[str] | None,
+    ) -> ResolvedCredential:
+        """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
+
+        Shared by :meth:`inject` and :meth:`select` so both surfaces render
+        identical problem+json for the resolve-phase failures
+        (424/400/409).
+        """
+        try:
+            return await CredentialResolver(self._ctx).resolve(
+                api=api,
+                caller=identity.sub,
+                credential_name=credential_name,
+                credential_id=credential_id,
+                allowed_credential_ids=allowed_credential_ids,
+            )
+        except CredentialNotProvisionedError as exc:
+            await self._emit_credential_failure(
+                type=EventType.CREDENTIAL_NOT_PROVISIONED,
+                summary=f"No credential provisioned for '{api.vendor}'",
+                identity=identity,
+            )
+            raise self._not_provisioned(api, identity) from exc
+        except CredentialNameNotFoundError as exc:
+            raise InvalidCredentialNameError(
+                detail=str(exc),
+                type="credential_name_not_found",
+                extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
+            ) from exc
+        except CredentialIdNotFoundError as exc:
+            # The Jentic-Credential-Id tie-breaker named a credential that is not
+            # among the caller's covering candidates. Same class of caller error
+            # as a bad Jentic-Credential-Name (fix the header value and retry) —
+            # candidates carried so the caller can pick a valid id.
+            raise InvalidCredentialNameError(
+                detail=str(exc),
+                type="credential_id_not_found",
+                extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
+            ) from exc
+        except AmbiguousCredentialError as exc:
+            # On the direct-binding path (allowed set present) the candidates are
+            # the caller's own bound credentials — a *binding* ambiguity resolved
+            # with the Jentic-Credential-Id header — so it gets the Phase-2 wire
+            # type + directive. The legacy unfiltered path keeps its vocabulary.
+            if allowed_credential_ids is not None:
+                raise AmbiguousMatchError(
+                    detail=str(exc),
+                    type="ambiguous_credential_binding",
+                    extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
+                    directive=ambiguous_credential_binding_directive(
+                        [c.id for c in exc.candidates]
+                    ),
+                ) from exc
+            raise AmbiguousMatchError(
+                detail=str(exc),
+                type="ambiguous_credential",
+                extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
             ) from exc
 
     async def _emit_credential_failure(

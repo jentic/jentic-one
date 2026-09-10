@@ -80,6 +80,35 @@ class CredentialNameNotFoundError(CredentialResolutionError):
         self.candidates = candidates
 
 
+class CredentialIdNotFoundError(CredentialResolutionError):
+    """The requested credential id does not match any allowed, covering candidate.
+
+    The direct-binding twin of :class:`CredentialNameNotFoundError`: raised when
+    a ``Jentic-Credential-Id`` tie-breaker names a credential that is not among
+    the caller's covering candidates (unbound, suspended, inactive, or simply
+    not covering this API).
+    """
+
+    def __init__(
+        self,
+        vendor: str,
+        name: str,
+        version: str,
+        requested_id: str,
+        candidates: list[CredentialCandidate],
+    ) -> None:
+        candidate_ids = [c.id for c in candidates]
+        super().__init__(
+            f"No bound credential with id '{requested_id}' for api ({vendor}, {name}, "
+            f"{version}); available: {candidate_ids}"
+        )
+        self.vendor = vendor
+        self.name = name
+        self.version = version
+        self.requested_id = requested_id
+        self.candidates = candidates
+
+
 class RefreshError(CredentialResolutionError):
     """Base for errors during token refresh."""
 

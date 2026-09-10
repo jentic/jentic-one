@@ -247,6 +247,10 @@ type BrokerConfig struct {
 	// "account_linking_base_url".
 	AccountLinkingBaseUrl interface{} `json:"account_linking_base_url,omitempty,omitzero" yaml:"account_linking_base_url,omitempty" mapstructure:"account_linking_base_url,omitempty"`
 
+	// DirectBindingsEnabled corresponds to the JSON schema field
+	// "direct_bindings_enabled".
+	DirectBindingsEnabled bool `json:"direct_bindings_enabled,omitempty,omitzero" yaml:"direct_bindings_enabled,omitempty" mapstructure:"direct_bindings_enabled,omitempty"`
+
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
@@ -268,6 +272,10 @@ type BrokerConfig struct {
 	// ResolveCacheTtlSeconds corresponds to the JSON schema field
 	// "resolve_cache_ttl_seconds".
 	ResolveCacheTtlSeconds float64 `json:"resolve_cache_ttl_seconds,omitempty,omitzero" yaml:"resolve_cache_ttl_seconds,omitempty" mapstructure:"resolve_cache_ttl_seconds,omitempty"`
+
+	// RuleCacheMaxEntries corresponds to the JSON schema field
+	// "rule_cache_max_entries".
+	RuleCacheMaxEntries int `json:"rule_cache_max_entries,omitempty,omitzero" yaml:"rule_cache_max_entries,omitempty" mapstructure:"rule_cache_max_entries,omitempty"`
 
 	// RuleCacheTtlS corresponds to the JSON schema field "rule_cache_ttl_s".
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s,omitempty,omitzero" yaml:"rule_cache_ttl_s,omitempty" mapstructure:"rule_cache_ttl_s,omitempty"`
@@ -296,8 +304,14 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
 	}
+	if v, ok := raw["direct_bindings_enabled"]; !ok || v == nil {
+		plain.DirectBindingsEnabled = false
+	}
 	if v, ok := raw["resolve_cache_ttl_seconds"]; !ok || v == nil {
 		plain.ResolveCacheTtlSeconds = 3.0
+	}
+	if v, ok := raw["rule_cache_max_entries"]; !ok || v == nil {
+		plain.RuleCacheMaxEntries = 5000
 	}
 	if v, ok := raw["rule_cache_ttl_s"]; !ok || v == nil {
 		plain.RuleCacheTtlS = 3.0

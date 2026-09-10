@@ -24,7 +24,12 @@ from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.broker.protocols import RuleEvaluatorProtocol, ToolkitDeriverProtocol
+from jentic_one.shared.broker.protocols import (
+    AgentRuleEvaluatorProtocol,
+    CredentialDeriverProtocol,
+    RuleEvaluatorProtocol,
+    ToolkitDeriverProtocol,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
@@ -154,6 +159,18 @@ def get_toolkit_deriver(request: Request) -> ToolkitDeriverProtocol:
     return deriver
 
 
+def get_credential_deriver(request: Request) -> CredentialDeriverProtocol:
+    """Provide the direct-binding credential deriver (theme-5 Phase 2)."""
+    deriver: CredentialDeriverProtocol = request.app.state.broker_credential_deriver
+    return deriver
+
+
+def get_agent_rule_evaluator(request: Request) -> AgentRuleEvaluatorProtocol:
+    """Provide the direct-binding rule evaluator (theme-5 Phase 2)."""
+    evaluator: AgentRuleEvaluatorProtocol = request.app.state.broker_agent_rule_evaluator
+    return evaluator
+
+
 async def require_execute_within_rate_limit(request: Request) -> Identity:
     """Auth + scope, then enforce the per-caller rate limit keyed on ``sub``.
 
@@ -216,6 +233,8 @@ def get_rule_evaluator(request: Request) -> RuleEvaluatorProtocol:
 RequireBrokerIdentity = Annotated[Identity, Depends(require_broker_identity)]
 RequireToolkitAccess = Annotated[Identity, Depends(require_execute_within_rate_limit)]
 ToolkitDeriver = Annotated[ToolkitDeriverProtocol, Depends(get_toolkit_deriver)]
+CredentialDeriver = Annotated[CredentialDeriverProtocol, Depends(get_credential_deriver)]
 RuleEvaluatorDep = Annotated[RuleEvaluatorProtocol, Depends(get_rule_evaluator)]
+AgentRuleEvaluatorDep = Annotated[AgentRuleEvaluatorProtocol, Depends(get_agent_rule_evaluator)]
 HttpRunnerDep = Annotated[UpstreamRunner, Depends(get_http_runner)]
 IdempotencyStoreDep = Annotated[SharedStateIdempotencyStore | None, Depends(get_idempotency_store)]

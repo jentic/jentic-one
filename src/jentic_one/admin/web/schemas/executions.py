@@ -34,7 +34,9 @@ class ExecutionResponse(BaseModel):
     """Execution record representation in API responses."""
 
     execution_id: str
-    toolkit_id: str
+    # Nullable-legacy (theme-5 Phase 2): null for direct-binding executions —
+    # attribute those via credential_id/credential_name instead.
+    toolkit_id: str | None = None
     toolkit_name: str | None = None
     trace_id: str
     started_at: datetime

@@ -443,3 +443,150 @@ def action_denied_directive() -> AgentDirective:
             "not something you can grant yourself."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct-binding (theme-5 Phase 2) directives — the agent→credential twins of
+# the toolkit directives above. Active only when
+# ``broker.direct_bindings_enabled`` is on; the toolkit directives keep serving
+# the legacy path (and toolkit-key callers) untouched.
+# ---------------------------------------------------------------------------
+
+
+def no_credential_binding_directive(
+    *, vendor: str, name: str, version: str, api_served: bool
+) -> AgentDirective:
+    """Directive for a ``no_credential_binding`` 403 — recover the missing binding.
+
+    The caller is authenticated but has no active direct credential binding
+    covering this API. The right recovery depends on whether any credential
+    serves the API *at all*:
+
+    - ``api_served=True`` — a credential exists, the caller just isn't bound to
+      it. An operator can grant the binding (``POST /agents/{id}/credentials``).
+    - ``api_served=False`` — no credential is provisioned for this API yet, so a
+      binding grant alone cannot help: the operator must provision the
+      credential first, then bind it.
+
+    No ``suggested_command`` is emitted: the direct-binding access-request verbs
+    land in Phase 3, so promising a CLI command here would be a dead-end. The
+    prose names the operator action instead. Deliberately never enumerates
+    other owners' credentials (that would leak instance inventory to an unbound
+    agent).
+    """
+    api = "/".join(part for part in (vendor, name) if part)
+    parameters: dict[str, Any] = {
+        "api": {"vendor": vendor, "name": name, "version": version},
+        "api_served": api_served,
+    }
+    if api_served:
+        instruction = (
+            f"You have no credential binding for '{api}'. Ask your operator to bind a "
+            f"credential for '{api}' to this agent (POST /agents/{{agent_id}}/credentials) "
+            "and attach permission rules; only a human can grant the binding. Once bound, "
+            "retry this call."
+        )
+    else:
+        instruction = (
+            f"No credential is provisioned for '{api}' yet, so a binding cannot be granted. "
+            f"Ask your operator to provision a credential for '{api}', bind it to this agent "
+            "(POST /agents/{agent_id}/credentials) and attach permission rules. Only a human "
+            "can do this. Once bound, retry this call."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters=parameters,
+        human_readable_instruction=instruction,
+    )
+
+
+def direct_credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
+    """Directive for the direct-binding ``credential_identity_mismatch`` 403.
+
+    Same diagnostic contract as :func:`credential_identity_mismatch_directive`
+    (#747/#748) with direct-binding prose: the agent *is* bound to credential(s),
+    but none of their stored identities cover the resolved operation. The fix is
+    the **credential**, never a new binding request (the binding already exists).
+    """
+    expected = _render_identity(
+        mismatch.expected_vendor, mismatch.expected_name, mismatch.expected_version
+    )
+    found = _render_identity(mismatch.found_vendor, mismatch.found_name, mismatch.found_version)
+    if mismatch.would_match_if_normalized:
+        instruction = (
+            f"You are bound to a credential whose stored identity '{found}' only matches "
+            f"'{expected}' after normalization — it was stored in a non-canonical form. Ask "
+            f"your operator to re-provision (or recreate) the credential for '{expected}' so "
+            "its identity is canonical, then retry. Do not request a new binding — one "
+            "already exists."
+        )
+    else:
+        instruction = (
+            f"You are bound to a credential whose identity '{found}' does not match this API "
+            f"'{expected}'. Ask your operator to fix or re-provision the credential so it "
+            f"targets '{expected}', then retry. Do not request a new binding — one already "
+            "exists."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={
+            "expected": {
+                "vendor": mismatch.expected_vendor,
+                "name": mismatch.expected_name,
+                "version": mismatch.expected_version,
+            },
+            "found": {
+                "vendor": mismatch.found_vendor,
+                "name": mismatch.found_name,
+                "version": mismatch.found_version,
+            },
+            "would_match_if_normalized": mismatch.would_match_if_normalized,
+        },
+        human_readable_instruction=instruction,
+    )
+
+
+def ambiguous_credential_binding_directive(candidates: list[str]) -> AgentDirective:
+    """Directive for an ``ambiguous_credential_binding`` 409 — pick one and retry.
+
+    Several credentials the caller is bound to cover this API at the same
+    specificity; the agent must resend with the ``Jentic-Credential-Id`` header
+    (the authoritative tie-breaker) naming one of ``candidates`` — or
+    ``Jentic-Credential-Name`` when names are unique. Candidate ids are the
+    caller's own bound credentials, so naming them here leaks nothing.
+    """
+    pick = candidates[0] if candidates else "<credential_id>"
+    return AgentDirective(
+        strategy="modify_headers",
+        parameters={
+            "candidates": candidates,
+            "headers": {"Jentic-Credential-Id": pick},
+        },
+        human_readable_instruction=(
+            "Multiple bound credentials cover this API. Resend the same request "
+            "with the Jentic-Credential-Id header set to one of the ids in "
+            "parameters.candidates (Jentic-Credential-Name also works when names "
+            "are unique)."
+        ),
+    )
+
+
+def direct_action_denied_directive() -> AgentDirective:
+    """Directive for the direct-binding ``action_denied`` 403.
+
+    The caller *is* bound to the selected credential, but the binding's
+    permission rules (inline or via its attached rule set) deny this specific
+    operation. Only a human can relax the rules, so the strategy is
+    ``prompt_human``.
+    """
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={},
+        human_readable_instruction=(
+            "This operation is denied by your credential binding's permission "
+            "rules. You are bound to a credential for this API, but the rules "
+            "forbid this specific call — ask your operator to adjust the "
+            "binding's permission rules. This is not something you can grant "
+            "yourself."
+        ),
+    )

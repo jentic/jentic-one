@@ -4105,8 +4105,15 @@
             "type": "string"
           },
           "toolkit_id": {
-            "title": "Toolkit Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toolkit Id"
           },
           "toolkit_name": {
             "anyOf": [
@@ -4126,7 +4133,6 @@
         },
         "required": [
           "execution_id",
-          "toolkit_id",
           "trace_id",
           "started_at",
           "status",

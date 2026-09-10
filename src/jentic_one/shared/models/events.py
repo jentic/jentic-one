@@ -97,6 +97,12 @@ class EventType:
     # advisory for the same condition (see
     # ``AccessRequestService._advise_unserved_bind_references``).
     TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
+    # Direct-binding twin of ``TOOLKIT_BINDING_UNSERVED`` (theme-5 Phase 2):
+    # emitted when the broker denies an execute with 403
+    # ``no_credential_binding`` AND no credential yet serves the requested API —
+    # the operator must provision a credential before any binding can be
+    # granted. The *pre-binding* signal for the direct-binding path.
+    CREDENTIAL_BINDING_UNSERVED = "broker.credential_binding_unserved"
 
     # --- Local-MCP transport events (issue #1177) -------------------------
     # Emitted once per MCP session UUID on the first authenticated request
@@ -177,6 +183,7 @@ class EventType:
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
             TOOLKIT_BINDING_UNSERVED,
+            CREDENTIAL_BINDING_UNSERVED,
             MCP_SESSION_STARTED,
             MCP_CONFIG_REGISTERED,
             OAUTH_CLIENT_REGISTERED,

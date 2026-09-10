@@ -129,6 +129,7 @@ BROKER_CONSUMED_HEADERS: frozenset[str] = frozenset(
         "jentic-toolkit-id",
         "x-jentic-api-key",
         "jentic-credential-name",
+        "jentic-credential-id",
     }
 )
 

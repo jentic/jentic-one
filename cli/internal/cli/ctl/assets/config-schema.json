@@ -179,6 +179,11 @@
           "default": null,
           "title": "Account Linking Base Url"
         },
+        "direct_bindings_enabled": {
+          "default": false,
+          "title": "Direct Bindings Enabled",
+          "type": "boolean"
+        },
         "egress": {
           "$ref": "#/$defs/EgressConfig"
         },
@@ -221,6 +226,11 @@
           "default": 3.0,
           "title": "Resolve Cache Ttl Seconds",
           "type": "number"
+        },
+        "rule_cache_max_entries": {
+          "default": 5000,
+          "title": "Rule Cache Max Entries",
+          "type": "integer"
         },
         "rule_cache_ttl_s": {
           "default": 3.0,

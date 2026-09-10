@@ -1896,7 +1896,7 @@ type ExecutionResponse struct {
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
 	StartedAt       time.Time               `json:"started_at"`
 	Status          string                  `json:"status"`
-	ToolkitId       string                  `json:"toolkit_id"`
+	ToolkitId       *string                 `json:"toolkit_id,omitempty"`
 	ToolkitName     *string                 `json:"toolkit_name,omitempty"`
 	TraceId         string                  `json:"trace_id"`
 }

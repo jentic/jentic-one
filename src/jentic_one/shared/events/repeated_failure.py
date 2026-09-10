@@ -40,11 +40,16 @@ async def maybe_emit_repeated_failure(
     operation_id: str | None,
     trace_id: str | None,
     config: SecurityConfig,
+    credential_id: str | None = None,
 ) -> None:
     """Emit ``execution.repeated_failure`` when failures cross the threshold.
 
-    Counts failed ``ExecutionRecord`` rows for the ``actor_id``+``toolkit_id``+
-    ``operation_id`` key within ``execution_repeated_failure_window_s``. If the
+    Counts failed ``ExecutionRecord`` rows for the ``actor_id`` + consumer axis
+    + ``operation_id`` key within ``execution_repeated_failure_window_s``. The
+    consumer axis is ``toolkit_id`` when present (the legacy toolkit path), else
+    ``credential_id`` (the direct-binding path, theme-5 Phase 2 — whose
+    executions carry no toolkit, so without this fallback the early return
+    below would silently stop escalation for every direct-path caller). If the
     count reaches ``execution_repeated_failure_threshold`` it emits one event —
     ``CRITICAL`` once the count reaches
     ``execution_repeated_failure_critical_threshold``, else ``ERROR``.
@@ -58,10 +63,23 @@ async def maybe_emit_repeated_failure(
     Best-effort: any failure (count query, dedup query, emit) is swallowed with a
     warning so the surrounding execution persistence is never disturbed.
     """
-    # An aggregate key needs all three identifiers to be meaningful; a missing
-    # toolkit/operation can't be grouped, so there is nothing to count.
-    if not toolkit_id or not operation_id:
+    # An aggregate key needs an operation plus a consumer axis to be meaningful;
+    # with neither toolkit nor credential there is nothing to count.
+    if not operation_id or not (toolkit_id or credential_id):
         return
+
+    # The consumer axis: toolkit takes precedence (legacy path attribution);
+    # the direct-binding path keys on the credential instead.
+    if toolkit_id:
+        record_axis = ExecutionRecord.toolkit_id == toolkit_id
+        event_axis = Event.data["toolkit_id"].as_string() == toolkit_id
+        axis_label = f"toolkit {toolkit_id}"
+        axis_data: dict[str, str] = {"toolkit_id": toolkit_id}
+    else:
+        record_axis = ExecutionRecord.credential_id == credential_id
+        event_axis = Event.data["credential_id"].as_string() == credential_id
+        axis_label = f"credential {credential_id}"
+        axis_data = {"credential_id": credential_id or ""}
 
     try:
         now = datetime.now(UTC)
@@ -73,7 +91,7 @@ async def maybe_emit_repeated_failure(
             .where(
                 ExecutionRecord.status == ExecutionStatus.FAILED.value,
                 ExecutionRecord.actor_id == actor_id,
-                ExecutionRecord.toolkit_id == toolkit_id,
+                record_axis,
                 ExecutionRecord.operation_id == operation_id,
                 ExecutionRecord.started_at >= window_start,
             )
@@ -98,7 +116,7 @@ async def maybe_emit_repeated_failure(
                 Event.severity == severity.value,
                 Event.created_at >= window_start,
                 Event.data["actor_id"].as_string() == actor_id,
-                Event.data["toolkit_id"].as_string() == toolkit_id,
+                event_axis,
                 Event.data["operation_id"].as_string() == operation_id,
             )
             .limit(1)
@@ -115,7 +133,7 @@ async def maybe_emit_repeated_failure(
             severity=severity,
             summary=(
                 f"{failure_count} failures for operation {operation_id} "
-                f"on toolkit {toolkit_id} in {config.execution_repeated_failure_window_s}s"
+                f"on {axis_label} in {config.execution_repeated_failure_window_s}s"
             ),
             requires_action=True,
             trace_id=trace_id,
@@ -124,7 +142,7 @@ async def maybe_emit_repeated_failure(
             actor_type=actor_type,
             data={
                 "actor_id": actor_id,
-                "toolkit_id": toolkit_id,
+                **axis_data,
                 "operation_id": operation_id,
                 "failure_count": failure_count,
                 "window_s": config.execution_repeated_failure_window_s,
@@ -136,5 +154,6 @@ async def maybe_emit_repeated_failure(
             event_type=EventType.EXECUTION_REPEATED_FAILURE,
             actor_id=actor_id,
             toolkit_id=toolkit_id,
+            credential_id=credential_id,
             operation_id=operation_id,
         )
