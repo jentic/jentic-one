@@ -43,10 +43,11 @@ CODE_TRANSPORT_ERROR = "TRANSPORT_ERROR"
 CODE_INTERNAL_ERROR = "INTERNAL_ERROR"
 
 #: error codes whose default recovery pointer is ``get_started`` (Go:
-#: ``softErrorExtra``'s code-keyed mapping). ``get_started`` is not served by
-#: this mount yet (it queues behind this PR with the other CLI-flavoured
-#: tools), but the pointer strings are part of the shared envelope contract —
-#: they must match the stdio server byte-for-byte.
+#: ``softErrorExtra``'s code-keyed mapping). ``get_started`` never ports to
+#: this mount (it diagnoses *the local machine's* CLI setup — over HTTP there
+#: is no local machine; see ``spec.py``), but the pointer strings are part of
+#: the shared envelope contract — they must match the stdio server
+#: byte-for-byte.
 _DEFAULT_NEXT_TOOL_CODES = frozenset(
     {CODE_NOT_AUTHENTICATED, CODE_PENDING_APPROVAL, CODE_RESOLVE_FAILED}
 )
