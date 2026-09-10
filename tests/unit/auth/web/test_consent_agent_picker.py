@@ -117,10 +117,16 @@ def _mock_authorize_svc(
     *,
     user_id: str | None = "usr_owner",
     agents: list[AgentConsentOption] | None = None,
+    has_any_agents: bool | None = None,
 ) -> MagicMock:
     svc = MagicMock()
     svc.resolve_existing_user_id = AsyncMock(return_value=user_id)
     svc.list_consentable_agents = AsyncMock(return_value=agents or [])
+    # Default: any-status ownership mirrors the active list, i.e. no
+    # disabled/archived residue unless a test says otherwise.
+    svc.owner_has_any_agents = AsyncMock(
+        return_value=bool(agents) if has_any_agents is None else has_any_agents
+    )
     svc.provision_from_claims = AsyncMock(return_value="usr_owner")
     svc.record_consent_decision = AsyncMock()
     svc.issue_authorization_code = AsyncMock(return_value="code_grant")

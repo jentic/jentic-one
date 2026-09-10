@@ -452,3 +452,44 @@ async def test_inline_agent_create_race_skips_creation(
         resp = await client.get("/oauth/consent", params={"ch": handle})
         assert resp.status_code == 200
         assert f'name="agent_id" value="{raced_agent}"' in resp.text
+
+
+async def test_inline_agent_create_not_offered_when_agents_all_disabled(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """A user whose agents were all taken out of service by an admin owns
+    zero ACTIVE agents but is not first-run: the create form must not render
+    (it would mint a fresh active agent past the admin action) — the terminal
+    empty state stays, against the real any-status predicate."""
+    ctx = integration_context
+    owner_id = await seed_user(ctx, "usr_w_p4disabled")
+    await seed_client(ctx, allowed_scopes=["apis:read"])
+    await _link_external_identity(ctx, user_id=owner_id, external_subject="ext-w-p4disabled")
+    await seed_agent(
+        ctx,
+        owner_id=owner_id,
+        scopes=["apis:read"],
+        status=ActorStatus.DISABLED,
+        name="admin-disabled-agent",
+    )
+
+    app = _make_app(ctx)
+    async with _web_client(app) as client:
+        handle = await _seed_handle(
+            app, external_subject="ext-w-p4disabled", email=f"{owner_id}@grants.test"
+        )
+        resp = await client.get("/oauth/consent", params={"ch": handle})
+        assert resp.status_code == 200
+        assert "you don't have one yet" in resp.text
+        assert 'action="/oauth/consent/agent"' not in resp.text
+        assert 'name="agent_id"' not in resp.text
+
+        # No agent row appears even for a hand-crafted submit against this
+        # handle (no rendered blob exists, so any create_state is foreign).
+        async with ctx.admin_db.session() as session:
+            rows = (
+                await session.execute(select(Agent).where(Agent.owner_id == owner_id))
+            ).scalars()
+            agents = list(rows)
+            assert len(agents) == 1
+            assert agents[0].status == ActorStatus.DISABLED.value

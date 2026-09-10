@@ -282,6 +282,20 @@ class AuthorizeService:
                 for agent in agents
             ]
 
+    async def owner_has_any_agents(self, user_id: str) -> bool:
+        """Whether the user owns ANY agent row, in any status.
+
+        The inline create-agent arm (P4) keys on this, NOT on the active-only
+        picker predicate above: a user whose agents were all disabled or
+        archived by an admin has zero *consentable* agents but is not a
+        first-run user — offering the create form there would let the owner
+        mint a fresh ACTIVE agent mid-flow and sidestep the admin's action.
+        "First run" means zero agent rows, ever.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agents = await AgentRepository.list_by_owner(session, user_id, limit=1)
+            return bool(agents)
+
     async def issue_authorization_code(
         self,
         *,

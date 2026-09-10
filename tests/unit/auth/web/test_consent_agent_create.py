@@ -19,14 +19,25 @@ import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.authorize_service import AgentConsentOption
-from jentic_one.auth.web.flow import agent_create_signing_key, sign_payload, verify_payload
-from jentic_one.auth.web.routers import authorize
-from jentic_one.shared.config import AuthConfig
+from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
+from jentic_one.auth.web.errors import service_error_handler
+from jentic_one.auth.web.flow import (
+    agent_create_signing_key,
+    approval_state_key,
+    login_signing_key,
+    session_signing_key,
+    sign_payload,
+    state_signing_key,
+    verify_payload,
+)
+from jentic_one.auth.web.routers import authorize, local_login
+from jentic_one.shared.config import AuthConfig, LocalLoginConfig
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -136,10 +147,16 @@ def _mock_authorize_svc(
     *,
     user_id: str | None = None,
     agents: list[AgentConsentOption] | None = None,
+    has_any_agents: bool | None = None,
 ) -> MagicMock:
     svc = MagicMock()
     svc.resolve_existing_user_id = AsyncMock(return_value=user_id)
     svc.list_consentable_agents = AsyncMock(return_value=agents or [])
+    # Any-status ownership defaults to mirroring the active list — pass
+    # has_any_agents=True to model a user whose agents are all non-active.
+    svc.owner_has_any_agents = AsyncMock(
+        return_value=bool(agents) if has_any_agents is None else has_any_agents
+    )
     svc.provision_from_claims = AsyncMock(return_value="usr_new")
     svc.issue_authorization_code = AsyncMock(return_value="code_x")
     svc.record_consent_decision = AsyncMock()
@@ -262,6 +279,30 @@ def test_nonzero_agents_keeps_the_picker_no_create_form(
     assert resp.status_code == 200
     assert 'name="agent_id" value="agnt_1"' in resp.text
     assert 'action="/oauth/consent/agent"' not in resp.text
+
+
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_only_nonactive_agents_keeps_terminal_empty_state(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+) -> None:
+    """A user whose agents were all disabled/archived by an admin owns zero
+    ACTIVE agents but is NOT first-run: the create form must not render — it
+    would let the owner mint a fresh active agent and sidestep the admin
+    action. The terminal empty state stays."""
+    client, backend, _ctx = _make_app()
+    _seed_consent_handle(backend)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(user_id="usr_new", agents=[], has_any_agents=True)
+    mock_authorize_cls.return_value = svc
+
+    resp = client.get("/oauth/consent", params={"ch": _HANDLE})
+
+    assert resp.status_code == 200
+    assert "you don't have one yet" in resp.text
+    assert 'action="/oauth/consent/agent"' not in resp.text
+    svc.owner_has_any_agents.assert_awaited_once_with("usr_new")
 
 
 # ---------- POST /oauth/consent/agent ----------
@@ -426,9 +467,10 @@ def test_create_wrong_purpose_blob_rejected(
     mock_authorize_cls: MagicMock,
     mock_agent_svc_cls: MagicMock,
 ) -> None:
-    """Purpose discrimination: a blob signed under another flow purpose can
-    never drive the create form (mutual rejection, same discipline as the
-    state/approval/login/session matrix)."""
+    """Purpose discrimination: a blob signed under any sibling flow purpose
+    (with that purpose's own derived key) can never drive the create form —
+    the fifth purpose rejects all four siblings, same discipline as the
+    state/approval/login/session matrix."""
     client, backend, ctx = _make_app()
     _seed_consent_handle(backend)
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
@@ -436,18 +478,31 @@ def test_create_wrong_purpose_blob_rejected(
     agent_svc = _mock_agent_svc()
     mock_agent_svc_cls.return_value = agent_svc
 
-    foreign = sign_payload(
-        {
-            "ch_digest": hashlib.sha256(_HANDLE.encode()).hexdigest(),
-            "user_key": "idp:ext-create-1",
-            "iat": str(int(time.time())),
-        },
-        agent_create_signing_key(ctx),
-        purpose="approval",
-    )
+    payload = {
+        "ch_digest": hashlib.sha256(_HANDLE.encode()).hexdigest(),
+        "user_key": "idp:ext-create-1",
+        "iat": str(int(time.time())),
+    }
+    siblings = [
+        ("state", state_signing_key(ctx)),
+        ("approval", approval_state_key(ctx)),
+        ("login", login_signing_key(ctx)),
+        ("session", session_signing_key(ctx)),
+    ]
+    for purpose, key in siblings:
+        foreign = sign_payload(dict(payload), key, purpose=purpose)
+        resp = client.post(
+            "/oauth/consent/agent",
+            data={"consent_token": _HANDLE, "create_state": foreign, "agent_name": "nope"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302, purpose
+        assert resp.headers["location"] == "/error?error=invalid_consent"
+    # A forged _purpose under the agent-create key is equally refused.
+    forged = sign_payload(dict(payload), agent_create_signing_key(ctx), purpose="approval")
     resp = client.post(
         "/oauth/consent/agent",
-        data={"consent_token": _HANDLE, "create_state": foreign, "agent_name": "nope"},
+        data={"consent_token": _HANDLE, "create_state": forged, "agent_name": "nope"},
         follow_redirects=False,
     )
     assert resp.status_code == 302
@@ -640,6 +695,36 @@ def test_create_race_agent_appeared_skips_creation_and_reenters_consent(
 @patch("jentic_one.auth.web.deps.AgentService")
 @patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_create_skipped_when_user_owns_only_nonactive_agents(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+    mock_agent_svc_cls: MagicMock,
+) -> None:
+    """The submit-side twin of the render guard: zero ACTIVE agents but
+    non-active rows exist (admin disabled/archived them) → nothing is
+    created; a stale or hand-crafted submit cannot mint a fresh active agent
+    past the admin action."""
+    client, backend, ctx = _make_app()
+    _seed_consent_handle(backend)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(user_id="usr_new", agents=[], has_any_agents=True)
+    mock_authorize_cls.return_value = svc
+    agent_svc = _mock_agent_svc()
+    mock_agent_svc_cls.return_value = agent_svc
+
+    resp = client.post(
+        "/oauth/consent/agent",
+        data={"consent_token": _HANDLE, "create_state": _mint_blob(ctx), "agent_name": "sneaky"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    agent_svc.create.assert_not_awaited()
+    svc.owner_has_any_agents.assert_awaited_once_with("usr_new")
+
+
+@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_create_rejected_for_user_consent_model_client(
     mock_client_svc_cls: MagicMock,
     mock_authorize_cls: MagicMock,
@@ -693,3 +778,72 @@ def test_create_gated_client_rejected_midflow(
     assert resp.status_code == 302
     assert resp.headers["location"] == "/error?error=access_denied"
     agent_svc.create.assert_not_awaited()
+
+
+# ---------- the fifth purpose in the matrix: rejected in ALL directions ----------
+
+
+def test_agent_create_purpose_rejected_at_every_other_endpoint() -> None:
+    """The remaining matrix cells (P3 precedent, #1300 review F4): an
+    agent-create blob — which rides in page HTML, the most exposed of the
+    five — never opens the login form, the IdP callback, or the anonymous
+    approval-status poll."""
+    app = FastAPI()
+    app.include_router(authorize.router)
+    app.include_router(local_login.router)
+    app.add_exception_handler(AuthServiceError, service_error_handler)
+
+    ctx = MagicMock()
+    ctx.config.auth = AuthConfig(
+        canonical_base_url="https://auth.example.com",
+        local_login=LocalLoginConfig(enabled=True),
+        platform_clients=[],
+    )
+    ctx.config.admin.auth.jwt_secret.get_secret_value.return_value = _JWT_SECRET
+    app.state.ctx = ctx
+    app.state.auth_state_backend = MemoryStateBackend()
+    client = TestClient(app)
+
+    blob = _mint_blob(ctx)
+
+    # GET /login → invalid_state redirect.
+    resp = client.get("/login", params={"ls": blob}, follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/error?error=invalid_state"
+
+    # IdP callback → invalid_state redirect.
+    resp = client.get(
+        "/oauth/callback",
+        params={"code": "upstream-code", "state": blob},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/error?error=invalid_state"
+
+    # Anonymous approval-status poll → 400.
+    resp = client.get("/oauth/approval/status", params={"st": blob})
+    assert resp.status_code == 400
+
+
+def test_agent_create_key_is_purpose_derived() -> None:
+    """The fifth purpose has its own derived key: a blob whose _purpose field
+    says "agent-create" but which was signed with any sibling key fails
+    verification — forging the discriminator alone is never enough."""
+    ctx = MagicMock()
+    ctx.config.admin.auth.jwt_secret.get_secret_value.return_value = _JWT_SECRET
+    payload = {
+        "ch_digest": hashlib.sha256(_HANDLE.encode()).hexdigest(),
+        "user_key": "idp:ext-create-1",
+        "iat": str(int(time.time())),
+    }
+    for wrong_key in (
+        state_signing_key(ctx),
+        approval_state_key(ctx),
+        login_signing_key(ctx),
+        session_signing_key(ctx),
+    ):
+        forged = sign_payload(dict(payload), wrong_key, purpose="agent-create")
+        with pytest.raises(InvalidGrantError):
+            verify_payload(
+                forged, agent_create_signing_key(ctx), purpose="agent-create", max_age=300
+            )

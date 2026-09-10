@@ -431,8 +431,8 @@ export class OAuthService {
      * Create the consenting user's first agent inline (consent page)
      * Create the consenting user's first agent from the zero-agents consent page (P4).
      *
-     * The form is rendered only when the consenting user owns zero active
-     * agents (the G12(b) first-run dead-end). This submit verifies the signed
+     * The form is rendered only when the consenting user owns zero agents in
+     * any status (the G12(b) first-run dead-end). This submit verifies the signed
      * single-use ``agent-create`` blob (bound to the consent handle AND the
      * authenticated subject — no ambient credential is honored, so a cross-site
      * form cannot drive it: it would need both the unguessable handle and a

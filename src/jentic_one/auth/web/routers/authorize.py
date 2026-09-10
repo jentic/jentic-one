@@ -705,10 +705,12 @@ _AGENT_OPTION_TEMPLATE = """<label class="agent">
     </ul>
 </label>"""
 
-# Zero active agents AND no provisionable subject on the handle → a terminal
-# empty-state page, HTTP 200, no code minted. (The normal zero-agents arm now
-# renders the inline create-agent form below — P4; this template survives only
-# as the fallback for a malformed handle that names no subject.)
+# Zero active agents AND (no provisionable subject on the handle OR the user
+# owns non-active agent rows) → a terminal empty-state page, HTTP 200, no code
+# minted. (The genuine first-run zero-agents arm renders the inline
+# create-agent form below — P4; this template survives as the fallback for a
+# malformed handle that names no subject, and for users whose agents were all
+# disabled/archived — the create form must not sidestep that admin action.)
 _NO_AGENTS_PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -738,7 +740,8 @@ _NO_AGENTS_PAGE_TEMPLATE = """<!DOCTYPE html>
 
 
 # The zero-agents create-agent form (P4): rendered in place of the terminal
-# empty state when the consent handle names a provisionable subject. Static
+# empty state when the consent handle names a provisionable subject AND the
+# resolved user owns no agent rows at all (any status — first run). Static
 # page structure only — every dynamic value is HTML-escaped before it is
 # formatted in; no page script, so no JSON seam is needed.
 _CREATE_AGENT_PAGE_TEMPLATE = """<!DOCTYPE html>
@@ -1558,6 +1561,17 @@ async def _consume_agent_create_state(create_state: str, request: Request) -> bo
     )
 
 
+def _render_no_agents_page(app_name: str) -> HTMLResponse:
+    """The terminal zero-agents empty state (pre-P4 fallback, see template)."""
+    html = _NO_AGENTS_PAGE_TEMPLATE.format(
+        app_name=html_mod.escape(app_name),
+        fonts_url=FONTS_URL,
+        page_css=AUTH_PAGE_CSS,
+        logo_block=LOGO_BLOCK_HTML,
+    )
+    return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
+
+
 def _render_agent_create_page(
     params: dict[str, object],
     *,
@@ -1692,13 +1706,16 @@ async def _render_agent_consent_page(
 ) -> HTMLResponse:
     """The agent-picker consent variant for ``consent_model='agent'`` clients.
 
-    Lists only the consenting user's own ``status='active'`` agents; zero
-    agents renders the inline create-agent form (P4) so a first-run user can
-    mint their first agent without leaving the flow — unless the handle names
-    no provisionable subject at all (malformed), which keeps the terminal
-    empty state. The user identity is resolved read-only: rendering consent
-    must not create a user row (the Deny contract); provisioning happens only
-    on the create submit, an affirmative user action.
+    Lists only the consenting user's own ``status='active'`` agents; a
+    genuinely first-run user (zero agent rows in ANY status) gets the inline
+    create-agent form (P4) so they can mint their first agent without leaving
+    the flow. The terminal empty state survives for two arms: a handle naming
+    no provisionable subject (malformed), and a user whose agents all sit in
+    a non-active status (the create form must not sidestep the admin action
+    that disabled/archived them). The user identity is resolved read-only:
+    rendering consent must not create a user row (the Deny contract);
+    provisioning happens only on the create submit, an affirmative user
+    action.
     """
     app_name = str(params.get("client_name") or "Unknown Application")
     app_description = str(params.get("client_description") or "This application")
@@ -1720,13 +1737,14 @@ async def _render_agent_consent_page(
         if user_key is None:
             # No local user and no IdP claims on the handle: nothing to
             # provision from, so no create form — the pre-P4 empty state.
-            html = _NO_AGENTS_PAGE_TEMPLATE.format(
-                app_name=html_mod.escape(app_name),
-                fonts_url=FONTS_URL,
-                page_css=AUTH_PAGE_CSS,
-                logo_block=LOGO_BLOCK_HTML,
-            )
-            return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
+            return _render_no_agents_page(app_name)
+        if user_id is not None and await authorize_svc.owner_has_any_agents(user_id):
+            # Zero ACTIVE agents but the user owns non-active rows (disabled,
+            # archived, pending): not a first-run user. Offering the create
+            # form here would let the owner mint a fresh ACTIVE agent and
+            # sidestep the admin action that took the others out of service —
+            # keep the terminal empty state instead (fail closed).
+            return _render_no_agents_page(app_name)
         create_state = _mint_agent_create_state(ctx, consent_token=consent_token, user_key=user_key)
         return _render_agent_create_page(
             params, consent_token=consent_token, create_state=create_state
@@ -1975,8 +1993,8 @@ async def consent_agent_create(
 ) -> HTMLResponse | RedirectResponse:
     """Create the consenting user's first agent from the zero-agents consent page (P4).
 
-    The form is rendered only when the consenting user owns zero active
-    agents (the G12(b) first-run dead-end). This submit verifies the signed
+    The form is rendered only when the consenting user owns zero agents in
+    any status (the G12(b) first-run dead-end). This submit verifies the signed
     single-use ``agent-create`` blob (bound to the consent handle AND the
     authenticated subject — no ambient credential is honored, so a cross-site
     form cannot drive it: it would need both the unguessable handle and a
@@ -2084,9 +2102,11 @@ async def consent_agent_create(
 
     # Idempotency/race re-check: if an agent appeared between the form render
     # and this submit (another tab, an admin, a parallel submit), create
-    # nothing — just re-enter consent, which now renders the picker.
-    agents = await authorize_svc.list_consentable_agents(user_id)
-    if not agents:
+    # nothing — just re-enter consent. The predicate is ownership of ANY
+    # agent row, in any status, matching the render arm: a user whose agents
+    # were disabled or archived by an admin is not first-run, and this
+    # submit must not mint them a fresh ACTIVE agent past that action.
+    if not await authorize_svc.owner_has_any_agents(user_id):
         # Owner is ALWAYS the consenting user resolved from the server-side
         # handle — the form carries no owner input. Scopes=None applies the
         # platform's DEFAULT_AGENT_SCOPES, exactly like the SPA path; the
