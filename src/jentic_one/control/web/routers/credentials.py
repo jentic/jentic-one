@@ -10,6 +10,10 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import Field
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
+from jentic_one.control.core.schema.permission_rule_sets import (
+    PermissionRuleSet,
+    PermissionRuleSetRule,
+)
 from jentic_one.control.services.credentials.connect_service import (
     ConnectFlowError,
     ConnectService,
@@ -47,6 +51,11 @@ from jentic_one.control.web.schemas.credentials import (
     CredentialUpdateRequest,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
+    RuleSetCreateRequest,
+    RuleSetListResponse,
+    RuleSetResponse,
+    RuleSetSummaryResponse,
+    RuleSetUpdateRequest,
 )
 from jentic_one.control.web.schemas.toolkits import (
     PermissionRuleListResponse,
@@ -460,6 +469,188 @@ async def test_agent_permissions(
         credential_id=result.credential_id,
         is_system=result.is_system,
     )
+
+
+# --- Shared permission rule sets (theme 5 phase 1, Q-04) ---
+
+
+def _to_rule_set_response(
+    rule_set: PermissionRuleSet, rules: list[PermissionRuleSetRule], binding_count: int
+) -> RuleSetResponse:
+    return RuleSetResponse(
+        rule_set_id=rule_set.id,
+        name=rule_set.name,
+        description=rule_set.description,
+        rules=[
+            PermissionRuleReadSchema.model_validate(
+                {
+                    "effect": r.effect,
+                    "methods": r.methods,
+                    "path": r.path,
+                    "match_mode": r.match_mode,
+                    "operations": r.operations,
+                    "_system": r.is_system,
+                    "_comment": r.comment,
+                }
+            )
+            for r in rules
+        ],
+        binding_count=binding_count,
+        created_by=rule_set.created_by,
+        created_at=rule_set.created_at,
+    )
+
+
+@router.get(
+    "/permission-rule-sets",
+    operation_id="listPermissionRuleSets",
+    summary="List permission rule sets",
+)
+async def list_rule_sets(
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> RuleSetListResponse:
+    """List shared rule sets with per-set rule counts (cursor-paginated)."""
+    data, has_more, next_cursor = await svc.list_rule_sets(
+        cursor=cursor, limit=limit, identity=identity
+    )
+    return RuleSetListResponse(
+        data=[
+            RuleSetSummaryResponse(
+                rule_set_id=rs.id,
+                name=rs.name,
+                description=rs.description,
+                rule_count=count,
+                created_by=rs.created_by,
+                created_at=rs.created_at,
+            )
+            for rs, count in data
+        ],
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
+
+
+@router.post(
+    "/permission-rule-sets",
+    operation_id="createPermissionRuleSet",
+    status_code=201,
+    summary="Create permission rule set",
+    responses=conflict(),
+)
+async def create_rule_set(
+    body: RuleSetCreateRequest,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> RuleSetResponse:
+    """Create a named, shareable ordered rule list (theme 5 rule grouping).
+
+    N agent-credential bindings can point at one set, so `permissions:test`
+    and "revoke this operation everywhere" stay single-place edits.
+    """
+    rule_set, rules = await svc.create_rule_set(
+        name=body.name,
+        description=body.description,
+        rules=[r.model_dump(exclude_none=True) for r in body.rules],
+        identity=identity,
+    )
+    return _to_rule_set_response(rule_set, rules, binding_count=0)
+
+
+@router.get(
+    "/permission-rule-sets/{rule_set_id}",
+    operation_id="getPermissionRuleSet",
+    summary="Get permission rule set",
+    responses=not_found(),
+)
+async def get_rule_set(
+    rule_set_id: str,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+) -> RuleSetResponse:
+    """Get a rule set with its ordered rules and referencing-binding count."""
+    rule_set, rules, binding_count = await svc.get_rule_set(rule_set_id, identity=identity)
+    return _to_rule_set_response(rule_set, rules, binding_count)
+
+
+@router.patch(
+    "/permission-rule-sets/{rule_set_id}",
+    operation_id="updatePermissionRuleSet",
+    summary="Update permission rule set",
+    responses=not_found(),
+)
+async def update_rule_set(
+    rule_set_id: str,
+    body: RuleSetUpdateRequest,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> RuleSetResponse:
+    """Rename or re-describe a rule set (creator or org admin)."""
+    await svc.update_rule_set(
+        rule_set_id, identity=identity, name=body.name, description=body.description
+    )
+    rule_set, rules, binding_count = await svc.get_rule_set(rule_set_id, identity=identity)
+    return _to_rule_set_response(rule_set, rules, binding_count)
+
+
+@router.put(
+    "/permission-rule-sets/{rule_set_id}/rules",
+    operation_id="replacePermissionRuleSetRules",
+    summary="Replace rule set rules",
+    responses=not_found(),
+)
+async def replace_rule_set_rules(
+    rule_set_id: str,
+    body: Annotated[list[PermissionRuleSchema], Field(max_length=100)],
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionRuleListResponse:
+    """Replace the set's full ordered rule list (idempotent PUT).
+
+    Every binding pointing at the set picks the new list up at once — the
+    single-place edit rule grouping exists for.
+    """
+    rules_data = [r.model_dump(exclude_none=True) for r in body]
+    rules = await svc.replace_rule_set_rules(rule_set_id, rules_data, identity=identity)
+    return PermissionRuleListResponse(
+        data=[
+            PermissionRuleReadSchema.model_validate(
+                {
+                    "effect": r.effect,
+                    "methods": r.methods,
+                    "path": r.path,
+                    "match_mode": r.match_mode,
+                    "operations": r.operations,
+                    "_system": r.is_system,
+                    "_comment": r.comment,
+                }
+            )
+            for r in rules
+        ]
+    )
+
+
+@router.delete(
+    "/permission-rule-sets/{rule_set_id}",
+    operation_id="deletePermissionRuleSet",
+    status_code=204,
+    summary="Delete permission rule set",
+    responses=with_responses(not_found(), conflict()),
+)
+async def delete_rule_set(
+    rule_set_id: str,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> Response:
+    """Delete a rule set nothing references (409 `rule_set_in_use` otherwise)."""
+    await svc.delete_rule_set(rule_set_id, identity=identity)
+    return Response(status_code=204)
 
 
 @router.patch(

@@ -3184,6 +3184,162 @@
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listPermissionRuleSets",
+      "path": "/permission-rule-sets",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "List permission rule sets",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "createPermissionRuleSet",
+      "path": "/permission-rule-sets",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Create permission rule set",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "deletePermissionRuleSet",
+      "path": "/permission-rule-sets/{rule_set_id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Delete permission rule set",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "getPermissionRuleSet",
+      "path": "/permission-rule-sets/{rule_set_id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "Get permission rule set",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "updatePermissionRuleSet",
+      "path": "/permission-rule-sets/{rule_set_id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Update permission rule set",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PUT",
+      "operation_id": "replacePermissionRuleSetRules",
+      "path": "/permission-rule-sets/{rule_set_id}/rules",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Replace rule set rules",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
       "implied_scopes": {},
       "method": "GET",
       "operation_id": "listPermissions",
@@ -5465,5 +5621,5 @@
     ],
     "total": 33
   },
-  "total": 192
+  "total": 198
 }

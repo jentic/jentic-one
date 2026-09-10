@@ -876,6 +876,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/system/version$"), "System"),
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
+    (re.compile(r"^/permission-rule-sets"), "Permission Rule Sets"),
     (re.compile(r"^/toolkits/[^/]+/keys"), "Toolkit Keys"),
     (re.compile(r"^/toolkits/[^/]+/credentials/[^/]+/permissions"), "Toolkit Permissions"),
     (re.compile(r"^/toolkits/[^/]+/credentials"), "Toolkit Credentials"),

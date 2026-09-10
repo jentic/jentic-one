@@ -75,7 +75,7 @@ class EventType:
     # toolkit-binding events until the toolkit path is removed.
     CREDENTIAL_BOUND_TO_AGENT = "credential.bound_to_agent"
     CREDENTIAL_UNBOUND_FROM_AGENT = "credential.unbound_from_agent"
-    AGENT_PERMISSION_RULE_SET = "agent.permission_rule_set"
+    CREDENTIAL_PERMISSION_RULE_SET = "credential.permission_rule_set"
     TOOLKIT_CREATED = "toolkit.created"
     TOOLKIT_KEY_CREATED = "toolkit.key_created"
     TOOLKIT_PERMISSION_RULE_SET = "toolkit.permission_rule_set"
@@ -165,7 +165,7 @@ class EventType:
             CREDENTIAL_UNBOUND_FROM_TOOLKIT,
             CREDENTIAL_BOUND_TO_AGENT,
             CREDENTIAL_UNBOUND_FROM_AGENT,
-            AGENT_PERMISSION_RULE_SET,
+            CREDENTIAL_PERMISSION_RULE_SET,
             TOOLKIT_CREATED,
             TOOLKIT_KEY_CREATED,
             TOOLKIT_PERMISSION_RULE_SET,

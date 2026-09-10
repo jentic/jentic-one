@@ -7,6 +7,10 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from jentic_one.control.web.schemas.toolkits import (
+    PermissionRuleReadSchema,
+    PermissionRuleSchema,
+)
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference as APIReferenceResponse
 from jentic_one.shared.schemas import APIReferenceRequest
@@ -474,5 +478,56 @@ class CredentialAgentListResponse(BaseModel):
     """Paginated list of agents directly bound to a credential."""
 
     data: list[CredentialAgentResponse]
+    has_more: bool
+    next_cursor: str | None = None
+
+
+class RuleSetCreateRequest(BaseModel):
+    """Create a shared permission rule set (theme 5 phase 1, Q-04)."""
+
+    name: str = Field(max_length=255, description="Unique human-readable name.")
+    description: str | None = Field(default=None, max_length=1000)
+    rules: Annotated[list[PermissionRuleSchema], Field(max_length=100)] = Field(
+        default_factory=list,
+        description="Initial ordered rule list (first-match-wins, default-deny).",
+    )
+
+
+class RuleSetUpdateRequest(BaseModel):
+    """Rename or re-describe a rule set."""
+
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class RuleSetSummaryResponse(BaseModel):
+    """Rule set list entry."""
+
+    rule_set_id: str
+    name: str
+    description: str | None = None
+    rule_count: int
+    created_by: str | None = None
+    created_at: datetime
+
+
+class RuleSetResponse(BaseModel):
+    """Rule set detail — the ordered rules plus its referencing-binding count."""
+
+    rule_set_id: str
+    name: str
+    description: str | None = None
+    rules: list[PermissionRuleReadSchema]
+    binding_count: int = Field(
+        description="How many agent-credential bindings currently point at this set."
+    )
+    created_by: str | None = None
+    created_at: datetime
+
+
+class RuleSetListResponse(BaseModel):
+    """Paginated list of rule sets."""
+
+    data: list[RuleSetSummaryResponse]
     has_more: bool
     next_cursor: str | None = None

@@ -286,3 +286,17 @@ class PrerequisiteRepository:
         )
         row = result.fetchone()
         return (str(row[0]), bool(row[1])) if row is not None else None
+
+    @staticmethod
+    async def count_bindings_for_rule_set(session: AsyncSession, rule_set_id: str) -> int:
+        """Count direct bindings referencing a shared rule set (admin DB).
+
+        Guards rule-set deletion: a set still pointed at by bindings must not
+        vanish under them (the pointer is FK-less across the DB seam, so the
+        application enforces the invariant).
+        """
+        result = await session.execute(
+            text("SELECT COUNT(*) FROM agent_credential_bindings WHERE rule_set_id = :rule_set_id"),
+            {"rule_set_id": rule_set_id},
+        )
+        return int(result.scalar_one())

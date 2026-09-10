@@ -9,12 +9,17 @@ import structlog
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.permission_rule_sets import (
+    PermissionRuleSet,
+    PermissionRuleSetRule,
+)
 from jentic_one.control.repos import (
     AgentPermissionRuleRepository,
     BasicCredentialRepository,
     CredentialRepository,
     CustomerAPIKeyRepository,
     OAuthClientCredentialRepository,
+    PermissionRuleSetRepository,
     Sigv4CredentialRepository,
     TokenValueCredentialRepository,
 )
@@ -28,6 +33,10 @@ from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
     ImmutableFieldError,
     InvalidCredentialInputError,
+    RuleSetAccessDeniedError,
+    RuleSetInUseError,
+    RuleSetNameConflictError,
+    RuleSetNotFoundError,
     UnsupportedProviderForTypeError,
 )
 from jentic_one.control.services.credentials.mapping import to_stored, to_wire
@@ -446,7 +455,7 @@ class CredentialService:
             async with self._ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
                     session,
-                    type=EventType.AGENT_PERMISSION_RULE_SET,
+                    type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
                     severity=EventSeverity.INFO,
                     summary=(
                         f"Permission rules set on agent {agent_id} for credential {credential_id}"
@@ -458,7 +467,7 @@ class CredentialService:
         except Exception:
             logger.warning(
                 "telemetry_emit_failed",
-                event_type=EventType.AGENT_PERMISSION_RULE_SET,
+                event_type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
                 exc_info=True,
             )
 
@@ -566,6 +575,184 @@ class CredentialService:
             credential_id=None,
             is_system=None,
         )
+
+    # --- Shared permission rule sets (theme 5 phase 1, Q-04) ---
+
+    def _may_mutate_rule_set(self, rule_set: PermissionRuleSet, identity: Identity) -> bool:
+        """Provisional creator-or-admin write gate (theme plan OQ-6 is open).
+
+        Everyone passing the route's read scope may *see* a shared set —
+        it carries policy, not secrets, and a binding pointing at it makes
+        its contents the binding owner's business. Widening the write gate
+        later needs no schema change.
+        """
+        return ORG_ADMIN in identity.permissions or rule_set.created_by == identity.sub
+
+    async def create_rule_set(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        rules: list[dict[str, object]],
+        identity: Identity,
+    ) -> tuple[PermissionRuleSet, list[PermissionRuleSetRule]]:
+        """Create a named shared rule set, optionally with its initial ordered rules."""
+        async with self._ctx.control_db.transaction() as session:
+            if await PermissionRuleSetRepository.get_by_name(session, name) is not None:
+                raise RuleSetNameConflictError(name)
+            rule_set = await PermissionRuleSetRepository.create(
+                session, name=name, description=description, created_by=identity.sub
+            )
+            set_rules = await PermissionRuleSetRepository.replace_user_rules(
+                session, rule_set.id, rules, created_by=identity.sub
+            )
+        await self._record_rule_set_change(rule_set.id, identity=identity, reason="create rule set")
+        return rule_set, set_rules
+
+    async def get_rule_set(
+        self, rule_set_id: str, *, identity: Identity
+    ) -> tuple[PermissionRuleSet, list[PermissionRuleSetRule], int]:
+        """Return a rule set, its ordered rules, and its referencing-binding count."""
+        async with self._ctx.control_db.session() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+            if rule_set is None:
+                raise RuleSetNotFoundError(rule_set_id)
+            rules = await PermissionRuleSetRepository.list_rules(session, rule_set_id)
+        async with self._ctx.admin_db.session() as session:
+            binding_count = await PrerequisiteRepository.count_bindings_for_rule_set(
+                session, rule_set_id
+            )
+        return rule_set, rules, binding_count
+
+    async def list_rule_sets(
+        self, *, cursor: str | None = None, limit: int = 50, identity: Identity
+    ) -> tuple[list[tuple[PermissionRuleSet, int]], bool, str | None]:
+        """List rule sets with per-set rule counts. Returns (data, has_more, next_cursor)."""
+        decoded_cursor = None
+        if cursor is not None:
+            ts, cid = decode_cursor_str(cursor)
+            decoded_cursor = (ts, cid)
+        async with self._ctx.control_db.session() as session:
+            rows = await PermissionRuleSetRepository.list_page(
+                session, cursor=decoded_cursor, limit=limit + 1
+            )
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            counts = await PermissionRuleSetRepository.rule_counts(session, [r.id for r in rows])
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = encode_cursor(last.created_at, last.id)
+        return [(r, counts.get(r.id, 0)) for r in rows], has_more, next_cursor
+
+    async def update_rule_set(
+        self,
+        rule_set_id: str,
+        *,
+        identity: Identity,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> PermissionRuleSet:
+        """Rename or re-describe a rule set (creator or org admin)."""
+        async with self._ctx.control_db.transaction() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+            if rule_set is None:
+                raise RuleSetNotFoundError(rule_set_id)
+            if not self._may_mutate_rule_set(rule_set, identity):
+                raise RuleSetAccessDeniedError(rule_set_id)
+            if name is not None and name != rule_set.name:
+                if await PermissionRuleSetRepository.get_by_name(session, name) is not None:
+                    raise RuleSetNameConflictError(name)
+                rule_set.name = name
+            if description is not None:
+                rule_set.description = description
+            await session.flush()
+        await self._record_rule_set_change(rule_set_id, identity=identity, reason="update rule set")
+        return rule_set
+
+    async def replace_rule_set_rules(
+        self,
+        rule_set_id: str,
+        rules: list[dict[str, object]],
+        *,
+        identity: Identity,
+    ) -> list[PermissionRuleSetRule]:
+        """Replace a set's ordered user-rule list (idempotent PUT).
+
+        This is the single-place edit rule grouping exists for: every binding
+        pointing at the set picks the new list up at once.
+        """
+        async with self._ctx.control_db.transaction() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+            if rule_set is None:
+                raise RuleSetNotFoundError(rule_set_id)
+            if not self._may_mutate_rule_set(rule_set, identity):
+                raise RuleSetAccessDeniedError(rule_set_id)
+            result = await PermissionRuleSetRepository.replace_user_rules(
+                session, rule_set_id, rules, created_by=identity.sub
+            )
+        await self._record_rule_set_change(
+            rule_set_id, identity=identity, reason="replace rule set rules"
+        )
+        return result
+
+    async def delete_rule_set(self, rule_set_id: str, *, identity: Identity) -> None:
+        """Delete a rule set nothing references (409 rule_set_in_use otherwise).
+
+        The binding's ``rule_set_id`` pointer is FK-less across the DB seam,
+        so this application-level check is what keeps a set from vanishing
+        under bindings that still evaluate through it.
+        """
+        async with self._ctx.control_db.session() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+            if rule_set is None:
+                raise RuleSetNotFoundError(rule_set_id)
+            if not self._may_mutate_rule_set(rule_set, identity):
+                raise RuleSetAccessDeniedError(rule_set_id)
+        async with self._ctx.admin_db.session() as session:
+            binding_count = await PrerequisiteRepository.count_bindings_for_rule_set(
+                session, rule_set_id
+            )
+        if binding_count:
+            raise RuleSetInUseError(rule_set_id, binding_count)
+        async with self._ctx.control_db.transaction() as session:
+            deleted = await PermissionRuleSetRepository.delete_by_id(session, rule_set_id)
+        if not deleted:
+            raise RuleSetNotFoundError(rule_set_id)
+        await self._record_rule_set_change(rule_set_id, identity=identity, reason="delete rule set")
+
+    async def _record_rule_set_change(
+        self, rule_set_id: str, *, identity: Identity, reason: str
+    ) -> None:
+        """Audit + telemetry for a rule-set mutation."""
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.PERMISSION_RULE_SET,
+            target_id=rule_set_id,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            reason=reason,
+            origin=identity.origin.value,
+        )
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
+                    severity=EventSeverity.INFO,
+                    summary=f"Permission rule set {rule_set_id}: {reason}",
+                    created_by=identity.sub,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                )
+        except Exception:
+            logger.warning(
+                "telemetry_emit_failed",
+                event_type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
+                exc_info=True,
+            )
 
     async def list_all(
         self,

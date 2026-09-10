@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **192**._
+_Total endpoints: **198**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -231,7 +231,7 @@ _Total endpoints: **192**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (79)
+## Any authenticated actor (85)
 
 
 ### `access-requests`
@@ -342,6 +342,17 @@ _Total endpoints: **192**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | POST | `/oauth-grants/{grant_id}:revoke` | _any authenticated_ | any | Revoke OAuth grant |
+
+### `permission-rule-sets`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/permission-rule-sets` | `credentials:read`, `owner:credentials:read` | any | List permission rule sets |
+| POST | `/permission-rule-sets` | `credentials:write` | any | Create permission rule set |
+| DELETE | `/permission-rule-sets/{rule_set_id}` | `credentials:write` | any | Delete permission rule set |
+| GET | `/permission-rule-sets/{rule_set_id}` | `credentials:read`, `owner:credentials:read` | any | Get permission rule set |
+| PATCH | `/permission-rule-sets/{rule_set_id}` | `credentials:write` | any | Update permission rule set |
+| PUT | `/permission-rule-sets/{rule_set_id}/rules` | `credentials:write` | any | Replace rule set rules |
 
 ### `permissions`
 

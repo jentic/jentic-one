@@ -11,7 +11,7 @@ Exercises the real HTTP path (router → service → DB) to pin two invariants:
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from datetime import datetime
 
 import pytest
@@ -19,7 +19,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from jentic_one.admin.repos import AgentCredentialBindingRepository
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from tests.web.control.conftest import _build_app, _effective
 
 pytestmark = pytest.mark.integration
 
@@ -549,3 +551,217 @@ def test_agent_permissions_write_needs_write_scope(
     base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
     assert delegated_agent_client.put(base, json=[]).status_code == 403
     assert delegated_agent_client.patch(base, json={"remove": [0]}).status_code == 403
+
+
+# --- Shared permission rule sets (theme 5 phase 1, Q-04) ---
+
+
+@pytest.fixture()
+async def clean_rule_sets(web_context: Context) -> AsyncGenerator[None, None]:
+    """Empty the rule-set tables after each test (rules cascade with sets)."""
+    yield
+    async with web_context.control_db.session() as session:
+        await session.execute(text("DELETE FROM permission_rule_sets"))
+        await session.commit()
+
+
+@pytest.fixture()
+def plain_writer_client(web_context: Context) -> Iterator[TestClient]:
+    """A credentials:write caller who is NOT org:admin and NOT the set creator.
+
+    Exists to pin the provisional creator-or-admin write gate (plan OQ-6):
+    holding the write scope alone must not admit edits to someone else's set.
+    """
+    identity = Identity(
+        sub="usr_webtest_plain_writer",
+        email="plainwriter@test.local",
+        permissions=_effective("credentials:read", "credentials:write"),
+    )
+    app = _build_app(web_context, identity)
+    with TestClient(app) as tc:
+        yield tc
+
+
+_RULES = [
+    {"effect": "deny", "path": "/v1/admin/.*"},
+    {"effect": "allow", "methods": ["GET"]},
+]
+
+
+def test_rule_set_crud_lifecycle(cred_writer_client: TestClient, clean_rule_sets: None) -> None:
+    """Create → get → list → rename → replace rules → delete round-trip."""
+    resp = cred_writer_client.post(
+        "/permission-rule-sets",
+        json={"name": "read-only", "description": "GETs only", "rules": _RULES},
+    )
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    set_id = created["rule_set_id"]
+    assert set_id.startswith("prs_")
+    assert created["binding_count"] == 0
+    assert [r["effect"] for r in created["rules"]] == ["deny", "allow"]
+
+    got = cred_writer_client.get(f"/permission-rule-sets/{set_id}").json()
+    assert got["name"] == "read-only"
+    assert got["rules"][0]["path"] == "/v1/admin/.*"
+
+    listed = cred_writer_client.get("/permission-rule-sets").json()
+    rows = {r["rule_set_id"]: r for r in listed["data"]}
+    assert rows[set_id]["rule_count"] == 2
+
+    renamed = cred_writer_client.patch(
+        f"/permission-rule-sets/{set_id}", json={"name": "read-only-v2"}
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "read-only-v2"
+
+    replaced = cred_writer_client.put(
+        f"/permission-rule-sets/{set_id}/rules",
+        json=[{"effect": "allow", "methods": ["GET", "HEAD"]}],
+    )
+    assert replaced.status_code == 200
+    assert len(replaced.json()["data"]) == 1
+
+    assert cred_writer_client.delete(f"/permission-rule-sets/{set_id}").status_code == 204
+    assert cred_writer_client.get(f"/permission-rule-sets/{set_id}").status_code == 404
+
+
+def test_rule_set_name_conflict(cred_writer_client: TestClient, clean_rule_sets: None) -> None:
+    """Names are unique — create and rename both 409 on a taken name."""
+    first = cred_writer_client.post("/permission-rule-sets", json={"name": "taken"})
+    assert first.status_code == 201
+    other = cred_writer_client.post("/permission-rule-sets", json={"name": "other"})
+    assert other.status_code == 201
+
+    dup = cred_writer_client.post("/permission-rule-sets", json={"name": "taken"})
+    assert dup.status_code == 409
+    assert dup.json()["type"] == "rule_set_name_conflict"
+
+    rename = cred_writer_client.patch(
+        f"/permission-rule-sets/{other.json()['rule_set_id']}", json={"name": "taken"}
+    )
+    assert rename.status_code == 409
+    assert rename.json()["type"] == "rule_set_name_conflict"
+
+
+async def test_rule_set_delete_in_use_conflict(
+    cred_writer_client: TestClient,
+    web_context: Context,
+    clean_rule_sets: None,
+) -> None:
+    """A set a binding still points at cannot be deleted (409 rule_set_in_use).
+
+    The binding's rule_set_id pointer is FK-less across the DB seam, so this
+    application-level refusal is the only thing keeping a set from vanishing
+    under bindings that still evaluate through it."""
+    credential_id = _create_api_key(cred_writer_client)
+    set_id = cred_writer_client.post(
+        "/permission-rule-sets", json={"name": "in-use", "rules": _RULES}
+    ).json()["rule_set_id"]
+
+    agent_id = "agnt_ruleset_inuse"
+    async with web_context.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, registered_by, status, created_by) "
+                "VALUES (:id, 'ruleset-inuse', 'usr_webtest_cred_writer', 'pending', 'usr_test') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": agent_id},
+        )
+        await AgentCredentialBindingRepository.bind(
+            session, agent_id=agent_id, credential_id=credential_id, created_by="usr_test"
+        )
+        await session.execute(
+            text(
+                "UPDATE agent_credential_bindings SET rule_set_id = :sid "
+                "WHERE agent_id = :aid AND credential_id = :cid"
+            ),
+            {"sid": set_id, "aid": agent_id, "cid": credential_id},
+        )
+    try:
+        resp = cred_writer_client.delete(f"/permission-rule-sets/{set_id}")
+        assert resp.status_code == 409
+        assert resp.json()["type"] == "rule_set_in_use"
+
+        # get still reports the reference.
+        assert (
+            cred_writer_client.get(f"/permission-rule-sets/{set_id}").json()["binding_count"] == 1
+        )
+
+        # Detach, then deletion goes through.
+        async with web_context.admin_db.transaction() as session:
+            await session.execute(
+                text(
+                    "UPDATE agent_credential_bindings SET rule_set_id = NULL "
+                    "WHERE rule_set_id = :sid"
+                ),
+                {"sid": set_id},
+            )
+        assert cred_writer_client.delete(f"/permission-rule-sets/{set_id}").status_code == 204
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE agent_id = :aid"),
+                {"aid": agent_id},
+            )
+            await session.execute(text("DELETE FROM agents WHERE id = :aid"), {"aid": agent_id})
+            await session.commit()
+
+
+def test_rule_set_mutations_gated_to_creator_or_admin(
+    cred_writer_client: TestClient,
+    plain_writer_client: TestClient,
+    clean_rule_sets: None,
+) -> None:
+    """Provisional OQ-6 gate: a non-admin non-creator with credentials:write can
+    read a shared set but not mutate it; their own sets they can mutate."""
+    set_id = cred_writer_client.post("/permission-rule-sets", json={"name": "admins-set"}).json()[
+        "rule_set_id"
+    ]
+
+    # Non-creator, non-admin: read OK, mutate 403.
+    assert plain_writer_client.get(f"/permission-rule-sets/{set_id}").status_code == 200
+    for resp in (
+        plain_writer_client.patch(f"/permission-rule-sets/{set_id}", json={"name": "hijack"}),
+        plain_writer_client.put(f"/permission-rule-sets/{set_id}/rules", json=[]),
+        plain_writer_client.delete(f"/permission-rule-sets/{set_id}"),
+    ):
+        assert resp.status_code == 403
+        assert resp.json()["type"] == "rule_set_access_denied"
+
+    # Their own set they fully control.
+    own_id = plain_writer_client.post("/permission-rule-sets", json={"name": "writers-own"}).json()[
+        "rule_set_id"
+    ]
+    assert (
+        plain_writer_client.patch(
+            f"/permission-rule-sets/{own_id}", json={"description": "mine"}
+        ).status_code
+        == 200
+    )
+    assert plain_writer_client.delete(f"/permission-rule-sets/{own_id}").status_code == 204
+
+    # org:admin edits anyone's.
+    assert cred_writer_client.delete(f"/permission-rule-sets/{set_id}").status_code == 204
+
+
+def test_rule_set_write_needs_write_scope(
+    delegated_agent_client: TestClient, cred_writer_client: TestClient, clean_rule_sets: None
+) -> None:
+    """owner:credentials:read admits reads but never writes."""
+    set_id = cred_writer_client.post("/permission-rule-sets", json={"name": "scope-gate"}).json()[
+        "rule_set_id"
+    ]
+    assert delegated_agent_client.get(f"/permission-rule-sets/{set_id}").status_code == 200
+    assert (
+        delegated_agent_client.post("/permission-rule-sets", json={"name": "nope"}).status_code
+        == 403
+    )
+    assert delegated_agent_client.delete(f"/permission-rule-sets/{set_id}").status_code == 403
+
+
+def test_rule_set_unknown_id_is_404(cred_writer_client: TestClient) -> None:
+    resp = cred_writer_client.get("/permission-rule-sets/prs_nonexistent")
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "rule_set_not_found"
