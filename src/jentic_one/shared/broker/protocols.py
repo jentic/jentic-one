@@ -126,13 +126,6 @@ class RuleEvaluatorProtocol(Protocol):
     ) -> RuleEvaluation: ...
 
 
-@runtime_checkable
-class ToolkitBindingCheckerProtocol(Protocol):
-    """Checks whether an agent has a binding to a specific toolkit."""
-
-    async def has_binding(self, agent_id: str, toolkit_id: str) -> bool: ...
-
-
 @dataclass(frozen=True, slots=True)
 class IdentityMismatch:
     """A nearest-miss credential identity for an unresolved-but-bound API.

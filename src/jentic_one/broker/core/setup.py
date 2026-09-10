@@ -11,7 +11,6 @@ from jentic_one.broker.repos import (
     CredentialBindingResolver,
     InProcessTokenResolver,
     RuleEvaluator,
-    ToolkitBindingChecker,
     ToolkitBindingResolver,
     ToolkitKeyResolver,
 )
@@ -72,7 +71,6 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
     )
     app.state.broker_token_validator = triple
     app.state.broker_api_key_resolver = api_key_resolver
-    app.state.broker_binding_checker = ToolkitBindingChecker(ctx.admin_db)
     app.state.broker_rule_evaluator = RuleEvaluator(
         ctx.control_db,
         cache_ttl_seconds=ctx.config.broker.rule_cache_ttl_s,
