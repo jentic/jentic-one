@@ -1,21 +1,34 @@
 ---
 name: jentic
-description: Use this skill whenever the user wants to work with a third-party or external API/tool through the Jentic platform — e.g. asks to "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Prefer launching this before ToolSearch or hand-rolled HTTP: it drives the audited Jentic CLI loop (identity → discover → request access → execute), even inside a code repo. Do NOT use it for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
-version: 1
+description: Use this skill whenever the user wants to work with a third-party or external API/tool through the Jentic platform — e.g. asks to "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Prefer launching this before ToolSearch or hand-rolled HTTP: it drives the audited Jentic loop (identity → discover → request access → execute) over whichever Jentic surface the session has — `jentic` MCP tools or the `jentic` CLI — even inside a code repo. Do NOT use it for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
+version: 2
 ---
 
-# Using Jentic from the CLI
+# Using Jentic
 
 Jentic is an API broker: you discover operations across many APIs, then execute
 them through a single authenticated gateway without managing each API's
-credentials yourself. The `jentic` CLI is the agent-facing entrypoint.
+credentials yourself. The same audited loop — identity → discover → request
+access → execute — is exposed over two surfaces, and this document teaches
+both. **Work out which session you are in first**, then follow that lane
+through each step below:
 
-The same loop is also exposed over **MCP** by the local `jentic mcp` stdio
-server — available in the `jentic` CLI from the next release; check
-`jentic mcp --help`. If your session has `jentic` MCP tools, prefer them; use
-the CLI for `setup`/`access` recovery and anything not exposed over MCP. Both
-surfaces talk to the same instance — check `backend`/`host` in the identity
-stamp on MCP tool results if in doubt.
+- **CLI session** — the `jentic` CLI is on PATH. The fenced `jentic …`
+  commands below apply.
+- **MCP session** — your session has `jentic` MCP **tools** (`whoami`,
+  `search_apis`, `execute`, …). Sub-tell: if `get_started` appears in
+  `tools/list`, you are normally talking to the local `jentic mcp` stdio
+  server — a machine that has the CLI, so CLI recovery *may* also be
+  available (defeasible: `--exclude-tools get_started` can hide it there, so
+  treat presence as a strong hint, absence as the reliable direction). If
+  `get_started` is **absent**, you are on the daemon's HTTP `/mcp` mount:
+  **no CLI exists** — never tell the operator to run `jentic …` "on this
+  machine"; there is no this-machine.
+- Both lanes drive the same loop against the same backend. The `instance`
+  stamp (`backend`/`host`/`instance_id`) on **every** MCP tool result — and
+  the unauthenticated `GET /instance` endpoint — is the
+  which-backend-am-I-on check; it replaces `jentic context view` in an MCP
+  session.
 
 ## When to Use
 
@@ -29,33 +42,46 @@ stamp on MCP tool results if in doubt.
   payment", "list pull requests") instead of reading raw OpenAPI specs.
 - You are an agent that should drive real API calls through one audited broker.
 
-Reach for this skill's `jentic` CLI **before** generic tool discovery
-(`ToolSearch`) or hand-rolling HTTP calls: the broker is the single audited path
-to external APIs and handles credentials for you.
+Reach for your session's Jentic surface — the `jentic` MCP tools or the
+`jentic` CLI — **before** generic tool discovery (`ToolSearch`) or
+hand-rolling HTTP calls: the broker is the single audited path to external
+APIs and handles credentials for you.
 
 ## Prerequisites
 
-- The `jentic` CLI is installed and on PATH.
-- A reachable Jentic control plane. The base URL comes from the active
-  context's environment — set it with `jentic env add <name> --url <URL>`
-  and select it with `jentic context use <name>` (inspect via
+- **CLI session:** the `jentic` CLI is installed and on PATH.
+- **CLI session:** a reachable Jentic control plane. The base URL comes from
+  the active context's environment — set it with `jentic env add <name> --url
+  <URL>` and select it with `jentic context use <name>` (inspect via
   `jentic context view`). Onboard a fresh machine with `jentic register --url
   <URL>`. There is no `--base-url` flag on data-plane commands.
-- **Remote deployments:** if the environment's base URL is remote (an
-  `https://…` host in `jentic context view`), the broker must be set
+- **CLI session, remote deployments:** if the environment's base URL is remote
+  (an `https://…` host in `jentic context view`), the broker must be set
   explicitly too — `broker_url` on the environment (pass `--broker-url` to
   `register`, or `jentic env add`), or `JENTIC_BROKER_URL` in file-less mode.
   It is never derived from the control-plane URL. A loopback install seeds it
   automatically.
+- **MCP session:** an authenticated MCP connection. The credential (an OAuth
+  grant your operator authorized when connecting the client, or a bearer
+  token/API key the client presents at the transport) is attached by the MCP
+  client on every request — you never run setup, never handle token refresh,
+  and never see the raw credential. On the HTTP mount your scopes and
+  bindings are resolved live per request, so an approved grant works on the
+  very next tool call with no re-mint step.
 
 ## Procedure
 
+Each step shows the shared doctrine first, then the lane-specific mechanics.
+Follow your session's lane; never execute the other lane's verbs.
+
 ### 1. Confirm you have a valid identity
 
-You normally don't set up your own identity — your human operator runs
-`jentic register` (or `jentic setup`) out-of-band, which connects this
-machine to a Jentic install, registers this agent, waits for a human to approve
-it, and (for setup) writes this skill. First, check your setup:
+You normally don't set up your own identity — your human operator connects
+this agent to a Jentic install out-of-band (via `jentic register`/`jentic
+setup` for a CLI machine, or by authorizing the MCP connection), and a human
+approves it. First, check your setup.
+
+**CLI session:**
 
 ```
 jentic doctor
@@ -76,27 +102,54 @@ token, bind it to a human identity with `jentic identity claim <agent-id>
 --token <token>` (an agent cannot claim itself; requires an active human
 context).
 
+**MCP session:** call `whoami` — it answers with your identity as the control
+plane sees it: id, **status**, scopes, and toolkit bindings.
+
+```
+whoami {}
+```
+
+If `whoami` succeeds and the status is active/approved, skip to step 2. If it
+errors with an auth code, or the status is pending, **stop and relay to your
+operator**: the connection's grant or credential needs (re-)authorization or
+the agent awaits approval — nothing you can call fixes it. Only call
+`get_started` to self-diagnose if it actually exists in your `tools/list`
+(stdio sessions); on the HTTP mount it does not exist — do not invent it.
+
 ### 2. Check what you can do, and request access if needed
 
-See your own identity, status, scopes, and which toolkits you're bound to:
-
-```
-jentic access whoami
-```
-
+See your own identity, status, scopes, and which toolkits you're bound to —
+`jentic access whoami` in a CLI session, the `whoami` tool in an MCP session.
 Each toolkit binding lists the APIs it **serves** (`serves: [{vendor, name,
-version}]`). This tells you exactly what you can already call. Combined with the
-catalog (what's available to add — see step 3), it's your map of the workspace.
+version}]`). This tells you exactly what you can already call. Combined with
+the catalog (what's available to add — see step 3), it's your map of the
+workspace.
 
 **Decide access from `whoami` first — do NOT execute an operation just to see
 whether you have access.** A denied execute is a wasted round-trip; you can tell
 in advance:
 
 - If a binding already **serves** the API you need → you have access. Skip
-  straight to `inspect`/`execute`; file no request.
+  straight to inspect/execute; file no request.
 - If **nothing** you're bound to serves it → you do **not** have access yet.
   Provision it **before** your first execute — do not "try execute and branch on
-  the denial":
+  the denial".
+
+**File once, richly — never thrash.** Work out the full access end-state up
+front — from `whoami`, the catalog, and the task — and file it as **one
+composite request** covering every API the job needs, so the human decides in
+one sitting. Always include a reason: a human reviews it before approving and
+your reason is shown to them — a clear one-liner ("fetch the user's open PRs
+to summarise them") is what gets you approved faster. Never file duplicate or
+per-operation requests, and don't withdraw-and-refile to tweak a proposal.
+Granting is always a human action — you file and wait, you never approve
+yourself.
+
+**CLI session:**
+
+```
+jentic access whoami
+```
 
 ```
 jentic access request --provision <vendor/name> \
@@ -109,18 +162,14 @@ jentic access request --provision <vendor/name> \
 `--wait` blocks until a human fulfils and approves the plan in the dashboard;
 once approved, the toolkit binding is live immediately — just retry `execute`.
 Always pass `--reason` on **every** access request (`--provision`, `--toolkit`,
-or `--scope`): a human reviews it before approving and your reason is shown to
-them — a clear one-liner ("fetch the user's open PRs to summarise them") is what
-gets you approved faster.
+or `--scope`).
 You normally do **not** need `jentic access refresh` after a `--provision` plan:
 bindings take effect live, and a plan grants no new token scope. Only refresh
 after an approved `scope:grant` **and** only if `whoami` flags the scope as not
 yet on your token (see the stale-scope note it prints).
 
-**File once, richly — never thrash.** Work out the full access end-state up
-front — from `whoami`, the catalog, and the task — and file it as **one
-composite request**: every target flag repeats and combines, so a job needing
-several APIs is one command the human decides in one sitting:
+A composite request repeats and combines every target flag, so a job needing
+several APIs is one command:
 
 ```
 jentic access request \
@@ -139,13 +188,12 @@ Each `--provision` adds a full plan for that API — keep every plan complete
 `--provision`, key `--auth` and `--rules-json` by the same
 `vendor/name[/version]` you passed to `--provision` (include the version in
 the key if you used one); the bare form applies when there is exactly one.
-Never file duplicate or per-operation requests, and don't
-withdraw-and-refile to tweak a proposal; once filed, tell your operator an
-approval is waiting and hand back (or `--wait`). If a composite collides with
+If a composite collides with
 an older pending request for one of its targets, nothing is filed — drop that
 target or `jentic access withdraw` the old request, then re-file. `--wait` can
 end `partially_approved` (exit 4): check `jentic access status <id>` to see
-which items were granted before proceeding.
+which items were granted before proceeding. Without `--wait` you get a request
+id and an `approve_url` to hand to your operator.
 
 If you'd rather be reactive, the broker also guides you: when `execute` is denied
 it prints a recovery line on stderr (the `agent_directive`) and **exits 2**, so
@@ -206,17 +254,53 @@ Always follow the `agent_directive`'s `suggested_command` / `provisioning_url`
 rather than assuming which recovery applies. You can also request access
 proactively before you're denied.
 
-### Proposing permission rules from the spec
+**MCP session:** the same decide-first doctrine, driven by `whoami` +
+`request_access`. The filing arm mirrors the composite CLI request — every
+target repeats and combines into one request, always with a `reason`:
 
-`--provision` is your chance to propose the credential's auth type and its
-permission rules as a **first pass** — a human reviews and edits them before
-approving. Do the work up front:
+```
+request_access {"provision": ["slack.com/api", "googleapis.com/sheets"],
+  "auth": ["slack.com/api=bearer", "googleapis.com/sheets=oauth2"],
+  "rules_json": ["slack.com/api=[{\"effect\":\"allow\",\"methods\":[\"POST\"],\"path\":\"/chat\\\\.postMessage\"}]",
+                 "googleapis.com/sheets=[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]"],
+  "toolkits": ["github.com/api"],
+  "reason": "one reason covering the whole job"}
+```
 
-1. Read the operation surface and security schemes:
+With exactly one `provision`, the bare forms apply — `"auth": ["bearer"]`,
+`"rules_json": [[{"effect":"allow","methods":["GET"],"path":".*"}]]` — no key
+needed. The result carries a `request_id` and an `approve_url`: **relay the
+`approve_url` to your human operator** (granting is always a human action in
+the dashboard; the tool never approves). Then the poll arm — pass ONLY the id:
+
+```
+request_access {"request_id": "<id>"}
+```
+
+Never re-file the same request while one is pending. Be honest about the
+terminal states: **denied** → read the items' `decision_reason` to learn *why*
+before giving up; **partially_approved** → proceed only with what was actually
+granted (read the per-item states); approved **scope** grants land live on the
+HTTP mount (scopes are resolved per request) — but if the session's own
+transport credential was authorized with a narrower consent (an OAuth grant
+that never included the scope), no filed request can widen it: tell the
+operator **re-authorization of the connection is required** — never "retry
+and it will work". Denial recovery in an MCP session arrives as coded error
+envelopes on `execute` (see step 5), not stderr directives.
+
+#### Proposing permission rules from the spec
+
+A provisioning plan is your chance to propose the credential's auth type and
+its permission rules as a **first pass** — a human reviews and edits them
+before approving. Do the work up front:
+
+1. Read the operation surface and security schemes — CLI:
    `jentic apis operations <vendor/name/version>` and
-   `jentic inspect <operation_id>` show methods, paths, and the declared auth.
-2. Pick `--auth` from what the spec declares (`bearer`, `api_key`, `basic`,
-   `oauth2`), or `none` if the API needs no credential.
+   `jentic inspect <operation_id>`; MCP: `inspect_operation` on the
+   operations you intend to call. Both show methods, paths, and the declared
+   auth.
+2. Pick the auth type from what the spec declares (`bearer`, `api_key`,
+   `basic`, `oauth2`), or `none` if the API needs no credential.
 3. Translate the user's plain-English intent into rules. "Read everything, write
    only to the prod board" becomes concrete `allow`/`deny` rules with
    `methods`/`path`, e.g.
@@ -233,34 +317,20 @@ approving. Do the work up front:
    record the constraint as instructions you follow yourself (unenforced).
    Also sanity-check your proposal before filing: rules evaluate
    first-match-wins, so an early broad `allow` shadows every rule after it,
-   and a rule set that contradicts the intent you stated in `--reason` will
+   and a rule set that contradicts the intent you stated in your reason will
    confuse the human reviewing it.
 4. You never enter the credential secret and you never approve — the human fills
    the secret in the dashboard and grants the plan. You propose; they decide.
 
-A plain `toolkit:bind` (`--toolkit`) is only the **last mile** — use it when a
-toolkit for the API already exists (e.g. an operator created one) and you just
-need to be bound to it. When nothing serves the API yet, `--provision` is the
-right first move; a bare `--toolkit` would auto-deny.
+A plain `toolkit:bind` (CLI `--toolkit`, MCP `"toolkits"`) is only the **last
+mile** — use it when a toolkit for the API already exists (e.g. an operator
+created one) and you just need to be bound to it. When nothing serves the API
+yet, a provisioning plan is the right first move; a bare toolkit bind would
+auto-deny with `decision_reason: "No toolkit serves API <vendor/name>;
+provision and bind a credential for it first"` — that is the signal to file
+the provisioning plan instead.
 
-`--toolkit`/`--provision` take a `vendor/name[/version]` reference (the broker
-also suggests the exact command in its `agent_directive`). `--wait` blocks until
-a human decides and sets the exit code: **0** = approved, **2** = denied —
-read the item's `decision_reason` (in the JSON, or shown under the item on a
-TTY) to learn *why* before giving up, **3** = still pending when `--timeout`
-elapsed (poll later with `jentic access status <id>`), **4** = partially
-approved. Without `--wait` you get a request id and an `approve_url` to hand to
-your operator. Granting is always a human action — you file and wait, you never
-approve yourself.
-
-If you file a bare `toolkit:bind` (`--toolkit`) for an API that nothing serves
-yet, approval comes back **denied** with `decision_reason: "No toolkit serves
-API <vendor/name>; provision and bind a credential for it first"`. That is the
-signal to file a `--provision` plan instead: it describes the missing toolkit,
-credential, rules, and binding as one request the operator can fulfil and
-approve in the dashboard.
-
-Track and manage your requests:
+Track and manage your requests — CLI:
 
 ```
 jentic access list
@@ -268,38 +338,48 @@ jentic access status <request_id>
 jentic access withdraw <request_id>
 ```
 
-`--wait`'s `--timeout` is a duration **with a unit** — `--timeout 120s`, `2m`,
-`90s`. A bare number (`--timeout 120`) is rejected. Once a request is approved,
-retry the `execute` that was denied.
+(MCP: poll with `request_access {"request_id": "<id>"}`.)
+
+`--wait` blocks until a human decides and sets the CLI exit code: **0** =
+approved, **2** = denied — read the item's `decision_reason` (in the JSON, or
+shown under the item on a TTY) to learn *why* before giving up, **3** = still
+pending when `--timeout` elapsed (poll later with `jentic access status
+<id>`), **4** = partially approved. `--wait`'s `--timeout` is a duration
+**with a unit** — `--timeout 120s`, `2m`, `90s`. A bare number (`--timeout
+120`) is rejected. Once a request is approved, retry the `execute` that was
+denied.
 
 ### 3. Find an operation (import first, then search)
 
-`search` only sees operations that have been **imported into this deployment's
-local registry**. On a fresh install the registry is empty, so `search` returns
-`{"data": []}` until you import something. **Import before you search** — if the
-user already named the API/vendor (e.g. "Google Sheets"), go straight to
-`catalog search`/`import`; don't `search` an empty registry first and waste a
-call. The discovery order is:
+Operation search only sees operations that have been **imported into this
+deployment's local registry**. On a fresh install the registry is empty, so a
+search returns `{"data": []}` until you import something. **Import before you
+search** — if the user already named the API/vendor (e.g. "Google Sheets"),
+go straight to the catalog; don't search an empty registry first and waste a
+call. The discovery order is: browse the public catalog for an importable
+API → import the one you want (auto-promotes to live) → search the local
+registry.
 
-1. Browse the public catalog for an importable API:
+Importing an **already-cataloged** API is gated on `catalog:import`, which an
+approved agent holds **by default** — no access request needed. Just run the
+import. Re-importing an API that is already there is safe: the result
+converges (`already_imported` on MCP; the CLI reports the same). Don't file
+an access request for a made-up "catalog read" scope — reading the registry
+and importing a cataloged API need no grant.
+
+**CLI session:**
 
 ```
 jentic catalog search "spreadsheets"
-```
-
-2. Import the one you want into the local registry (auto-promotes to live):
-
-```
 jentic catalog import googleapis.com/sheets
+jentic search "get values from a spreadsheet range" --limit 10
+jentic apis operations googleapis-com/googleapis-com-sheets/v4
 ```
 
-   Importing an **already-cataloged** API is gated on `catalog:import`, which an
-   approved agent holds **by default** — no access request needed. Just run the
-   import. (This is narrower than importing arbitrary URL/inline specs via
-   `POST /apis`, which still needs `apis:write`.) If `import` unexpectedly fails
-   with `403 … requires one of: catalog:import` — e.g. you were approved before
-   `catalog:import` became a default scope and weren't re-granted — request it,
-   wait for a human to approve, refresh your token, then retry:
+If `import` unexpectedly fails
+with `403 … requires one of: catalog:import` — e.g. you were approved before
+`catalog:import` became a default scope and weren't re-granted — request it,
+wait for a human to approve, refresh your token, then retry:
 
 ```
 jentic access request --scope catalog:import --reason "import the Sheets API to read the user's spreadsheet" --wait
@@ -307,17 +387,10 @@ jentic access refresh
 jentic catalog import googleapis.com/sheets
 ```
 
-   To register an API that is **not** in the catalog, upload its OpenAPI spec
-   directly with `jentic apis import <file|url> --vendor <vendor> --name <name>
-   --version <version>` (reads a local file inline or fetches a URL; async, prints
-   a job id). This needs `apis:write` rather than `catalog:import`.
-
-3. Now search the local registry, or list an API's operations directly:
-
-```
-jentic search "get values from a spreadsheet range" --limit 10
-jentic apis operations googleapis-com/googleapis-com-sheets/v4
-```
+To register an API that is **not** in the catalog, upload its OpenAPI spec
+directly with `jentic apis import <file|url> --vendor <vendor> --name <name>
+--version <version>` (reads a local file inline or fetches a URL; async, prints
+a job id). This needs `apis:write` rather than `catalog:import`.
 
 `search` returns JSON when piped. Each hit carries both a registry
 `operation_id` and a `_links.inspect` (a `/inspect?id=METHOD%20URL` link). Pass
@@ -329,10 +402,7 @@ direct.)
 
 If `search` returns no results, it prints a hint to run `jentic catalog search`
 / `jentic catalog import` first — that almost always means nothing relevant is
-imported yet. Both **reading** the registry and **importing a cataloged API**
-need no request — an approved agent already holds `apis:read` and
-`catalog:import` by default, so just import and search again. Don't file an
-access request for a made-up "catalog read" scope.
+imported yet. Import and search again.
 
 `jentic catalog outdated` lists registered APIs whose upstream spec changed since
 import (also surfaced by `jenticctl status`). Re-importing promotes the new spec
@@ -342,33 +412,50 @@ run it — never silently re-import on your own. (`jentic catalog refresh` rebui
 the catalog manifest from upstream but requires `org:admin`, so it too is an
 operator action.)
 
+**MCP session:** the same order, tool for tool — `search_catalog` →
+`import_api` → `search_apis`:
+
+```
+search_catalog {"query": "spreadsheets", "limit": 10}
+import_api {"api_id": "googleapis.com/sheets"}
+search_apis {"query": "get values from a spreadsheet range", "limit": 10}
+```
+
+`import_api` runs the import as a job and tracks it in-process: on completion
+it returns `{job_id, status, revisions, promoted}` with the imported revisions
+promoted live. `already_imported` is a **success** — the registry converges;
+re-importing is safe. If the result carries a non-terminal `status` (queued,
+tracking timed out), poll `get_execution_result` with the `job_id` from that
+result rather than re-importing. Each `search_apis` hit carries the
+`operation_id` to pass straight to `inspect_operation`/`execute`.
+
 **Before concluding "the data is gone", confirm which backend you're on.** If
 APIs, credentials, or toolkits you *know* existed appear missing — or IDs look
 unfamiliar — you may be talking to a **different** backend than you expect. A
 hosted (`remote`) Jentic install and a `local` self-hosted one have independent
-registries and credentials, and the CLI, an agent, or an MCP server can each be
-bound to a different one. Check the backend your base URL serves before
-diagnosing data loss:
+registries and credentials, and a CLI, an agent, or an MCP server can each be
+bound to a different one. The primary check is the **`instance` stamp**: every
+MCP tool result carries `instance` (`backend`, `host`, `instance_id`), and the
+unauthenticated `GET /instance` endpoint reports the same identity
+(`backend` is `local`/`remote` — the install's declared `server.backend` —
+plus `canonical_base_url`, `host`, and an opaque `instance_id`, null when
+telemetry is off). In a CLI session, read the same facts with:
 
 ```
 jentic context view        # shows the active context's environment + base_url
 jentic api GET /instance   # reads the connected backend's identity (auth attached)
 ```
 
-The unauthenticated `/instance` response reports `backend` (`local` / `remote` —
-the install's declared `server.backend`), `canonical_base_url`, `host`, an
-opaque `instance_id` (null when telemetry is off), and `broker_url` (the broker
-/ data-plane base URL for `execute`, when the backend can advertise one — null
-otherwise). If it's not the backend you
-meant to use (e.g. an MCP server still on a remote backend while you imported
-locally), repoint that client at the right base URL rather than
-importing/searching again.
+If it's not the backend you meant to use (e.g. an MCP server on a remote
+backend while you imported locally), repoint that client at the right base URL
+rather than importing/searching again.
 
 ### 4. Inspect the operation's contract
 
 Resolve an operation to its method, path, parameters, and schemas before
-calling it. Pass the inspect identifier from `search`/`apis operations`, or a
-`METHOD URL` pair:
+calling it. Pass the identifier from the search hit, or a `METHOD URL` pair.
+
+**CLI session:**
 
 ```
 jentic inspect "$(jentic search 'get spreadsheet values' --json | jq -r '.data[0].operation_id')"
@@ -380,13 +467,26 @@ not silent). If you passed the id from `catalog show` and it didn't resolve, use
 the `operation_id` from `search`/`apis operations`, or the `METHOD URL` pair
 that the hit's `_links.inspect` decodes to.
 
+**MCP session:**
+
+```
+inspect_operation {"operation_id": "op_abc123"}
+inspect_operation {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}"}
+```
+
+Always inspect before you execute — the contract names the parameters and the
+security requirements you'll propose rules against.
+
 ### 5. Execute through the broker
 
 Send the request through the Jentic broker. The broker is a transparent forward
 proxy, so the target is the **full upstream URL** (scheme + host + path), not a
-host-relative path. Reference an `operation_id`/inspect id from `search`/
-`inspect` — the CLI fills in the upstream URL for you — or pass `METHOD:URL`
-directly.
+host-relative path. Reference an `operation_id` from the search/inspect step —
+the surface fills in the upstream URL for you — or pass `METHOD:URL` directly.
+The broker authenticates you and injects the stored upstream credential
+server-side; credentials never pass through your session.
+
+**CLI session:**
 
 ```
 jentic execute <operation_id> --query limit=10
@@ -425,9 +525,8 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   refuses up front (it never dials the local default for a remote control
   plane). This means the environment was onboarded without a broker: set it
   with `jentic register --url <URL> --broker-url <broker URL>` (or
-  `JENTIC_BROKER_URL` in file-less mode). Read the broker URL from the
-  unauthenticated `GET /instance` on the control plane (`broker_url`); if
-  that reports null, ask the operator — do **not** assume a local broker.
+  `JENTIC_BROKER_URL` in file-less mode) — ask the operator for the broker
+  URL; do **not** assume a local broker.
 
 - **Stopped instance (connection refused on a local target).** If the target
   is already local (`127.0.0.1` / `localhost`) and the connection is
@@ -440,14 +539,57 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   `jenticctl start` (then `jenticctl status` to confirm), and I'll retry."*
   After the restart, retry the original call and continue the task.
 
+**MCP session:** call `execute` — or `execute_read` for any pure GET/HEAD
+read (**prefer `execute_read` for reads**: same envelope, same flow, no
+request body, and clients approve read-only tools more readily; it rejects
+any other HTTP method — use `execute` for those):
+
+```
+execute {"operation_id": "op_abc123", "inputs": {"limit": 10}}
+execute_read {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range}", "inputs": {"id": "ABC", "range": "A1:Z10"}}
+```
+
+**The job-poll idiom.** A held or async execution does not answer inline: a
+202 HELD response (human approval required) or a tracked import returns a
+**job envelope** (`{job_id, status, …}`). Poll it with the job id until the
+status is terminal (`completed`, `failed`, `cancelled`, `dead_letter`):
+
+```
+get_execution_result {"job_id": "<id from the held response>"}
+```
+
+**Never re-send the original call while a job is pending** — approval happens
+out-of-band, and re-sending duplicates the side effect.
+
+**The recovery mapping.** What the CLI lane surfaces as a stderr
+`agent_directive` + exit codes arrives on MCP as a **coded error envelope**:
+`{error_code, error, actionable_step, next_tool?, …, instance}`. Follow
+`next_tool` **when present**. Two caveats on the HTTP mount:
+
+- The mount drops any `next_tool` pointer that is not one of its served
+  tools, so auth-code errors there typically carry **no** pointer — that
+  means "relay to the operator", not "guess a tool".
+- `actionable_step` prose (and the pinned tool descriptions) may still name
+  stdio-only tools or `jentic` CLI verbs (`get_started`, `jentic register`,
+  …). Read those as **operator guidance to relay**, never as tools for you
+  to call.
+
+And know the CLI-only arms: a `credential_not_provisioned` (424) denial
+carries a `provisioning_url` — relay it to your operator to connect the
+account; there is nothing an MCP tool can do to fix it (do **not** file
+`request_access` for it). The denial taxonomy in step 2
+(`no_toolkit_binding`, `credential_undecryptable`,
+`credential_identity_mismatch`, `ambiguous_toolkit`) applies unchanged — the
+same codes, delivered in the envelope instead of stderr.
+
 ## Quick Reference
 
-- The authoritative command + flag reference is **generated from the CLI
+- The authoritative CLI command + flag reference is **generated from the CLI
   itself**, not this file: run `jentic --help` / `jentic <command> --help`
   (always current, works offline), or open the platform docs at `/app/docs` on
   the control plane (Reference → CLI) — the same reference rendered for humans,
   next to the HTTP API and Broker API references.
-- `jentic context view` — the active context (environment + identity + base_url); start here.
+- `jentic context view` — the active context (environment + identity + base_url); start here in a CLI session.
 - `jentic access whoami` — your identity, status, scopes, and toolkit bindings
   with the APIs each one **serves** (check this before executing or provisioning).
 - `jentic access request` — ask a human for access. `--provision <vendor/name>`
@@ -485,7 +627,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   response or from `jentic events watch`.
 - `jentic events watch` — stream live execution/approval events for this
   identity (long-running; Ctrl-C to stop).
-- `--dry-run` / `--export-plan` — on a mutating command (`execute`,
+- `--dry-run` / `--export-plan` — on a mutating CLI command (`execute`,
   `apis import`), validate and print the request that WOULD be sent (a machine
   plan with `--export-plan`) **without** sending it. Use it to preview a call —
   including the exact broker URL and headers — before committing side effects.
@@ -494,83 +636,108 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 - Add `--json` to force machine-readable output on a terminal (works on
   `search`, `execute`, `inspect`, `apis`, `access`, `doctor`). `context view`
   has no `--json` flag — it emits JSON automatically in agent/non-TTY mode.
-- **Correlation & retries**: export `JENTIC_SESSION_ID=<your session id>` and
-  every request carries it as `X-Jentic-Session-Id`, so operators can group all
-  of your calls in server logs; each `execute` also sends a fresh W3C
+- **Correlation & retries (CLI):** export `JENTIC_SESSION_ID=<your session id>`
+  and every request carries it as `X-Jentic-Session-Id`, so operators can group
+  all of your calls in server logs; each `execute` also sends a fresh W3C
   `traceparent`. When you must retry a mutating call (POST/PUT), pass
   `--idempotency-key <uuid>` to `execute` — the server can then de-duplicate,
   and the CLI treats the request as safe for its transport-level retries.
+- **MCP session — the mount serves exactly nine tools; each maps onto the
+  loop:**
+- `whoami` — your identity, status, scopes, and toolkit bindings with the APIs
+  each one serves; start here and decide access from it.
+- `search_apis` — search the imported registry for operations by
+  natural-language query; each hit carries the `operation_id`.
+- `inspect_operation` — one operation's full contract (method, URL,
+  parameters, schemas, security); always inspect before executing.
+- `execute` — run an operation through the broker (full upstream URL; the
+  broker injects the credential server-side).
+- `execute_read` — the GET/HEAD-only variant of `execute`; prefer it for
+  every pure read.
+- `get_execution_result` — poll a job id (from a held 202 execute or a
+  non-terminal import) until its status is terminal.
+- `search_catalog` — find importable APIs when the registry search comes up
+  empty.
+- `import_api` — import a catalog API into the registry; `already_imported`
+  is a success, re-import is safe.
+- `request_access` — file ONE composite access request (provision/toolkits/
+  scopes + reason), or poll a filed one with `{"request_id": "<id>"}`; relay
+  `approve_url` to the human.
+- **MCP structural facts:** every tool result carries an `instance` stamp
+  (`backend`/`host`/`instance_id`) — your which-backend check. `get_started`
+  and all `jentic` CLI verbs (`setup`, `access refresh`, `context`, `env`,
+  `doctor`, `api`, `history`, `events`) do **not** exist on the HTTP mount —
+  do not invent them.
 
 ## Pitfalls
 
-- Calling `execute` before the agent is registered and approved fails — there is
-  no token. Check `jentic doctor`; if the Identity section warns, ask your
-  operator to run `jentic register` (with `--url <install URL>` on a fresh
-  machine) and approve you.
-- `search` returning `{"data": []}` usually means **nothing is imported yet**,
-  not that you lack access. Run `jentic catalog search` → `jentic catalog
-  import`, then search again. Both reading the registry and importing a
-  cataloged API need no grant — an approved agent already holds `apis:read` and
-  `catalog:import` by default. (Importing arbitrary URL/inline specs via `POST
-  /apis` is the only import path that needs `apis:write`.) Don't invent other
-  "catalog read" scopes; they're rejected.
+- Executing before the agent is registered/approved fails — there is no
+  usable identity. CLI session: check `jentic doctor`; if the Identity section
+  warns, ask your operator to run `jentic register` (with `--url <install
+  URL>` on a fresh machine) and approve you. MCP session: `whoami` errors or
+  reports a pending status — relay to your operator; nothing you can call
+  completes an approval.
+- An empty search result (`{"data": []}`) usually means **nothing is imported
+  yet**, not that you lack access. Go through the catalog (`jentic catalog
+  search`/`import`, or `search_catalog`/`import_api`), then search again. Both
+  reading the registry and importing a cataloged API need no grant — an
+  approved agent already holds `apis:read` and `catalog:import` by default.
+  (Importing arbitrary URL/inline specs via `POST /apis` is the only import
+  path that needs `apis:write`.) Don't invent other "catalog read" scopes;
+  they're rejected.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
-  or credentials.** If your session also has Jentic **MCP tools**
-  (`search_apis`, `list_credentials`, `execute`, …), check which backend they
-  answer from. Tools served by the local `jentic mcp` server stamp
-  `backend`/`host` on every result — compare that against this CLI's backend.
-  Tools without the stamp (e.g. the hosted Jentic cloud platform's MCP server)
-  may be bound to a **different backend** than this CLI — typically the hosted
-  cloud workspace vs the local install. The symptom of a mismatch is *silent
-  wrong answers*, not errors: an API the user just imported "doesn't exist",
-  credentials "disappeared", or operation ids from one surface don't resolve
-  on the other. Before concluding anything is missing or broken, check where
-  each surface points — `jentic context view` shows this CLI's active
-  environment/`base_url`, and `jentic api GET /instance` reports which backend
-  serves it (see "confirm which backend you're on" in step 3); for MCP tools,
-  read the identity stamp or ask your operator which backend the MCP server
-  was configured against — and stick to one surface for the whole task.
-- An `execute` failure is not always an access problem. A DNS or TLS error
-  means the **broker target** is misconfigured (see step 5); connection
-  refused on a **local** target usually means the instance is **stopped** —
-  run `jenticctl status`, and if it's down tell the user to
+  or credentials.** The primary check is the **`instance` stamp**
+  (`backend`/`host`/`instance_id`) on every MCP tool result, and `jentic api
+  GET /instance` / `jentic context view` in a CLI session. Two surfaces in
+  one session (a CLI and an MCP server, or two MCP servers) can each be bound
+  to a **different backend** — typically a hosted cloud workspace vs a local
+  install. The symptom of a mismatch is *silent wrong answers*, not errors:
+  an API the user just imported "doesn't exist", credentials "disappeared",
+  or operation ids from one surface don't resolve on the other. Before
+  concluding anything is missing or broken, compare the stamps (see
+  "confirm which backend you're on" in step 3) — and stick to one surface
+  for the whole task.
+- An execute failure is not always an access problem. **CLI session:** a DNS
+  or TLS error means the **broker target** is misconfigured (see step 5);
+  connection refused on a **local** target usually means the instance is
+  **stopped** — run `jenticctl status`, and if it's down tell the user to
   `jenticctl start`, then retry rather than abandoning the task. Only a
-  broker **denial** (an `agent_directive` on stderr, exit **2**) is an
-  access/credential issue:
-  - **403 `no_toolkit_binding`** → check the directive's
-    `parameters.toolkit_serves_api`. If `true`, a toolkit already serves the API
-    and you just aren't bound — run the `jentic access request --toolkit …` it
-    suggests and wait for approval. If `false`, nothing serves the API yet and a
-    bare `--toolkit` bind would be **denied** ("No toolkit serves API …"); the
-    directive suggests `--provision` instead — file that plan (propose `--auth`
-    and `--rules-json` from the spec, pass `--reason`) and your operator fulfils
-    it in the dashboard, into a new toolkit **or one they already have** — an
-    existing toolkit never has to be recreated.
-  - **424 `credential_not_provisioned`** → the directive gives a
-    `provisioning_url` for your operator to connect an account (an access
-    request won't help).
-  - **424 `credential_undecryptable`** → the connected credential's secret
-    can't be decrypted anymore; retrying won't help — ask your operator to
-    remove and re-add the credential.
-  - **403 `credential_identity_mismatch`** → a bound credential exists but its
-    identity doesn't cover this API (`parameters.expected` vs
-    `parameters.found`). An access request won't help — ask your operator to fix
-    or re-provision the credential so it targets `expected`, then retry.
-  Follow the directive; don't keep re-sending the same `execute`.
+  broker **denial** (an `agent_directive` on stderr, exit **2** — or the
+  coded error envelope on MCP) is an access/credential issue; the code names
+  the recovery (see steps 2 and 5). Follow the directive/envelope; don't
+  keep re-sending the same execute.
 - You file and wait for access; you can't approve your own requests.
-- **Don't execute to test access.** `whoami` already tells you what your bindings
-  **serve**; if the API you need isn't there, `--provision` it and wait — don't
-  fire a `execute` you expect to be denied just to read the recovery directive.
-  The directive is a fallback for surprises, not a discovery step.
-- The `operation_id` from `search`/`apis operations` resolves directly; the id
-  from `catalog show` is the spec `operationId` (`inspect` resolves it via a
+- **Don't execute to test access.** `whoami` already tells you what your
+  bindings **serve**; if the API you need isn't there, file the provisioning
+  plan and wait — don't fire an execute you expect to be denied just to read
+  the recovery directive. The directive is a fallback for surprises, not a
+  discovery step.
+- The `operation_id` from the registry search resolves directly; the id from
+  `catalog show` is the spec `operationId` (inspect resolves it via a
   fallback). If one doesn't resolve, try the `METHOD URL` pair from the hit's
   `_links.inspect` — don't guess ids.
+- **MCP session:** never re-send an execute while its job is pending — poll
+  `get_execution_result` with the job id; approval happens out-of-band and
+  re-sending duplicates the side effect.
+- **MCP session:** don't file `request_access` to fix a 424
+  `credential_not_provisioned` error — it carries a `provisioning_url` for
+  your **operator**; an access request cannot connect an account.
+- **MCP session:** don't call `get_started` on the HTTP mount — it isn't
+  there. Its absence is a transport tell (you're on the daemon mount), not an
+  outage; don't retry it or report it as a failure.
+- **MCP session:** when an error envelope's `actionable_step` names a
+  `jentic` CLI verb or a tool your session doesn't have, relay it to the
+  operator as guidance instead of inventing a tool call.
 
 ## Verification
 
-- `jentic doctor` shows a resolvable identity with a valid token.
-- After `jentic catalog import <vendor/name>`, `jentic search "<something in
-  that API>"` returns at least one result.
-- A known-allowed `jentic execute …` (pointed at the right broker) returns a 2xx
-  response body.
+- CLI session: `jentic doctor` shows a resolvable identity with a valid token.
+- CLI session: after `jentic catalog import <vendor/name>`, `jentic search
+  "<something in that API>"` returns at least one result.
+- CLI session: a known-allowed `jentic execute …` (pointed at the right
+  broker) returns a 2xx response body.
+- MCP session: `whoami` answers with your identity (id, status, scopes,
+  bindings) and an `instance` stamp.
+- MCP session: after `import_api`, `search_apis` finds operations from that
+  API.
+- MCP session: a known-allowed `execute_read` returns a 2xx response body.
