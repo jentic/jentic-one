@@ -37,6 +37,9 @@ class CredentialBindingEntry(BaseModel):
     # rules but is excluded from broker derivation, so the agent should not
     # expect to execute through it until an operator resumes it.
     suspended: bool = False
+    # Shared permission rule set this binding points at (None = inline rules)
+    # — tells the agent which policy object governs it (theme 5, Q-04).
+    rule_set_id: str | None = None
     # The API this credential serves. Empty when unresolvable.
     serves: list[ServedApiRef] = []
 

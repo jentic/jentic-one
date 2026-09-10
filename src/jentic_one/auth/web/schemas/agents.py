@@ -78,6 +78,8 @@ class CredentialBindingResponse(BaseModel):
     name: str | None = None
     bound_at: datetime
     suspended: bool
+    # Shared permission rule set the binding points at (None = inline rules).
+    rule_set_id: str | None = None
     serves: list[ServedApiRef] = []
 
 

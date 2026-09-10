@@ -116,6 +116,7 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
                 name=cb.name,
                 bound_at=cb.bound_at,
                 suspended=cb.suspended,
+                rule_set_id=cb.rule_set_id,
                 serves=cb.serves,
             )
             for cb in credentials

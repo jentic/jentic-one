@@ -286,6 +286,7 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
         name=view.name,
         bound_at=view.bound_at,
         suspended=view.suspended,
+        rule_set_id=view.rule_set_id,
         serves=view.serves,
     )
 

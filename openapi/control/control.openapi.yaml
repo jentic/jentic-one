@@ -1790,6 +1790,12 @@ components:
           format: date-time
           title: Bound At
           type: string
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Shared permission rule set this binding points at, if any. While attached, the set's ordered list is the binding's effective policy; null means the binding's inline rules apply.
+          title: Rule Set Id
         status:
           title: Status
           type: string
@@ -1832,6 +1838,11 @@ components:
           - type: string
           - type: 'null'
           title: Name
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rule Set Id
         serves:
           default: []
           items:
@@ -1880,6 +1891,11 @@ components:
           - type: string
           - type: 'null'
           title: Name
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rule Set Id
         serves:
           default: []
           items:
@@ -5308,6 +5324,17 @@ components:
       required:
       - token
       title: RevokeRequest
+      type: object
+    RuleSetAttachRequest:
+      description: Point a direct agent↔credential binding at a shared rule set.
+      properties:
+        rule_set_id:
+          description: Id (`prs_…`) of the rule set to attach.
+          title: Rule Set Id
+          type: string
+      required:
+      - rule_set_id
+      title: RuleSetAttachRequest
       type: object
     RuleSetCreateRequest:
       description: Create a shared permission rule set (theme 5 phase 1, Q-04).
@@ -14646,6 +14673,167 @@ paths:
       security:
       - BearerAuth: []
       summary: Dry-run permission evaluation
+      tags:
+      - Credentials
+  /credentials/{credential_id}/agents/{agent_id}/rule-set:
+    delete:
+      description: |-
+        Detach the binding's shared rule set — its inline rules apply again.
+
+        Idempotent: detaching a binding already on inline rules is a no-op 204.
+      operationId: detachAgentCredentialRuleSet
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Detach rule set from binding
+      tags:
+      - Credentials
+    put:
+      description: |-
+        Point the binding at a shared rule set (idempotent PUT).
+
+        While attached, the set's ordered list is the binding's effective policy
+        and its inline rules are dormant — `permissions:test` evaluates the set.
+        The set must exist (404 `rule_set_not_found`).
+      operationId: attachAgentCredentialRuleSet
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleSetAttachRequest'
+        required: true
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Attach rule set to binding
       tags:
       - Credentials
   /credentials/{credential_id}/connect:

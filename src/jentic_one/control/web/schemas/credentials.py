@@ -472,6 +472,14 @@ class CredentialAgentResponse(BaseModel):
             "through this credential until resumed."
         )
     )
+    rule_set_id: str | None = Field(
+        default=None,
+        description=(
+            "Shared permission rule set this binding points at, if any. While "
+            "attached, the set's ordered list is the binding's effective "
+            "policy; null means the binding's inline rules apply."
+        ),
+    )
 
 
 class CredentialAgentListResponse(BaseModel):
@@ -480,6 +488,12 @@ class CredentialAgentListResponse(BaseModel):
     data: list[CredentialAgentResponse]
     has_more: bool
     next_cursor: str | None = None
+
+
+class RuleSetAttachRequest(BaseModel):
+    """Point a direct agent↔credential binding at a shared rule set."""
+
+    rule_set_id: str = Field(description="Id (`prs_…`) of the rule set to attach.")
 
 
 class RuleSetCreateRequest(BaseModel):

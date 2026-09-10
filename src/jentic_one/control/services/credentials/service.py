@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,6 +25,7 @@ from jentic_one.control.repos import (
     TokenValueCredentialRepository,
 )
 from jentic_one.control.repos.prerequisite_repo import (
+    AgentCredentialBindingRow,
     CredentialBoundAgentRow,
     PrerequisiteRepository,
 )
@@ -409,13 +411,14 @@ class CredentialService:
 
     async def _require_visible_binding(
         self, credential_id: str, agent_id: str, *, identity: Identity
-    ) -> None:
+    ) -> AgentCredentialBindingRow:
         """Gate the per-binding rules endpoints on both axes (hard problems 7/9).
 
         The caller must see the credential (same filters as ``get`` — a miss
         is a uniform 404 that never confirms existence), and the direct
         ``(agent, credential)`` binding must exist (admin-DB row; the rules
-        themselves live control-side, so this is the cross-DB seam).
+        themselves live control-side, so this is the cross-DB seam). Returns
+        the binding row so callers can see its attached ``rule_set_id``.
         """
         access_filters = build_access_filters(
             identity,
@@ -435,6 +438,7 @@ class CredentialService:
             )
         if binding is None:
             raise AgentBindingNotFoundError(credential_id, agent_id)
+        return binding
 
     async def _record_rules_change(
         self, credential_id: str, agent_id: str, *, identity: Identity, reason: str
@@ -532,14 +536,24 @@ class CredentialService:
 
         Unlike the toolkit ``:test`` there is **no vendor pooling**: the direct
         binding's rules are a single ordered first-match-wins list, which is
-        the point of the per-binding model. Default-deny when nothing matches.
-        The broker's condition-less-``allow`` skip is honoured so a bare
-        ``allow`` with no constraints doesn't unlock a dry-run any more than
-        it unlocks a real request.
+        the point of the per-binding model. When the binding points at a
+        shared ``permission_rule_set`` the set's list is what gets evaluated —
+        inline rules are dormant while a set is attached, and the dry-run must
+        not lie about that. Default-deny when nothing matches. The broker's
+        condition-less-``allow`` skip is honoured so a bare ``allow`` with no
+        constraints doesn't unlock a dry-run any more than it unlocks a real
+        request.
         """
-        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        binding = await self._require_visible_binding(credential_id, agent_id, identity=identity)
         async with self._ctx.control_db.session() as session:
-            rules = await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+            if binding.rule_set_id is not None:
+                rules: Sequence[
+                    AgentPermissionRule | PermissionRuleSetRule
+                ] = await PermissionRuleSetRepository.list_rules(session, binding.rule_set_id)
+            else:
+                rules = await AgentPermissionRuleRepository.list_rules(
+                    session, agent_id, credential_id
+                )
 
         method_upper = method.upper()
         for idx, rule in enumerate(rules):
@@ -577,6 +591,59 @@ class CredentialService:
         )
 
     # --- Shared permission rule sets (theme 5 phase 1, Q-04) ---
+
+    async def attach_binding_rule_set(
+        self,
+        credential_id: str,
+        agent_id: str,
+        rule_set_id: str,
+        *,
+        identity: Identity,
+    ) -> None:
+        """Point a direct binding at a shared rule set.
+
+        While attached, the set's ordered list is the binding's effective
+        policy and its inline rules are dormant (they survive untouched for
+        when the set is detached). The set must exist — the pointer is FK-less
+        across the DB seam, so this check plus the delete-time
+        ``rule_set_in_use`` refusal are the integrity guard.
+        """
+        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.session() as session:
+            if await PermissionRuleSetRepository.get_by_id(session, rule_set_id) is None:
+                raise RuleSetNotFoundError(rule_set_id)
+        async with self._ctx.admin_db.transaction() as session:
+            await PrerequisiteRepository.set_binding_rule_set(
+                session, agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+            )
+        await self._record_rules_change(
+            credential_id,
+            agent_id,
+            identity=identity,
+            reason=f"attach rule set {rule_set_id}",
+        )
+
+    async def detach_binding_rule_set(
+        self, credential_id: str, agent_id: str, *, identity: Identity
+    ) -> None:
+        """Detach the binding's shared rule set — inline rules apply again.
+
+        Idempotent: detaching a binding that already runs on inline rules is
+        a no-op, not an error.
+        """
+        binding = await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        if binding.rule_set_id is None:
+            return
+        async with self._ctx.admin_db.transaction() as session:
+            await PrerequisiteRepository.set_binding_rule_set(
+                session, agent_id=agent_id, credential_id=credential_id, rule_set_id=None
+            )
+        await self._record_rules_change(
+            credential_id,
+            agent_id,
+            identity=identity,
+            reason=f"detach rule set {binding.rule_set_id}",
+        )
 
     def _may_mutate_rule_set(self, rule_set: PermissionRuleSet, identity: Identity) -> bool:
         """Provisional creator-or-admin write gate (theme plan OQ-6 is open).

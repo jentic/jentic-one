@@ -34,6 +34,15 @@ class CredentialBoundAgentRow(NamedTuple):
     agent_status: str
     bound_at: datetime
     suspended: bool
+    rule_set_id: str | None
+
+
+class AgentCredentialBindingRow(NamedTuple):
+    """Direct agent↔credential binding existence-check row (theme 5 phase 1)."""
+
+    binding_id: str
+    suspended: bool
+    rule_set_id: str | None
 
 
 class UserDisplayRow(NamedTuple):
@@ -236,7 +245,7 @@ class PrerequisiteRepository:
             cursor_ts, cursor_id = cursor
             result = await session.execute(
                 text(
-                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended "
+                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id "
                     "FROM agent_credential_bindings b "
                     "JOIN agents a ON a.id = b.agent_id "
                     "WHERE b.credential_id = :credential_id "
@@ -255,7 +264,7 @@ class PrerequisiteRepository:
         else:
             result = await session.execute(
                 text(
-                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended "
+                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id "
                     "FROM agent_credential_bindings b "
                     "JOIN agents a ON a.id = b.agent_id "
                     "WHERE b.credential_id = :credential_id "
@@ -269,23 +278,54 @@ class PrerequisiteRepository:
     @staticmethod
     async def get_agent_credential_binding(
         session: AsyncSession, *, agent_id: str, credential_id: str
-    ) -> tuple[str, bool] | None:
-        """Return ``(binding_id, suspended)`` for a direct binding, or ``None``.
+    ) -> AgentCredentialBindingRow | None:
+        """Return the direct binding's (id, suspended, rule_set_id), or ``None``.
 
         Existence check for the per-binding permission endpoints (theme 5
         phase 1): the binding row lives in the admin DB while the rules live
         in the control DB, so the rules endpoints bridge the same seam the
-        reverse lookup above does.
+        reverse lookup above does. ``rule_set_id`` rides along so the dry-run
+        endpoint can evaluate an attached shared set instead of inline rules.
         """
         result = await session.execute(
             text(
-                "SELECT id, suspended FROM agent_credential_bindings "
+                "SELECT id, suspended, rule_set_id FROM agent_credential_bindings "
                 "WHERE agent_id = :agent_id AND credential_id = :credential_id"
             ),
             {"agent_id": agent_id, "credential_id": credential_id},
         )
         row = result.fetchone()
-        return (str(row[0]), bool(row[1])) if row is not None else None
+        if row is None:
+            return None
+        return AgentCredentialBindingRow(
+            binding_id=str(row[0]),
+            suspended=bool(row[1]),
+            rule_set_id=str(row[2]) if row[2] is not None else None,
+        )
+
+    @staticmethod
+    async def set_binding_rule_set(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
+    ) -> bool:
+        """Point a direct binding at a shared rule set (or back to inline rules).
+
+        Cross-DB write (control surface → admin table), same raw-SQL seam as
+        ``delete_agent_toolkit_bindings_for_toolkit`` above. ``None`` detaches:
+        the binding's inline ``agent_permission_rules`` rows apply again.
+        Returns ``False`` when no such binding exists.
+        """
+        result = await session.execute(
+            text(
+                "UPDATE agent_credential_bindings SET rule_set_id = :rule_set_id "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
+            ),
+            {"rule_set_id": rule_set_id, "agent_id": agent_id, "credential_id": credential_id},
+        )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def count_bindings_for_rule_set(session: AsyncSession, rule_set_id: str) -> int:

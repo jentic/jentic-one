@@ -67,6 +67,9 @@ class CredentialBindingView(BaseModel):
     bound_at: datetime
     # Reversible per-consumer cut-off: excluded from derivation, rules kept.
     suspended: bool = False
+    # Shared permission rule set the binding points at (control DB, Q-04).
+    # None means the binding's inline rules apply.
+    rule_set_id: str | None = None
     # The API the bound credential serves (control DB) — the credential-side
     # analogue of the toolkit `serves` list (issue #686).
     serves: list[ServedApiRef] = []

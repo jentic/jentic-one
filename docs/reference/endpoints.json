@@ -2368,6 +2368,58 @@
           "credentials:read"
         ]
       },
+      "method": "DELETE",
+      "operation_id": "detachAgentCredentialRuleSet",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/rule-set",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Detach rule set from binding",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PUT",
+      "operation_id": "attachAgentCredentialRuleSet",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/rule-set",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Attach rule set to binding",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
       "method": "POST",
       "operation_id": "connectCredential",
       "path": "/credentials/{credential_id}/connect",
@@ -5621,5 +5673,5 @@
     ],
     "total": 33
   },
-  "total": 198
+  "total": 200
 }

@@ -360,6 +360,8 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     named = cred_bindings[NAMED_CREDENTIAL_ID]
     assert named["name"] == NAMED_CREDENTIAL_NAME
     assert named["suspended"] is False
+    # No shared rule set attached — inline rules govern this binding (Q-04).
+    assert named["rule_set_id"] is None
     assert named["serves"] == [
         {"api_vendor": "stripe", "api_name": "payments", "api_version": "v1"}
     ]

@@ -51,6 +51,7 @@ from jentic_one.control.web.schemas.credentials import (
     CredentialUpdateRequest,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
+    RuleSetAttachRequest,
     RuleSetCreateRequest,
     RuleSetListResponse,
     RuleSetResponse,
@@ -344,6 +345,7 @@ async def list_credential_agents(
                 status=row.agent_status,
                 bound_at=row.bound_at,
                 suspended=row.suspended,
+                rule_set_id=row.rule_set_id,
             )
             for row in data
         ],
@@ -472,6 +474,51 @@ async def test_agent_permissions(
 
 
 # --- Shared permission rule sets (theme 5 phase 1, Q-04) ---
+
+
+@router.put(
+    "/credentials/{credential_id}/agents/{agent_id}/rule-set",
+    operation_id="attachAgentCredentialRuleSet",
+    status_code=204,
+    summary="Attach rule set to binding",
+    responses=not_found(),
+)
+async def attach_agent_rule_set(
+    credential_id: str,
+    agent_id: str,
+    body: RuleSetAttachRequest,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> Response:
+    """Point the binding at a shared rule set (idempotent PUT).
+
+    While attached, the set's ordered list is the binding's effective policy
+    and its inline rules are dormant — `permissions:test` evaluates the set.
+    The set must exist (404 `rule_set_not_found`).
+    """
+    await svc.attach_binding_rule_set(credential_id, agent_id, body.rule_set_id, identity=identity)
+    return Response(status_code=204)
+
+
+@router.delete(
+    "/credentials/{credential_id}/agents/{agent_id}/rule-set",
+    operation_id="detachAgentCredentialRuleSet",
+    status_code=204,
+    summary="Detach rule set from binding",
+    responses=not_found(),
+)
+async def detach_agent_rule_set(
+    credential_id: str,
+    agent_id: str,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> Response:
+    """Detach the binding's shared rule set — its inline rules apply again.
+
+    Idempotent: detaching a binding already on inline rules is a no-op 204.
+    """
+    await svc.detach_binding_rule_set(credential_id, agent_id, identity=identity)
+    return Response(status_code=204)
 
 
 def _to_rule_set_response(

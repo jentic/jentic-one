@@ -765,3 +765,117 @@ def test_rule_set_unknown_id_is_404(cred_writer_client: TestClient) -> None:
     resp = cred_writer_client.get("/permission-rule-sets/prs_nonexistent")
     assert resp.status_code == 404
     assert resp.json()["type"] == "rule_set_not_found"
+
+
+async def test_rule_set_attach_lifecycle(
+    cred_writer_client: TestClient,
+    bound_agents: tuple[str, list[str]],
+    clean_rule_sets: None,
+) -> None:
+    """Attach a shared set to a binding: the reverse lookup shows the pointer,
+    permissions:test evaluates the set's rules (inline rules go dormant, not
+    lost), and detach restores inline evaluation. Attach/detach are idempotent."""
+    credential_id, (agent_id, _) = bound_agents
+    binding_base = f"/credentials/{credential_id}/agents/{agent_id}"
+
+    # Inline rules allow GET /inline only.
+    put = cred_writer_client.put(
+        f"{binding_base}/permissions",
+        json=[{"effect": "allow", "methods": ["GET"], "path": "/inline"}],
+    )
+    assert put.status_code == 200, put.text
+
+    # Shared set allows GET /shared only.
+    set_id = cred_writer_client.post(
+        "/permission-rule-sets",
+        json={
+            "name": "attach-test",
+            "rules": [{"effect": "allow", "methods": ["GET"], "path": "/shared"}],
+        },
+    ).json()["rule_set_id"]
+
+    # Before attach: inline rules govern.
+    got = cred_writer_client.post(
+        f"{binding_base}/permissions:test", json={"method": "GET", "path": "/inline"}
+    ).json()
+    assert got["allowed"] is True
+    got = cred_writer_client.post(
+        f"{binding_base}/permissions:test", json={"method": "GET", "path": "/shared"}
+    ).json()
+    assert got["allowed"] is False
+
+    # Attach (twice — idempotent PUT).
+    for _ in range(2):
+        assert (
+            cred_writer_client.put(
+                f"{binding_base}/rule-set", json={"rule_set_id": set_id}
+            ).status_code
+            == 204
+        )
+
+    # Reverse lookup shows the pointer.
+    rows = {
+        r["agent_id"]: r
+        for r in cred_writer_client.get(f"/credentials/{credential_id}/agents").json()["data"]
+    }
+    assert rows[agent_id]["rule_set_id"] == set_id
+
+    # While attached: the set's list is the effective policy.
+    got = cred_writer_client.post(
+        f"{binding_base}/permissions:test", json={"method": "GET", "path": "/shared"}
+    ).json()
+    assert got["allowed"] is True
+    got = cred_writer_client.post(
+        f"{binding_base}/permissions:test", json={"method": "GET", "path": "/inline"}
+    ).json()
+    assert got["allowed"] is False
+
+    # The attached set cannot be deleted out from under the binding.
+    resp = cred_writer_client.delete(f"/permission-rule-sets/{set_id}")
+    assert resp.status_code == 409
+    assert resp.json()["type"] == "rule_set_in_use"
+
+    # Detach (twice — idempotent): inline rules govern again, delete succeeds.
+    for _ in range(2):
+        assert cred_writer_client.delete(f"{binding_base}/rule-set").status_code == 204
+    got = cred_writer_client.post(
+        f"{binding_base}/permissions:test", json={"method": "GET", "path": "/inline"}
+    ).json()
+    assert got["allowed"] is True
+    assert cred_writer_client.delete(f"/permission-rule-sets/{set_id}").status_code == 204
+
+
+async def test_rule_set_attach_errors(
+    cred_writer_client: TestClient,
+    bound_agents: tuple[str, list[str]],
+    clean_rule_sets: None,
+) -> None:
+    """Attach requires an existing set and an existing binding — both 404."""
+    credential_id, (agent_id, _) = bound_agents
+
+    resp = cred_writer_client.put(
+        f"/credentials/{credential_id}/agents/{agent_id}/rule-set",
+        json={"rule_set_id": "prs_nonexistent"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "rule_set_not_found"
+
+    set_id = cred_writer_client.post(
+        "/permission-rule-sets", json={"name": "orphan-attach"}
+    ).json()["rule_set_id"]
+    resp = cred_writer_client.put(
+        f"/credentials/{credential_id}/agents/agnt_never_bound/rule-set",
+        json={"rule_set_id": set_id},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "agent_binding_not_found"
+
+
+def test_rule_set_attach_needs_write_scope(
+    delegated_agent_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """owner:credentials:read admits binding reads but never rule-set writes."""
+    credential_id, (agent_id, _) = bound_agents
+    base = f"/credentials/{credential_id}/agents/{agent_id}/rule-set"
+    assert delegated_agent_client.put(base, json={"rule_set_id": "prs_x"}).status_code == 403
+    assert delegated_agent_client.delete(base).status_code == 403
