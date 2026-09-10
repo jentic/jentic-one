@@ -84,11 +84,12 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string             { return []string{"token"} }
-func (ConnectChallengeResponse) RequiredFields() []string { return []string{"authorize_url", "state"} }
-func (CreateAdminRequest) RequiredFields() []string       { return []string{"email", "password"} }
-func (CredentialCreateResponse) RequiredFields() []string { return []string{"credential", "secret"} }
-func (CredentialListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
+func (ClaimRequest) RequiredFields() []string               { return []string{"token"} }
+func (ConnectChallengeResponse) RequiredFields() []string   { return []string{"authorize_url", "state"} }
+func (ConsentAgentStatusResponse) RequiredFields() []string { return []string{"status"} }
+func (CreateAdminRequest) RequiredFields() []string         { return []string{"email", "password"} }
+func (CredentialCreateResponse) RequiredFields() []string   { return []string{"credential", "secret"} }
+func (CredentialListResponse) RequiredFields() []string     { return []string{"data", "has_more"} }
 func (CredentialRedactedResponse) RequiredFields() []string {
 	return []string{"active", "api", "created_at", "credential_id", "name", "provider", "type"}
 }

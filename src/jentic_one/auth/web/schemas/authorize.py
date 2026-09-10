@@ -18,6 +18,20 @@ class OAuthApprovalStatusResponse(BaseModel):
     status: Literal["pending", "approved", "denied"]
 
 
+class ConsentAgentStatusResponse(BaseModel):
+    """Minimal tri-state for the consent page's pending-agent awaiting page (P4).
+
+    Deliberately carries nothing else — no agent name, owner, or scopes — so
+    the anonymous poll endpoint cannot be used to read agent details. The
+    poll is keyed by a signed ``agent-status`` blob bound to one agent id,
+    never a bare id, and non-terminal lifecycle states (disabled, archived, a
+    vanished row) all read as ``pending`` so the endpoint is not a lifecycle
+    oracle either.
+    """
+
+    status: Literal["pending", "approved", "denied"]
+
+
 class OAuthApprovalDecisionRequest(BaseModel):
     """Inline admin approve/deny posted from the approval-pending page.
 

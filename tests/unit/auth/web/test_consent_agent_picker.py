@@ -117,10 +117,20 @@ def _mock_authorize_svc(
     *,
     user_id: str | None = "usr_owner",
     agents: list[AgentConsentOption] | None = None,
+    has_any_agents: bool | None = None,
 ) -> MagicMock:
     svc = MagicMock()
     svc.resolve_existing_user_id = AsyncMock(return_value=user_id)
     svc.list_consentable_agents = AsyncMock(return_value=agents or [])
+    # Default: any-status ownership mirrors the active list, i.e. no
+    # disabled/archived residue unless a test says otherwise.
+    svc.owner_has_any_agents = AsyncMock(
+        return_value=bool(agents) if has_any_agents is None else has_any_agents
+    )
+    # Hybrid arm inputs (P4): no pending agent, agents:write held — keeps the
+    # picker tests on the pre-hybrid ACTIVE arm.
+    svc.newest_pending_agent = AsyncMock(return_value=None)
+    svc.user_can_create_active_agent = AsyncMock(return_value=True)
     svc.provision_from_claims = AsyncMock(return_value="usr_owner")
     svc.record_consent_decision = AsyncMock()
     svc.issue_authorization_code = AsyncMock(return_value="code_grant")
@@ -206,10 +216,13 @@ def test_redirect_origin_renders_sensibly_for_all_accepted_shapes(
 
 @patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
-def test_agent_model_zero_agents_renders_empty_state(
+def test_agent_model_zero_agents_renders_create_form(
     mock_client_svc_cls: MagicMock,
     mock_authorize_cls: MagicMock,
 ) -> None:
+    """P4: zero active agents no longer dead-ends — the page renders the
+    inline create-agent form (no picker, no code minted). The form's own
+    arms are pinned in test_consent_agent_create.py."""
     client, backend = _make_app()
     _seed_consent_handle(backend)
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
@@ -219,19 +232,20 @@ def test_agent_model_zero_agents_renders_empty_state(
     resp = client.get("/oauth/consent", params={"ch": _HANDLE})
 
     assert resp.status_code == 200
-    assert "you don't have one yet" in resp.text
+    assert 'action="/oauth/consent/agent"' in resp.text
     assert 'name="agent_id"' not in resp.text
     svc.issue_authorization_code.assert_not_awaited()
 
 
 @patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
-def test_agent_model_unresolvable_user_renders_empty_state(
+def test_agent_model_unresolvable_user_renders_create_form_without_provisioning(
     mock_client_svc_cls: MagicMock,
     mock_authorize_cls: MagicMock,
 ) -> None:
     """Deferred provisioning: a brand-new user has no row yet, hence no
-    agents — the page must not create one just to render."""
+    agents — P4 offers the create form (bound to the handle's IdP claims),
+    but the page must not create a user row just to render."""
     client, backend = _make_app()
     _seed_consent_handle(backend)
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
@@ -241,7 +255,7 @@ def test_agent_model_unresolvable_user_renders_empty_state(
     resp = client.get("/oauth/consent", params={"ch": _HANDLE})
 
     assert resp.status_code == 200
-    assert "you don't have one yet" in resp.text
+    assert 'action="/oauth/consent/agent"' in resp.text
     svc.list_consentable_agents.assert_not_awaited()
     svc.provision_from_claims.assert_not_awaited()
 

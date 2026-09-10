@@ -2,8 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { Body_consentAgentCreate } from '../models/Body_consentAgentCreate';
 import type { Body_consentSubmit } from '../models/Body_consentSubmit';
 import type { Body_loginSubmit } from '../models/Body_loginSubmit';
+import type { ConsentAgentStatusResponse } from '../models/ConsentAgentStatusResponse';
 import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
@@ -420,6 +422,102 @@ export class OAuthService {
             mediaType: 'application/x-www-form-urlencoded',
             errors: {
                 400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Create the consenting user's first agent inline (consent page)
+     * Create the consenting user's first agent from the zero-agents consent page (P4).
+     *
+     * The form is rendered only when the consenting user owns zero agents in
+     * any status (the G12(b) first-run dead-end). This submit verifies the signed
+     * single-use ``agent-create`` blob (bound to the consent handle AND the
+     * authenticated subject — no ambient credential is honored, so a cross-site
+     * form cannot drive it: it would need both the unguessable handle and a
+     * blob minted for that very handle), re-validates the handle and the D7
+     * client gate, provisions the user row if deferred provisioning left none
+     * (an affirmative user action, unlike rendering), re-checks the zero-agents
+     * predicate (an agent appearing in between skips creation — idempotent),
+     * creates the agent through the same ``AgentService.create`` path as the
+     * SPA (owner = the consenting user, default agent scopes, same audit +
+     * event), and 303-redirects back into ``GET /oauth/consent`` where the new
+     * agent renders pre-selected.
+     *
+     * Failure arms: expired/tampered/replayed blob and expired handle → the
+     * consent flow's standard ``invalid_consent`` error redirect; a gated
+     * client → ``access_denied``; an invalid agent name → the form re-rendered
+     * with the error inline and a fresh blob.
+     *
+     * Creation posture (security review — the hybrid): the arm is decided
+     * server-side AFTER the subject is resolved/provisioned, against the same
+     * effective-permission math as POST /agents' ``agents:write`` gate. A
+     * permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+     * unpermissioned one gets a PENDING agent (the POST /register posture) and
+     * the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+     * makes N parallel submits (N distinct blobs from N renders) create exactly
+     * one agent — losers re-enter consent, which renders the picker or the
+     * awaiting page as appropriate.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static consentAgentCreate({
+        formData,
+    }: {
+        formData: Body_consentAgentCreate,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/consent/agent',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Poll pending-agent approval status (consent awaiting page)
+     * Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+     *
+     * Anonymous but keyed by the signed ``agent-status`` blob — never a bare
+     * agent id, so the endpoint cannot be used to enumerate or probe agents:
+     * the id it reports on is the one SIGNED into the blob, which only the
+     * consent flow mints, and only for an agent it verified belongs to the
+     * handle's subject. The response carries ONLY the tri-state — no name,
+     * owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+     * a vanished row) all read as ``pending``, so possession of a blob is not a
+     * lifecycle oracle either. Any verification failure (bad signature, wrong
+     * purpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the
+     * page treats a 400 as terminal ("retry the connection") because the blob
+     * shares the consent handle's lifetime — a retry re-enters the flow, which
+     * re-parks on a fresh awaiting page while the agent stays pending. Shares
+     * the approval-status poll's own per-IP rate bucket (same cadence, same
+     * caller shape).
+     * @returns ConsentAgentStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static consentAgentStatus({
+        st,
+    }: {
+        /**
+         * Signed agent-status blob minted by the consent flow's pending arm
+         */
+        st: string,
+    }): CancelablePromise<ConsentAgentStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/oauth/consent/agent/status',
+            query: {
+                'st': st,
+            },
+            errors: {
+                400: `Malformed, tampered, or expired agent-status blob.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
