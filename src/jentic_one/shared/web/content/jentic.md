@@ -67,14 +67,17 @@ APIs and handles credentials for you.
   client on every request — you never run setup, never handle token refresh,
   and never see the raw credential. On the HTTP mount your scopes and
   bindings are resolved live per request, so an approved grant works on the
-  very next tool call with no re-mint step.
+  very next tool call with no re-mint step (one exception: the session's
+  OAuth consent ceiling — see the access step).
 
 ## Procedure
 
 Each step shows the shared doctrine first, then the lane-specific mechanics.
-Follow your session's lane; never execute the other lane's verbs.
 
 ### 1. Confirm you have a valid identity
+
+Follow your session's lane through every step; never execute the other
+lane's verbs.
 
 You normally don't set up your own identity — your human operator connects
 this agent to a Jentic install out-of-band (via `jentic register`/`jentic
@@ -120,10 +123,10 @@ the agent awaits approval — nothing you can call fixes it. Only call
 
 See your own identity, status, scopes, and which toolkits you're bound to —
 `jentic access whoami` in a CLI session, the `whoami` tool in an MCP session.
-Each toolkit binding lists the APIs it **serves** (`serves: [{vendor, name,
-version}]`). This tells you exactly what you can already call. Combined with
-the catalog (what's available to add — see step 3), it's your map of the
-workspace.
+Each toolkit binding lists the APIs it **serves** (`serves: [{api_vendor,
+api_name, api_version}]`). This tells you exactly what you can already call.
+Combined with the catalog (what's available to add — see step 3), it's your
+map of the workspace.
 
 **Decide access from `whoami` first — do NOT execute an operation just to see
 whether you have access.** A denied execute is a wasted round-trip; you can tell
@@ -268,7 +271,7 @@ request_access {"provision": ["slack.com/api", "googleapis.com/sheets"],
 ```
 
 With exactly one `provision`, the bare forms apply — `"auth": ["bearer"]`,
-`"rules_json": [[{"effect":"allow","methods":["GET"],"path":".*"}]]` — no key
+`"rules_json": [{"effect":"allow","methods":["GET"],"path":".*"}]` — no key
 needed. The result carries a `request_id` and an `approve_url`: **relay the
 `approve_url` to your human operator** (granting is always a human action in
 the dashboard; the tool never approves). Then the poll arm — pass ONLY the id:
@@ -327,8 +330,8 @@ mile** — use it when a toolkit for the API already exists (e.g. an operator
 created one) and you just need to be bound to it. When nothing serves the API
 yet, a provisioning plan is the right first move; a bare toolkit bind would
 auto-deny with `decision_reason: "No toolkit serves API <vendor/name>;
-provision and bind a credential for it first"` — that is the signal to file
-the provisioning plan instead.
+provision and bind a credential for it first, then request the toolkit
+binding"` — that is the signal to file the provisioning plan instead.
 
 Track and manage your requests — CLI:
 
@@ -362,8 +365,12 @@ registry.
 
 Importing an **already-cataloged** API is gated on `catalog:import`, which an
 approved agent holds **by default** — no access request needed. Just run the
-import. Re-importing an API that is already there is safe: the result
-converges (`already_imported` on MCP; the CLI reports the same). Don't file
+import. Re-importing an API that is already there is safe — the registry
+state converges either way — but the surfaces report it differently:
+`already_imported` (a success) on the HTTP mount; the stdio MCP server and
+the `jentic catalog import` CLI surface the same duplicate as a **failed
+(dead-letter) import** whose error says a revision with identical content
+already exists. Treat that error as "already there" — don't retry. Don't file
 an access request for a made-up "catalog read" scope — reading the registry
 and importing a cataloged API need no grant.
 
@@ -423,10 +430,13 @@ search_apis {"query": "get values from a spreadsheet range", "limit": 10}
 
 `import_api` runs the import as a job and tracks it in-process: on completion
 it returns `{job_id, status, revisions, promoted}` with the imported revisions
-promoted live. `already_imported` is a **success** — the registry converges;
-re-importing is safe. If the result carries a non-terminal `status` (queued,
-tracking timed out), poll `get_execution_result` with the `job_id` from that
-result rather than re-importing. Each `search_apis` hit carries the
+promoted live. A duplicate import converges — re-importing is safe — but only
+the HTTP mount reports it as an `already_imported` **success**; the stdio
+server surfaces the same duplicate as a failed (dead-letter) import whose
+error says identical content already exists — read that as "already there",
+never as something to retry. If the result carries a non-terminal `status`
+(queued, tracking timed out), poll `get_execution_result` with the `job_id`
+from that result rather than re-importing. Each `search_apis` hit carries the
 `operation_id` to pass straight to `inspect_operation`/`execute`.
 
 **Before concluding "the data is gone", confirm which backend you're on.** If
@@ -658,8 +668,10 @@ same codes, delivered in the envelope instead of stderr.
   non-terminal import) until its status is terminal.
 - `search_catalog` — find importable APIs when the registry search comes up
   empty.
-- `import_api` — import a catalog API into the registry; `already_imported`
-  is a success, re-import is safe.
+- `import_api` — import a catalog API into the registry; re-import is safe —
+  the mount reports a duplicate as an `already_imported` success (the stdio
+  server reports the same duplicate as a failed dead-letter import; either
+  way it's already there).
 - `request_access` — file ONE composite access request (provision/toolkits/
   scopes + reason), or poll a filed one with `{"request_id": "<id>"}`; relay
   `approve_url` to the human.
