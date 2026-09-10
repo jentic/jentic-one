@@ -298,7 +298,9 @@ with `Authorization: Bearer <agent API key or access token>`. Alternatively,
 the local `jentic mcp` stdio server — available in the `jentic` CLI from the
 next release; check `jentic mcp --help` — spawns on the agent machine and
 talks to this deployment with the agent's registered identity. Both expose
-the same discover → execute loop as the CLI tools. Stdio-only MCP runtimes
+the same discover → execute loop as the CLI tools. The endpoint also serves
+the shipped skill set as MCP resources (`skill://<name>`; `skill://index` is
+the manifest). Stdio-only MCP runtimes
 can reach {base}/mcp through a stdio↔HTTP bridge such as `mcp-remote` or
 `mcp-proxy` — exact entries in the
 [MCP endpoint guide](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/mcp-http-endpoint.md).
