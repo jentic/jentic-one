@@ -23,6 +23,7 @@ import type { PermissionsPatchRequest } from '../models/PermissionsPatchRequest'
 import type { PermissionTestRequest } from '../models/PermissionTestRequest';
 import type { PermissionTestResponse } from '../models/PermissionTestResponse';
 import type { ProviderDiscoveryResponse } from '../models/ProviderDiscoveryResponse';
+import type { RuleSetAttachRequest } from '../models/RuleSetAttachRequest';
 import type { Sigv4CreateRequest } from '../models/Sigv4CreateRequest';
 import type { Sigv4UpdateRequest } from '../models/Sigv4UpdateRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -409,6 +410,78 @@ export class CredentialsService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/credentials/{credential_id}/agents/{agent_id}/permissions:test',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Detach rule set from binding
+     * Detach the binding's shared rule set — its inline rules apply again.
+     *
+     * Idempotent: detaching a binding already on inline rules is a no-op 204.
+     * @returns void
+     * @throws ApiError
+     */
+    public static detachAgentCredentialRuleSet({
+        credentialId,
+        agentId,
+    }: {
+        credentialId: string,
+        agentId: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/credentials/{credential_id}/agents/{agent_id}/rule-set',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Attach rule set to binding
+     * Point the binding at a shared rule set (idempotent PUT).
+     *
+     * While attached, the set's ordered list is the binding's effective policy
+     * and its inline rules are dormant — `permissions:test` evaluates the set.
+     * The set must exist (404 `rule_set_not_found`).
+     * @returns void
+     * @throws ApiError
+     */
+    public static attachAgentCredentialRuleSet({
+        credentialId,
+        agentId,
+        requestBody,
+    }: {
+        credentialId: string,
+        agentId: string,
+        requestBody: RuleSetAttachRequest,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/credentials/{credential_id}/agents/{agent_id}/rule-set',
             path: {
                 'credential_id': credentialId,
                 'agent_id': agentId,

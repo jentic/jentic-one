@@ -12,6 +12,7 @@ export type CredentialBindingResponse = {
     credential_id: string;
     id: string;
     name?: (string | null);
+    rule_set_id?: (string | null);
     serves?: Array<ServedApiRef>;
     suspended: boolean;
 };

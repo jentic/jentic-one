@@ -177,6 +177,7 @@ export type { RegisterRequest } from './models/RegisterRequest';
 export type { RegisterResponse } from './models/RegisterResponse';
 export type { RegistrationStatusResponse } from './models/RegistrationStatusResponse';
 export type { RevokeRequest } from './models/RevokeRequest';
+export type { RuleSetAttachRequest } from './models/RuleSetAttachRequest';
 export type { RuleSetCreateRequest } from './models/RuleSetCreateRequest';
 export type { RuleSetListResponse } from './models/RuleSetListResponse';
 export type { RuleSetResponse } from './models/RuleSetResponse';
