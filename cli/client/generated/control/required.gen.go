@@ -126,7 +126,7 @@ func (EventResponse) RequiredFields() []string {
 func (ExecutionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ExecutionRecordLinks) RequiredFields() []string  { return []string{"self"} }
 func (ExecutionResponse) RequiredFields() []string {
-	return []string{"_links", "actor_id", "actor_type", "created_at", "execution_id", "started_at", "status", "toolkit_id", "trace_id"}
+	return []string{"_links", "actor_id", "actor_type", "created_at", "execution_id", "started_at", "status", "trace_id"}
 }
 func (ExecutionStatsResponse) RequiredFields() []string {
 	return []string{"daily_buckets", "success_rate_percent", "top_operations", "total_executions"}
