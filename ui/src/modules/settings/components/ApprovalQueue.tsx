@@ -214,8 +214,11 @@ function QueueRow({
 					</div>
 				</div>
 				{/* The verifiable identity — origins + software_id — right under
-				    the self-reported name it keeps honest. */}
-				<p className="text-muted-foreground mt-1 min-w-0 truncate font-mono text-xs">
+				    the self-reported name it keeps honest. WRAPS rather than
+				    truncates: this is the one line whose job is verification,
+				    so extra origins must not vanish past an ellipsis (the full
+				    URI list can hide behind the >2 disclosure; this can't). */}
+				<p className="text-muted-foreground mt-1 font-mono text-xs break-all">
 					{verifiableLine}
 				</p>
 				{client.description && (
@@ -275,26 +278,18 @@ function QueueRow({
 								</Badge>
 							))
 						)}
-						{hiddenScopeCount > 0 && (
+						{/* ONE persistent toggle (the URI-disclosure pattern):
+						    swapping two conditionally-mounted buttons would drop
+						    keyboard focus to body on every click. */}
+						{scopes.length > SCOPE_PREVIEW_COUNT && (
 							<Button
 								variant="ghost"
 								size="sm"
 								className="h-auto px-1 py-0.5 text-xs"
-								aria-expanded={false}
-								onClick={(): void => setScopesExpanded(true)}
+								aria-expanded={scopesExpanded}
+								onClick={(): void => setScopesExpanded((v) => !v)}
 							>
-								+{hiddenScopeCount} more
-							</Button>
-						)}
-						{scopesExpanded && scopes.length > SCOPE_PREVIEW_COUNT && (
-							<Button
-								variant="ghost"
-								size="sm"
-								className="h-auto px-1 py-0.5 text-xs"
-								aria-expanded
-								onClick={(): void => setScopesExpanded(false)}
-							>
-								Show less
+								{scopesExpanded ? 'Show less' : `+${hiddenScopeCount} more`}
 							</Button>
 						)}
 					</p>

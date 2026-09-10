@@ -19,7 +19,7 @@ import { SettingsPage } from '@/modules/settings/pages/SettingsPage';
 // The full flattened page (header + page-level TabNav + section): the page
 // owns the ?tab= wiring and the tab bar, so the surface is exercised through
 // it — rendering the section alone would leave the tabs unmounted.
-function renderSection(route = '/settings') {
+function renderSettingsPage(route = '/settings') {
 	return renderWithProviders(
 		<>
 			<SettingsPage />
@@ -42,7 +42,7 @@ async function settleHeader(): Promise<void> {
 	await waitFor(() => expect(getComputedStyle(motionEl).opacity).toBe('1'));
 }
 
-describe('OAuthClientsSection', () => {
+describe('OAuth clients surface (via SettingsPage)', () => {
 	beforeEach(async () => {
 		// The roster swaps to stacked cards below `sm` (640px); these specs
 		// assert the desktop table grammar, so pin a desktop viewport.
@@ -56,7 +56,7 @@ describe('OAuthClientsSection', () => {
 	// ------------------------------------------------------------------
 
 	it('defaults to the Active segment: working fleet only, pending/denied/inactive hidden', async () => {
-		renderSection();
+		renderSettingsPage();
 
 		// The admin-registered confidential client, with its §4.8 grant count.
 		expect(await screen.findByText('Internal Dashboard')).toBeInTheDocument();
@@ -71,7 +71,7 @@ describe('OAuthClientsSection', () => {
 
 	it('status segments carry live counts and Inactive surfaces the approved+inactive zombie (#1312)', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		// Live counts over the full include_inactive pool.
@@ -91,7 +91,7 @@ describe('OAuthClientsSection', () => {
 
 	it('never offers Reactivate on a denied row — its recovery routes to the queue', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		// The denied row's kebab: Review in queue, but NO Reactivate (a PATCH
@@ -117,7 +117,7 @@ describe('OAuthClientsSection', () => {
 
 	it('"Review in queue" on a denied row lands on the queue tab, Denied slice', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		await user.click(screen.getByRole('button', { name: 'Denied 1' }));
@@ -134,7 +134,7 @@ describe('OAuthClientsSection', () => {
 	});
 
 	it('has no critical a11y violations on the clients tab', async () => {
-		const { container } = renderSection();
+		const { container } = renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 		await settleHeader();
 		await checkA11y(container);
@@ -145,14 +145,14 @@ describe('OAuthClientsSection', () => {
 	// ------------------------------------------------------------------
 
 	it('carries the pending count on the Approval queue tab label', async () => {
-		renderSection();
+		renderSettingsPage();
 		// One seeded pending registration → the tab badge shows 1.
 		const tab = await screen.findByRole('tab', { name: /Approval queue/ });
 		expect(await within(tab).findByText('1')).toBeInTheDocument();
 	});
 
 	it('deep-links to the queue via ?tab=queue: name-led heading with the Unverified marker and adjacent origins', async () => {
-		renderSection('/settings?tab=queue');
+		renderSettingsPage('/settings?tab=queue');
 
 		// Hierarchy v2: the client NAME is the heading — what humans scan for.
 		const heading = await screen.findByRole('heading', { name: 'Cursor' });
@@ -185,7 +185,7 @@ describe('OAuthClientsSection', () => {
 
 	it('approves a pending registration and empties the queue (D7 pending→approved)', async () => {
 		const user = userEvent.setup();
-		renderSection('/settings?tab=queue');
+		renderSettingsPage('/settings?tab=queue');
 		await screen.findByText('Cursor');
 
 		await user.click(screen.getByRole('button', { name: 'Approve' }));
@@ -200,7 +200,7 @@ describe('OAuthClientsSection', () => {
 
 	it('denies a pending registration via the reason dialog (D7 pending→denied)', async () => {
 		const user = userEvent.setup();
-		renderSection('/settings?tab=queue');
+		renderSettingsPage('/settings?tab=queue');
 		await screen.findByText('Cursor');
 
 		await user.click(screen.getByRole('button', { name: 'Deny' }));
@@ -266,7 +266,7 @@ describe('OAuthClientsSection', () => {
 
 	it('keeps the deny reason draft across a casual dismiss (dialog-state rule)', async () => {
 		const user = userEvent.setup();
-		renderSection('/settings?tab=queue');
+		renderSettingsPage('/settings?tab=queue');
 		await screen.findByText('Cursor');
 
 		await user.click(screen.getByRole('button', { name: 'Deny' }));
@@ -284,7 +284,7 @@ describe('OAuthClientsSection', () => {
 
 	it('recovers a denied client: the Denied filter re-offers Approve (D7 denied→approved)', async () => {
 		const user = userEvent.setup();
-		renderSection('/settings?tab=queue');
+		renderSettingsPage('/settings?tab=queue');
 		await screen.findByText('Cursor');
 
 		// The seeded denied row lives under the Denied filter, without a Deny verb.
@@ -299,7 +299,7 @@ describe('OAuthClientsSection', () => {
 
 	it('collapses noisy queue-card metadata: scope "+N more" and redirect-URI disclosure', async () => {
 		const user = userEvent.setup();
-		renderSection('/settings?tab=queue');
+		renderSettingsPage('/settings?tab=queue');
 		await screen.findByText('Cursor');
 
 		// Sketchy Tool is seeded noisy: 6 scopes, 3 redirect URIs.
@@ -323,7 +323,7 @@ describe('OAuthClientsSection', () => {
 	});
 
 	it('has no critical a11y violations on the queue tab', async () => {
-		const { container } = renderSection('/settings?tab=queue');
+		const { container } = renderSettingsPage('/settings?tab=queue');
 		await screen.findByText('Cursor');
 		await settleHeader();
 		await checkA11y(container);
@@ -335,7 +335,7 @@ describe('OAuthClientsSection', () => {
 
 	it('opens the detail sheet from the roster name: metadata and grants render', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		await user.click(
@@ -362,7 +362,7 @@ describe('OAuthClientsSection', () => {
 
 	it("offers Reactivate in a zombie's detail sheet (recovery from its own console)", async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		// The approved+inactive zombie must not be stranded: its own console
@@ -378,7 +378,7 @@ describe('OAuthClientsSection', () => {
 
 	it('revoke honours can_revoke: enabled kill switch vs. disabled with explanation', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 		await user.click(
 			screen.getByRole('button', { name: 'View details for Internal Dashboard' }),
@@ -401,7 +401,7 @@ describe('OAuthClientsSection', () => {
 
 	it('surfaces the decision history — including the deny reason — in Recent changes', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		// The denied client's audit trail carries the operator's deny reason,
@@ -421,7 +421,7 @@ describe('OAuthClientsSection', () => {
 
 	it('creates a public agent-consent client (consent_model + token_endpoint_auth_method sent)', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		await user.click(screen.getByRole('button', { name: 'Add client' }));
@@ -459,7 +459,7 @@ describe('OAuthClientsSection', () => {
 				return undefined;
 			}),
 		);
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		// Internal Dashboard is seeded WITH a restriction (apis:read) —
@@ -489,7 +489,7 @@ describe('OAuthClientsSection', () => {
 
 	it('shows the one-time secret for a new confidential client (and wipes it on close)', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		await user.click(screen.getByRole('button', { name: 'Add client' }));
@@ -510,7 +510,7 @@ describe('OAuthClientsSection', () => {
 
 	it('keeps the create-form draft across a casual dismiss (dialog-state rule)', async () => {
 		const user = userEvent.setup();
-		renderSection();
+		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		await user.click(screen.getByRole('button', { name: 'Add client' }));
