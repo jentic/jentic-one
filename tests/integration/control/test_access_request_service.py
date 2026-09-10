@@ -1,4 +1,10 @@
-"""Integration tests for AccessRequestService — lifecycle, scoping, and events."""
+"""Integration tests for AccessRequestService — lifecycle, scoping, and events.
+
+Theme-5 Phase 3: ``credential:bind`` binds the filing agent directly to a
+credential (two-stage admin effect — control-DB rules first, then the admin
+binding row); the toolkit vocabulary is retired; reference resolution runs
+under the decider's owner axis (hard problem 8).
+"""
 
 from __future__ import annotations
 
@@ -12,9 +18,8 @@ from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos import EventRepository
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
 from jentic_one.control.core.schema.access_requests import AccessRequest
+from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
-from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
-from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRepository
 from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
     AdminEffectReconcileError,
@@ -22,7 +27,6 @@ from jentic_one.control.services.access_requests.errors import (
     ItemNotOnRequestError,
     ItemNotPendingError,
     NotAReviewerError,
-    PrerequisiteNotMetError,
     RequestNotPendingError,
     UnsupportedScopeGrantError,
 )
@@ -42,6 +46,8 @@ REVIEWER_SUB = "usr_reviewer_001"
 UNRELATED_SUB = "usr_unrelated_001"
 ADMIN_SUB = "usr_admin_001"
 
+_RULES = [{"effect": "allow", "methods": ["GET"], "path": "^/pets"}]
+
 
 def _filer_identity() -> Identity:
     return Identity(
@@ -57,14 +63,6 @@ def _owner_identity() -> Identity:
     return Identity(
         sub=OWNER_SUB,
         email="owner@test.local",
-        permissions=["agents:write"],
-    )
-
-
-def _reviewer_identity() -> Identity:
-    return Identity(
-        sub=REVIEWER_SUB,
-        email="reviewer@test.local",
         permissions=["agents:write"],
     )
 
@@ -110,37 +108,75 @@ async def clean_events(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
 
 
 @pytest.fixture()
-async def seed_binding(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
-    """Seed an agent + binding so prerequisite checks pass."""
+async def seed_binding(
+    admin_db: DatabaseSession, control_db: DatabaseSession
+) -> AsyncGenerator[None, None]:
+    """Seed the filer agent (admin DB) + the owner's credentials (control DB).
+
+    ``credential:bind`` writes an admin ``agent_credential_bindings`` row keyed
+    by the filing agent, so the agent must exist; the bind's target credentials
+    (cred_001/cred_002, owned by OWNER_SUB) must be visible to the deciding
+    owner. Teardown removes the binding rows and rules the approvals created.
+    """
+
+    async def _cleanup() -> None:
+        async with admin_db.session() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE agent_id = :aid"),
+                {"aid": FILER_SUB},
+            )
+            await session.execute(
+                text("DELETE FROM agents WHERE id = :aid"),
+                {"aid": FILER_SUB},
+            )
+            await session.commit()
+        async with control_db.session() as session:
+            await session.execute(
+                text("DELETE FROM agent_permission_rules WHERE agent_id = :aid"),
+                {"aid": FILER_SUB},
+            )
+            await session.execute(
+                text("DELETE FROM credentials WHERE id IN ('cred_001', 'cred_002')")
+            )
+            await session.commit()
+
+    await _cleanup()
     async with admin_db.session() as session:
+        # agents.owner_id is FK'd to users — the owner must exist on the roster.
         await session.execute(
             text(
-                "INSERT INTO agents (id, name, registered_by, status) "
-                "VALUES (:id, :name, :registered_by, 'active') "
-                "ON CONFLICT DO NOTHING"
+                "INSERT INTO users (id, email, first_name, last_name) "
+                "VALUES (:id, :email, 'Olive', 'Owner') ON CONFLICT DO NOTHING"
             ),
-            {"id": FILER_SUB, "name": "test-filer-agent", "registered_by": OWNER_SUB},
+            {"id": OWNER_SUB, "email": "owner@test.local"},
         )
         await session.execute(
             text(
-                "INSERT INTO agent_toolkit_bindings (id, agent_id, toolkit_id) "
-                "VALUES (:id, :agent_id, :toolkit_id) "
+                "INSERT INTO agents (id, name, owner_id, registered_by, status) "
+                "VALUES (:id, :name, :owner, :registered_by, 'active') "
                 "ON CONFLICT DO NOTHING"
             ),
-            {"id": "atb_test_binding_001", "agent_id": FILER_SUB, "toolkit_id": "tk_target"},
+            {
+                "id": FILER_SUB,
+                "name": "test-filer-agent",
+                "owner": OWNER_SUB,
+                "registered_by": OWNER_SUB,
+            },
+        )
+        await session.commit()
+    async with control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials (id, type, name, api_vendor, created_by) VALUES "
+                "('cred_001', 'token_value', 'itest-cred-1', 'itest-vendor-one', :owner), "
+                "('cred_002', 'token_value', 'itest-cred-2', 'itest-vendor-two', :owner) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"owner": OWNER_SUB},
         )
         await session.commit()
     yield
-    async with admin_db.session() as session:
-        await session.execute(
-            text("DELETE FROM agent_toolkit_bindings WHERE id = :id"),
-            {"id": "atb_test_binding_001"},
-        )
-        await session.execute(
-            text("DELETE FROM agents WHERE id = :id"),
-            {"id": FILER_SUB},
-        )
-        await session.commit()
+    await _cleanup()
 
 
 @pytest.fixture()
@@ -152,10 +188,8 @@ def _base_items() -> list[dict[str, object]]:
     return [
         {
             "resource_type": "credential",
-            "action": "read",
+            "action": "bind",
             "resource_id": "cred_001",
-            "to_type": "toolkit",
-            "to_id": "tk_target",
         }
     ]
 
@@ -179,6 +213,34 @@ async def test_file_happy_path(
     assert view.filer_owner_id == OWNER_SUB
     assert "/access-requests/" in view.approve_url
     assert view.expires_at > dt.datetime.now(dt.UTC)
+    # Filing with no policy stamps the read-only default (hard problem 6).
+    assert view.items[0].rules == [{"effect": "allow", "methods": ["GET"]}]
+    assert view.items[0].rule_set_id is None
+
+
+async def test_file_rule_set_id_suppresses_default_rules(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+) -> None:
+    """A shared-set pointer is a policy: the default-rule substitution must not
+    override it (the stored item would then carry both carriers)."""
+    view = await svc.file(
+        actor_id=FILER_SUB,
+        reason=None,
+        items=[
+            {
+                "resource_type": "credential",
+                "action": "bind",
+                "resource_id": "cred_001",
+                "rule_set_id": "prs_pointer_1",
+            }
+        ],
+        identity=_filer_identity(),
+    )
+    assert view.items[0].rule_set_id == "prs_pointer_1"
+    assert view.items[0].rules is None
 
 
 async def test_file_scope_grant_rejects_unknown_scope(
@@ -236,35 +298,6 @@ async def test_file_ttl_honored(
     assert view.expires_at > expected_min
 
 
-async def test_file_prerequisite_not_met(
-    svc: AccessRequestService,
-    clean_access_requests: None,
-) -> None:
-    identity = _filer_identity()
-    with pytest.raises(PrerequisiteNotMetError):
-        await svc.file(
-            actor_id=FILER_SUB,
-            reason=None,
-            items=_base_items(),
-            identity=identity,
-        )
-
-
-async def test_file_no_prerequisite_check_without_to_id(
-    svc: AccessRequestService,
-    clean_access_requests: None,
-) -> None:
-    identity = _filer_identity()
-    items = [{"resource_type": "credential", "action": "read", "resource_id": "cred_001"}]
-    view = await svc.file(
-        actor_id=FILER_SUB,
-        reason=None,
-        items=items,
-        identity=identity,
-    )
-    assert view.status == "pending"
-
-
 async def test_file_duplicate_raises(
     svc: AccessRequestService,
     clean_access_requests: None,
@@ -296,20 +329,8 @@ async def test_decide_approve_and_deny(
 ) -> None:
     filer = _filer_identity()
     items = [
-        {
-            "resource_type": "credential",
-            "action": "read",
-            "resource_id": "cred_001",
-            "to_type": "toolkit",
-            "to_id": "tk_target",
-        },
-        {
-            "resource_type": "credential",
-            "action": "write",
-            "resource_id": "cred_002",
-            "to_type": "toolkit",
-            "to_id": "tk_target",
-        },
+        {"resource_type": "credential", "action": "bind", "resource_id": "cred_001"},
+        {"resource_type": "credential", "action": "bind", "resource_id": "cred_002"},
     ]
     filed = await svc.file(
         actor_id=FILER_SUB,
@@ -339,7 +360,9 @@ async def test_decide_approve_and_deny(
     denied_item = next(i for i in view.items if i.id == filed.items[1].id)
     assert approved_item.status == "approved"
     assert approved_item.applied_effects is not None
-    assert approved_item.applied_effects["skipped"] is True
+    # A credential:bind approval records a real binding effect, not a skip.
+    assert approved_item.applied_effects["credential_id"] == "cred_001"
+    assert approved_item.applied_effects["binding_id"].startswith("acb_")
     assert denied_item.status == "denied"
     assert denied_item.decision_reason == "Not needed"
 
@@ -420,10 +443,8 @@ async def test_decide_settles_filed_alert(
         items=[
             {
                 "resource_type": "credential",
-                "action": "write",
-                "resource_id": "cred_other",
-                "to_type": "toolkit",
-                "to_id": "tk_target",
+                "action": "bind",
+                "resource_id": "cred_002",
             }
         ],
         identity=filer,
@@ -507,9 +528,11 @@ async def test_decide_retry_after_post_commit_crash_still_announces(
     assert live.acknowledged is False
 
     # Retry with the same decisions: nothing transitions, but the announcement
-    # must be recovered — alert settled AND decision event emitted.
+    # must be recovered — alert settled AND decision event emitted — and the
+    # un-acked admin effect (the crash also skipped it) driven to completion.
     view = await svc.decide(filed.id, identity=reviewer, item_decisions=decisions)
     assert view.status == "approved"
+    assert view.items[0].applied_effects is not None
 
     settled = await _filed_alert(admin_db, filed.id)
     assert settled is not None
@@ -523,17 +546,18 @@ async def test_decide_retry_after_post_commit_crash_still_announces(
     assert len(decision_events) == 1
 
 
-async def test_decide_approve_unresolvable_toolkit_ref_denies_not_pending(
+async def test_decide_approve_unresolvable_credential_ref_denies_not_pending(
     svc: AccessRequestService,
     clean_access_requests: None,
     clean_events: None,
+    seed_binding: None,
 ) -> None:
-    """Regression (#696): approving a ``toolkit:bind`` whose reference resolves to
-    no toolkit must *deny the item with the failure as the reason* — not raise and
-    roll the decision back, leaving the request stranded as ``pending``.
+    """Regression (#696): approving a ``credential:bind`` whose reference resolves
+    to no credential must *deny the item with the failure as the reason* — not
+    raise and roll the decision back, leaving the request stranded as ``pending``.
 
     Pre-fix, ``decide()`` flipped the item to approved, then ``validate()`` raised
-    ``ToolkitReferenceUnresolvedError`` → the whole control-DB transaction rolled
+    the unresolved-reference error → the whole control-DB transaction rolled
     back → the item snapped back to ``pending`` and the agent's ``--wait`` timed
     out blind. Now the loop closes: the request leaves pending as ``denied`` and
     carries an actionable ``decision_reason``.
@@ -544,7 +568,7 @@ async def test_decide_approve_unresolvable_toolkit_ref_denies_not_pending(
         reason="bind me to sheets",
         items=[
             {
-                "resource_type": "toolkit",
+                "resource_type": "credential",
                 "action": "bind",
                 "resource_reference": {"vendor": "no-such-vendor", "name": "no-such-api"},
             }
@@ -564,7 +588,7 @@ async def test_decide_approve_unresolvable_toolkit_ref_denies_not_pending(
     item = view.items[0]
     assert item.status == "denied"
     assert item.decision_reason is not None
-    assert "No toolkit serves API" in item.decision_reason
+    assert "No credential covers API" in item.decision_reason
     assert "no-such-vendor/no-such-api" in item.decision_reason
 
     # The denial is durable, not just in the returned view: a re-read sees the
@@ -572,6 +596,155 @@ async def test_decide_approve_unresolvable_toolkit_ref_denies_not_pending(
     reread = await svc.get(filed.id, identity=reviewer)
     assert reread.status == "denied"
     assert reread.items[0].decision_reason == item.decision_reason
+
+
+# --- decider owner axis (hard problem 8) ---
+
+
+@pytest.fixture()
+async def seed_foreign_credential(
+    control_db: DatabaseSession, admin_db: DatabaseSession
+) -> AsyncGenerator[None, None]:
+    """A credential owned by UNRELATED_SUB covering a distinct vendor."""
+
+    async def _cleanup() -> None:
+        async with admin_db.session() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE credential_id = 'cred_foreign'")
+            )
+            await session.execute(text("DELETE FROM agents WHERE id = 'agnt_owned_by_owner'"))
+            await session.commit()
+        async with control_db.session() as session:
+            await session.execute(
+                text("DELETE FROM agent_permission_rules WHERE credential_id = 'cred_foreign'")
+            )
+            await session.execute(text("DELETE FROM credentials WHERE id = 'cred_foreign'"))
+            await session.commit()
+
+    await _cleanup()
+    async with control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials (id, type, name, api_vendor, created_by) "
+                "VALUES ('cred_foreign', 'token_value', 'foreign-cred', 'itest-foreign', "
+                ":owner) ON CONFLICT DO NOTHING"
+            ),
+            {"owner": UNRELATED_SUB},
+        )
+        await session.commit()
+    yield
+    await _cleanup()
+
+
+def _foreign_ref_items() -> list[dict[str, object]]:
+    return [
+        {
+            "resource_type": "credential",
+            "action": "bind",
+            "resource_reference": {"vendor": "itest-foreign"},
+        }
+    ]
+
+
+async def test_decide_reference_owner_scope_hides_foreign_credential(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    seed_foreign_credential: None,
+) -> None:
+    """A non-admin decider's reference resolution is confined to their owner
+    axis: a covering credential owned by someone else does NOT resolve, so the
+    approval closes as a DENY with the provision-first reason — never a silent
+    grant of another operator's credential."""
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB, reason=None, items=_foreign_ref_items(), identity=filer
+    )
+    view = await svc.decide(
+        filed.id,
+        identity=_owner_identity(),
+        item_decisions=[{"item_id": filed.items[0].id, "decision": "approved"}],
+    )
+    assert view.status == "denied"
+    assert "No credential covers API" in (view.items[0].decision_reason or "")
+
+
+async def test_decide_reference_org_admin_resolves_across_owners(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    seed_foreign_credential: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """org:admin resolves unscoped: the same foreign credential the owner
+    couldn't see satisfies the bind when an admin decides."""
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB, reason=None, items=_foreign_ref_items(), identity=filer
+    )
+    view = await svc.decide(
+        filed.id,
+        identity=_admin_identity(),
+        item_decisions=[{"item_id": filed.items[0].id, "decision": "approved"}],
+    )
+    assert view.status == "approved"
+    assert view.items[0].applied_effects is not None
+    assert view.items[0].applied_effects["credential_id"] == "cred_foreign"
+    async with admin_db.session() as session:
+        bound = await session.execute(
+            text(
+                "SELECT 1 FROM agent_credential_bindings "
+                "WHERE agent_id = :aid AND credential_id = 'cred_foreign'"
+            ),
+            {"aid": FILER_SUB},
+        )
+        assert bound.scalar_one_or_none() is not None
+
+
+async def test_decide_reference_binding_widened_credential_resolves(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    seed_foreign_credential: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """The binding-widened half of the owner axis: a credential owned by
+    someone else still resolves for an owner decider when it is bound to an
+    agent that decider owns (the admin-DB push-down list). The decider
+    legitimately governs the credential through their agent."""
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, owner_id, registered_by, status) "
+                "VALUES ('agnt_owned_by_owner', 'sibling-agent', :owner, :owner, 'active') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"owner": OWNER_SUB},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO agent_credential_bindings (id, agent_id, credential_id) "
+                "VALUES ('acb_widened_1', 'agnt_owned_by_owner', 'cred_foreign') "
+                "ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.commit()
+
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB, reason=None, items=_foreign_ref_items(), identity=filer
+    )
+    view = await svc.decide(
+        filed.id,
+        identity=_owner_identity(),
+        item_decisions=[{"item_id": filed.items[0].id, "decision": "approved"}],
+    )
+    assert view.status == "approved"
+    assert view.items[0].applied_effects is not None
+    assert view.items[0].applied_effects["credential_id"] == "cred_foreign"
 
 
 async def test_decide_not_reviewer_raises(
@@ -653,20 +826,12 @@ async def test_amend_updates_rules(
     seed_binding: None,
 ) -> None:
     filer = _filer_identity()
-    # Rules only enforce on a credential:bind, so amending them is only valid for
-    # that item type (a credential:read carries no enforceable rules).
+    # Rules only enforce on a credential:bind, so amending them is only valid
+    # for that item type.
     filed = await svc.file(
         actor_id=FILER_SUB,
         reason=None,
-        items=[
-            {
-                "resource_type": "credential",
-                "action": "bind",
-                "resource_id": "cred_001",
-                "to_type": "toolkit",
-                "to_id": "tk_target",
-            }
-        ],
+        items=_base_items(),
         identity=filer,
     )
     new_rules = [{"effect": "allow", "methods": ["GET", "POST"]}]
@@ -678,9 +843,38 @@ async def test_amend_updates_rules(
     assert view.items[0].rules == new_rules
 
 
+async def test_amend_rule_set_id_swaps_policy_carrier(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    seed_binding: None,
+) -> None:
+    """Amending a rule_set_id onto a bind detaches its inline rules (and vice
+    versa): the stored item never carries both policy carriers."""
+    filer = _filer_identity()
+    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
+    assert filed.items[0].rules is not None  # the stamped default
+
+    view = await svc.amend(
+        filed.id,
+        identity=filer,
+        item_amendments=[{"item_id": filed.items[0].id, "rule_set_id": "prs_swap_1"}],
+    )
+    assert view.items[0].rule_set_id == "prs_swap_1"
+    assert view.items[0].rules is None
+
+    view = await svc.amend(
+        filed.id,
+        identity=filer,
+        item_amendments=[{"item_id": filed.items[0].id, "rules": _RULES}],
+    )
+    assert view.items[0].rule_set_id is None
+    assert view.items[0].rules == _RULES
+
+
 async def test_amend_not_pending_raises(
     svc: AccessRequestService,
     clean_access_requests: None,
+    clean_events: None,
     seed_binding: None,
 ) -> None:
     filer = _filer_identity()
@@ -775,6 +969,7 @@ async def test_withdraw_sets_withdrawn(
 async def test_withdraw_not_pending_raises(
     svc: AccessRequestService,
     clean_access_requests: None,
+    clean_events: None,
     seed_binding: None,
 ) -> None:
     filer = _filer_identity()
@@ -1022,20 +1217,8 @@ async def test_event_not_emitted_when_still_pending(
     """A decide that leaves the request still 'pending' emits no decide event."""
     filer = _filer_identity()
     items = [
-        {
-            "resource_type": "credential",
-            "action": "read",
-            "resource_id": "cred_001",
-            "to_type": "toolkit",
-            "to_id": "tk_target",
-        },
-        {
-            "resource_type": "credential",
-            "action": "write",
-            "resource_id": "cred_002",
-            "to_type": "toolkit",
-            "to_id": "tk_target",
-        },
+        {"resource_type": "credential", "action": "bind", "resource_id": "cred_001"},
+        {"resource_type": "credential", "action": "bind", "resource_id": "cred_002"},
     ]
     filed = await svc.file(
         actor_id=FILER_SUB,
@@ -1068,41 +1251,17 @@ async def test_approve_credential_bind_creates_binding_and_rules(
     clean_events: None,
     seed_binding: None,
     control_db: DatabaseSession,
+    admin_db: DatabaseSession,
 ) -> None:
-    """Approving a credential-bind request creates the credential binding and permission rules."""
+    """Approving a credential:bind lands BOTH halves of the two-stage effect:
+    the control-DB agent permission rules AND the admin-DB agent↔credential
+    binding row (a rule-less live bind must be impossible — hard problem 6)."""
     filer = _filer_identity()
-
-    async with control_db.transaction() as session:
-        await session.execute(
-            text(
-                "INSERT INTO toolkits (id, name, created_by) "
-                "VALUES (:id, :name, :created_by) "
-                "ON CONFLICT DO NOTHING"
-            ),
-            {"id": "tk_target", "name": "test-toolkit-for-bind", "created_by": OWNER_SUB},
-        )
-        await session.execute(
-            text(
-                "INSERT INTO credentials (id, type, name, api_vendor, created_by) "
-                "VALUES (:id, :type, :name, :vendor, :created_by) "
-                "ON CONFLICT DO NOTHING"
-            ),
-            {
-                "id": "cred_bind_001",
-                "type": "token",
-                "name": "test-cred",
-                "vendor": "test-vendor",
-                "created_by": OWNER_SUB,
-            },
-        )
-
     items = [
         {
             "resource_type": "credential",
             "action": "bind",
-            "resource_id": "cred_bind_001",
-            "to_type": "toolkit",
-            "to_id": "tk_target",
+            "resource_id": "cred_001",
             "rules": [
                 {"effect": "allow", "methods": ["GET"], "path": "^/pets"},
             ],
@@ -1125,56 +1284,84 @@ async def test_approve_credential_bind_creates_binding_and_rules(
     assert view.status == "approved"
     approved_item = view.items[0]
     assert approved_item.applied_effects is not None
-    assert "binding_id" in approved_item.applied_effects
+    assert approved_item.applied_effects["binding_id"].startswith("acb_")
+    assert approved_item.applied_effects["credential_id"] == "cred_001"
     assert approved_item.applied_effects["rules_applied"] == 1
     assert approved_item.applied_effects["already_bound"] is False
 
+    async with admin_db.session() as session:
+        binding = await session.execute(
+            text(
+                "SELECT id FROM agent_credential_bindings "
+                "WHERE agent_id = :aid AND credential_id = 'cred_001'"
+            ),
+            {"aid": FILER_SUB},
+        )
+        assert binding.scalar_one_or_none() == approved_item.applied_effects["binding_id"]
+
     async with control_db.session() as session:
-        binding = await ToolkitBindingRepository.get(session, "tk_target", "cred_bind_001")
-        assert binding is not None
+        rules = await AgentPermissionRuleRepository.list_rules(session, FILER_SUB, "cred_001")
+        assert len(rules) == 1
+        assert rules[0].effect == "allow"
+        assert rules[0].path == "^/pets"
 
-        rules = await ToolkitPermissionRepository.list_rules(session, "tk_target", "cred_bind_001")
-        assert len(rules) >= 1
-        assert any(r.effect == "allow" and r.path == "^/pets" for r in rules)
 
-    async with control_db.transaction() as session:
+async def test_approve_credential_bind_already_bound_is_idempotent(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Approving a bind whose binding already exists converges on the existing
+    row (ON CONFLICT) and reports already_bound — approval-as-ratification of
+    a manually-fulfilled request must not fail or duplicate."""
+    async with admin_db.session() as session:
         await session.execute(
             text(
-                "DELETE FROM toolkit_permission_rules "
-                "WHERE toolkit_id = :tk AND credential_id = :cred"
+                "INSERT INTO agent_credential_bindings (id, agent_id, credential_id) "
+                "VALUES ('acb_preexisting_1', :aid, 'cred_001') ON CONFLICT DO NOTHING"
             ),
-            {"tk": "tk_target", "cred": "cred_bind_001"},
+            {"aid": FILER_SUB},
         )
-        await session.execute(
+        await session.commit()
+
+    filer = _filer_identity()
+    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
+    view = await svc.decide(
+        filed.id,
+        identity=_owner_identity(),
+        item_decisions=[{"item_id": filed.items[0].id, "decision": "approved"}],
+    )
+    assert view.status == "approved"
+    effects = view.items[0].applied_effects
+    assert effects is not None
+    assert effects["already_bound"] is True
+    assert effects["binding_id"] == "acb_preexisting_1"
+
+    async with admin_db.session() as session:
+        count = await session.execute(
             text(
-                "DELETE FROM toolkit_credential_bindings "
-                "WHERE toolkit_id = :tk AND credential_id = :cred"
+                "SELECT count(*) FROM agent_credential_bindings "
+                "WHERE agent_id = :aid AND credential_id = 'cred_001'"
             ),
-            {"tk": "tk_target", "cred": "cred_bind_001"},
+            {"aid": FILER_SUB},
         )
-        await session.execute(
-            text("DELETE FROM credentials WHERE id = :id"),
-            {"id": "cred_bind_001"},
-        )
-        await session.execute(
-            text("DELETE FROM toolkits WHERE id = :id"),
-            {"id": "tk_target"},
-        )
+        assert count.scalar_one() == 1
 
 
 # --- cross-DB reconcile (issue #625) ---
 
 SCOPE_GRANT = "owner:toolkits:read"
-TOOLKIT_BIND_TARGET = "tk_admin_bind_001"
 
 
 def _admin_effect_items() -> list[dict[str, object]]:
-    """A toolkit-bind and a scope-grant — both applied as admin-DB effects."""
+    """A credential-bind and a scope-grant — both applied as admin-DB effects."""
     return [
         {
-            "resource_type": "toolkit",
+            "resource_type": "credential",
             "action": "bind",
-            "resource_id": TOOLKIT_BIND_TARGET,
+            "resource_id": "cred_001",
         },
         {
             "resource_type": "scope",
@@ -1185,43 +1372,22 @@ def _admin_effect_items() -> list[dict[str, object]]:
 
 
 @pytest.fixture()
-async def clean_admin_effects(
-    admin_db: DatabaseSession, control_db: DatabaseSession
-) -> AsyncGenerator[None, None]:
-    """Remove any toolkit-bind / scope-grant rows produced by reconcile tests.
+async def clean_admin_effects(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
+    """Remove any scope-grant rows produced by reconcile tests.
 
-    Also seeds the bind-target toolkit (owned by ``OWNER_SUB``) so the decider's
-    owner-scoped visibility check on ``toolkit:bind`` passes.
+    (The credential-bind side — agent_credential_bindings and
+    agent_permission_rules — is cleaned by ``seed_binding``.)
     """
 
     async def _cleanup() -> None:
         async with admin_db.session() as session:
             await session.execute(
-                text("DELETE FROM agent_toolkit_bindings WHERE toolkit_id = :tk"),
-                {"tk": TOOLKIT_BIND_TARGET},
-            )
-            await session.execute(
                 text("DELETE FROM actor_scope_grants WHERE actor_id = :aid AND scope = :scope"),
                 {"aid": FILER_SUB, "scope": SCOPE_GRANT},
             )
             await session.commit()
-        async with control_db.session() as session:
-            await session.execute(
-                text("DELETE FROM toolkits WHERE id = :id"),
-                {"id": TOOLKIT_BIND_TARGET},
-            )
-            await session.commit()
 
     await _cleanup()
-    async with control_db.transaction() as session:
-        await session.execute(
-            text(
-                "INSERT INTO toolkits (id, name, created_by) "
-                "VALUES (:id, :name, :created_by) "
-                "ON CONFLICT DO NOTHING"
-            ),
-            {"id": TOOLKIT_BIND_TARGET, "name": "test-toolkit-admin-bind", "created_by": OWNER_SUB},
-        )
     yield
     await _cleanup()
 
@@ -1247,14 +1413,26 @@ async def _count_scope_grants(admin_db: DatabaseSession) -> int:
         return int(result.scalar_one())
 
 
-async def _count_toolkit_bindings(admin_db: DatabaseSession) -> int:
+async def _count_credential_bindings(admin_db: DatabaseSession) -> int:
     async with admin_db.session() as session:
         result = await session.execute(
             text(
-                "SELECT count(*) FROM agent_toolkit_bindings "
-                "WHERE agent_id = :aid AND toolkit_id = :tk"
+                "SELECT count(*) FROM agent_credential_bindings "
+                "WHERE agent_id = :aid AND credential_id = 'cred_001'"
             ),
-            {"aid": FILER_SUB, "tk": TOOLKIT_BIND_TARGET},
+            {"aid": FILER_SUB},
+        )
+        return int(result.scalar_one())
+
+
+async def _count_control_rules(control_db: DatabaseSession) -> int:
+    async with control_db.session() as session:
+        result = await session.execute(
+            text(
+                "SELECT count(*) FROM agent_permission_rules "
+                "WHERE agent_id = :aid AND credential_id = 'cred_001'"
+            ),
+            {"aid": FILER_SUB},
         )
         return int(result.scalar_one())
 
@@ -1293,17 +1471,61 @@ async def test_decide_mid_apply_failure_leaves_no_orphans(
 
     # Decision is durable: both items APPROVED (phase 1 committed).
     items = await _decided_items(control_db, filed.id)
-    assert items["toolkit"].status == "approved"
+    assert items["credential"].status == "approved"
     assert items["scope"].status == "approved"
-    # The toolkit-bind succeeded and is acked; the scope-grant is un-acked.
-    assert items["toolkit"].applied_effects is not None
+    # The credential-bind succeeded and is acked; the scope-grant is un-acked.
+    assert items["credential"].applied_effects is not None
     assert items["scope"].applied_effects is None
 
-    # Admin DB has exactly the toolkit binding, no scope grant.
-    assert await _count_toolkit_bindings(admin_db) == 1
+    # Admin DB has exactly the credential binding, no scope grant.
+    assert await _count_credential_bindings(admin_db) == 1
     assert await _count_scope_grants(admin_db) == 0
 
     monkeypatch.setattr(EffectsRepository, "grant_scope_to_actor", original_grant)
+
+
+async def test_decide_mid_bind_failure_leaves_inert_rules_not_live_bind(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    clean_admin_effects: None,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The write ORDER is the hard-problem-6 guarantee: rules land in the
+    control DB (with the decision) BEFORE the admin binding row. A crash
+    between the two leaves inert rules — invisible to enforcement because no
+    binding exists — never a live rule-less bind. The retry then converges."""
+    filer = _filer_identity()
+    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
+    reviewer = _owner_identity()
+    decisions = [{"item_id": filed.items[0].id, "decision": "approved"}]
+
+    original_bind = EffectsRepository.bind_agent_to_credential
+
+    async def _boom(*args: object, **kwargs: object) -> tuple[str, bool]:
+        raise RuntimeError("simulated crash between prepare and complete")
+
+    monkeypatch.setattr(EffectsRepository, "bind_agent_to_credential", staticmethod(_boom))
+    with pytest.raises(AdminEffectReconcileError):
+        await svc.decide(filed.id, identity=reviewer, item_decisions=decisions)
+
+    # The crash window: rules committed (inert), NO admin binding.
+    assert await _count_control_rules(control_db) == 1
+    assert await _count_credential_bindings(admin_db) == 0
+    items = await _decided_items(control_db, filed.id)
+    assert items["credential"].status == "approved"
+    assert items["credential"].applied_effects is None  # un-acked
+
+    # Retry converges: exactly one binding, rules not duplicated.
+    monkeypatch.setattr(EffectsRepository, "bind_agent_to_credential", original_bind)
+    view = await svc.decide(filed.id, identity=reviewer, item_decisions=decisions)
+    assert view.status == "approved"
+    assert view.items[0].applied_effects is not None
+    assert await _count_credential_bindings(admin_db) == 1
+    assert await _count_control_rules(control_db) == 1
 
 
 async def test_decide_retry_reconciles(
@@ -1342,11 +1564,11 @@ async def test_decide_retry_reconciles(
 
     assert view.status == "approved"
     items = await _decided_items(control_db, filed.id)
-    assert items["toolkit"].applied_effects is not None
+    assert items["credential"].applied_effects is not None
     assert items["scope"].applied_effects is not None
 
     # Each admin row exists exactly once (ON CONFLICT idempotency).
-    assert await _count_toolkit_bindings(admin_db) == 1
+    assert await _count_credential_bindings(admin_db) == 1
     assert await _count_scope_grants(admin_db) == 1
 
 
@@ -1380,7 +1602,7 @@ async def test_decide_idempotent_recall(
     }
 
     # No duplicate admin rows.
-    assert await _count_toolkit_bindings(admin_db) == 1
+    assert await _count_credential_bindings(admin_db) == 1
     assert await _count_scope_grants(admin_db) == 1
 
     # No duplicate decision event — exactly one approved event from the first call.
@@ -1416,7 +1638,7 @@ async def test_decide_conflict_raises_item_not_pending(
         )
 
 
-# --- file-time fulfillability advisory (theme 3 residual) ---
+# --- file-time fulfillability advisory ---
 
 
 async def _list_events_by_type(admin_db: DatabaseSession, event_type: str) -> list[Event]:
@@ -1424,21 +1646,26 @@ async def _list_events_by_type(admin_db: DatabaseSession, event_type: str) -> li
         return await EventRepository.list_all(session, event_type=[event_type])
 
 
-async def test_file_emits_unserved_advisory_for_plain_toolkit_bind_with_no_serving_toolkit(
+_UNSERVED = "broker.credential_binding_unserved"
+
+
+async def test_file_emits_unserved_advisory_for_plain_reference_bind(
     svc: AccessRequestService,
     clean_access_requests: None,
     clean_events: None,
     seed_binding: None,
     admin_db: DatabaseSession,
 ) -> None:
-    """A plain `toolkit:bind` by reference with no serving toolkit emits an advisory."""
+    """A plain `credential:bind` by reference with no owned covering credential
+    emits a CREDENTIAL_BINDING_UNSERVED advisory (early operator signal that a
+    plain approval would deny)."""
     filer = _filer_identity()
     filed = await svc.file(
         actor_id=FILER_SUB,
         reason="bind me to a not-yet-served api",
         items=[
             {
-                "resource_type": "toolkit",
+                "resource_type": "credential",
                 "action": "bind",
                 "resource_reference": {"vendor": "no-such-vendor", "name": "no-such-api"},
             }
@@ -1447,7 +1674,7 @@ async def test_file_emits_unserved_advisory_for_plain_toolkit_bind_with_no_servi
     )
     assert filed.status == "pending"  # advisory doesn't block the filing
 
-    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    events = await _list_events_by_type(admin_db, _UNSERVED)
     matching = [e for e in events if e.data.get("request_id") == filed.id]
     assert len(matching) == 1
     event = matching[0]
@@ -1481,7 +1708,7 @@ async def test_file_survives_non_string_reference_fields(
         reason="crafted non-string reference fields",
         items=[
             {
-                "resource_type": "toolkit",
+                "resource_type": "credential",
                 "action": "bind",
                 "resource_reference": {"vendor": "no-such-vendor", "name": 123, "version": 4},
             }
@@ -1490,7 +1717,7 @@ async def test_file_survives_non_string_reference_fields(
     )
     assert filed.status == "pending"
 
-    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    events = await _list_events_by_type(admin_db, _UNSERVED)
     matching = [e for e in events if e.data.get("request_id") == filed.id]
     assert len(matching) == 1
     assert matching[0].data["api"] == {
@@ -1500,7 +1727,7 @@ async def test_file_survives_non_string_reference_fields(
     }
 
 
-async def test_file_skips_unserved_advisory_when_toolkit_serves_api(
+async def test_file_skips_unserved_advisory_when_credential_covers_api(
     svc: AccessRequestService,
     clean_access_requests: None,
     clean_events: None,
@@ -1508,25 +1735,14 @@ async def test_file_skips_unserved_advisory_when_toolkit_serves_api(
     control_db: DatabaseSession,
     admin_db: DatabaseSession,
 ) -> None:
-    """When a toolkit already serves the referenced API, no advisory fires."""
+    """When the filer's owner already holds a covering credential, no advisory
+    fires — the plain-approve path will resolve cleanly."""
     async with control_db.transaction() as session:
-        await session.execute(
-            text(
-                "INSERT INTO toolkits (id, name, created_by) "
-                "VALUES (:id, :name, :created_by) "
-                "ON CONFLICT DO NOTHING"
-            ),
-            {
-                "id": "tk_served",
-                "name": "served-toolkit",
-                "created_by": OWNER_SUB,
-            },
-        )
         await session.execute(
             text(
                 "INSERT INTO credentials "
                 "(id, type, name, api_vendor, api_name, created_by) "
-                "VALUES (:id, 'token', :name, :vendor, :api_name, :created_by) "
+                "VALUES (:id, 'token_value', :name, :vendor, :api_name, :created_by) "
                 "ON CONFLICT DO NOTHING"
             ),
             {
@@ -1537,31 +1753,28 @@ async def test_file_skips_unserved_advisory_when_toolkit_serves_api(
                 "created_by": OWNER_SUB,
             },
         )
-        await EffectsRepository.bind_credential_to_toolkit(
-            session,
-            toolkit_id="tk_served",
-            credential_id="cred_served_001",
-            created_by=OWNER_SUB,
+    try:
+        filer = _filer_identity()
+        filed = await svc.file(
+            actor_id=FILER_SUB,
+            reason="bind me to a served api",
+            items=[
+                {
+                    "resource_type": "credential",
+                    "action": "bind",
+                    "resource_reference": {"vendor": "servedvendor", "name": "widgets"},
+                }
+            ],
+            identity=filer,
         )
+        assert filed.status == "pending"
 
-    filer = _filer_identity()
-    filed = await svc.file(
-        actor_id=FILER_SUB,
-        reason="bind me to a served api",
-        items=[
-            {
-                "resource_type": "toolkit",
-                "action": "bind",
-                "resource_reference": {"vendor": "servedvendor", "name": "widgets"},
-            }
-        ],
-        identity=filer,
-    )
-    assert filed.status == "pending"
-
-    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
-    matching = [e for e in events if e.data.get("request_id") == filed.id]
-    assert matching == []
+        events = await _list_events_by_type(admin_db, _UNSERVED)
+        matching = [e for e in events if e.data.get("request_id") == filed.id]
+        assert matching == []
+    finally:
+        async with control_db.transaction() as session:
+            await session.execute(text("DELETE FROM credentials WHERE id = 'cred_served_001'"))
 
 
 async def test_file_skips_unserved_advisory_when_request_carries_fulfilment_intent(
@@ -1571,24 +1784,20 @@ async def test_file_skips_unserved_advisory_when_request_carries_fulfilment_inte
     seed_binding: None,
     admin_db: DatabaseSession,
 ) -> None:
-    """Plans expect nothing to serve the API yet — the advisory must stay silent."""
+    """A provisioning plan (credential:provision + credential:bind) expects
+    nothing to cover the API yet — the advisory must stay silent."""
     filer = _filer_identity()
     filed = await svc.file(
         actor_id=FILER_SUB,
         reason="provision then bind",
         items=[
             {
-                "resource_type": "toolkit",
-                "action": "create",
-                "resource_reference": {"vendor": "brandnew", "name": "widgets"},
-            },
-            {
                 "resource_type": "credential",
                 "action": "provision",
                 "resource_reference": {"vendor": "brandnew", "name": "widgets"},
             },
             {
-                "resource_type": "toolkit",
+                "resource_type": "credential",
                 "action": "bind",
                 "resource_reference": {"vendor": "brandnew", "name": "widgets"},
             },
@@ -1597,34 +1806,28 @@ async def test_file_skips_unserved_advisory_when_request_carries_fulfilment_inte
     )
     assert filed.status == "pending"
 
-    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    events = await _list_events_by_type(admin_db, _UNSERVED)
     matching = [e for e in events if e.data.get("request_id") == filed.id]
     assert matching == []
 
 
-async def test_file_skips_unserved_advisory_when_bind_names_toolkit_by_id(
+async def test_file_skips_unserved_advisory_when_bind_names_credential_by_id(
     svc: AccessRequestService,
     clean_access_requests: None,
     clean_events: None,
     seed_binding: None,
     admin_db: DatabaseSession,
 ) -> None:
-    """A `toolkit:bind` with an explicit id (not a reference) is not by-name — no advisory."""
+    """A `credential:bind` with an explicit id (not a reference) is not by-name — no advisory."""
     filer = _filer_identity()
     filed = await svc.file(
         actor_id=FILER_SUB,
         reason="bind by id",
-        items=[
-            {
-                "resource_type": "toolkit",
-                "action": "bind",
-                "resource_id": "tk_target",
-            }
-        ],
+        items=_base_items(),
         identity=filer,
     )
     assert filed.status == "pending"
 
-    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    events = await _list_events_by_type(admin_db, _UNSERVED)
     matching = [e for e in events if e.data.get("request_id") == filed.id]
     assert matching == []
