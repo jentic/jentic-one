@@ -13,12 +13,14 @@ docker compose -f docker/local-setup/docker-compose.yaml up -d
 echo "==> Waiting for database to become healthy..."
 MAX_WAIT=60
 elapsed=0
-# Use a real query rather than pg_isready: on first boot the Postgres image
-# runs a temporary internal server for init scripts that pg_isready can match,
-# then restarts the real server, leaving a brief window where the socket is
-# gone. `SELECT 1` only succeeds once the real server is accepting connections.
+# Probe over TCP (-h 127.0.0.1), not the unix socket, and with a real query
+# rather than pg_isready: on first boot the Postgres image runs a temporary
+# internal server for init scripts with listen_addresses='' — it serves the
+# unix socket (so a socket SELECT 1 can succeed!) but never TCP, then shuts
+# down before the real server starts ("the database system is shutting
+# down" mid-setup). Only the final server accepts TCP connections.
 until docker compose -f docker/local-setup/docker-compose.yaml exec -T db \
-    psql -U postgres -d jentic -tAc 'SELECT 1' >/dev/null 2>&1; do
+    psql -h 127.0.0.1 -U postgres -d jentic -tAc 'SELECT 1' >/dev/null 2>&1; do
     if [ "$elapsed" -ge "$MAX_WAIT" ]; then
         echo "ERROR: db did not become ready within ${MAX_WAIT}s"
         exit 1
@@ -30,7 +32,8 @@ echo "    db is ready"
 
 echo "==> Ensuring schemas exist..."
 for schema in registry control admin; do
-    docker compose -f docker/local-setup/docker-compose.yaml exec -T db psql -U postgres -d jentic -c \
+    docker compose -f docker/local-setup/docker-compose.yaml exec -T db \
+        psql -h 127.0.0.1 -U postgres -d jentic -c \
         "CREATE SCHEMA IF NOT EXISTS ${schema};" >/dev/null
     echo "    schema '$schema' ensured"
 done
