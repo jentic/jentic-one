@@ -54,10 +54,11 @@ _DEFAULT_NEXT_TOOL_CODES = frozenset(
     {CODE_NOT_AUTHENTICATED, CODE_PENDING_APPROVAL, CODE_RESOLVE_FAILED}
 )
 
-#: the code-keyed default pointer (Go: ``softErrorExtra``). Not served on
-#: this lane, so today the default never reaches a rendered envelope — it is
-#: kept so serving ``get_started`` later restores the stdio behaviour with no
-#: further change here.
+#: the code-keyed default pointer (Go: ``softErrorExtra``). ``get_started``
+#: never ports to this mount (it diagnoses *the local machine's* CLI setup —
+#: over HTTP there is no local machine; see ``spec.py``), so on this lane the
+#: default never reaches a rendered envelope — the spelling is kept only so
+#: the code-keyed mapping stays byte-for-byte with the stdio server's.
 _DEFAULT_NEXT_TOOL = "get_started"
 
 
