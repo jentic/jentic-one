@@ -55,7 +55,9 @@ def test_skill_served_as_markdown(client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "text/markdown; charset=utf-8"
     assert resp.text == load_skill_markdown("jentic")
-    assert "# Using Jentic from the CLI" in resp.text
+    # The raw document's H1 is transport-neutral (v2); the CLI-branded
+    # "from the CLI" title now exists only in CLI-rendered copies (titleFor).
+    assert "# Using Jentic" in resp.text
 
 
 def test_each_shipped_skill_fetchable(client: TestClient) -> None:
@@ -106,7 +108,8 @@ def test_skill_traversal_attempts_do_not_serve(client: TestClient, path: str) ->
     resp = client.get(path)
     assert resp.status_code != 200
     assert resp.status_code < 500
-    assert "# Using Jentic from the CLI" not in resp.text
+    # The jentic document's transport-neutral H1 (v2) must never be served here.
+    assert "# Using Jentic" not in resp.text
 
 
 def test_llms_txt_served_with_request_base_url(client: TestClient) -> None:
