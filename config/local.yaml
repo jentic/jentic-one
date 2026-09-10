@@ -75,6 +75,14 @@ credentials:
         prompt: consent
         access_type: offline
 
+# Verified vendors with known SSO integrations for the agent-driven
+# integration flow. Intentionally empty here — vendor entries carry
+# real OAuth app identifiers (and, for authorization_code flows, real
+# client secrets), so they never belong in a checked-in dev config.
+# See ``config/production.yaml.example`` for the shape and drop your
+# own entry via a gitignored local override or a
+# ``JENTIC__VENDORS__ENTRIES__…`` env var.
+
 # Pin the OAuth issuer / endpoint URIs and the expected JWT-Bearer assertion
 # audience for local runs. Without this, canonical_base_url defaults to "" and
 # the assertion audience collapses to "/oauth/token".

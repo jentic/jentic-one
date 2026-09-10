@@ -42,6 +42,7 @@ def to_wire(stored: StoredCredentialType) -> CredentialType:
     if stored in (
         StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,
+        StoredCredentialType.OAUTH2_DEVICE_CODE,
         StoredCredentialType.OAUTH2_IMPLICIT,
     ):
         return CredentialType.OAUTH2
@@ -54,4 +55,8 @@ def is_refreshable(stored: StoredCredentialType) -> bool:
     return stored in (
         StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,
+        # RFC 8628 issues a refresh_token when the vendor supports it; the
+        # subsequent refresh grant is standard OAuth2 (public client — no
+        # client_secret). See broker refresh path follow-up.
+        StoredCredentialType.OAUTH2_DEVICE_CODE,
     )
