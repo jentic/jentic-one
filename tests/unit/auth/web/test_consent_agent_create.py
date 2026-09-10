@@ -18,6 +18,7 @@ import json
 import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import unquote
 
 import pytest
 from fastapi import FastAPI
@@ -895,8 +896,6 @@ def test_pending_agent_reentry_renders_awaiting_page(
     status_url = str(config["status_url"])
     assert status_url.startswith("/oauth/consent/agent/status?st=")
     blob = status_url.removeprefix("/oauth/consent/agent/status?st=")
-    from urllib.parse import unquote
-
     payload = verify_payload(
         unquote(blob), agent_status_signing_key(ctx), purpose="agent-status", max_age=300
     )
@@ -935,8 +934,6 @@ def test_create_unpermissioned_lands_pending_and_awaiting_page(
     config = _extract_awaiting_config(resp.text)
     assert config["continue_url"] == f"/oauth/consent?ch={_HANDLE}"
     # The status blob is bound to the agent the create just minted.
-    from urllib.parse import unquote
-
     blob = str(config["status_url"]).removeprefix("/oauth/consent/agent/status?st=")
     payload = verify_payload(
         unquote(blob), agent_status_signing_key(ctx), purpose="agent-status", max_age=300
