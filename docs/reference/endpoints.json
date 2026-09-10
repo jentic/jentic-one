@@ -2873,6 +2873,21 @@
       "typical_caller": null
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "consentAgentStatus",
+      "path": "/oauth/consent/agent/status",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Poll pending-agent approval status (consent awaiting page)",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -5252,5 +5267,5 @@
     ],
     "total": 33
   },
-  "total": 184
+  "total": 185
 }

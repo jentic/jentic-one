@@ -63,6 +63,7 @@ export type { ChangePasswordRequest } from './models/ChangePasswordRequest';
 export type { ClaimRequest } from './models/ClaimRequest';
 export type { ConnectChallengeResponse } from './models/ConnectChallengeResponse';
 export type { ConnectRequestBody } from './models/ConnectRequestBody';
+export { ConsentAgentStatusResponse } from './models/ConsentAgentStatusResponse';
 export type { CreateAdminRequest } from './models/CreateAdminRequest';
 export type { CredentialCreateResponse } from './models/CredentialCreateResponse';
 export type { CredentialListResponse } from './models/CredentialListResponse';

@@ -288,6 +288,27 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for ConsentAgentStatusResponseStatus.
+const (
+	ConsentAgentStatusResponseStatusApproved ConsentAgentStatusResponseStatus = "approved"
+	ConsentAgentStatusResponseStatusDenied   ConsentAgentStatusResponseStatus = "denied"
+	ConsentAgentStatusResponseStatusPending  ConsentAgentStatusResponseStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ConsentAgentStatusResponseStatus enum.
+func (e ConsentAgentStatusResponseStatus) Valid() bool {
+	switch e {
+	case ConsentAgentStatusResponseStatusApproved:
+		return true
+	case ConsentAgentStatusResponseStatusDenied:
+		return true
+	case ConsentAgentStatusResponseStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CredentialLocation.
 const (
 	Cookie CredentialLocation = "cookie"
@@ -1553,6 +1574,21 @@ type ConnectRequestBody struct {
 	Extra  *map[string]string `json:"extra,omitempty"`
 	Scopes *[]string          `json:"scopes,omitempty"`
 }
+
+// ConsentAgentStatusResponse Minimal tri-state for the consent page's pending-agent awaiting page (P4).
+//
+// Deliberately carries nothing else — no agent name, owner, or scopes — so
+// the anonymous poll endpoint cannot be used to read agent details. The
+// poll is keyed by a signed “agent-status“ blob bound to one agent id,
+// never a bare id, and non-terminal lifecycle states (disabled, archived, a
+// vanished row) all read as “pending“ so the endpoint is not a lifecycle
+// oracle either.
+type ConsentAgentStatusResponse struct {
+	Status ConsentAgentStatusResponseStatus `json:"status"`
+}
+
+// ConsentAgentStatusResponseStatus defines model for ConsentAgentStatusResponse.Status.
+type ConsentAgentStatusResponseStatus string
 
 // CreateAdminRequest Payload for first-run admin creation (one-time setup).
 type CreateAdminRequest struct {
@@ -3766,6 +3802,12 @@ type AuthorizeOauthCallbackParams struct {
 type ConsentPageParams struct {
 	// Ch Opaque consent-flow handle
 	Ch string `form:"ch" json:"ch"`
+}
+
+// ConsentAgentStatusParams defines parameters for ConsentAgentStatus.
+type ConsentAgentStatusParams struct {
+	// St Signed agent-status blob minted by the consent flow's pending arm
+	St string `form:"st" json:"st"`
 }
 
 // TokenEndpointJSONBody defines parameters for TokenEndpoint.
@@ -6371,6 +6413,16 @@ type ClientInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
+	// Creation posture (security review — the hybrid): the arm is decided
+	// server-side AFTER the subject is resolved/provisioned, against the same
+	// effective-permission math as POST /agents' ``agents:write`` gate. A
+	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+	// unpermissioned one gets a PENDING agent (the POST /register posture) and
+	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// makes N parallel submits (N distinct blobs from N renders) create exactly
+	// one agent — losers re-enter consent, which renders the picker or the
+	// awaiting page as appropriate.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
@@ -6399,10 +6451,42 @@ type ClientInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
+	// Creation posture (security review — the hybrid): the arm is decided
+	// server-side AFTER the subject is resolved/provisioned, against the same
+	// effective-permission math as POST /agents' ``agents:write`` gate. A
+	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+	// unpermissioned one gets a PENDING agent (the POST /register posture) and
+	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// makes N parallel submits (N distinct blobs from N renders) create exactly
+	// one agent — losers re-enter consent, which renders the picker or the
+	// awaiting page as appropriate.
+	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
 	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
 	ConsentAgentCreateWithFormdataBody(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConsentAgentStatus Poll pending-agent approval status (consent awaiting page)
+	//
+	// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+	//
+	// Anonymous but keyed by the signed ``agent-status`` blob — never a bare
+	// agent id, so the endpoint cannot be used to enumerate or probe agents:
+	// the id it reports on is the one SIGNED into the blob, which only the
+	// consent flow mints, and only for an agent it verified belongs to the
+	// handle's subject. The response carries ONLY the tri-state — no name,
+	// owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+	// a vanished row) all read as ``pending``, so possession of a blob is not a
+	// lifecycle oracle either. Any verification failure (bad signature, wrong
+	// purpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the
+	// page treats a 400 as terminal ("retry the connection") because the blob
+	// shares the consent handle's lifetime — a retry re-enters the flow, which
+	// re-parks on a fresh awaiting page while the agent stays pending. Shares
+	// the approval-status poll's own per-IP rate bucket (same cadence, same
+	// caller shape).
+	//
+	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
+	ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IntrospectEndpointWithBody Introspect Endpoint
 	//
@@ -10385,6 +10469,16 @@ func (c *Client) ConsentSubmitWithFormdataBody(ctx context.Context, body Consent
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
+// Creation posture (security review — the hybrid): the arm is decided
+// server-side AFTER the subject is resolved/provisioned, against the same
+// effective-permission math as POST /agents' “agents:write“ gate. A
+// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+// unpermissioned one gets a PENDING agent (the POST /register posture) and
+// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// makes N parallel submits (N distinct blobs from N renders) create exactly
+// one agent — losers re-enter consent, which renders the picker or the
+// awaiting page as appropriate.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
@@ -10423,11 +10517,53 @@ func (c *Client) ConsentAgentCreateWithBody(ctx context.Context, contentType str
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
+// Creation posture (security review — the hybrid): the arm is decided
+// server-side AFTER the subject is resolved/provisioned, against the same
+// effective-permission math as POST /agents' “agents:write“ gate. A
+// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+// unpermissioned one gets a PENDING agent (the POST /register posture) and
+// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// makes N parallel submits (N distinct blobs from N renders) create exactly
+// one agent — losers re-enter consent, which renders the picker or the
+// awaiting page as appropriate.
+//
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
 // Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
 func (c *Client) ConsentAgentCreateWithFormdataBody(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConsentAgentCreateRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConsentAgentStatus Poll pending-agent approval status (consent awaiting page)
+//
+// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+//
+// Anonymous but keyed by the signed “agent-status“ blob — never a bare
+// agent id, so the endpoint cannot be used to enumerate or probe agents:
+// the id it reports on is the one SIGNED into the blob, which only the
+// consent flow mints, and only for an agent it verified belongs to the
+// handle's subject. The response carries ONLY the tri-state — no name,
+// owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+// a vanished row) all read as “pending“, so possession of a blob is not a
+// lifecycle oracle either. Any verification failure (bad signature, wrong
+// purpose, expired “iat“, malformed blob) is a 400 “invalid_grant“; the
+// page treats a 400 as terminal ("retry the connection") because the blob
+// shares the consent handle's lifetime — a retry re-enters the flow, which
+// re-parks on a fresh awaiting page while the agent stays pending. Shares
+// the approval-status poll's own per-IP rate bucket (same cadence, same
+// caller shape).
+//
+// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
+func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentAgentStatusRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -18756,6 +18892,56 @@ func NewConsentAgentCreateRequestWithBody(server string, contentType string, bod
 	return req, nil
 }
 
+// NewConsentAgentStatusRequest constructs an http.Request for the ConsentAgentStatus method
+func NewConsentAgentStatusRequest(server string, params *ConsentAgentStatusParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/consent/agent/status")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "st", params.St, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewIntrospectEndpointRequest calls the generic IntrospectEndpoint builder with application/json body
 func NewIntrospectEndpointRequest(server string, body IntrospectEndpointJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -22914,6 +23100,16 @@ type ClientWithResponsesInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
+	// Creation posture (security review — the hybrid): the arm is decided
+	// server-side AFTER the subject is resolved/provisioned, against the same
+	// effective-permission math as POST /agents' ``agents:write`` gate. A
+	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+	// unpermissioned one gets a PENDING agent (the POST /register posture) and
+	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// makes N parallel submits (N distinct blobs from N renders) create exactly
+	// one agent — losers re-enter consent, which renders the picker or the
+	// awaiting page as appropriate.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
@@ -22942,10 +23138,44 @@ type ClientWithResponsesInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
+	// Creation posture (security review — the hybrid): the arm is decided
+	// server-side AFTER the subject is resolved/provisioned, against the same
+	// effective-permission math as POST /agents' ``agents:write`` gate. A
+	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+	// unpermissioned one gets a PENDING agent (the POST /register posture) and
+	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// makes N parallel submits (N distinct blobs from N renders) create exactly
+	// one agent — losers re-enter consent, which renders the picker or the
+	// awaiting page as appropriate.
+	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
 	ConsentAgentCreateWithFormdataBodyWithResponse(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error)
+
+	// ConsentAgentStatusWithResponse Poll pending-agent approval status (consent awaiting page)
+	//
+	// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+	//
+	// Anonymous but keyed by the signed ``agent-status`` blob — never a bare
+	// agent id, so the endpoint cannot be used to enumerate or probe agents:
+	// the id it reports on is the one SIGNED into the blob, which only the
+	// consent flow mints, and only for an agent it verified belongs to the
+	// handle's subject. The response carries ONLY the tri-state — no name,
+	// owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+	// a vanished row) all read as ``pending``, so possession of a blob is not a
+	// lifecycle oracle either. Any verification failure (bad signature, wrong
+	// purpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the
+	// page treats a 400 as terminal ("retry the connection") because the blob
+	// shares the consent handle's lifetime — a retry re-enters the flow, which
+	// re-parks on a fresh awaiting page while the agent stays pending. Shares
+	// the approval-status poll's own per-IP rate bucket (same cadence, same
+	// caller shape).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
+	ConsentAgentStatusWithResponse(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*ConsentAgentStatusHTTPResp, error)
 
 	// IntrospectEndpointWithBodyWithResponse Introspect Endpoint
 	//
@@ -33701,6 +33931,68 @@ func (r ConsentAgentCreateHTTPResp) ContentType() string {
 	return ""
 }
 
+type ConsentAgentStatusHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConsentAgentStatusResponse
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConsentAgentStatusHTTPResp) GetJSON200() *ConsentAgentStatusResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ConsentAgentStatusHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConsentAgentStatusHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConsentAgentStatusHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConsentAgentStatusHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type IntrospectEndpointHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -40806,6 +41098,16 @@ func (c *ClientWithResponses) ConsentSubmitWithFormdataBodyWithResponse(ctx cont
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
+// Creation posture (security review — the hybrid): the arm is decided
+// server-side AFTER the subject is resolved/provisioned, against the same
+// effective-permission math as POST /agents' “agents:write“ gate. A
+// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+// unpermissioned one gets a PENDING agent (the POST /register posture) and
+// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// makes N parallel submits (N distinct blobs from N renders) create exactly
+// one agent — losers re-enter consent, which renders the picker or the
+// awaiting page as appropriate.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
@@ -40840,6 +41142,16 @@ func (c *ClientWithResponses) ConsentAgentCreateWithBodyWithResponse(ctx context
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
+// Creation posture (security review — the hybrid): the arm is decided
+// server-side AFTER the subject is resolved/provisioned, against the same
+// effective-permission math as POST /agents' “agents:write“ gate. A
+// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+// unpermissioned one gets a PENDING agent (the POST /register posture) and
+// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// makes N parallel submits (N distinct blobs from N renders) create exactly
+// one agent — losers re-enter consent, which renders the picker or the
+// awaiting page as appropriate.
+//
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
@@ -40849,6 +41161,36 @@ func (c *ClientWithResponses) ConsentAgentCreateWithFormdataBodyWithResponse(ctx
 		return nil, err
 	}
 	return ParseConsentAgentCreateHTTPResp(rsp)
+}
+
+// ConsentAgentStatusWithResponse Poll pending-agent approval status (consent awaiting page)
+//
+// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+//
+// Anonymous but keyed by the signed “agent-status“ blob — never a bare
+// agent id, so the endpoint cannot be used to enumerate or probe agents:
+// the id it reports on is the one SIGNED into the blob, which only the
+// consent flow mints, and only for an agent it verified belongs to the
+// handle's subject. The response carries ONLY the tri-state — no name,
+// owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+// a vanished row) all read as “pending“, so possession of a blob is not a
+// lifecycle oracle either. Any verification failure (bad signature, wrong
+// purpose, expired “iat“, malformed blob) is a 400 “invalid_grant“; the
+// page treats a 400 as terminal ("retry the connection") because the blob
+// shares the consent handle's lifetime — a retry re-enters the flow, which
+// re-parks on a fresh awaiting page while the agent stays pending. Shares
+// the approval-status poll's own per-IP rate bucket (same cadence, same
+// caller shape).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
+func (c *ClientWithResponses) ConsentAgentStatusWithResponse(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*ConsentAgentStatusHTTPResp, error) {
+	rsp, err := c.ConsentAgentStatus(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentAgentStatusHTTPResp(rsp)
 }
 
 // IntrospectEndpointWithBodyWithResponse Introspect Endpoint
@@ -50257,6 +50599,56 @@ func ParseConsentAgentCreateHTTPResp(rsp *http.Response) (*ConsentAgentCreateHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseConsentAgentStatusHTTPResp parses an HTTP response from a ConsentAgentStatusWithResponse call
+func ParseConsentAgentStatusHTTPResp(rsp *http.Response) (*ConsentAgentStatusHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConsentAgentStatusHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConsentAgentStatusResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
