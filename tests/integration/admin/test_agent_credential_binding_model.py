@@ -54,6 +54,15 @@ async def test_round_trip_and_id_prefix(admin_db: DatabaseSession, clean_binding
         assert loaded.credential_id == "cred_test001"
         assert loaded.bound_at is not None
         assert loaded.created_at is not None
+        # Rule grouping (Q-04): defaults to inline rules (no shared set)…
+        assert loaded.rule_set_id is None
+        # …and accepts a cross-DB rule-set pointer (plain string, no FK).
+        loaded.rule_set_id = "prs_shared01"
+        await session.commit()
+    async with admin_db.session() as session:
+        reloaded = await session.get(AgentCredentialBinding, binding_id)
+        assert reloaded is not None
+        assert reloaded.rule_set_id == "prs_shared01"
 
 
 async def test_duplicate_pair_rejected(admin_db: DatabaseSession, clean_bindings: None) -> None:

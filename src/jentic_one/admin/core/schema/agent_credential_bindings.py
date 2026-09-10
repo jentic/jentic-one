@@ -21,6 +21,13 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
     application layer. An agent may hold bindings to several credentials of
     the same API (multi-account); per-request disambiguation uses the
     ``Jentic-Credential-Name`` header.
+
+    ``rule_set_id`` optionally points at a control-DB ``permission_rule_sets``
+    row (cross-DB, FK-less, same as ``credential_id``). NULL means the
+    binding's policy is its inline ``agent_permission_rules`` rows; non-NULL
+    means the shared rule set's list applies instead (theme 5 rule grouping,
+    Q-04 — N bindings can share one ordered list, so policy reuse survives
+    the toolkit removal).
     """
 
     __tablename__ = "agent_credential_bindings"
@@ -30,6 +37,7 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
         ),
         Index("ix_agent_credential_bindings_agent_id", "agent_id"),
         Index("ix_agent_credential_bindings_credential_id", "credential_id"),
+        Index("ix_agent_credential_bindings_rule_set_id", "rule_set_id"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -44,6 +52,7 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
         nullable=False,
     )
     credential_id: Mapped[str] = mapped_column(String(30), nullable=False)
+    rule_set_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     bound_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

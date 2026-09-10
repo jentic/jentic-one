@@ -38,6 +38,10 @@ def upgrade() -> None:
         ),
         sa.Column("agent_id", sa.String(30), nullable=False),
         sa.Column("credential_id", sa.String(30), nullable=False),
+        # Cross-DB pointer to control's permission_rule_sets (FK-less, like
+        # credential_id). NULL = the binding's inline agent_permission_rules
+        # rows apply; non-NULL = the shared set's list applies (Q-04).
+        sa.Column("rule_set_id", sa.String(30), nullable=True),
         sa.Column(
             "bound_at",
             sa.DateTime(timezone=True),
@@ -72,6 +76,11 @@ def upgrade() -> None:
         ["credential_id"],
     )
     op.create_index(
+        "ix_agent_credential_bindings_rule_set_id",
+        "agent_credential_bindings",
+        ["rule_set_id"],
+    )
+    op.create_index(
         "ix_agent_credential_bindings_created_at", "agent_credential_bindings", ["created_at"]
     )
     op.create_index(
@@ -82,6 +91,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_agent_credential_bindings_created_by", table_name="agent_credential_bindings")
     op.drop_index("ix_agent_credential_bindings_created_at", table_name="agent_credential_bindings")
+    op.drop_index(
+        "ix_agent_credential_bindings_rule_set_id", table_name="agent_credential_bindings"
+    )
     op.drop_index(
         "ix_agent_credential_bindings_credential_id", table_name="agent_credential_bindings"
     )
