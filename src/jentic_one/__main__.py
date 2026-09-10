@@ -21,7 +21,7 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
-from jentic_one.shared.config import AppConfig, load_config
+from jentic_one.shared.config import AppConfig, load_config, oneshot_config_source_active
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
@@ -121,6 +121,7 @@ def _serve() -> None:
     # token-mint path; a SQLite registry/control DB under reload would still
     # contend, but that is out of scope here.
     reload_enabled = config.server.reload
+    logging_configured = False
     if reload_enabled and config.databases.admin.backend == "sqlite":
         # Configure logging up front so the warning is emitted in the standard
         # format; the reload branch returns before the single-process path, while
@@ -136,8 +137,24 @@ def _serve() -> None:
         )
         reload_enabled = False
         logging_configured = True
-    else:
-        logging_configured = False
+    if reload_enabled and oneshot_config_source_active():
+        # The reload worker is a separate process that re-loads config from the
+        # environment (see create_app); a one-shot source (pipe / /dev/fd) is
+        # already drained in this process and would hang or fail the worker's
+        # read. Degrade to a single process instead of hanging boot.
+        if not logging_configured:
+            configure_logging(config)
+            logging_configured = True
+        logger = structlog.get_logger(__name__)
+        logger.warning(
+            "reload_disabled_oneshot_config_source",
+            detail=(
+                "server.reload ignored: the config came from a one-shot source "
+                "(pipe / /dev/fd) that a reload worker process cannot re-read; "
+                "running a single worker instead."
+            ),
+        )
+        reload_enabled = False
 
     if reload_enabled:
         uvicorn.run(

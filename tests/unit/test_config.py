@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+import structlog.testing
 import yaml
 from pydantic import SecretStr, ValidationError
 
@@ -607,7 +609,9 @@ def test_encryption_active_id_env_override(config_file: Path):
     assert config.credentials.encryption.active_id == "env-id"
 
 
-_KEY_B64 = "dGVzdC1rZXktbWF0ZXJpYWwtMzItYnl0ZXMtcGFk"
+# A syntactically valid key for source-resolution tests: material_file content
+# is vetted as base64 of exactly 32 bytes at config load.
+_KEY_B64 = base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
 
 
 def test_encryption_key_inline_material():
@@ -665,6 +669,103 @@ def test_encryption_key_requires_exactly_one_source():
         EncryptionKey(id="v1", material=SecretStr(_KEY_B64), material_env="TEST_ENC_KEY")
 
 
+@pytest.mark.parametrize("inline", ["", "   ", " \n\t"])
+def test_encryption_key_inline_material_empty_fails(inline: str):
+    """An empty/whitespace inline material fails at validation, not at first
+    credential use — all three sources reject empties identically."""
+    with pytest.raises(ValidationError, match="material is empty"):
+        EncryptionKey(id="v1", material=SecretStr(inline))
+
+
+def test_encryption_key_inline_material_strips_whitespace():
+    """Inline material strips like the env/file sources do, so identical bytes
+    produce identical keys regardless of which source carried them."""
+    key = EncryptionKey(id="v1", material=SecretStr(f"  {_KEY_B64}\n"))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+@pytest.mark.parametrize("value", ["", "   ", " \n"])
+def test_encryption_key_material_env_empty_fails(value: str):
+    """A set-but-empty (or whitespace-only) variable must fail like an unset
+    one — it must never resolve to a zero-length key."""
+    with (
+        patch.dict(os.environ, {"TEST_ENC_KEY": value}, clear=False),
+        pytest.raises(ValidationError, match=r"is not set \(or empty\)"),
+    ):
+        EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+
+
+def test_encryption_key_material_file_rejects_fifo(tmp_path: Path):
+    """A pipe cannot be re-read, so it must be rejected up front — a writer-less
+    FIFO would otherwise block boot forever with no timeout."""
+    fifo = tmp_path / "key.fifo"
+    os.mkfifo(fifo)
+    with pytest.raises(ValidationError, match="must be a regular file"):
+        EncryptionKey(id="v1", material_file=str(fifo))
+
+
+def test_encryption_key_material_file_not_base64_fails(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text("this is not base64!\n")
+    with pytest.raises(ValidationError, match="does not contain a base64-encoded key"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_material_file_wrong_length_fails_without_length_echo(tmp_path: Path):
+    """The failure must not echo the observed byte length: material_file is
+    reachable with env-write privilege, and echoing the length turns any
+    readable path into a content-length oracle."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(base64.b64encode(b"short-key").decode())
+    with pytest.raises(ValidationError, match="does not contain a 32-byte key") as excinfo:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert "got" not in str(excinfo.value)
+    assert "9 bytes" not in str(excinfo.value)
+
+
+def test_encryption_key_material_file_too_large_fails(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_bytes(b"A" * 8192)
+    with pytest.raises(ValidationError, match="does not contain a base64-encoded key"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_material_file_permissive_mode_warns(tmp_path: Path):
+    """A group/other-readable key file is the feature's whole security boundary
+    silently gone; the load must say so."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key_file.chmod(0o644)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert any(log["event"] == "encryption_material_file_permissive" for log in logs)
+
+
+def test_encryption_key_material_file_private_mode_does_not_warn(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key_file.chmod(0o600)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert not any(log["event"] == "encryption_material_file_permissive" for log in logs)
+
+
+def test_encryption_key_resolution_logs_source_and_fingerprint_not_material(tmp_path: Path):
+    """The boot trail must record where the key came from (id, source, origin,
+    fingerprint) and must never carry the material itself."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    resolved = [log for log in logs if log["event"] == "encryption_key_material_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0]["key_id"] == "v1"
+    assert resolved[0]["source"] == "material_file"
+    assert resolved[0]["origin"] == str(key_file)
+    assert len(resolved[0]["fingerprint"]) == 16
+    assert all(_KEY_B64 not in str(v) for v in resolved[0].values())
+
+
 def test_encryption_key_resolved_key_revalidates(tmp_path: Path):
     """A resolved key survives dump -> validate: the source field is cleared,
     so re-validation neither trips the exactly-one check nor re-reads the file."""
@@ -713,6 +814,76 @@ def test_load_config_from_pipe_is_cached(sample_config_dict: dict[str, Any]):
         assert first.databases.registry.name == second.databases.registry.name
     finally:
         os.close(read_fd)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_load_config_from_regular_file_is_not_cached(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """Regular files re-read on every load — caching them would defeat keyset
+    rotation (edit the file, reload, still get the stale document)."""
+    path = tmp_path / "cfg.yaml"
+    sample_config_dict["databases"]["registry"]["name"] = "before-rotation"
+    path.write_text(yaml.dump(sample_config_dict))
+    first = load_config(path)
+    sample_config_dict["databases"]["registry"]["name"] = "after-rotation"
+    path.write_text(yaml.dump(sample_config_dict))
+    second = load_config(path)
+    assert first.databases.registry.name == "before-rotation"
+    assert second.databases.registry.name == "after-rotation"
+    assert _ONESHOT_CONFIG_CACHE == {}
+
+
+def test_load_config_oneshot_empty_source_fails_loudly_and_is_not_cached():
+    """A drained (or never-written) one-shot source must raise a ConfigError
+    naming the real cause — and must NOT be cached, or the process would be
+    permanently pinned to an empty config with no recovery."""
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)  # supervisor closed its end without writing
+    try:
+        with pytest.raises(ConfigError, match="yielded no content"):
+            load_config(Path(f"/dev/fd/{read_fd}"))
+        assert _ONESHOT_CONFIG_CACHE == {}
+    finally:
+        os.close(read_fd)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_oneshot_cache_is_keyed_on_source_identity_not_path(
+    sample_config_dict: dict[str, Any],
+):
+    """fd numbers are recycled, so two different pipes can both be /dev/fd/N in
+    one process. The cache must key on the source's identity, never the path
+    string — a path-keyed cache silently serves the first pipe's document for
+    the second."""
+    sample_config_dict["databases"]["registry"]["name"] = "config-a"
+    doc_a = yaml.dump(sample_config_dict).encode()
+    sample_config_dict["databases"]["registry"]["name"] = "config-b"
+    doc_b = yaml.dump(sample_config_dict).encode()
+
+    read_a, write_a = os.pipe()
+    read_b = -1
+    try:
+        os.write(write_a, doc_a)
+        os.close(write_a)
+        first = load_config(Path(f"/dev/fd/{read_a}"))
+        os.close(read_a)
+
+        read_b, write_b = os.pipe()
+        os.write(write_b, doc_b)
+        os.close(write_b)
+        # Force the second pipe onto the first pipe's recycled fd number.
+        if read_b != read_a:
+            os.dup2(read_b, read_a)
+            os.close(read_b)
+        read_b = read_a
+        second = load_config(Path(f"/dev/fd/{read_b}"))
+
+        assert first.databases.registry.name == "config-a"
+        assert second.databases.registry.name == "config-b"
+    finally:
+        if read_b >= 0:
+            os.close(read_b)
         _ONESHOT_CONFIG_CACHE.clear()
 
 

@@ -942,9 +942,10 @@ func (j *EncryptionConfig) UnmarshalJSON(value []byte) error {
 //
 //   - “material“      — inline in the config (local dev / vault-templated files),
 //   - “material_env“  — the name of an environment variable holding the key,
-//   - “material_file“ — a path to read the key from (docker/k8s secret mounts,
-//     systemd credentials, or a pipe such as “/dev/stdin“ fed by a supervisor
-//     that holds the key in an OS keystore).
+//   - “material_file“ — a regular file to read the key from (docker/k8s secret
+//     mounts, systemd “LoadCredential“ paths). Pipes and “/dev/fd“ sources
+//     are rejected: config may be validated more than once per process, and a
+//     source that cannot be re-read would hang or fail the second load.
 //
 // “material_env“/“material_file“ are resolved once, at config load, into
 // “material“ — consumers keep reading “resolved_material“ and never learn
@@ -957,13 +958,14 @@ type EncryptionKey struct {
 	// Id corresponds to the JSON schema field "id".
 	Id string `json:"id" yaml:"id" mapstructure:"id"`
 
-	// Material corresponds to the JSON schema field "material".
+	// Base64-encoded key material, inline in the config.
 	Material interface{} `json:"material,omitempty,omitzero" yaml:"material,omitempty" mapstructure:"material,omitempty"`
 
-	// MaterialEnv corresponds to the JSON schema field "material_env".
+	// Name of an environment variable holding the base64-encoded key material.
 	MaterialEnv interface{} `json:"material_env,omitempty,omitzero" yaml:"material_env,omitempty" mapstructure:"material_env,omitempty"`
 
-	// MaterialFile corresponds to the JSON schema field "material_file".
+	// Path to a regular file holding the base64-encoded key material (docker/k8s
+	// secret mount, systemd LoadCredential path).
 	MaterialFile interface{} `json:"material_file,omitempty,omitzero" yaml:"material_file,omitempty" mapstructure:"material_file,omitempty"`
 }
 

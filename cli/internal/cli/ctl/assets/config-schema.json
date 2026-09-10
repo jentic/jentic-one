@@ -607,7 +607,24 @@
       "type": "object"
     },
     "EncryptionKey": {
-      "description": "A single named encryption key.\n\nKey material comes from exactly ONE source:\n\n- ``material``      — inline in the config (local dev / vault-templated files),\n- ``material_env``  — the name of an environment variable holding the key,\n- ``material_file`` — a path to read the key from (docker/k8s secret mounts,\n  systemd credentials, or a pipe such as ``/dev/stdin`` fed by a supervisor\n  that holds the key in an OS keystore).\n\n``material_env``/``material_file`` are resolved once, at config load, into\n``material`` — consumers keep reading ``resolved_material`` and never learn\nwhere the bytes came from (the source field is cleared after resolution, so\na resolved key re-validates cleanly and never re-reads the environment or\nthe file). Resolution failures (unset variable, unreadable file, empty\nvalue) fail validation loudly rather than booting a server that cannot\ndecrypt its own credentials.",
+      "description": "A single named encryption key.\n\nKey material comes from exactly ONE source:\n\n- ``material``      — inline in the config (local dev / vault-templated files),\n- ``material_env``  — the name of an environment variable holding the key,\n- ``material_file`` — a regular file to read the key from (docker/k8s secret\n  mounts, systemd ``LoadCredential`` paths). Pipes and ``/dev/fd`` sources\n  are rejected: config may be validated more than once per process, and a\n  source that cannot be re-read would hang or fail the second load.\n\n``material_env``/``material_file`` are resolved once, at config load, into\n``material`` — consumers keep reading ``resolved_material`` and never learn\nwhere the bytes came from (the source field is cleared after resolution, so\na resolved key re-validates cleanly and never re-reads the environment or\nthe file). Resolution failures (unset variable, unreadable file, empty\nvalue) fail validation loudly rather than booting a server that cannot\ndecrypt its own credentials.",
+      "oneOf": [
+        {
+          "required": [
+            "material"
+          ]
+        },
+        {
+          "required": [
+            "material_env"
+          ]
+        },
+        {
+          "required": [
+            "material_file"
+          ]
+        }
+      ],
       "properties": {
         "id": {
           "title": "Id",
@@ -625,6 +642,7 @@
             }
           ],
           "default": null,
+          "description": "Base64-encoded key material, inline in the config.",
           "title": "Material"
         },
         "material_env": {
@@ -637,6 +655,7 @@
             }
           ],
           "default": null,
+          "description": "Name of an environment variable holding the base64-encoded key material.",
           "title": "Material Env"
         },
         "material_file": {
@@ -649,6 +668,7 @@
             }
           ],
           "default": null,
+          "description": "Path to a regular file holding the base64-encoded key material (docker/k8s secret mount, systemd LoadCredential path).",
           "title": "Material File"
         }
       },
