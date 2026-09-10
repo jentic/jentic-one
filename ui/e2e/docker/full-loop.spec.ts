@@ -58,7 +58,7 @@ test('full loop prefix: import → toolkit → credential → bind → grant →
 
 	// 3. Create a credential. Pin the EXACT resolved API identity (not a bare
 	//    vendor) to sidestep #527 (F-10) so this stays a faithful happy-path.
-	await createApiKeyCredential(request, {
+	const credentialId = await createApiKeyCredential(request, {
 		name: `e2e-loop-cred-${sfx}`,
 		vendor,
 		apiName,
@@ -77,15 +77,16 @@ test('full loop prefix: import → toolkit → credential → bind → grant →
 	// 6. File an access request AS the agent and approve it from the UI — the
 	//    real human-in-the-loop gate. Because the agent is admin-owned, the
 	//    admin satisfies owns_filer and the decision is authorised. We file a
-	//    toolkit:bind for the REAL toolkit created above (by its id) so the
-	//    approved decision applies a genuine, resolvable effect. The row is
+	//    credential:bind for the REAL credential created above (by its id) so
+	//    the approved decision applies a genuine, resolvable effect (filing
+	//    stamps a read-only default rule set — theme-5 phase 3). The row is
 	//    matched in the queue by filer name (the queue resolves the agent id to
 	//    its directory name via <ActorLabel>).
 	await fileAccessRequestAsAgent(request, agent, {
 		reason: `e2e full-loop ${sfx}`,
-		resourceType: 'toolkit',
+		resourceType: 'credential',
 		action: 'bind',
-		resourceId: toolkitId,
+		resourceId: credentialId,
 	});
 
 	await page.goto('/app/access-requests');

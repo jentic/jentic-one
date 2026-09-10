@@ -4,18 +4,16 @@
  * A `--provision` request is an ENVELOPE describing the whole path to first
  * execution rather than a single last-mile binding (see `provisioningPlan.ts`):
  *
- *   toolkit:create        — create a toolkit that serves the API      (Step 1)
- *   credential:provision  — create a credential for the API           (Step 2, skipped if no-auth)
- *   credential:bind       — bind that credential to that toolkit + rules
- *   toolkit:bind          — bind the agent to that toolkit
+ *   credential:provision  — create a credential for the API   (Step 1, auto for no-auth)
+ *   credential:bind       — bind the AGENT to that credential + permission rules
  *
- * The two `create`/`provision` items are inert placeholders; a human fulfils
- * them here by CREATING the real toolkit/credential (reusing the shared
- * CreateCredentialDialog and toolkit create), then this wizard AMENDs the
- * resulting ids + confirmed rules onto the `credential:bind` item and APPROVES
- * the whole request — the existing bind effects do the real wiring.
+ * The `provision` item is an inert placeholder; a human fulfils it here by
+ * CREATING the real credential (reusing the shared CreateCredentialDialog),
+ * then this wizard AMENDs the resulting credential id + confirmed rules onto
+ * the `credential:bind` item and APPROVES the whole request — the existing
+ * bind effect does the real wiring (agent ↔ credential + rules).
  *
- * Orphans: the toolkit/credential are created before approval, so an abandoned
+ * Orphans: the credential is created before approval, so an abandoned
  * fulfilment can leave real objects. The wizard tracks what it created this
  * session and offers to discard them on cancel (client-side, best-effort).
  */
@@ -33,7 +31,6 @@ import {
 } from 'lucide-react';
 import { Dialog } from '@/shared/ui/Dialog';
 import { Button } from '@/shared/ui/Button';
-import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
 import { Select } from '@/shared/ui/Select';
 import { Badge } from '@/shared/ui/Badge';
@@ -49,11 +46,9 @@ import {
 	CredentialType,
 	AgentsService,
 	CredentialsService,
-	ToolkitsService,
 	getToken,
 	subscribeToken,
 	type CredentialRedactedResponse,
-	type ToolkitResponse,
 } from '@/shared/api';
 import {
 	amendAccessRequest,
@@ -77,27 +72,15 @@ import {
 	type PlanApiReference,
 	type PlanChain,
 } from '@/shared/lib/provisioningPlan';
-import {
-	createNoAuthCredential,
-	createPlanToolkit,
-	discardPlanCredential,
-	discardPlanToolkit,
-	suggestToolkitName,
-} from '@/shared/lib/provisioningFulfilment';
+import { createNoAuthCredential, discardPlanCredential } from '@/shared/lib/provisioningFulfilment';
 
-type Step = 'toolkit' | 'credential' | 'rules' | 'review' | 'done';
+type Step = 'credential' | 'rules' | 'review' | 'done';
 type Outcome = 'granted' | 'error';
 
 /** Per-chain fulfilment progress — one entry per provisioning chain. */
 interface ChainProgress {
 	/** The chain's `PlanChain.key` — aligns restored drafts to the right API. */
 	key: string;
-	toolkitId: string | null;
-	toolkitName: string;
-	toolkitNameEdited: boolean;
-	/** The toolkit was ADOPTED from the operator's existing toolkits (picker),
-	 * not created this session — excluded from orphan discard on cancel. */
-	toolkitAdopted: boolean;
 	credentialId: string | null;
 	credentialType: string | null;
 	/** Display name of an adopted credential (created ones show their type). */
@@ -125,14 +108,18 @@ interface WizardDraft {
  * Session-scoped drafts keyed by request id. The wizard's only production
  * mount path (AccessRequestDecisionDialog) UNMOUNTS it on close, so component
  * state alone would evaporate on "Keep & finish later" — reopening would then
- * create a SECOND toolkit/credential, accumulating exactly the orphans the
- * discard flow exists to prevent. Backed by sessionStorage (best-effort,
- * per-tab, gone when the tab closes): the OAuth connect flow can fall back to
- * a SAME-TAB redirect when the popup is blocked, and a module-scoped map
- * would not survive that full-page navigation — every chain's created
- * toolkit/credential id would be lost mid-fulfilment.
+ * create a SECOND credential, accumulating exactly the orphans the discard
+ * flow exists to prevent. Backed by sessionStorage (best-effort, per-tab,
+ * gone when the tab closes): the OAuth connect flow can fall back to a
+ * SAME-TAB redirect when the popup is blocked, and a module-scoped map would
+ * not survive that full-page navigation — every chain's created credential id
+ * would be lost mid-fulfilment.
+ *
+ * The `.v2` suffix retires drafts from the 4-step toolkit era: their step
+ * names and chain fields no longer exist, so restoring one would misroute the
+ * wizard. Old-key entries simply expire with the session.
  */
-const DRAFTS_STORAGE_KEY = 'jentic.provisioningWizardDrafts';
+const DRAFTS_STORAGE_KEY = 'jentic.provisioningWizardDrafts.v2';
 
 function loadDrafts(): Map<string, WizardDraft> {
 	try {
@@ -238,24 +225,30 @@ function proposedChainRules(chain: PlanChain): PermissionRuleInput[] {
 }
 
 /**
+ * The shared rule set attached to a chain's bind item, if any. When present it
+ * — not inline rules — is the binding's effective policy (they are mutually
+ * exclusive), so the wizard neither edits nor amends rules for the chain: it
+ * preserves the pointer and shows it read-only.
+ */
+function chainRuleSetId(chain: PlanChain): string | null {
+	return chain.credentialBind?.rule_set_id ?? null;
+}
+
+/**
  * A chain the wizard cannot wire: without a `credential:bind` item there is
- * nothing to amend the created toolkit/credential onto, so walking the
- * operator through creating them would throw that work away. Such chains
- * (only reachable via raw-API-filed requests) are seeded as skipped, locked,
- * and denied at submit with an explicit reason.
+ * nothing to amend the created credential onto, so walking the operator
+ * through creating one would throw that work away. Such chains (only
+ * reachable via raw-API-filed requests) are seeded as skipped, locked, and
+ * denied at submit with an explicit reason.
  */
 function chainUnfulfillable(chain: PlanChain): boolean {
 	return chain.credentialBind === undefined;
 }
 
 /** Fresh (untouched) progress for each of a request's chains. */
-function seedChainProgress(chains: PlanChain[], agentName: string | undefined): ChainProgress[] {
+function seedChainProgress(chains: PlanChain[]): ChainProgress[] {
 	return chains.map((chain) => ({
 		key: chain.key,
-		toolkitId: null,
-		toolkitName: suggestChainToolkitName(chain, agentName, chains),
-		toolkitNameEdited: false,
-		toolkitAdopted: false,
 		credentialId: null,
 		credentialType: null,
 		credentialName: null,
@@ -266,28 +259,9 @@ function seedChainProgress(chains: PlanChain[], agentName: string | undefined): 
 	}));
 }
 
-/**
- * Per-chain toolkit-name suggestion. With several chains the agent-based
- * suggestion would be identical for every chain (only 409 suffixes would
- * disambiguate), so append the API name — or vendor/name when two chains
- * share an API name — to keep the names meaningful.
- */
-function suggestChainToolkitName(
-	chain: PlanChain,
-	agentName: string | undefined,
-	chains: PlanChain[],
-): string {
-	const base = suggestToolkitName(agentName, chain.apiRef.vendor, chain.apiRef.name);
-	if (chains.length <= 1 || !base) return base;
-	const name = chain.apiRef.name ?? chain.apiRef.vendor;
-	const nameCollides = chains.some(
-		(c) => c.key !== chain.key && (c.apiRef.name ?? c.apiRef.vendor) === name,
-	);
-	const api = nameCollides ? `${chain.apiRef.vendor}/${name}` : name;
-	// The pre-resolution fallback base is already "<vendor/name> toolkit" —
-	// suffixing it with the same slug would read "…/forecast toolkit (forecast)".
-	if (base.toLowerCase().includes(api.toLowerCase())) return base;
-	return `${base.slice(0, 200)} (${api.slice(0, 40)})`;
+/** The first interactive step for a chain (no-auth chains have no credential step). */
+function chainFirstStep(chain: PlanChain | undefined): Step {
+	return chain !== undefined && !chainIsNoAuth(chain) ? 'credential' : 'rules';
 }
 
 export function ProvisioningRequestDialog({
@@ -297,24 +271,22 @@ export function ProvisioningRequestDialog({
 	onFulfilled,
 }: ProvisioningRequestDialogProps) {
 	// The request split into provisioning chains (one per API) + plain extras
-	// (binds to existing toolkits, scope grants) decided alongside the chains.
+	// (binds to existing credentials, scope grants) decided alongside the chains.
 	const shape = useMemo(() => planChains(request), [request]);
 	const chains = shape.chains;
 
 	// The requesting agent's display name, resolved from the actor directory.
-	// Feeds the header badge and the toolkit-name suggestion (a toolkit is the
-	// agent's access bundle, so it should be named after the agent — not the
-	// credential/API). Resolves asynchronously; undefined until the directory
-	// query lands or when the id is unknown.
+	// Feeds the header badge. Resolves asynchronously; undefined until the
+	// directory query lands or when the id is unknown.
 	const directory = useActorDirectory();
 	const directoryName = directory.resolve(request.actor_id);
 
 	// Directory miss fallback: the directory is cached reference data, and the
 	// normal CLI flow registers the agent SECONDS before this dialog opens — a
 	// cached-before-registration directory misses it, which would leave the
-	// raw `agnt_…` id in the header and an API-slug toolkit name. Only once the
-	// directory has loaded AND missed, fetch the agent directly by id (keyed to
-	// the id so a stale name can never leak across requests).
+	// raw `agnt_…` id in the header. Only once the directory has loaded AND
+	// missed, fetch the agent directly by id (keyed to the id so a stale name
+	// can never leak across requests).
 	const [fetched, setFetched] = useState<{ id: string; name: string } | null>(null);
 	const fetchedAgentName = fetched?.id === request.actor_id ? fetched.name : undefined;
 	useEffect(() => {
@@ -346,9 +318,9 @@ export function ProvisioningRequestDialog({
 	// draft-save effect below and clobber the draft with defaults. Draft
 	// chains are realigned to the CURRENT chain order by `PlanChain.key` —
 	// item order isn't guaranteed server-side, so a positional restore could
-	// apply one API's toolkit/credential/rules to another API's chain. A
-	// draft whose keys no longer match (the request was amended elsewhere)
-	// is discarded rather than mis-applied.
+	// apply one API's credential/rules to another API's chain. A draft whose
+	// keys no longer match (the request was amended elsewhere) is discarded
+	// rather than mis-applied.
 	const draftFor = (id: string): WizardDraft | undefined => {
 		const draft = wizardDrafts.get(id);
 		if (!draft || draft.chains.length !== chains.length) return undefined;
@@ -357,25 +329,16 @@ export function ProvisioningRequestDialog({
 		for (const chain of chains) {
 			const cs = byKey.get(chain.key);
 			if (!cs) return undefined;
-			// Backfill fields older drafts predate (adopt-existing support):
-			// their objects were all wizard-created, so `adopted: false` is the
-			// accurate default for them, keeping them discardable. The
-			// stored JSON may genuinely lack these keys even though the type
-			// declares them, hence the runtime defaults.
-			aligned.push({
-				...cs,
-				toolkitAdopted: cs.toolkitAdopted ?? false,
-				credentialName: cs.credentialName ?? null,
-				credentialAdopted: cs.credentialAdopted ?? false,
-				credentialUnconnected: cs.credentialUnconnected ?? false,
-			});
+			aligned.push(cs);
 		}
 		return { ...draft, chains: aligned };
 	};
-	const [step, setStep] = useState<Step>(() => draftFor(request.id)?.step ?? 'toolkit');
+	const [step, setStep] = useState<Step>(
+		() => draftFor(request.id)?.step ?? chainFirstStep(chains[0]),
+	);
 	const [chainIndex, setChainIndex] = useState(() => draftFor(request.id)?.chainIndex ?? 0);
 	const [chainStates, setChainStates] = useState<ChainProgress[]>(
-		() => draftFor(request.id)?.chains ?? seedChainProgress(chains, agentName),
+		() => draftFor(request.id)?.chains ?? seedChainProgress(chains),
 	);
 	// Set once the operator mutates anything, gating draft persistence — a
 	// pristine peek at a plan should not accumulate map entries.
@@ -384,7 +347,7 @@ export function ProvisioningRequestDialog({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [outcome, setOutcome] = useState<Outcome | null>(null);
-	// In-dialog "discard orphaned toolkit/credential?" confirmation shown when
+	// In-dialog "discard orphaned credential?" confirmation shown when
 	// cancelling a partially-fulfilled wizard (replaces a browser confirm()).
 	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const [discarding, setDiscarding] = useState(false);
@@ -392,8 +355,8 @@ export function ProvisioningRequestDialog({
 	// from the list query; before showing the LIVE create/approve controls we
 	// confirm the request is still pending, so an operator can't re-fulfil a
 	// request that was decided/expired since the list was fetched (which would
-	// strand a real toolkit/credential then fail at decide). The fresh copy
-	// also carries the single-GET `already_satisfied` enrichment feeding the
+	// strand a real credential then fail at decide). The fresh copy also
+	// carries the single-GET `already_satisfied` enrichment feeding the
 	// "already in place" hints. Null until the fetch resolves; the terminal
 	// gate falls back to the snapshot.
 	const [freshRequest, setFreshRequest] = useState<AccessRequest | null>(null);
@@ -440,9 +403,9 @@ export function ProvisioningRequestDialog({
 		if (lastSeededId.current === request.id) return;
 		lastSeededId.current = request.id;
 		const draft = draftFor(request.id);
-		setStep(draft?.step ?? 'toolkit');
+		setStep(draft?.step ?? chainFirstStep(chains[0]));
 		setChainIndex(draft?.chainIndex ?? 0);
-		setChainStates(draft?.chains ?? seedChainProgress(chains, agentName));
+		setChainStates(draft?.chains ?? seedChainProgress(chains));
 		setTouched(draft !== undefined);
 		setOutcome(null);
 		setFreshRequest(null);
@@ -474,30 +437,12 @@ export function ProvisioningRequestDialog({
 	// fast-path) while a draft existed, the draft can never be resumed — the
 	// terminal gate below renders the read-only summary from now on. Drop the
 	// entry so it doesn't sit in the map for the rest of the session. Any
-	// toolkit/credential created before the external decision stays (deleting
-	// server objects on a status we merely OBSERVED is too destructive);
-	// operators can remove them from the toolkits page.
+	// credential created before the external decision stays (deleting server
+	// objects on a status we merely OBSERVED is too destructive); operators
+	// can remove them from the credentials page.
 	useEffect(() => {
 		if (effectiveStatus !== 'pending') wizardDrafts.delete(request.id);
 	}, [effectiveStatus, request.id]);
-
-	// The actor directory resolves asynchronously, so the requester's name often
-	// lands AFTER the seed above. Upgrade each chain's suggested name when it
-	// does — but never clobber a manual edit or a name a toolkit was already
-	// created with.
-	useEffect(() => {
-		setChainStates((prev) =>
-			prev.map((cs, i) => {
-				if (cs.toolkitNameEdited || cs.toolkitId !== null || chains[i] === undefined) {
-					return cs;
-				}
-				return {
-					...cs,
-					toolkitName: suggestChainToolkitName(chains[i], agentName, chains),
-				};
-			}),
-		);
-	}, [agentName, chains]);
 
 	// The chain the per-chain steps currently operate on. `chain`/`progress`
 	// are undefined only transiently (index race on a re-seed); guarded below.
@@ -507,8 +452,10 @@ export function ProvisioningRequestDialog({
 	const detectedAuth = chain ? chainAuthType(chain) : null;
 	const initialCredentialType = authTypeToCredentialType(detectedAuth);
 	// Locked chains can't be un-skipped: there is no credential:bind to amend,
-	// so any toolkit/credential the operator created would be thrown away.
+	// so any credential the operator created would be thrown away.
 	const chainLocked = chain !== undefined && chainUnfulfillable(chain);
+	// The chain's policy is a shared rule set: rules are read-only here.
+	const ruleSetId = chain ? chainRuleSetId(chain) : null;
 
 	/** Mutate the current chain's progress (marks the wizard as touched). */
 	const updateChain = useCallback(
@@ -524,8 +471,8 @@ export function ProvisioningRequestDialog({
 	// (issue #826): true when the binding/grant an item asks for already
 	// exists — e.g. the operator set things up manually outside the wizard.
 	// Absent entries mean "not computed" (never "no"). `satisfiedByItemId`
-	// carries the satisfying toolkit id for toolkit:bind items so the nudge
-	// can name the exact object instead of waving at a bare boolean.
+	// carries the satisfying CREDENTIAL id for credential:bind items so the
+	// nudge can name the exact object instead of waving at a bare boolean.
 	const satisfiedItemIds = useMemo(() => {
 		const ids = new Set<string>();
 		for (const it of freshRequest?.items ?? []) {
@@ -544,36 +491,9 @@ export function ProvisioningRequestDialog({
 	}, [freshRequest]);
 	const chainAlreadyWired = useCallback(
 		(c: PlanChain): boolean =>
-			[c.credentialBind, c.toolkitBind].some(
-				(it) => it !== undefined && satisfiedItemIds.has(it.id),
-			),
+			c.credentialBind !== undefined && satisfiedItemIds.has(c.credentialBind.id),
 		[satisfiedItemIds],
 	);
-
-	// The operator's existing toolkits, fetched lazily the first time a toolkit
-	// step is shown — they feed the "use an existing toolkit" picker so manual
-	// setups can be adopted instead of duplicated (issue #826). Suspended
-	// toolkits are excluded (adopting one would wire the agent to a dead end).
-	// One page is plenty for a picker; a genuinely empty list collapses the
-	// section, but a FAILED fetch shows a retry line instead — silently
-	// collapsing while the nudge says "adopt" would strand the operator.
-	const [existingToolkits, setExistingToolkits] = useState<ToolkitResponse[] | null | 'error'>(
-		null,
-	);
-	useEffect(() => {
-		if (!open || step !== 'toolkit' || existingToolkits !== null) return;
-		let cancelled = false;
-		void ToolkitsService.listToolkits({ limit: 100 })
-			.then((res) => {
-				if (!cancelled) setExistingToolkits(res.data.filter((tk) => tk.active));
-			})
-			.catch(() => {
-				if (!cancelled) setExistingToolkits('error');
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [open, step, existingToolkits]);
 
 	// Existing credentials for the CURRENT chain's API vendor, cached per
 	// vendor. Vendor-filtered server-side so the picker only offers
@@ -621,10 +541,8 @@ export function ProvisioningRequestDialog({
 	// button: committing on <select> change is a keyboard trap (arrowing
 	// through options on a closed native select fires change per keystroke —
 	// WCAG 3.2.2). Reset whenever the step or chain changes.
-	const [pendingToolkitChoice, setPendingToolkitChoice] = useState('');
 	const [pendingCredentialChoice, setPendingCredentialChoice] = useState('');
 	useEffect(() => {
-		setPendingToolkitChoice('');
 		setPendingCredentialChoice('');
 	}, [step, chainIndex]);
 	// Derived before JSX (file convention — no closures in the tree): the
@@ -636,47 +554,14 @@ export function ProvisioningRequestDialog({
 	const pendingUnconnectedOAuth =
 		pendingCredential !== undefined && isUnconnectedOAuth(pendingCredential);
 
-	/** Adopt an existing toolkit for the current chain. */
-	const handleAdoptToolkit = useCallback(
-		(toolkitId: string) => {
-			const tk =
-				existingToolkits === 'error'
-					? undefined
-					: existingToolkits?.find((t) => t.toolkit_id === toolkitId);
-			if (!tk) return;
-			// Adopting commits to this chain, same as creating (clears a skip).
-			// `toolkitNameEdited` stops the async suggested-name upgrade from
-			// clobbering the adopted name.
-			updateChain({
-				toolkitId: tk.toolkit_id,
-				toolkitName: tk.name,
-				toolkitNameEdited: true,
-				toolkitAdopted: true,
-				skipped: false,
-			});
-			setStep(noAuth ? 'rules' : 'credential');
-		},
-		[existingToolkits, noAuth, updateChain],
-	);
-
-	/** Un-adopt: back to the create form (adopted objects are never deleted). */
-	const handleClearAdoptedToolkit = useCallback(() => {
-		if (!chain) return;
-		updateChain({
-			toolkitId: null,
-			toolkitName: suggestChainToolkitName(chain, agentName, chains),
-			toolkitNameEdited: false,
-			toolkitAdopted: false,
-		});
-	}, [chain, chains, agentName, updateChain]);
-
 	/**
 	 * Adopt an existing credential — reused as-is, no connect flow. The picker
 	 * only offers active credentials; a never-connected OAuth credential is
 	 * flagged in the picker (see `isUnconnectedOAuth`) with a warning before
 	 * commit, but adoption still trusts the operator's choice — warned, not
 	 * blocked (a broken pick fails at execute time, same as it would for the
-	 * manual setup being adopted).
+	 * manual setup being adopted). Adopting commits to this chain (clears a
+	 * skip).
 	 */
 	const handleAdoptCredential = useCallback(
 		(credentialId: string) => {
@@ -691,6 +576,7 @@ export function ProvisioningRequestDialog({
 				credentialName: cred.name,
 				credentialAdopted: true,
 				credentialUnconnected: isUnconnectedOAuth(cred),
+				skipped: false,
 			});
 			setStep('rules');
 		},
@@ -711,11 +597,11 @@ export function ProvisioningRequestDialog({
 	const advanceChain = useCallback(() => {
 		if (chainIndex + 1 < chains.length) {
 			setChainIndex(chainIndex + 1);
-			setStep('toolkit');
+			setStep(chainFirstStep(chains[chainIndex + 1]));
 		} else {
 			setStep('review');
 		}
-	}, [chainIndex, chains.length]);
+	}, [chainIndex, chains]);
 
 	/** Skip the current chain (its items are denied at submit) and advance. */
 	const handleSkipChain = useCallback(() => {
@@ -729,42 +615,19 @@ export function ProvisioningRequestDialog({
 		updateChain({ skipped: false });
 	}, [chainLocked, updateChain]);
 
-	const handleCreateToolkit = useCallback(async () => {
-		if (!progress || chainLocked) return;
-		setBusy(true);
-		setError(null);
-		try {
-			const created = await createPlanToolkit(progress.toolkitName.trim());
-			// Adopt the name the toolkit was ACTUALLY created with — on a 409 it
-			// carries a disambiguation suffix (e.g. "Claude Code toolkit-2"), and
-			// the review step + no-auth credential name derive from this state.
-			// This also settles any async suggested-name upgrade racing the POST.
-			// Creating a toolkit is committing to this chain — fulfilment work
-			// always clears a skip, so the created objects can't end up silently
-			// stranded behind a still-skipped (denied) chain.
-			updateChain({
-				toolkitId: created.toolkitId,
-				toolkitName: created.name,
-				toolkitAdopted: false,
-				skipped: false,
-			});
-			setStep(noAuth ? 'rules' : 'credential');
-		} catch (e) {
-			setError(e instanceof Error ? e.message : String(e));
-		} finally {
-			setBusy(false);
-		}
-	}, [progress, noAuth, updateChain, chainLocked]);
-
 	const handleCredentialCreated = useCallback(
 		async (info: CreatedCredentialInfo) => {
 			setCredentialDialogOpen(false);
+			// Creating a credential is committing to this chain — fulfilment
+			// work always clears a skip, so the created object can't end up
+			// silently stranded behind a still-skipped (denied) chain.
 			updateChain({
 				credentialId: info.credentialId,
 				credentialType: info.type,
 				credentialName: null,
 				credentialAdopted: false,
 				credentialUnconnected: false,
+				skipped: false,
 			});
 			// An OAuth2 credential that needs a browser sign-in (authorization-code
 			// with an authorize URL) has NO token until the connect flow completes —
@@ -810,28 +673,22 @@ export function ProvisioningRequestDialog({
 	);
 
 	// Everything the wizard CREATED this session, for orphan control on cancel.
-	// Adopted (pre-existing) objects are deliberately excluded — discarding
+	// Adopted (pre-existing) credentials are deliberately excluded — discarding
 	// them would delete infrastructure the operator set up outside the wizard.
-	const createdToolkitIds = chainStates
-		.filter((cs) => cs.toolkitId && !cs.toolkitAdopted)
-		.map((cs) => cs.toolkitId!);
 	const createdCredentialIds = chainStates
 		.filter((cs) => cs.credentialId && !cs.credentialAdopted)
 		.map((cs) => cs.credentialId!);
 
 	const handleCancel = useCallback(() => {
-		// Orphan control: if we created toolkits/credentials but didn't approve,
-		// ask whether to discard them so an abandoned fulfilment doesn't strand
+		// Orphan control: if we created credentials but didn't approve, ask
+		// whether to discard them so an abandoned fulfilment doesn't strand
 		// objects. In-dialog (house style) — never a native browser confirm().
-		if (
-			(createdToolkitIds.length > 0 || createdCredentialIds.length > 0) &&
-			outcome !== 'granted'
-		) {
+		if (createdCredentialIds.length > 0 && outcome !== 'granted') {
 			setConfirmDiscard(true);
 			return;
 		}
 		onClose();
-	}, [createdToolkitIds.length, createdCredentialIds.length, outcome, onClose]);
+	}, [createdCredentialIds.length, outcome, onClose]);
 
 	/** "Keep & finish later" — close the wizard, leave the draft objects. */
 	const handleKeepAndClose = useCallback(() => {
@@ -844,30 +701,28 @@ export function ProvisioningRequestDialog({
 		setDiscarding(true);
 		try {
 			for (const id of createdCredentialIds) await discardPlanCredential(id);
-			for (const id of createdToolkitIds) await discardPlanToolkit(id);
 		} finally {
 			// Reset the draft so a reopen doesn't reference the deleted objects
 			// (the draft otherwise persists across dismissals by design).
 			wizardDrafts.delete(request.id);
-			setChainStates(seedChainProgress(chains, agentName));
+			setChainStates(seedChainProgress(chains));
 			setChainIndex(0);
-			setStep('toolkit');
+			setStep(chainFirstStep(chains[0]));
 			setTouched(false);
 			setDiscarding(false);
 			setConfirmDiscard(false);
 			onClose();
 		}
-	}, [createdToolkitIds, createdCredentialIds, onClose, agentName, chains, request.id]);
+	}, [createdCredentialIds, onClose, chains, request.id]);
 
 	// A chain counts as fulfilled when it wasn't skipped AND has everything its
-	// bind items need: a created toolkit, plus a connected credential unless the
-	// chain is no-auth (that credential is auto-created at submit).
+	// bind item needs: a connected credential, unless the chain is no-auth
+	// (that credential is auto-created at submit).
 	const chainFulfilled = useCallback(
 		(i: number): boolean => {
 			const cs = chainStates[i];
 			const c = chains[i];
 			if (!cs || !c || cs.skipped) return false;
-			if (cs.toolkitId === null) return false;
 			return chainIsNoAuth(c) || cs.credentialId !== null;
 		},
 		[chains, chainStates],
@@ -883,22 +738,21 @@ export function ProvisioningRequestDialog({
 		setBusy(true);
 		setError(null);
 		try {
-			// 1. Amend every fulfilled chain's resolved ids + confirmed rules onto
-			//    its bind items in ONE call. A no-auth chain still needs a
-			//    credential for the credential:bind effect to attach the toolkit
-			//    binding + rules to (the broker keys rules on `(toolkit,
+			// 1. Amend every fulfilled chain's resolved credential id + confirmed
+			//    rules onto its bind item in ONE call. A no-auth chain still needs
+			//    a credential for the credential:bind effect to attach the agent
+			//    binding + rules to (the broker keys rules on `(agent,
 			//    credential)` and resolves a no_auth credential as a no-op auth) —
-			//    auto-create a NO_AUTH credential per such chain now. The concrete
-			//    toolkit id is also stamped onto each chain's toolkit:bind so it
-			//    resolves by id — the credential→toolkit binding isn't visible to
-			//    the reference join until the credential:bind effect applies later
-			//    in the same decision (see provisioning-plan e2e / #656 ordering).
+			//    auto-create a NO_AUTH credential per such chain now. When the
+			//    bind item carries a shared `rule_set_id`, that set IS the policy
+			//    (mutually exclusive with inline rules) — the amendment preserves
+			//    the pointer by sending no `rules`.
 			const amendments: ItemAmendment[] = [];
 			for (let i = 0; i < chains.length; i++) {
 				if (!chainFulfilled(i)) continue;
 				const c = chains[i];
 				const cs = chainStates[i];
-				if (!c.credentialBind || !cs.toolkitId) continue;
+				if (!c.credentialBind) continue;
 				let bindCredentialId = cs.credentialId;
 				if (chainIsNoAuth(c) && !bindCredentialId) {
 					const created = await createNoAuthCredential(
@@ -908,34 +762,26 @@ export function ProvisioningRequestDialog({
 							version: c.apiRef.version,
 						},
 						// Credential names share the 255-char DB cap but the create
-						// schema doesn't enforce it, so an over-long name surfaces as
-						// an opaque server error at the FINAL step. The toolkit name
-						// can legitimately be 255 (manual entry, 409-suffixed adopted
-						// name) — clamp it before deriving so the suffix always fits.
-						`${cs.toolkitName.trim().slice(0, 240)} (no-auth)`,
+						// schema doesn't enforce it — clamp the API-derived base so
+						// the suffix always fits and a long vendor/name can't
+						// surface as an opaque server error at the FINAL step.
+						`${apiLabel(c.apiRef).slice(0, 240)} (no-auth)`,
 					);
 					bindCredentialId = created.credentialId;
 					updateChain({ credentialId: created.credentialId }, i);
 				}
 				amendments.push({
 					item_id: c.credentialBind.id,
-					to_id: cs.toolkitId,
 					...(bindCredentialId ? { resource_id: bindCredentialId } : {}),
-					rules: cs.rules,
+					...(chainRuleSetId(c) ? {} : { rules: cs.rules }),
 				});
-				if (c.toolkitBind) {
-					amendments.push({ item_id: c.toolkitBind.id, resource_id: cs.toolkitId });
-				}
-				// Audit honesty (#897): stamp the fulfilled ids onto the inert
-				// placeholders too. Approving them is a recorded no-op either
-				// way, but without the id the record can't say WHICH toolkit
-				// fulfilled the "create" intent — which matters most when the
-				// operator adopted an EXISTING toolkit instead of creating one
+				// Audit honesty (#897): stamp the fulfilled id onto the inert
+				// placeholder too. Approving it is a recorded no-op either way,
+				// but without the id the record can't say WHICH credential
+				// fulfilled the "provision" intent — which matters most when the
+				// operator adopted an EXISTING credential instead of creating one
 				// (the agent's --wait then reads a full approval naming the
-				// reused toolkit, not a phantom "created" with no object).
-				if (c.create) {
-					amendments.push({ item_id: c.create.id, resource_id: cs.toolkitId });
-				}
+				// reused credential, not a phantom "provision" with no object).
 				if (c.provision && bindCredentialId) {
 					amendments.push({ item_id: c.provision.id, resource_id: bindCredentialId });
 				}
@@ -987,18 +833,15 @@ export function ProvisioningRequestDialog({
 			}
 			const decided = await decideAccessRequest(request.id, decisions);
 			// Granted = everything the operator MEANT to grant actually wired: every
-			// fulfilled chain's binds approved and every extra item approved.
-			// Skipped chains were denied on purpose and don't count against it. The
-			// aggregate `partially_approved` is NOT the signal here — one denied
-			// bind on a fulfilled chain means that agent still can't call that API.
+			// fulfilled chain's credential:bind approved and every extra item
+			// approved. Skipped chains were denied on purpose and don't count
+			// against it. The aggregate `partially_approved` is NOT the signal here
+			// — one denied bind on a fulfilled chain means that agent still can't
+			// call that API.
 			const decidedShape = planChains(decided);
 			const chainsOk = decidedShape.chains
 				.filter((c) => !skippedKeys.has(c.key))
-				.every(
-					(c) =>
-						c.credentialBind?.status === 'approved' &&
-						(c.toolkitBind === undefined || c.toolkitBind.status === 'approved'),
-				);
+				.every((c) => c.credentialBind?.status === 'approved');
 			const extrasOk = decidedShape.extras.every((it) => it.status === 'approved');
 			const granted = chainsOk && extrasOk;
 			// Decided either way — there is no draft left to resume.
@@ -1060,45 +903,24 @@ export function ProvisioningRequestDialog({
 	const multiChain = chains.length > 1;
 	const chainLabel = apiLabel(chain?.apiRef ?? null);
 
-	// The toolkit that already satisfies this chain's toolkit:bind (from the
-	// backend hint), if any — named in the nudge and floated to the top of the
-	// picker so the operator can find THE wired toolkit among up to 100
+	// The credential that already satisfies this chain's credential:bind (from
+	// the backend hint), if any — named in the nudge and floated to the top of
+	// the picker so the operator can find THE wired credential among up to 100
 	// name-only options. Plain derivation (no hook): we're past the early
 	// returns, and the list caps at one page.
-	const wiredToolkitId = chain?.toolkitBind
-		? satisfiedByItemId.get(chain.toolkitBind.id)
+	const wiredCredentialId = chain?.credentialBind
+		? satisfiedByItemId.get(chain.credentialBind.id)
 		: undefined;
-	// Whether a toolkit already serves this chain's API (from the list
-	// response's `apis` aggregation — ServedApiRef, NULL name/version meaning
-	// "covers all"): in the canonical manual-setup state (toolkit + credential
-	// exist, agent unbound) nothing is satisfied, so the wired-toolkit float
-	// never fires — ranking by served API rescues that exact case (issue
-	// #890). Vendor must match; names only when both are known — a NULL/empty
-	// name on either side matches any row for the vendor, mirroring
-	// decide-time reference resolution's laxity.
-	const chainNameSlug = chain?.apiRef.name ? slugifyApiField(chain.apiRef.name) : '';
-	const servesChainApi = (tk: ToolkitResponse) =>
-		chainVendor !== undefined &&
-		(tk.apis ?? []).some(
-			(api) =>
-				api.api_vendor === chainVendor &&
-				(!chainNameSlug || !api.api_name || api.api_name === chainNameSlug),
-		);
-	const toolkitPickerOptions =
-		existingToolkits === 'error' || existingToolkits === null
-			? existingToolkits
+	const credentialPickerOptions =
+		chainCredentialOptions === 'error' || chainCredentialOptions === null
+			? chainCredentialOptions
 			: [
-					...existingToolkits.filter((tk) => tk.toolkit_id === wiredToolkitId),
-					...existingToolkits.filter(
-						(tk) => tk.toolkit_id !== wiredToolkitId && servesChainApi(tk),
-					),
-					...existingToolkits.filter(
-						(tk) => tk.toolkit_id !== wiredToolkitId && !servesChainApi(tk),
-					),
+					...chainCredentialOptions.filter((c) => c.credential_id === wiredCredentialId),
+					...chainCredentialOptions.filter((c) => c.credential_id !== wiredCredentialId),
 				];
-	const wiredToolkitName =
-		wiredToolkitId && existingToolkits !== 'error'
-			? existingToolkits?.find((tk) => tk.toolkit_id === wiredToolkitId)?.name
+	const wiredCredentialName =
+		wiredCredentialId && chainCredentialOptions !== 'error'
+			? chainCredentialOptions?.find((c) => c.credential_id === wiredCredentialId)?.name
 			: undefined;
 	const chainSkipped = progress?.skipped === true;
 	// Skipping is only offered on a composite: skipping the ONLY chain would
@@ -1119,102 +941,91 @@ export function ProvisioningRequestDialog({
 		<span />
 	);
 	/** Back within/between chains: previous step, or the previous chain's end. */
-	const backToPrevious = (from: 'toolkit' | 'credential' | 'rules') => {
-		if (from === 'credential') {
-			setStep('toolkit');
-			return;
-		}
-		if (from === 'rules') {
-			setStep(noAuth ? 'toolkit' : 'credential');
+	const backToPrevious = (from: 'credential' | 'rules') => {
+		if (from === 'rules' && !noAuth) {
+			setStep('credential');
 			return;
 		}
 		if (chainIndex > 0) {
 			setChainIndex(chainIndex - 1);
-			setStep(chainStates[chainIndex - 1]?.skipped ? 'toolkit' : 'rules');
+			setStep(
+				chainStates[chainIndex - 1]?.skipped
+					? chainFirstStep(chains[chainIndex - 1])
+					: 'rules',
+			);
 		}
 	};
 
+	// A skipped chain parks on its first step showing the skip notice; the
+	// footer offers Keep skipped / Include (locked chains only Continue).
+	const skippedFooter = (
+		<span className="flex items-center gap-2">
+			<Button variant="ghost" onClick={advanceChain}>
+				{chainLocked ? (
+					<>
+						Continue <ArrowRight className="h-4 w-4" />
+					</>
+				) : (
+					'Keep skipped'
+				)}
+			</Button>
+			{!chainLocked && (
+				<Button variant="primary" onClick={handleUnskipChain}>
+					Include this API
+				</Button>
+			)}
+		</span>
+	);
+
 	const stepFooter: Record<Step, React.ReactNode> = {
-		toolkit: (
+		credential: (
 			<>
 				<span className="flex items-center gap-2">
 					{chainIndex > 0 && (
-						<Button variant="ghost" onClick={() => backToPrevious('toolkit')}>
+						<Button variant="ghost" onClick={() => backToPrevious('credential')}>
 							<ArrowLeft className="h-4 w-4" /> Back
 						</Button>
 					)}
 					{skipButton}
 				</span>
 				{chainSkipped ? (
-					<span className="flex items-center gap-2">
-						<Button variant="ghost" onClick={advanceChain}>
-							{chainLocked ? (
-								<>
-									Continue <ArrowRight className="h-4 w-4" />
-								</>
-							) : (
-								'Keep skipped'
-							)}
-						</Button>
-						{!chainLocked && (
-							<Button variant="primary" onClick={handleUnskipChain}>
-								Include this API
-							</Button>
-						)}
-					</span>
-				) : progress?.toolkitId != null ? (
-					// Resumed draft: the toolkit already exists. Re-showing "Create
-					// toolkit" here would mint a duplicate one click after a Back —
-					// continue with the one we have instead.
-					<Button
-						variant="primary"
-						onClick={() => setStep(noAuth ? 'rules' : 'credential')}
-					>
-						Continue <ArrowRight className="h-4 w-4" />
-					</Button>
+					skippedFooter
 				) : (
 					<Button
 						variant="primary"
-						onClick={handleCreateToolkit}
-						loading={busy}
-						disabled={busy || !progress?.toolkitName.trim()}
+						onClick={() => setStep('rules')}
+						disabled={!progress?.credentialId}
 					>
-						Create toolkit
-						<ArrowRight className="h-4 w-4" />
+						Continue <ArrowRight className="h-4 w-4" />
 					</Button>
 				)}
 			</>
 		),
-		credential: (
-			<>
-				<Button variant="ghost" onClick={() => setStep('toolkit')}>
-					<ArrowLeft className="h-4 w-4" /> Back
-				</Button>
-				<Button
-					variant="primary"
-					onClick={() => setStep('rules')}
-					disabled={!progress?.credentialId}
-				>
-					Continue <ArrowRight className="h-4 w-4" />
-				</Button>
-			</>
-		),
 		rules: (
 			<>
-				<Button variant="ghost" onClick={() => setStep(noAuth ? 'toolkit' : 'credential')}>
-					<ArrowLeft className="h-4 w-4" /> Back
-				</Button>
-				<Button variant="primary" onClick={advanceChain}>
-					{chainIndex + 1 < chains.length ? (
-						<>
-							Next API <ArrowRight className="h-4 w-4" />
-						</>
-					) : (
-						<>
-							Review <ArrowRight className="h-4 w-4" />
-						</>
+				<span className="flex items-center gap-2">
+					{(chainIndex > 0 || !noAuth) && (
+						<Button variant="ghost" onClick={() => backToPrevious('rules')}>
+							<ArrowLeft className="h-4 w-4" /> Back
+						</Button>
 					)}
-				</Button>
+					{skipButton}
+				</span>
+				{chainSkipped ? (
+					skippedFooter
+				) : (
+					<Button variant="primary" onClick={advanceChain}>
+						{chainIndex + 1 < chains.length ? (
+							<>
+								Next API <ArrowRight className="h-4 w-4" />
+							</>
+						) : (
+							<>
+								Review <ArrowRight className="h-4 w-4" />
+							</>
+						)}
+					</Button>
+				)}
 			</>
 		),
 		review: (
@@ -1225,7 +1036,11 @@ export function ProvisioningRequestDialog({
 						// Back into the LAST chain (skipped chains land on their
 						// locked/skip notice, where "Include this API" un-skips).
 						setChainIndex(chains.length - 1);
-						setStep(chainStates[chains.length - 1]?.skipped ? 'toolkit' : 'rules');
+						setStep(
+							chainStates[chains.length - 1]?.skipped
+								? chainFirstStep(chains[chains.length - 1])
+								: 'rules',
+						);
 					}}
 				>
 					<ArrowLeft className="h-4 w-4" /> Back
@@ -1249,6 +1064,34 @@ export function ProvisioningRequestDialog({
 			</>
 		),
 	};
+
+	// The skip notice replaces the step body when the chain is skipped
+	// (rendered on whichever step the skipped chain is parked on).
+	const skippedNotice = (
+		<StepBody title={`${chainLabel} is skipped`} blurb="This API is not part of the grant.">
+			<div className="border-border bg-muted/40 flex max-w-md items-start gap-2.5 rounded-lg border p-4 text-sm">
+				<XCircle className="text-danger mt-0.5 h-5 w-5 shrink-0" />
+				<span>
+					{chainLocked ? (
+						<>
+							This API&rsquo;s items can&rsquo;t be fulfilled from this wizard (the
+							request has no credential:bind item for it) and will be{' '}
+							<span className="text-danger font-medium">denied</span> at approval.
+						</>
+					) : (
+						<>
+							You skipped this API — its items will be{' '}
+							<span className="text-danger font-medium">denied</span> at approval.
+							{progress?.credentialId && (
+								<> The credential you already created will be kept.</>
+							)}{' '}
+							Use &ldquo;Include this API&rdquo; below to change your mind.
+						</>
+					)}
+				</span>
+			</div>
+		</StepBody>
+	);
 
 	return (
 		<>
@@ -1321,412 +1164,262 @@ export function ProvisioningRequestDialog({
 							</div>
 						)}
 
-						{step === 'toolkit' && (
-							<StepBody
-								title={
-									chainSkipped
-										? `${chainLabel} is skipped`
-										: multiChain
-											? `Create a toolkit for ${chainLabel}`
-											: 'Create a toolkit'
-								}
-								blurb={
-									chainSkipped
-										? 'This API is not part of the grant.'
-										: `A toolkit is the container that will serve ${chainLabel} to this agent. Give it a name — the default is fine — or pick one of your existing toolkits.`
-								}
-							>
-								{chainSkipped ? (
-									<div className="border-border bg-muted/40 flex max-w-md items-start gap-2.5 rounded-lg border p-4 text-sm">
-										<XCircle className="text-danger mt-0.5 h-5 w-5 shrink-0" />
-										<span>
-											{chainLocked ? (
+						{step === 'credential' &&
+							(chainSkipped ? (
+								skippedNotice
+							) : (
+								<StepBody
+									title={
+										multiChain
+											? `Connect a credential for ${chainLabel}`
+											: 'Connect a credential'
+									}
+									blurb={
+										<>
+											{chainLabel} needs an account to call it
+											{detectedAuth ? (
 												<>
-													This API&rsquo;s items can&rsquo;t be fulfilled
-													from this wizard (the request has no
-													credential:bind item for it) and will be{' '}
-													<span className="text-danger font-medium">
-														denied
-													</span>{' '}
-													at approval.
+													{' '}
+													(detected auth:{' '}
+													<Badge variant="default">{detectedAuth}</Badge>)
 												</>
+											) : null}
+											.{' '}
+											<span className="text-foreground font-medium">You</span>{' '}
+											enter the secret — the agent never sees it. Approving
+											binds the agent directly to this credential.
+										</>
+									}
+								>
+									{progress?.credentialId && progress.credentialAdopted ? (
+										<div className="max-w-md space-y-3">
+											{progress.credentialUnconnected ? (
+												// The warning must not vanish at the moment it
+												// becomes binding: a never-connected adoption
+												// stays warning-toned, not a green success.
+												<div
+													className="border-warning/30 bg-warning/5 flex items-center gap-2.5 rounded-lg border p-4 text-sm"
+													role="status"
+												>
+													<AlertTriangle className="text-warning h-5 w-5 shrink-0" />
+													<span>
+														Using existing credential{' '}
+														<span className="font-medium">
+															{progress.credentialName ??
+																credentialLabel ??
+																'credential'}
+														</span>{' '}
+														— it was never connected, so calls will fail
+														until someone connects it from the
+														Credentials page.
+													</span>
+												</div>
 											) : (
-												<>
-													You skipped this API — its items will be{' '}
-													<span className="text-danger font-medium">
-														denied
-													</span>{' '}
-													at approval.
-													{(progress?.toolkitId ||
-														progress?.credentialId) && (
-														<>
-															{' '}
-															The{' '}
-															{progress.toolkitId &&
-															progress.credentialId
-																? 'toolkit and credential'
-																: progress.toolkitId
-																	? 'toolkit'
-																	: 'credential'}{' '}
-															you already created will be kept.
-														</>
-													)}{' '}
-													Use &ldquo;Include this API&rdquo; below to
-													change your mind.
-												</>
-											)}
-										</span>
-									</div>
-								) : progress?.toolkitId != null && progress.toolkitAdopted ? (
-									<div className="max-w-md space-y-3">
-										<div className="border-success/30 bg-success/5 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
-											<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
-											<span>
-												Using existing toolkit{' '}
-												<span className="font-medium">
-													{progress.toolkitName}
-												</span>{' '}
-												— continue to the next step.
-											</span>
-										</div>
-										<Button variant="ghost" onClick={handleClearAdoptedToolkit}>
-											Use a different toolkit
-										</Button>
-									</div>
-								) : (
-									<div className="max-w-md space-y-1.5">
-										{chain?.toolkitBind !== undefined &&
-											satisfiedItemIds.has(chain.toolkitBind.id) &&
-											progress?.toolkitId == null && (
-												// #826: the agent is ALREADY bound to a toolkit
-												// serving this API — the operator most likely set
-												// it up manually. Nudge towards adopting it
-												// instead of minting a duplicate, naming the
-												// toolkit when the picker has resolved it.
-												<div className="border-warning/40 bg-warning/5 mb-3 rounded-lg border p-3 text-sm">
-													{wiredToolkitName ? (
-														<>
-															This agent is already wired to{' '}
-															<span className="font-medium">
-																{wiredToolkitName}
-															</span>{' '}
-															for {chainLabel} — adopt it below
-															instead of creating another one.
-														</>
-													) : (
-														<>
-															This agent is already wired to a toolkit
-															serving {chainLabel} — prefer adopting
-															that existing toolkit over creating
-															another one.
-														</>
-													)}
+												<div className="border-success/30 bg-success/5 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
+													<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
+													<span>
+														Using existing credential{' '}
+														<span className="font-medium">
+															{progress.credentialName ??
+																credentialLabel ??
+																'credential'}
+														</span>{' '}
+														— reused as-is. Its sign-in isn’t
+														re-verified; if it has stopped working,
+														calls will fail until you reconnect it.
+													</span>
 												</div>
 											)}
-										<Label htmlFor="pw-toolkit-name">Toolkit name</Label>
-										<Input
-											id="pw-toolkit-name"
-											value={progress?.toolkitName ?? ''}
-											onChange={(e) => {
-												updateChain({
-													toolkitName: e.target.value,
-													toolkitNameEdited: true,
-												});
-											}}
-											placeholder="e.g. Claude Code toolkit"
-											disabled={progress?.toolkitId != null}
-										/>
-										{progress?.toolkitId != null && (
-											// Created already (resumed draft / Back from a later
-											// step). The field is locked because this state feeds
-											// the review summary and the no-auth credential name —
-											// editing it here would no longer rename the real
-											// toolkit.
-											<div className="border-success/30 bg-success/5 mt-3 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
-												<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
-												<span>
-													Toolkit created — continue to the next step.
-												</span>
-											</div>
-										)}
-										{progress?.toolkitId == null &&
-											toolkitPickerOptions === 'error' && (
-												// Failure ≠ empty: the nudge above may be telling
-												// the operator to adopt — never strand them with
-												// a silent collapse (issue #826 review).
-												<div className="text-muted-foreground flex items-center gap-2 pt-4 text-sm">
+											<Button
+												variant="ghost"
+												onClick={handleClearAdoptedCredential}
+											>
+												Use a different credential
+											</Button>
+										</div>
+									) : progress?.credentialId ? (
+										<div className="border-success/30 bg-success/5 flex max-w-md items-center gap-2.5 rounded-lg border p-4 text-sm">
+											<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
+											<span>
+												{credentialLabel ?? 'Credential'} connected and
+												ready.
+											</span>
+										</div>
+									) : (
+										<div className="max-w-md space-y-4">
+											{chain?.credentialBind !== undefined &&
+												satisfiedItemIds.has(chain.credentialBind.id) && (
+													// #826: the agent is ALREADY bound to a
+													// credential serving this API — the operator
+													// most likely set it up manually. Nudge
+													// towards adopting it instead of minting a
+													// duplicate, naming the credential when the
+													// picker has resolved it.
+													<div className="border-warning/40 bg-warning/5 rounded-lg border p-3 text-sm">
+														{wiredCredentialName ? (
+															<>
+																This agent is already wired to{' '}
+																<span className="font-medium">
+																	{wiredCredentialName}
+																</span>{' '}
+																for {chainLabel} — adopt it below
+																instead of creating another one.
+															</>
+														) : (
+															<>
+																This agent is already wired to a
+																credential serving {chainLabel} —
+																prefer adopting that existing
+																credential over creating another
+																one.
+															</>
+														)}
+													</div>
+												)}
+											<Button
+												variant="primary"
+												size="lg"
+												onClick={() => setCredentialDialogOpen(true)}
+											>
+												<KeyRound className="h-4 w-4" /> Connect credential
+											</Button>
+											{credentialPickerOptions === 'error' && (
+												// Failure ≠ empty — offer a retry instead of a
+												// silent collapse.
+												<div className="text-muted-foreground flex items-center gap-2 pt-2 text-sm">
 													<span>
-														Couldn’t load your existing toolkits — you
-														can still create a new one, or retry.
+														Couldn’t load your existing credentials —
+														you can still connect a new one, or retry.
 													</span>
 													<Button
 														variant="secondary"
 														size="sm"
-														onClick={() => setExistingToolkits(null)}
+														onClick={() =>
+															setExistingCredentials((prev) => {
+																const next = { ...prev };
+																if (chainVendor) {
+																	delete next[chainVendor];
+																}
+																return next;
+															})
+														}
 													>
 														Retry
 													</Button>
 												</div>
 											)}
-										{progress?.toolkitId == null &&
-											toolkitPickerOptions !== 'error' &&
-											toolkitPickerOptions !== null &&
-											toolkitPickerOptions.length > 0 && (
-												// Adopt-existing path (#826): a manual setup can
-												// be pointed at instead of duplicated. Selection
-												// is staged; the button commits (a change-commit
-												// select is a keyboard trap). The already-wired
-												// toolkit, when known, is floated to the top.
-												<div className="space-y-1.5 pt-4">
-													<Label htmlFor="pw-existing-toolkit">
-														Or use an existing toolkit (the credential
-														you connect next is added to it)
-													</Label>
-													<Select
-														id="pw-existing-toolkit"
-														value={pendingToolkitChoice}
-														onChange={(e) =>
-															setPendingToolkitChoice(e.target.value)
-														}
-														disabled={busy}
-													>
-														<option value="">
-															Choose an existing toolkit…
-														</option>
-														{toolkitPickerOptions.map((tk) => (
-															<option
-																key={tk.toolkit_id}
-																value={tk.toolkit_id}
-															>
-																{tk.name}
-																{tk.toolkit_id === wiredToolkitId
-																	? ' — already linked to this agent'
-																	: servesChainApi(tk)
-																		? // Fixed-width suffix (long names push past the
-																			// closed control's ellipsis) and hedged: a
-																			// NULL-name credential matches the vendor
-																			// laxly, so don't assert the exact API.
-																			' — already serves this API'
-																		: ''}
-															</option>
-														))}
-													</Select>
-													{pendingToolkitChoice && (
-														<Button
-															variant="secondary"
-															onClick={() =>
-																handleAdoptToolkit(
-																	pendingToolkitChoice,
+											{credentialPickerOptions !== 'error' &&
+												credentialPickerOptions !== null &&
+												credentialPickerOptions.length > 0 && (
+													// Adopt-existing path (#826): an active
+													// credential the operator already provisioned
+													// for this vendor can be reused as-is — no
+													// connect flow and no orphan discard. Staged
+													// selection + explicit commit (a change-commit
+													// select is a keyboard trap). The
+													// already-wired credential, when known, is
+													// floated to the top.
+													<div className="space-y-1.5 pt-2">
+														<Label htmlFor="pw-existing-credential">
+															Or use an existing credential for{' '}
+															{chainLabel}
+														</Label>
+														<Select
+															id="pw-existing-credential"
+															value={pendingCredentialChoice}
+															onChange={(e) =>
+																setPendingCredentialChoice(
+																	e.target.value,
 																)
 															}
 															disabled={busy}
 														>
-															Use this toolkit
-														</Button>
-													)}
-												</div>
-											)}
-									</div>
-								)}
-							</StepBody>
-						)}
-
-						{step === 'credential' && (
-							<StepBody
-								title={
-									multiChain
-										? `Connect a credential for ${chainLabel}`
-										: 'Connect a credential'
-								}
-								blurb={
-									<>
-										{chainLabel} needs an account to call it
-										{detectedAuth ? (
-											<>
-												{' '}
-												(detected auth:{' '}
-												<Badge variant="default">{detectedAuth}</Badge>)
-											</>
-										) : null}
-										. <span className="text-foreground font-medium">You</span>{' '}
-										enter the secret — the agent never sees it.
-									</>
-								}
-							>
-								{progress?.credentialId && progress.credentialAdopted ? (
-									<div className="max-w-md space-y-3">
-										{progress.credentialUnconnected ? (
-											// The warning must not vanish at the moment it
-											// becomes binding: a never-connected adoption
-											// stays warning-toned, not a green success.
-											<div
-												className="border-warning/30 bg-warning/5 flex items-center gap-2.5 rounded-lg border p-4 text-sm"
-												role="status"
-											>
-												<AlertTriangle className="text-warning h-5 w-5 shrink-0" />
-												<span>
-													Using existing credential{' '}
-													<span className="font-medium">
-														{progress.credentialName ??
-															credentialLabel ??
-															'credential'}
-													</span>{' '}
-													— it was never connected, so calls will fail
-													until someone connects it from the Credentials
-													page.
-												</span>
-											</div>
-										) : (
-											<div className="border-success/30 bg-success/5 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
-												<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
-												<span>
-													Using existing credential{' '}
-													<span className="font-medium">
-														{progress.credentialName ??
-															credentialLabel ??
-															'credential'}
-													</span>{' '}
-													— reused as-is. Its sign-in isn’t re-verified;
-													if it has stopped working, calls will fail until
-													you reconnect it.
-												</span>
-											</div>
-										)}
-										<Button
-											variant="ghost"
-											onClick={handleClearAdoptedCredential}
-										>
-											Use a different credential
-										</Button>
-									</div>
-								) : progress?.credentialId ? (
-									<div className="border-success/30 bg-success/5 flex max-w-md items-center gap-2.5 rounded-lg border p-4 text-sm">
-										<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
-										<span>
-											{credentialLabel ?? 'Credential'} connected and ready.
-										</span>
-									</div>
-								) : (
-									<div className="max-w-md space-y-4">
-										<Button
-											variant="primary"
-											size="lg"
-											onClick={() => setCredentialDialogOpen(true)}
-										>
-											<KeyRound className="h-4 w-4" /> Connect credential
-										</Button>
-										{chainCredentialOptions === 'error' && (
-											// Failure ≠ empty — offer a retry instead of a
-											// silent collapse.
-											<div className="text-muted-foreground flex items-center gap-2 pt-2 text-sm">
-												<span>
-													Couldn’t load your existing credentials — you
-													can still connect a new one, or retry.
-												</span>
-												<Button
-													variant="secondary"
-													size="sm"
-													onClick={() =>
-														setExistingCredentials((prev) => {
-															const next = { ...prev };
-															if (chainVendor) {
-																delete next[chainVendor];
-															}
-															return next;
-														})
-													}
-												>
-													Retry
-												</Button>
-											</div>
-										)}
-										{chainCredentialOptions !== 'error' &&
-											chainCredentialOptions !== null &&
-											chainCredentialOptions.length > 0 && (
-												// Adopt-existing path (#826): an active credential
-												// the operator already provisioned for this vendor
-												// can be reused as-is — no connect flow and no
-												// orphan discard. Staged selection + explicit
-												// commit (see the toolkit picker).
-												<div className="space-y-1.5 pt-2">
-													<Label htmlFor="pw-existing-credential">
-														Or use an existing credential for{' '}
-														{chainLabel}
-													</Label>
-													<Select
-														id="pw-existing-credential"
-														value={pendingCredentialChoice}
-														onChange={(e) =>
-															setPendingCredentialChoice(
-																e.target.value,
-															)
-														}
-														disabled={busy}
-													>
-														<option value="">
-															Choose an existing credential…
-														</option>
-														{chainCredentialOptions.map((cred) => (
-															<option
-																key={cred.credential_id}
-																value={cred.credential_id}
-															>
-																{cred.name} (
-																{credentialTypeLabel(cred.type) ??
-																	cred.type}
-																)
-																{isUnconnectedOAuth(cred)
-																	? ' — not connected yet'
-																	: ''}
+															<option value="">
+																Choose an existing credential…
 															</option>
-														))}
-													</Select>
-													{pendingUnconnectedOAuth && (
-														<p
-															className="text-warning text-sm"
-															role="status"
-														>
-															This OAuth credential was never
-															connected, so calls using it will fail
-															until someone connects it from the
-															Credentials page.
-														</p>
-													)}
-													{pendingCredentialChoice && (
-														<Button
-															variant="secondary"
-															onClick={() =>
-																handleAdoptCredential(
-																	pendingCredentialChoice,
-																)
-															}
-															disabled={busy}
-														>
-															Use this credential
-														</Button>
-													)}
-												</div>
-											)}
-									</div>
-								)}
-							</StepBody>
-						)}
+															{credentialPickerOptions.map((cred) => (
+																<option
+																	key={cred.credential_id}
+																	value={cred.credential_id}
+																>
+																	{cred.name} (
+																	{credentialTypeLabel(
+																		cred.type,
+																	) ?? cred.type}
+																	)
+																	{cred.credential_id ===
+																	wiredCredentialId
+																		? ' — already linked to this agent'
+																		: isUnconnectedOAuth(cred)
+																			? ' — not connected yet'
+																			: ''}
+																</option>
+															))}
+														</Select>
+														{pendingUnconnectedOAuth && (
+															<p
+																className="text-warning text-sm"
+																role="status"
+															>
+																This OAuth credential was never
+																connected, so calls using it will
+																fail until someone connects it from
+																the Credentials page.
+															</p>
+														)}
+														{pendingCredentialChoice && (
+															<Button
+																variant="secondary"
+																onClick={() =>
+																	handleAdoptCredential(
+																		pendingCredentialChoice,
+																	)
+																}
+																disabled={busy}
+															>
+																Use this credential
+															</Button>
+														)}
+													</div>
+												)}
+										</div>
+									)}
+								</StepBody>
+							))}
 
-						{step === 'rules' && (
-							<StepBody
-								title={
-									multiChain
-										? `Confirm what the agent can do on ${chainLabel}`
-										: 'Confirm what the agent can do'
-								}
-								blurb="The agent proposed these permission rules from the API spec. Edit them if you like — with no rules, every call is blocked."
-							>
-								<PermissionRuleEditor
-									rules={progress?.rules ?? []}
-									onChange={(next) => updateChain({ rules: next })}
-								/>
-							</StepBody>
-						)}
+						{step === 'rules' &&
+							(chainSkipped ? (
+								skippedNotice
+							) : (
+								<StepBody
+									title={
+										multiChain
+											? `Confirm what the agent can do on ${chainLabel}`
+											: 'Confirm what the agent can do'
+									}
+									blurb={
+										ruleSetId
+											? 'This binding is governed by a shared permission rule set — its ordered rules are the effective policy, managed outside this request.'
+											: 'The agent proposed these permission rules from the API spec. Edit them if you like — with no rules, every call is blocked.'
+									}
+								>
+									{ruleSetId ? (
+										<div className="border-border bg-muted/40 max-w-md rounded-lg border p-4 text-sm">
+											Shared rule set{' '}
+											<span className="font-mono font-medium">
+												{ruleSetId}
+											</span>{' '}
+											applies to this binding. Approving keeps it attached;
+											edit the set itself to change what the agent can do.
+										</div>
+									) : (
+										<PermissionRuleEditor
+											rules={progress?.rules ?? []}
+											onChange={(next) => updateChain({ rules: next })}
+										/>
+									)}
+								</StepBody>
+							))}
 
 						{step === 'review' && (
 							<StepBody
@@ -1775,7 +1468,7 @@ export function ProvisioningRequestDialog({
 																	setStep(
 																		skipped ||
 																			!chainFulfilled(i)
-																			? 'toolkit'
+																			? chainFirstStep(c)
 																			: 'rules',
 																	);
 																}}
@@ -1786,36 +1479,24 @@ export function ProvisioningRequestDialog({
 													</span>
 												</SummaryRow>
 												{skipped ? (
-													(cs?.toolkitId || cs?.credentialId) && (
+													cs?.credentialId && (
 														<SummaryRow label="Note">
 															<span className="text-warning">
-																The{' '}
-																{cs.toolkitId && cs.credentialId
-																	? 'toolkit and credential'
-																	: cs.toolkitId
-																		? 'toolkit'
-																		: 'credential'}{' '}
-																created for this API will be kept
-																even though it is denied — use Edit
-																to include it, or delete them
-																afterwards.
+																The credential created for this API
+																will be kept even though it is
+																denied — use Edit to include it, or
+																delete it afterwards.
 															</span>
 														</SummaryRow>
 													)
 												) : (
 													<>
-														<SummaryRow label="Toolkit">
-															{cs?.toolkitName}
-															{cs?.toolkitAdopted && (
-																<span className="text-muted-foreground ml-2">
-																	(existing)
-																</span>
-															)}
-														</SummaryRow>
 														<SummaryRow label="Credential">
 															{chainIsNoAuth(c) ? (
 																<span className="text-muted-foreground">
-																	none — this API needs no auth
+																	none — this API needs no auth (a
+																	no-auth credential is created
+																	automatically)
 																</span>
 															) : cs?.credentialAdopted ? (
 																<>
@@ -1835,22 +1516,30 @@ export function ProvisioningRequestDialog({
 															)}
 														</SummaryRow>
 														<SummaryRow label="Agent can">
-															{summarizeRules(cs?.rules ?? [])}
+															{chainRuleSetId(c) ? (
+																<span>
+																	governed by shared rule set{' '}
+																	<span className="font-mono">
+																		{chainRuleSetId(c)}
+																	</span>
+																</span>
+															) : (
+																summarizeRules(cs?.rules ?? [])
+															)}
 														</SummaryRow>
 														{chainAlreadyWired(c) && (
-															// Honest per-path copy: adoption reuses
-															// the detected setup (but the approve
-															// still REPLACES the binding's
-															// permission rules with the ones
-															// confirmed here — say so); creating
-															// anyway wires the NEW toolkit
-															// alongside it.
+															// Honest per-path copy: adoption
+															// reuses the detected setup (but the
+															// approve still REPLACES the
+															// binding's permission rules with the
+															// ones confirmed here — say so);
+															// creating anyway wires the NEW
+															// credential alongside it.
 															<SummaryRow label="Note">
 																<span className="text-muted-foreground">
-																	{cs?.toolkitAdopted ||
-																	cs?.credentialAdopted
-																		? 'Parts of this API are already wired for this agent — approving reuses that setup and updates its permission rules to the ones you confirmed here. Nothing is duplicated.'
-																		: 'This agent already has a toolkit wired for this API — approving will bind the new objects created here alongside that existing setup.'}
+																	{cs?.credentialAdopted
+																		? 'This agent is already wired to this credential — approving reuses that setup and updates its permission rules to the ones you confirmed here. Nothing is duplicated.'
+																		: 'This agent already has a credential wired for this API — approving will bind the new credential created here alongside that existing setup.'}
 																</span>
 															</SummaryRow>
 														)}
@@ -1951,11 +1640,7 @@ export function ProvisioningRequestDialog({
 					<p className="text-foreground">
 						This setup already created{' '}
 						<span className="font-medium">
-							{createdToolkitIds.length > 0 && createdCredentialIds.length > 0
-								? `${countLabel(createdToolkitIds.length, 'toolkit')} and ${countLabel(createdCredentialIds.length, 'credential')}`
-								: createdToolkitIds.length > 0
-									? countLabel(createdToolkitIds.length, 'toolkit')
-									: countLabel(createdCredentialIds.length, 'credential')}
+							{countLabel(createdCredentialIds.length, 'credential')}
 						</span>{' '}
 						for this request, but access hasn&rsquo;t been granted yet.
 					</p>
@@ -2004,7 +1689,7 @@ function SummaryRow({ label, children }: { label: string; children: React.ReactN
 	);
 }
 
-/** "a toolkit" / "2 toolkits" — for the discard confirmation copy. */
+/** "a credential" / "2 credentials" — for the discard confirmation copy. */
 function countLabel(n: number, noun: string): string {
 	return n === 1 ? `a ${noun}` : `${n} ${noun}s`;
 }
@@ -2019,16 +1704,18 @@ function credentialTypeLabel(type: string | null | undefined): string | null {
 function extraItemLabel(it: AccessRequestItem): string {
 	const key = `${it.resource_type}:${it.action}`;
 	if (key === 'scope:grant') return `scope ${it.resource_id ?? ''}`.trim();
+	const ref = it.resource_reference;
+	const target =
+		it.resource_id ??
+		(ref && typeof ref.vendor === 'string'
+			? [ref.vendor, typeof ref.name === 'string' ? ref.name : null].filter(Boolean).join('/')
+			: null);
+	if (key === 'credential:bind') {
+		return `bind agent to credential ${target ?? ''}`.trim();
+	}
+	// Retired verb, historical rows only: render the stored strings, never file.
 	if (key === 'toolkit:bind') {
-		const ref = it.resource_reference;
-		const target =
-			it.resource_id ??
-			(ref && typeof ref.vendor === 'string'
-				? [ref.vendor, typeof ref.name === 'string' ? ref.name : null]
-						.filter(Boolean)
-						.join('/')
-				: 'a toolkit');
-		return `bind to existing toolkit ${target}`;
+		return `bind to toolkit ${target ?? ''}`.trim();
 	}
 	return key;
 }
@@ -2037,9 +1724,8 @@ function extraItemLabel(it: AccessRequestItem): string {
  * Read-only summary shown when a provisioning plan is opened after it's already
  * been decided (or otherwise left `pending`). No create/approve controls. For an
  * approved plan it reconstructs WHAT was set up from the decided items (per
- * chain: toolkit, credential, the rules the agent got, when); for a denial it
- * shows the reason the agent reads back. Prevents re-fulfilling a settled
- * request.
+ * chain: credential, the rules the agent got, when); for a denial it shows the
+ * reason the agent reads back. Prevents re-fulfilling a settled request.
  */
 function TerminalSummaryDialog({
 	open,
@@ -2119,9 +1805,12 @@ function TerminalSummaryDialog({
 				{/* What the approval actually wired — concrete, per chain. */}
 				{approved &&
 					chains.map((c) => {
-						const toolkitId =
-							c.toolkitBind?.resource_id ?? c.credentialBind?.to_id ?? null;
 						const credentialId = c.credentialBind?.resource_id ?? null;
+						// HISTORICAL: rows decided before toolkits were retired
+						// carry the toolkit the credential was bound to on
+						// `to_id` — render the stored string read-only.
+						const legacyToolkitId = c.credentialBind?.to_id ?? null;
+						const ruleSet = c.credentialBind?.rule_set_id ?? null;
 						const grantedRules = c.credentialBind
 							? ruleSummary(parseItemRules(c.credentialBind))
 							: null;
@@ -2139,9 +1828,6 @@ function TerminalSummaryDialog({
 								</SummaryRow>
 								{!chainDenied && (
 									<>
-										{toolkitId && (
-											<SummaryRow label="Toolkit">{toolkitId}</SummaryRow>
-										)}
 										<SummaryRow label="Credential">
 											{credentialId ?? (
 												<span className="text-muted-foreground">
@@ -2149,10 +1835,24 @@ function TerminalSummaryDialog({
 												</span>
 											)}
 										</SummaryRow>
-										{grantedRules && (
-											<SummaryRow label="Agent can">
-												{grantedRules}
+										{legacyToolkitId && (
+											<SummaryRow label="Toolkit">
+												{legacyToolkitId}
 											</SummaryRow>
+										)}
+										{ruleSet ? (
+											<SummaryRow label="Agent can">
+												<span>
+													governed by shared rule set{' '}
+													<span className="font-mono">{ruleSet}</span>
+												</span>
+											</SummaryRow>
+										) : (
+											grantedRules && (
+												<SummaryRow label="Agent can">
+													{grantedRules}
+												</SummaryRow>
+											)
 										)}
 									</>
 								)}
@@ -2206,10 +1906,10 @@ function Stepper({
 	chains: PlanChain[];
 	chainStates: ChainProgress[];
 }) {
-	// Flatten every chain's steps (toolkit → credential? → rules) plus the
-	// global review into one ordered list. With several chains each step is
-	// suffixed with its API so the rail reads as a per-API checklist; a skipped
-	// chain collapses to a single dimmed entry.
+	// Flatten every chain's steps (credential? → rules) plus the global review
+	// into one ordered list. With several chains each step is suffixed with its
+	// API so the rail reads as a per-API checklist; a skipped chain collapses
+	// to a single dimmed entry.
 	const multi = chains.length > 1;
 	interface RailStep {
 		key: string;
@@ -2237,13 +1937,6 @@ function Stepper({
 			});
 			return;
 		}
-		steps.push({
-			key: `${c.key}:toolkit`,
-			label: `Create toolkit${suffix}`,
-			hint: 'A container that serves this API',
-			chain: i,
-			step: 'toolkit',
-		});
 		if (!chainIsNoAuth(c)) {
 			steps.push({
 				key: `${c.key}:credential`,

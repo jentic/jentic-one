@@ -472,7 +472,7 @@ export function AgentStreamProvider({
 		// aggressively (5-min staleTime) as reference data, and a CLI agent
 		// files its provisioning request seconds after registering. Without
 		// this, every `actor_id` resolution for the new agent (rail rows, the
-		// setup wizard's badge and agent-named toolkit suggestion) misses and
+		// setup wizard's header badge) misses and
 		// falls back to the raw `agnt_…` id until the cache expires.
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 	}, [queryClient]);

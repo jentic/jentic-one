@@ -4,6 +4,7 @@ import {
 	isScopeGrant,
 	isSpecificResource,
 	isUnrestrictedAllow,
+	itemActionSummary,
 	itemTargetLabel,
 	parseItemRules,
 	ruleSummary,
@@ -72,6 +73,27 @@ describe('isSpecificResource', () => {
 	it('is true only when a concrete resource_id is present', () => {
 		expect(isSpecificResource(item({ resource_id: 'cred_1' }))).toBe(true);
 		expect(isSpecificResource(item({ resource_id: null }))).toBe(false);
+	});
+});
+
+describe('itemActionSummary', () => {
+	it('summarises the new vocabulary in agent↔credential terms', () => {
+		expect(itemActionSummary(item({ resource_type: 'credential', action: 'bind' }))).toBe(
+			'Bind agent to credential',
+		);
+		expect(itemActionSummary(item({ resource_type: 'credential', action: 'provision' }))).toBe(
+			'Provision a credential',
+		);
+		expect(itemActionSummary(item({ resource_type: 'scope', action: 'grant' }))).toBe(
+			'Platform scope',
+		);
+	});
+
+	it('falls back to the stored resource_type for retired/unknown verbs (historical rows)', () => {
+		expect(itemActionSummary(item({ resource_type: 'toolkit', action: 'bind' }))).toBe(
+			'toolkit',
+		);
+		expect(itemActionSummary(item({ resource_type: 'org', action: 'admin' }))).toBe('org');
 	});
 });
 
@@ -269,12 +291,12 @@ describe('summarizeAccessRequest', () => {
 		expect(
 			summarizeAccessRequest(
 				request([
-					item({ resource_type: 'toolkit', action: 'create' }),
+					item({ resource_type: 'credential', action: 'provision' }),
 					item({ id: 'ari_2' }),
 					item({ id: 'ari_3' }),
 				]),
 			),
-		).toBe('toolkit · create +2 more');
+		).toBe('credential · provision +2 more');
 	});
 
 	it('falls back to "access" for an empty item list', () => {

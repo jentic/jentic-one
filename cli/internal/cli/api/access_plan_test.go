@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/client/generated/control"
@@ -16,15 +17,15 @@ func TestPlanBuildsFullProvisioningChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProvisionPlan() error: %v", err)
 	}
-	if len(items) != 4 {
-		t.Fatalf("expected 4 items, got %d", len(items))
+	// Theme-5 phase 3: the plan is the 2-item credential:provision +
+	// credential:bind chain (the toolkit steps are gone).
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
 	}
 
 	want := []struct{ rt, action string }{
-		{"toolkit", "create"},
 		{"credential", "provision"},
 		{"credential", "bind"},
-		{"toolkit", "bind"},
 	}
 	for i, w := range want {
 		if string(items[i].ResourceType) != w.rt || string(items[i].Action) != w.action {
@@ -35,16 +36,16 @@ func TestPlanBuildsFullProvisioningChain(t *testing.T) {
 	// The credential:bind item carries the proposed rules AND the API
 	// reference: item order is not guaranteed server-side, so the reference is
 	// what ties the bind to its chain in a composite request.
-	if items[2].Rules == nil || len(*items[2].Rules) != 1 || string((*items[2].Rules)[0].Effect) != "allow" {
-		t.Errorf("credential:bind should carry the proposed allow rule, got %+v", items[2].Rules)
+	if items[1].Rules == nil || len(*items[1].Rules) != 1 || string((*items[1].Rules)[0].Effect) != "allow" {
+		t.Errorf("credential:bind should carry the proposed allow rule, got %+v", items[1].Rules)
 	}
-	bindRef := deref(items[2].ResourceReference)
+	bindRef := deref(items[1].ResourceReference)
 	if bindRef["vendor"] != "posthog.com" || bindRef["name"] != "posthog-api" {
 		t.Errorf("credential:bind should carry the api reference, got %v", bindRef)
 	}
 
 	// The provision item carries the detected auth type and the API reference.
-	provRef := deref(items[1].ResourceReference)
+	provRef := deref(items[0].ResourceReference)
 	if provRef["security_scheme"] != "bearer" {
 		t.Errorf("credential:provision should carry security_scheme=bearer, got %v", provRef)
 	}
@@ -58,16 +59,16 @@ func TestPlanNoAuthProvisionsNoAuthCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProvisionPlan() error: %v", err)
 	}
-	// A no-auth plan is the SAME four-item shape as an auth plan — a credential
-	// row is still required for the credential:bind effect to attach the toolkit
+	// A no-auth plan is the SAME two-item shape as an auth plan — a credential
+	// row is still required for the credential:bind effect to attach the
 	// binding + rules to. The provision item carries security_scheme=no_auth so
 	// the wizard auto-creates a NO_AUTH credential (no operator secret prompt).
-	if len(items) != 4 {
-		t.Fatalf("expected 4 items for no-auth plan, got %d: %+v", len(items), items)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items for no-auth plan, got %d: %+v", len(items), items)
 	}
-	prov := items[1]
+	prov := items[0]
 	if string(prov.ResourceType) != "credential" || string(prov.Action) != "provision" {
-		t.Fatalf("item[1] should be credential:provision, got %s:%s", prov.ResourceType, prov.Action)
+		t.Fatalf("item[0] should be credential:provision, got %s:%s", prov.ResourceType, prov.Action)
 	}
 	provRef := deref(prov.ResourceReference)
 	if provRef["security_scheme"] != "no_auth" {
@@ -90,6 +91,36 @@ func TestPlanRejectsBadRulesJSON(t *testing.T) {
 	}
 }
 
+func TestComposeToolkitFlagFilesCredentialBind(t *testing.T) {
+	// --toolkit vendor/name survives as an alias for the direct
+	// credential:bind-by-reference (the toolkit vocabulary is retired).
+	opts := &accessRequestOptions{toolkits: []string{"github.com/rest-api"}}
+	items, err := opts.compose()
+	if err != nil {
+		t.Fatalf("compose() error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	it := items[0]
+	if string(it.ResourceType) != "credential" || string(it.Action) != "bind" {
+		t.Fatalf("expected credential:bind, got %s:%s", it.ResourceType, it.Action)
+	}
+	ref := deref(it.ResourceReference)
+	if ref["vendor"] != "github.com" || ref["name"] != "rest-api" {
+		t.Errorf("expected the api reference on the bind, got %v", ref)
+	}
+}
+
+func TestComposeToolkitIDIsRetired(t *testing.T) {
+	opts := &accessRequestOptions{toolkitIDs: []string{"tk_123"}}
+	if _, err := opts.compose(); err == nil {
+		t.Fatal("expected --toolkit-id to be rejected after toolkit retirement")
+	} else if !strings.Contains(err.Error(), "--toolkit <vendor/name>") {
+		t.Errorf("the error should carry the re-file directive, got: %v", err)
+	}
+}
+
 func TestRequestGrantedScope(t *testing.T) {
 	// A scope:grant that was approved → needs a token re-mint.
 	scopePlan := &control.AccessRequestResponse{Items: []control.AccessRequestItemResponse{
@@ -101,10 +132,8 @@ func TestRequestGrantedScope(t *testing.T) {
 
 	// A binding-only provisioning plan (no scope) → no re-mint; bindings are live.
 	bindingPlan := &control.AccessRequestResponse{Items: []control.AccessRequestItemResponse{
-		{ResourceType: "toolkit", Action: "create", Status: "approved"},
 		{ResourceType: "credential", Action: "provision", Status: "approved"},
 		{ResourceType: "credential", Action: "bind", Status: "approved"},
-		{ResourceType: "toolkit", Action: "bind", Status: "approved"},
 	}}
 	if requestGrantedScope(bindingPlan) {
 		t.Error("a binding-only plan must not trigger a re-mint")
@@ -131,15 +160,15 @@ func TestParseProposedRulesEmpty(t *testing.T) {
 
 func TestPlanItemsSerializeWithoutEmptyIDs(t *testing.T) {
 	items, _ := buildProvisionPlan("x.com/api", "bearer", "")
-	// credential:bind has no resource_id/to_id yet (filled at approval); ensure
-	// they are omitted from the wire form rather than sent as empty strings.
-	b, _ := json.Marshal(items[2])
+	// credential:bind has no resource_id yet (filled at approval); ensure it is
+	// omitted from the wire form rather than sent as an empty string.
+	b, _ := json.Marshal(items[1])
 	var m map[string]any
 	_ = json.Unmarshal(b, &m)
 	if _, ok := m["resource_id"]; ok {
 		t.Errorf("credential:bind should omit empty resource_id, got %s", b)
 	}
-	if _, ok := m["to_id"]; ok {
-		t.Errorf("credential:bind should omit empty to_id, got %s", b)
+	if _, ok := m["rule_set_id"]; ok {
+		t.Errorf("credential:bind should omit empty rule_set_id, got %s", b)
 	}
 }

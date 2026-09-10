@@ -1,4 +1,15 @@
-"""Unit tests for EffectApplicator — all dispatch branches, idempotency, and fallback."""
+"""Unit tests for EffectApplicator — validate/prepare/complete, plan governance, and classification.
+
+Theme-5 Phase 3 ("governance collapse"): the toolkit vocabulary is retired.
+``credential:bind`` now binds the item's actor (an agent) directly to a
+credential, applied as a two-stage admin effect — ``prepare()`` writes the
+binding's inline permission rules in the caller's control transaction,
+``complete()`` writes the admin binding row afterwards — so a crash between
+the stages leaves inert rules, never a live rule-less bind (hard problem 6).
+``apply()`` survives only for fulfilment-only intents, and a retired/unknown
+pair is a **hard failure** (UnsupportedAccessRequestItemError), never the old
+silent skip.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +18,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from jentic_one.control.repos.effects_repo import BindTargetMissingError
 from jentic_one.control.services.access_requests.effects import (
     UNGOVERNED_PLAN,
     EffectApplicator,
     EffectPhase,
     PlanGovernance,
+    PreparedEffect,
     admin_effect_keys,
     classify_effect,
     is_admin_effect,
@@ -20,19 +31,20 @@ from jentic_one.control.services.access_requests.effects import (
 )
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
+    CredentialReferenceAmbiguousError,
+    CredentialReferenceUnresolvedError,
     ProvisioningPlanNotFulfilledError,
     RequiredFieldMissingError,
+    RuleSetNotFoundForBindError,
     RulesNotSupportedForBindError,
-    ToolkitNotVisibleError,
-    ToolkitReferenceAmbiguousError,
-    ToolkitReferenceUnresolvedError,
+    RulesRequiredForBindError,
+    UnsupportedAccessRequestItemError,
     UnsupportedScopeGrantError,
 )
 from jentic_one.control.services.access_requests.schemas.effects import (
     CredentialBindEffect,
     ScopeGrantEffect,
     SkippedEffect,
-    ToolkitBindEffect,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.actors import ActorType, actor_type_from_id
@@ -49,9 +61,9 @@ def _make_ctx() -> MagicMock:
     admin_session = AsyncMock()
     ctx.admin_db.transaction.return_value.__aenter__ = AsyncMock(return_value=admin_session)
     ctx.admin_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
-    control_session = AsyncMock()
-    ctx.control_db.session.return_value.__aenter__ = AsyncMock(return_value=control_session)
-    ctx.control_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
+    admin_read_session = AsyncMock()
+    ctx.admin_db.session.return_value.__aenter__ = AsyncMock(return_value=admin_read_session)
+    ctx.admin_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
     return ctx
 
 
@@ -69,488 +81,592 @@ def _make_item(
     action: str = "bind",
     resource_id: str | None = "cred_001",
     resource_reference: dict[str, Any] | None = None,
-    to_id: str | None = "tk_001",
     actor_id: str = "agnt_001",
     rules: list[dict[str, Any]] | None = None,
+    rule_set_id: str | None = None,
     item_id: str = "arqi_001",
     status: str = "pending",
 ) -> MagicMock:
+    # rule_set_id must default to a REAL None: a bare MagicMock attribute is
+    # truthy and would silently flip every bind onto the rule-set path.
     item = MagicMock()
     item.id = item_id
     item.resource_type = resource_type
     item.action = action
     item.resource_id = resource_id
     item.resource_reference = resource_reference
-    item.to_id = to_id
     item.actor_id = actor_id
     item.rules = rules
+    item.rule_set_id = rule_set_id
     item.status = status
     return item
 
 
-# --- credential bind ---
+_RULES = [{"effect": "allow", "methods": ["GET"], "path": "^/pets"}]
 
 
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.ToolkitPermissionRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_credential_bind_happy_path(
-    mock_effects_repo: MagicMock,
-    mock_perm_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
+# --- apply(): fulfilment-only intents ONLY -----------------------------------
+
+
+async def test_apply_fulfilment_only_intent_is_skipped() -> None:
+    """credential:provision is an inert placeholder — an audited no-op, not a write."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.bind_credential_to_toolkit = AsyncMock(return_value=("tcb_new_001", False))
-    mock_perm_repo.replace_user_rules = AsyncMock(return_value=[])
-
-    rules = [{"effect": "allow", "methods": ["GET"], "path": "^/pets"}]
-    item = _make_item(rules=rules)
     applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
-
-    assert isinstance(effects, CredentialBindEffect)
-    assert effects.binding_id == "tcb_new_001"
-    assert effects.rules_applied == 1
-    assert effects.already_bound is False
-    mock_effects_repo.bind_credential_to_toolkit.assert_awaited_once()
-    mock_perm_repo.replace_user_rules.assert_awaited_once()
-
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.ToolkitPermissionRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_credential_bind_duplicate_idempotent(
-    mock_effects_repo: MagicMock,
-    mock_perm_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.bind_credential_to_toolkit = AsyncMock(
-        return_value=("tcb_existing_001", True)
+    item = _make_item(resource_type="credential", action="provision", resource_id=None, rules=None)
+    effect = await applicator.apply(
+        item, identity=_make_identity(), control_session=_make_session()
     )
-    mock_perm_repo.replace_user_rules = AsyncMock(return_value=[])
+    assert isinstance(effect, SkippedEffect)
+    assert effect.skipped is True
+    assert "provisioned out-of-band" in effect.reason
 
-    rules = [{"effect": "allow", "methods": ["GET"]}]
-    item = _make_item(rules=rules)
+
+async def test_apply_admin_effect_is_a_programming_error() -> None:
+    """Admin effects MUST go through prepare()/complete() — the write ordering
+    (rules durable before the binding exists) is the hard-problem-6 invariant,
+    and apply() refuses to shortcut it."""
+    ctx = _make_ctx()
     applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
-
-    assert isinstance(effects, CredentialBindEffect)
-    assert effects.already_bound is True
-    assert effects.binding_id == "tcb_existing_001"
-    assert effects.rules_applied == 1
+    for resource_type, action in (("credential", "bind"), ("scope", "grant")):
+        item = _make_item(resource_type=resource_type, action=action, rules=_RULES)
+        with pytest.raises(ValueError, match="prepare"):
+            await applicator.apply(item, identity=_make_identity(), control_session=_make_session())
 
 
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.ToolkitPermissionRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_credential_bind_no_rules_skips_permission_call(
-    mock_effects_repo: MagicMock,
-    mock_perm_repo: MagicMock,
-    mock_audit: AsyncMock,
+async def test_apply_retired_pair_fails_loudly() -> None:
+    """A stored toolkit-era item (toolkit:create / toolkit:bind) — or any
+    unknown pair — must hard-fail, never the old silent skip which would
+    approve-and-grant-nothing (the "hollow yes")."""
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    for resource_type, action in (
+        ("toolkit", "create"),
+        ("toolkit", "bind"),
+        ("unknown", "magic"),
+    ):
+        item = _make_item(resource_type=resource_type, action=action, rules=None)
+        with pytest.raises(UnsupportedAccessRequestItemError) as exc_info:
+            await applicator.apply(item, identity=_make_identity(), control_session=_make_session())
+        assert exc_info.value.resource_type == resource_type
+        assert exc_info.value.action == action
+        # The directive names the surviving verb so the caller can re-file.
+        assert "credential" in str(exc_info.value)
+
+
+# --- prepare(): stage 1 (control transaction) --------------------------------
+
+
+@patch(f"{_MODULE}.AgentPermissionRuleRepository")
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_prepare_credential_bind_writes_rules_on_control_session(
+    mock_cred_repo: MagicMock,
+    mock_rule_repo: MagicMock,
 ) -> None:
+    """prepare() writes the binding's inline rules via replace_user_rules on the
+    CALLER's control session — the rules-first half of the two-stage write."""
     ctx = _make_ctx()
     session = _make_session()
-    mock_effects_repo.bind_credential_to_toolkit = AsyncMock(return_value=("tcb_new_002", False))
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    mock_rule_repo.replace_user_rules = AsyncMock(return_value=[])
 
-    item = _make_item(rules=None)
+    item = _make_item(resource_id="cred_001", rules=_RULES)
     applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
+    prepared = await applicator.prepare(item, identity=_make_identity(), control_session=session)
 
-    assert isinstance(effects, CredentialBindEffect)
-    assert effects.rules_applied == 0
-    mock_perm_repo.replace_user_rules.assert_not_called()
-
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.ToolkitPermissionRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_credential_bind_lost_toctou_race_raises_domain_error(
-    mock_effects_repo: MagicMock,
-    mock_perm_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
-    """A credential deleted between pre-validation and the bind write surfaces a
-    422 CredentialNotFoundForBindError, not an AssertionError → 500. The repo
-    detects the FK-violation race, attributes it to the credential, and raises
-    BindTargetMissingError; apply must map it to the matching domain error
-    (#649)."""
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.bind_credential_to_toolkit = AsyncMock(
-        side_effect=BindTargetMissingError("credential", "cred_001")
+    assert prepared == PreparedEffect(credential_id="cred_001", rules_applied=1)
+    mock_rule_repo.replace_user_rules.assert_awaited_once_with(
+        session, "agnt_001", "cred_001", _RULES, created_by="usr_admin"
     )
 
-    item = _make_item(rules=None)
+
+@patch(f"{_MODULE}.AgentPermissionRuleRepository")
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_prepare_rule_set_bind_writes_no_control_rules(
+    mock_cred_repo: MagicMock,
+    mock_rule_repo: MagicMock,
+) -> None:
+    """A rule_set_id bind carries its policy as a pointer on the admin row —
+    prepare() must NOT write inline control rules for it."""
+    ctx = _make_ctx()
+    session = _make_session()
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    mock_rule_repo.replace_user_rules = AsyncMock()
+
+    item = _make_item(resource_id="cred_001", rules=None, rule_set_id="prs_001")
+    applicator = EffectApplicator(ctx)
+    prepared = await applicator.prepare(item, identity=_make_identity(), control_session=session)
+
+    assert prepared == PreparedEffect(credential_id="cred_001", rules_applied=0)
+    mock_rule_repo.replace_user_rules.assert_not_called()
+
+
+@patch(f"{_MODULE}.AgentPermissionRuleRepository")
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_prepare_rules_less_bind_raises(
+    mock_cred_repo: MagicMock,
+    mock_rule_repo: MagicMock,
+) -> None:
+    """The reconcile path re-drives prepare() without re-running validate(), so
+    prepare() keeps its own guard: a rule-less bind can never be written."""
+    ctx = _make_ctx()
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    item = _make_item(resource_id="cred_001", rules=None, rule_set_id=None)
+    applicator = EffectApplicator(ctx)
+    with pytest.raises(RulesRequiredForBindError):
+        await applicator.prepare(item, identity=_make_identity(), control_session=_make_session())
+    mock_rule_repo.replace_user_rules.assert_not_called()
+
+
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_prepare_explicit_id_not_visible_raises(
+    mock_cred_repo: MagicMock,
+) -> None:
+    """prepare() re-runs the same visibility gate as validate() so the two can
+    never drift — a credential the decider can't see fails stage 1 up front."""
+    ctx = _make_ctx()
+    mock_cred_repo.get_by_id = AsyncMock(return_value=None)
+    item = _make_item(resource_id="cred_foreign", rules=_RULES)
     applicator = EffectApplicator(ctx)
     with pytest.raises(CredentialNotFoundForBindError):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
-    # The permission-rules write must not run once the bind failed.
-    mock_perm_repo.replace_user_rules.assert_not_called()
-
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.ToolkitPermissionRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_credential_bind_lost_toctou_race_attributes_toolkit(
-    mock_effects_repo: MagicMock,
-    mock_perm_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
-    """When the FK that vanished is the toolkit (not the credential), the repo
-    attributes the race to the toolkit and apply maps it to ToolkitNotVisibleError,
-    not CredentialNotFoundForBindError — the binding has two FKs and the error must
-    name the one that actually failed."""
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.bind_credential_to_toolkit = AsyncMock(
-        side_effect=BindTargetMissingError("toolkit", "tk_target")
-    )
-
-    item = _make_item(rules=None)
-    applicator = EffectApplicator(ctx)
-    with pytest.raises(ToolkitNotVisibleError):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
-    mock_perm_repo.replace_user_rules.assert_not_called()
-
-
-# --- toolkit bind ---
-
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_happy_path(
-    mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.toolkit_visible_to_owners = AsyncMock(return_value=True)
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock(return_value=("atb_new_001", False))
-
-    item = _make_item(resource_type="toolkit", action="bind", resource_id="tk_target")
-    applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
-
-    assert isinstance(effects, ToolkitBindEffect)
-    assert effects.binding_id == "atb_new_001"
-    assert effects.already_bound is False
-    mock_effects_repo.toolkit_visible_to_owners.assert_awaited_once()
-    mock_effects_repo.bind_agent_to_toolkit.assert_awaited_once()
-
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_rejects_rules(
-    mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
-    """Defense-in-depth: a stored toolkit:bind carrying rules must fail loudly,
-    never silently approve into an unrestricted binding."""
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock(return_value=("atb_x", False))
-
-    rules = [{"effect": "allow", "methods": ["GET"]}]
-    item = _make_item(resource_type="toolkit", action="bind", resource_id="tk_target", rules=rules)
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(RulesNotSupportedForBindError):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
-    mock_effects_repo.bind_agent_to_toolkit.assert_not_called()
-
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_duplicate_idempotent(
-    mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.toolkit_visible_to_owners = AsyncMock(return_value=True)
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock(return_value=("atb_existing_001", True))
-
-    item = _make_item(resource_type="toolkit", action="bind", resource_id="tk_target")
-    applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
-
-    assert isinstance(effects, ToolkitBindEffect)
-    assert effects.already_bound is True
-    assert effects.binding_id == "atb_existing_001"
-
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_explicit_id_not_visible_raises(
-    mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
-    """A non-admin decider cannot bind to a toolkit they don't own."""
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.toolkit_visible_to_owners = AsyncMock(return_value=False)
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock()
-
-    item = _make_item(resource_type="toolkit", action="bind", resource_id="tk_other_owner")
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ToolkitNotVisibleError):
-        await applicator.apply(
-            item, identity=_make_identity(sub="usr_op", org_admin=False), control_session=session
+        await applicator.prepare(
+            item,
+            identity=_make_identity(sub="usr_op", org_admin=False),
+            control_session=_make_session(),
         )
-    mock_effects_repo.bind_agent_to_toolkit.assert_not_called()
 
 
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
+@patch(f"{_MODULE}.AgentPermissionRuleRepository")
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_resolves_reference_single_candidate(
+async def test_prepare_resolves_reference_under_admin_owner_axis(
     mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
+    mock_rule_repo: MagicMock,
 ) -> None:
+    """An org:admin decider resolves a reference unscoped (owner_ids=None,
+    bound push-down skipped), and the vendor is slugified to match stored rows
+    (#656)."""
     ctx = _make_ctx()
     session = _make_session()
-    mock_effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_resolved"])
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock(return_value=("atb_new_002", False))
+    mock_effects_repo.resolve_credentials_for_api = AsyncMock(return_value=["cred_resolved"])
+    mock_rule_repo.replace_user_rules = AsyncMock(return_value=[])
 
     item = _make_item(
-        resource_type="toolkit",
-        action="bind",
         resource_id=None,
-        to_id=None,
         resource_reference={"vendor": "httpbin.org", "name": "httpbin"},
+        rules=_RULES,
     )
     applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
+    prepared = await applicator.prepare(item, identity=_make_identity(), control_session=session)
 
-    assert isinstance(effects, ToolkitBindEffect)
-    assert effects.binding_id == "atb_new_002"
-    # Resolution runs on the shared decision session (not a fresh control_db session),
-    # and org:admin gets owner_ids=None (resolve across all owners). The vendor is
-    # normalized to the registry slug form (httpbin.org -> httpbin-org) so it
-    # matches the credential's stored api_vendor (#656).
-    mock_effects_repo.resolve_toolkits_for_api.assert_awaited_once_with(
+    assert prepared.credential_id == "cred_resolved"
+    mock_effects_repo.resolve_credentials_for_api.assert_awaited_once_with(
         session,
         vendor="httpbin-org",
         name="httpbin",
         version=None,
         owner_ids=None,
+        bound_credential_ids=None,
     )
-    mock_effects_repo.bind_agent_to_toolkit.assert_awaited_once()
-    bound_kwargs = mock_effects_repo.bind_agent_to_toolkit.await_args.kwargs
-    assert bound_kwargs["toolkit_id"] == "tk_resolved"
+    # org:admin needs no admin-DB push-down session.
+    ctx.admin_db.session.assert_not_called()
 
 
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
+@patch(f"{_MODULE}.AgentPermissionRuleRepository")
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_reference_owner_scoped_for_non_admin(
+async def test_prepare_reference_owner_scoped_with_bound_pushdown_for_non_admin(
     mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
+    mock_rule_repo: MagicMock,
 ) -> None:
-    """A non-admin decider's reference resolution is scoped to their own owner id."""
+    """A non-admin decider's resolution is confined to their owner axis PLUS the
+    admin-DB push-down list (credentials bound to agents they own) — hard
+    problem 8's binding-widened visibility."""
     ctx = _make_ctx()
     session = _make_session()
-    mock_effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_owned"])
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock(return_value=("atb_new_003", False))
+    mock_effects_repo.resolve_credentials_for_api = AsyncMock(return_value=["cred_owned"])
+    mock_effects_repo.list_bound_credential_ids_for_owned_agents = AsyncMock(
+        return_value=["cred_via_binding"]
+    )
+    mock_rule_repo.replace_user_rules = AsyncMock(return_value=[])
 
     item = _make_item(
-        resource_type="toolkit",
-        action="bind",
         resource_id=None,
-        to_id=None,
         resource_reference={"vendor": "httpbin.org", "name": "httpbin"},
+        rules=_RULES,
     )
     applicator = EffectApplicator(ctx)
-    await applicator.apply(
+    await applicator.prepare(
         item, identity=_make_identity(sub="usr_op", org_admin=False), control_session=session
     )
 
-    mock_effects_repo.resolve_toolkits_for_api.assert_awaited_once_with(
+    mock_effects_repo.list_bound_credential_ids_for_owned_agents.assert_awaited_once()
+    assert mock_effects_repo.list_bound_credential_ids_for_owned_agents.await_args.kwargs[
+        "owner_ids"
+    ] == ["usr_op"]
+    mock_effects_repo.resolve_credentials_for_api.assert_awaited_once_with(
         session,
         vendor="httpbin-org",
         name="httpbin",
         version=None,
         owner_ids=["usr_op"],
+        bound_credential_ids=["cred_via_binding"],
     )
+
+
+async def test_prepare_scope_grant_checks_allow_list() -> None:
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    ok = _make_item(resource_type="scope", action="grant", resource_id=_GRANTABLE)
+    prepared = await applicator.prepare(
+        ok, identity=_make_identity(), control_session=_make_session()
+    )
+    assert prepared == PreparedEffect()
+
+    bad = _make_item(resource_type="scope", action="grant", resource_id="org:admin")
+    with pytest.raises(UnsupportedScopeGrantError):
+        await applicator.prepare(bad, identity=_make_identity(), control_session=_make_session())
+
+
+async def test_prepare_retired_pair_fails_loudly() -> None:
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(resource_type="toolkit", action="bind", resource_id="tk_old", rules=None)
+    with pytest.raises(UnsupportedAccessRequestItemError):
+        await applicator.prepare(item, identity=_make_identity(), control_session=_make_session())
+
+
+# --- complete(): stage 2 (admin transaction) ----------------------------------
 
 
 @patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_reference_no_candidates_raises(
+async def test_complete_credential_bind_happy_path(
     mock_effects_repo: MagicMock,
     mock_audit: AsyncMock,
 ) -> None:
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=[])
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock()
+    mock_effects_repo.bind_agent_to_credential = AsyncMock(return_value=("acb_new_001", False))
 
+    item = _make_item(resource_id="cred_001", rules=_RULES)
+    applicator = EffectApplicator(ctx)
+    effect = await applicator.complete(
+        item,
+        identity=_make_identity(),
+        prepared=PreparedEffect(credential_id="cred_001", rules_applied=1),
+    )
+
+    assert isinstance(effect, CredentialBindEffect)
+    assert effect.binding_id == "acb_new_001"
+    assert effect.credential_id == "cred_001"
+    assert effect.rules_applied == 1
+    assert effect.rule_set_id is None
+    assert effect.already_bound is False
+    bound_kwargs = mock_effects_repo.bind_agent_to_credential.await_args.kwargs
+    assert bound_kwargs["agent_id"] == "agnt_001"
+    assert bound_kwargs["credential_id"] == "cred_001"
+    assert bound_kwargs["rule_set_id"] is None
+    assert bound_kwargs["created_by"] == "usr_admin"
+    mock_audit.assert_awaited_once()
+
+
+@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_complete_credential_bind_duplicate_idempotent(
+    mock_effects_repo: MagicMock,
+    mock_audit: AsyncMock,
+) -> None:
+    """A retry converges on the existing binding (ON CONFLICT) — the effect
+    records already_bound so the ack is honest about what happened."""
+    ctx = _make_ctx()
+    mock_effects_repo.bind_agent_to_credential = AsyncMock(return_value=("acb_existing", True))
+
+    item = _make_item(resource_id="cred_001", rules=_RULES)
+    applicator = EffectApplicator(ctx)
+    effect = await applicator.complete(
+        item,
+        identity=_make_identity(),
+        prepared=PreparedEffect(credential_id="cred_001", rules_applied=1),
+    )
+    assert isinstance(effect, CredentialBindEffect)
+    assert effect.already_bound is True
+    assert effect.binding_id == "acb_existing"
+
+
+@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_complete_rule_set_bind_carries_pointer_on_admin_row(
+    mock_effects_repo: MagicMock,
+    mock_audit: AsyncMock,
+) -> None:
+    """The rule-set pointer rides on the admin binding row; the effect surfaces
+    it (with rules_applied 0) so the ack names the policy carrier."""
+    ctx = _make_ctx()
+    mock_effects_repo.bind_agent_to_credential = AsyncMock(return_value=("acb_rs", False))
+
+    item = _make_item(resource_id="cred_001", rules=None, rule_set_id="prs_001")
+    applicator = EffectApplicator(ctx)
+    effect = await applicator.complete(
+        item,
+        identity=_make_identity(),
+        prepared=PreparedEffect(credential_id="cred_001", rules_applied=0),
+    )
+    assert isinstance(effect, CredentialBindEffect)
+    assert effect.rule_set_id == "prs_001"
+    assert effect.rules_applied == 0
+    assert mock_effects_repo.bind_agent_to_credential.await_args.kwargs["rule_set_id"] == "prs_001"
+
+
+@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_complete_scope_grant_happy_path_and_idempotent(
+    mock_effects_repo: MagicMock,
+    mock_audit: AsyncMock,
+) -> None:
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(resource_type="scope", action="grant", resource_id=_GRANTABLE)
+
+    mock_effects_repo.grant_scope_to_actor = AsyncMock(return_value=True)
+    effect = await applicator.complete(item, identity=_make_identity(), prepared=PreparedEffect())
+    assert isinstance(effect, ScopeGrantEffect)
+    assert effect.scope == _GRANTABLE
+    assert effect.already_granted is False
+
+    mock_effects_repo.grant_scope_to_actor = AsyncMock(return_value=False)
+    effect = await applicator.complete(item, identity=_make_identity(), prepared=PreparedEffect())
+    assert isinstance(effect, ScopeGrantEffect)
+    assert effect.already_granted is True
+
+
+@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_complete_scope_grant_privileged_scope_rejected(
+    mock_effects_repo: MagicMock,
+    mock_audit: AsyncMock,
+) -> None:
+    """Defense-in-depth: even at the last write, a privileged scope (org:admin)
+    is refused — the confused-deputy guard cannot rely on validate() alone."""
+    ctx = _make_ctx()
+    mock_effects_repo.grant_scope_to_actor = AsyncMock()
+    item = _make_item(resource_type="scope", action="grant", resource_id="org:admin")
+    applicator = EffectApplicator(ctx)
+    with pytest.raises(UnsupportedScopeGrantError):
+        await applicator.complete(item, identity=_make_identity(), prepared=PreparedEffect())
+    mock_effects_repo.grant_scope_to_actor.assert_not_called()
+
+
+async def test_complete_retired_pair_fails_loudly() -> None:
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(resource_type="toolkit", action="create", resource_id=None, rules=None)
+    with pytest.raises(UnsupportedAccessRequestItemError):
+        await applicator.complete(item, identity=_make_identity(), prepared=PreparedEffect())
+
+
+# --- rules-first write ordering (hard problem 6) ------------------------------
+
+
+@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
+@patch(f"{_MODULE}.EffectsRepository")
+@patch(f"{_MODULE}.AgentPermissionRuleRepository")
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_prepare_then_complete_orders_rules_before_binding(
+    mock_cred_repo: MagicMock,
+    mock_rule_repo: MagicMock,
+    mock_effects_repo: MagicMock,
+    mock_audit: AsyncMock,
+) -> None:
+    """The whole point of the two-stage split: the control-DB rules write
+    (prepare) happens strictly BEFORE the admin-DB binding write (complete).
+    Asserted via a shared call recorder so a refactor that flips the order —
+    reintroducing the live-rule-less-bind crash window — fails here."""
+    ctx = _make_ctx()
+    calls: list[str] = []
+
+    async def _record_rules(*args: object, **kwargs: object) -> list[object]:
+        calls.append("rules_write")
+        return []
+
+    async def _record_bind(*args: object, **kwargs: object) -> tuple[str, bool]:
+        calls.append("binding_write")
+        return ("acb_ordered", False)
+
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    mock_rule_repo.replace_user_rules = AsyncMock(side_effect=_record_rules)
+    mock_effects_repo.bind_agent_to_credential = AsyncMock(side_effect=_record_bind)
+
+    item = _make_item(resource_id="cred_001", rules=_RULES)
+    applicator = EffectApplicator(ctx)
+    prepared = await applicator.prepare(
+        item, identity=_make_identity(), control_session=_make_session()
+    )
+    effect = await applicator.complete(item, identity=_make_identity(), prepared=prepared)
+
+    assert calls == ["rules_write", "binding_write"]
+    assert isinstance(effect, CredentialBindEffect)
+    assert effect.credential_id == "cred_001"
+
+
+# --- validate() pre-pass -------------------------------------------------------
+
+
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_validate_credential_bind_visible_id_passes(
+    mock_cred_repo: MagicMock,
+) -> None:
+    ctx = _make_ctx()
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    item = _make_item(resource_id="cred_001", rules=_RULES)
+    applicator = EffectApplicator(ctx)
+    await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
+    mock_cred_repo.get_by_id.assert_awaited_once()
+
+
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_validate_credential_bind_missing_credential_raises(
+    mock_cred_repo: MagicMock,
+) -> None:
+    """A credential:bind naming a non-existent/invisible credential must fail
+    validate() as a 422 CredentialNotFoundForBindError, not slip through to a
+    FK fault mid-apply (issue #649)."""
+    ctx = _make_ctx()
+    mock_cred_repo.get_by_id = AsyncMock(return_value=None)
+    item = _make_item(resource_id="cred_missing", rules=_RULES)
+    applicator = EffectApplicator(ctx)
+    with pytest.raises(CredentialNotFoundForBindError):
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_reference_unresolved_raises(
+    mock_effects_repo: MagicMock,
+) -> None:
+    ctx = _make_ctx()
+    mock_effects_repo.resolve_credentials_for_api = AsyncMock(return_value=[])
     item = _make_item(
-        resource_type="toolkit",
-        action="bind",
         resource_id=None,
-        to_id=None,
         resource_reference={"vendor": "httpbin.org", "name": "httpbin"},
+        rules=_RULES,
     )
     applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ToolkitReferenceUnresolvedError):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
-    mock_effects_repo.bind_agent_to_toolkit.assert_not_called()
+    with pytest.raises(CredentialReferenceUnresolvedError):
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
 
 
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_vendor_only_reference_message_omits_none(
+async def test_validate_reference_unresolved_message_omits_none(
     mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
 ) -> None:
-    # A vendor-only reference (no name) must not surface a misleading
-    # "vendor/None" in the error message (review P3-10).
+    """A vendor-only reference (no name) must not surface a misleading
+    'vendor/None' in the error message."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=[])
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock()
-
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
-        resource_id=None,
-        to_id=None,
-        resource_reference={"vendor": "httpbin.org"},
-    )
+    mock_effects_repo.resolve_credentials_for_api = AsyncMock(return_value=[])
+    item = _make_item(resource_id=None, resource_reference={"vendor": "httpbin.org"}, rules=_RULES)
     applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ToolkitReferenceUnresolvedError) as excinfo:
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
+    with pytest.raises(CredentialReferenceUnresolvedError) as excinfo:
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
     assert "None" not in str(excinfo.value)
     assert "httpbin.org" in str(excinfo.value)
 
 
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_toolkit_bind_reference_multiple_candidates_raises(
+async def test_validate_reference_ambiguous_raises(
     mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
 ) -> None:
+    """Several covering credentials → the approver must disambiguate by amending
+    an explicit resource_id; the raise keeps the request pending."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_a", "tk_b"])
-    mock_effects_repo.bind_agent_to_toolkit = AsyncMock()
-
+    mock_effects_repo.resolve_credentials_for_api = AsyncMock(return_value=["cred_a", "cred_b"])
     item = _make_item(
-        resource_type="toolkit",
-        action="bind",
         resource_id=None,
-        to_id=None,
         resource_reference={"vendor": "httpbin.org", "name": "httpbin"},
+        rules=_RULES,
     )
     applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ToolkitReferenceAmbiguousError) as excinfo:
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
-    assert excinfo.value.candidates == ["tk_a", "tk_b"]
-    mock_effects_repo.bind_agent_to_toolkit.assert_not_called()
+    with pytest.raises(CredentialReferenceAmbiguousError) as excinfo:
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
+    assert excinfo.value.candidates == ["cred_a", "cred_b"]
 
 
-# --- scope grant ---
-
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_scope_grant_happy_path(
-    mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
-) -> None:
+async def test_validate_vendor_less_bind_raises_missing_field() -> None:
+    """No resource_id and no usable reference: a clear missing-field error, not
+    a bare ValueError mid-apply."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.grant_scope_to_actor = AsyncMock(return_value=True)
-
-    item = _make_item(resource_type="scope", action="grant", resource_id=_GRANTABLE)
     applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
+    for reference in (None, {"name": "widgets"}):
+        item = _make_item(resource_id=None, resource_reference=reference, rules=_RULES)
+        with pytest.raises(RequiredFieldMissingError) as exc_info:
+            await applicator.validate(
+                item, identity=_make_identity(), control_session=_make_session()
+            )
+        assert exc_info.value.field == "resource_id"
 
-    assert isinstance(effects, ScopeGrantEffect)
-    assert effects.scope == _GRANTABLE
-    assert effects.already_granted is False
-    mock_effects_repo.grant_scope_to_actor.assert_awaited_once()
 
-
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_scope_grant_duplicate_idempotent(
-    mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_validate_rules_less_bind_raises(
+    mock_cred_repo: MagicMock,
 ) -> None:
+    """A bind with neither rules nor rule_set_id is a live default-deny the
+    operator believes granted — validate() raises (keeping the request pending
+    for amendment) BEFORE any target resolution runs."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.grant_scope_to_actor = AsyncMock(return_value=False)
-
-    item = _make_item(resource_type="scope", action="grant", resource_id=_GRANTABLE)
+    mock_cred_repo.get_by_id = AsyncMock()
+    item = _make_item(resource_id="cred_001", rules=None, rule_set_id=None)
     applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
-
-    assert isinstance(effects, ScopeGrantEffect)
-    assert effects.already_granted is True
-    assert effects.scope == _GRANTABLE
+    with pytest.raises(RulesRequiredForBindError):
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
+    mock_cred_repo.get_by_id.assert_not_called()
 
 
-@patch(f"{_MODULE}.record_audit_best_effort", new_callable=AsyncMock)
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_scope_grant_privileged_scope_rejected(
-    mock_effects_repo: MagicMock,
-    mock_audit: AsyncMock,
+@patch(f"{_MODULE}.PermissionRuleSetRepository")
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_validate_dangling_rule_set_raises(
+    mock_cred_repo: MagicMock,
+    mock_rule_set_repo: MagicMock,
 ) -> None:
-    """A privileged scope (org:admin) cannot be granted via the self-service path."""
+    """rule_set_id is FK-less across the control/admin seam, so validate() must
+    prove the set exists — approving past a dangling pointer would create a
+    live default-deny binding (the hollow-yes shape again)."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.grant_scope_to_actor = AsyncMock()
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    mock_rule_set_repo.get_by_id = AsyncMock(return_value=None)
+    item = _make_item(resource_id="cred_001", rules=None, rule_set_id="prs_missing")
+    applicator = EffectApplicator(ctx)
+    with pytest.raises(RuleSetNotFoundForBindError) as exc_info:
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
+    assert exc_info.value.rule_set_id == "prs_missing"
 
+
+@patch(f"{_MODULE}.PermissionRuleSetRepository")
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_validate_existing_rule_set_passes(
+    mock_cred_repo: MagicMock,
+    mock_rule_set_repo: MagicMock,
+) -> None:
+    ctx = _make_ctx()
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    mock_rule_set_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    item = _make_item(resource_id="cred_001", rules=None, rule_set_id="prs_001")
+    applicator = EffectApplicator(ctx)
+    await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
+    mock_rule_set_repo.get_by_id.assert_awaited_once()
+
+
+async def test_validate_scope_grant_privileged_raises() -> None:
+    ctx = _make_ctx()
     item = _make_item(resource_type="scope", action="grant", resource_id="org:admin")
     applicator = EffectApplicator(ctx)
-
     with pytest.raises(UnsupportedScopeGrantError):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
-    mock_effects_repo.grant_scope_to_actor.assert_not_called()
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
 
 
-# --- validate() pre-pass ---
-
-
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_toolkit_reference_not_visible_raises(
-    mock_effects_repo: MagicMock,
-) -> None:
+async def test_validate_scope_grant_missing_resource_id_raises() -> None:
+    """A scope-grant item with no resource_id must fail validate() as a 422
+    RequiredFieldMissingError, not slip through to a 500 mid-apply."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=[])
-
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
-        resource_id=None,
-        to_id=None,
-        resource_reference={"vendor": "httpbin.org", "name": "httpbin"},
-    )
+    item = _make_item(resource_type="scope", action="grant", resource_id=None)
     applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ToolkitReferenceUnresolvedError):
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
-
-
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_scope_grant_privileged_raises(
-    mock_effects_repo: MagicMock,
-) -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    item = _make_item(resource_type="scope", action="grant", resource_id="org:admin")
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(UnsupportedScopeGrantError):
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
+    with pytest.raises(RequiredFieldMissingError) as exc_info:
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
+    assert exc_info.value.field == "resource_id"
 
 
 async def test_validate_scope_grant_apis_write_passes() -> None:
@@ -559,15 +675,13 @@ async def test_validate_scope_grant_apis_write_passes() -> None:
     An agent must be able to request ``apis:write`` (so it can ``jentic catalog
     import`` after a human approves) and have an owner approve it. validate()
     mirrors the file-time guard via ``GRANTABLE_SCOPES``, so it must NOT reject
-    ``apis:write`` — before this change it raised ``UnsupportedScopeGrantError``.
+    ``apis:write``.
     """
     assert "apis:write" in GRANTABLE_SCOPES
     ctx = _make_ctx()
-    session = _make_session()
     item = _make_item(resource_type="scope", action="grant", resource_id="apis:write")
     applicator = EffectApplicator(ctx)
-
-    await applicator.validate(item, identity=_make_identity(), control_session=session)
+    await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
 
 
 async def test_validate_scope_grant_overlays_confirm_rejected() -> None:
@@ -581,228 +695,218 @@ async def test_validate_scope_grant_overlays_confirm_rejected() -> None:
     """
     assert "overlays:confirm" not in GRANTABLE_SCOPES
     ctx = _make_ctx()
-    session = _make_session()
     item = _make_item(resource_type="scope", action="grant", resource_id="overlays:confirm")
     applicator = EffectApplicator(ctx)
-
     with pytest.raises(UnsupportedScopeGrantError):
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
 
 
-@patch(f"{_MODULE}.CredentialRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_credential_bind_visible_passes(
-    mock_effects_repo: MagicMock,
-    mock_credential_repo: MagicMock,
-) -> None:
+async def test_validate_fulfilment_only_intent_with_rules_is_rejected() -> None:
+    """A fulfilment-only intent (credential:provision) can carry no enforceable
+    rules — there is no binding key to attach them to."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.toolkit_visible_to_owners = AsyncMock()
-    mock_effects_repo.resolve_toolkits_for_api = AsyncMock()
-    mock_credential_repo.get_by_id = AsyncMock(return_value=MagicMock())
-    item = _make_item(resource_type="credential", action="bind", resource_id="cred_001")
     applicator = EffectApplicator(ctx)
-    # A visible credential passes validate() without touching the toolkit reads.
-    await applicator.validate(item, identity=_make_identity(), control_session=session)
-    mock_credential_repo.get_by_id.assert_awaited_once()
-    mock_effects_repo.toolkit_visible_to_owners.assert_not_called()
-    mock_effects_repo.resolve_toolkits_for_api.assert_not_called()
+    item = _make_item(
+        resource_type="credential", action="provision", resource_id=None, rules=_RULES
+    )
+    with pytest.raises(RulesNotSupportedForBindError):
+        await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
 
 
-@patch(f"{_MODULE}.CredentialRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_credential_bind_missing_credential_raises(
-    mock_effects_repo: MagicMock,
-    mock_credential_repo: MagicMock,
-) -> None:
-    """A credential:bind naming a non-existent/invisible credential must fail
-    validate() as a 422 CredentialNotFoundForBindError, not slip through to a
-    500 from _apply_credential_bind / a downstream FK fault. See issue #649."""
+async def test_validate_fulfilment_only_intent_without_rules_passes() -> None:
     ctx = _make_ctx()
-    session = _make_session()
-    mock_credential_repo.get_by_id = AsyncMock(return_value=None)
-    item = _make_item(resource_type="credential", action="bind", resource_id="cred_missing")
     applicator = EffectApplicator(ctx)
+    item = _make_item(resource_type="credential", action="provision", resource_id=None, rules=None)
+    await applicator.validate(item, identity=_make_identity(), control_session=_make_session())
 
-    with pytest.raises(CredentialNotFoundForBindError):
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
 
-
-@patch(f"{_MODULE}.CredentialRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_credential_bind_missing_resource_id_raises(
-    mock_effects_repo: MagicMock,
-    mock_credential_repo: MagicMock,
-) -> None:
-    """A credential:bind with no resource_id must fail validate() up front, never
-    reaching the credential lookup or the apply step's bare ValueError."""
+async def test_validate_retired_pair_fails_loudly() -> None:
+    """A stored legacy toolkit item hard-fails the decision (422) — never the
+    old UNSUPPORTED silent skip."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_credential_repo.get_by_id = AsyncMock(return_value=None)
-    item = _make_item(resource_type="credential", action="bind", resource_id=None)
     applicator = EffectApplicator(ctx)
+    for resource_type, action in (("toolkit", "create"), ("toolkit", "bind"), ("api", "invoke")):
+        item = _make_item(resource_type=resource_type, action=action, rules=None)
+        with pytest.raises(UnsupportedAccessRequestItemError):
+            await applicator.validate(
+                item, identity=_make_identity(), control_session=_make_session()
+            )
 
-    with pytest.raises(RequiredFieldMissingError) as exc_info:
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
-    assert exc_info.value.field == "resource_id"
-    assert "<missing>" not in str(exc_info.value)
-    mock_credential_repo.get_by_id.assert_not_called()
+
+# --- validate() under plan governance -----------------------------------------
 
 
-@patch(f"{_MODULE}.CredentialRepository")
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_credential_bind_missing_to_id_raises(
-    mock_effects_repo: MagicMock,
-    mock_credential_repo: MagicMock,
-) -> None:
-    """A credential:bind missing its to_id (the toolkit target) fails validate()
-    with a clear missing-field error, not a misleading 'toolkit not visible'."""
+async def test_validate_governed_bind_without_id_denies_with_plan_reason() -> None:
+    """A governed credential:bind can only be satisfied by the credential id the
+    wizard stamps — a plain approval must surface the plan-aware reason naming
+    the awaiting intent(s) and API, not a cryptic resolution error."""
     ctx = _make_ctx()
-    session = _make_session()
-    mock_credential_repo.get_by_id = AsyncMock(return_value=None)
-    item = _make_item(resource_type="credential", action="bind", to_id=None, resource_id="cred_001")
     applicator = EffectApplicator(ctx)
-
-    with pytest.raises(RequiredFieldMissingError) as exc_info:
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
-    assert exc_info.value.field == "to_id"
-    assert "<missing>" not in str(exc_info.value)
-    mock_credential_repo.get_by_id.assert_not_called()
-
-
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_explicit_id_not_visible_raises(
-    mock_effects_repo: MagicMock,
-) -> None:
-    """validate() is the security-critical guard: an explicit-id bind to a
-    toolkit the decider can't see must fail up front, before any admin-DB write."""
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.toolkit_visible_to_owners = AsyncMock(return_value=False)
-
-    item = _make_item(resource_type="toolkit", action="bind", resource_id="tk_other_owner")
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ToolkitNotVisibleError):
+    item = _make_item(
+        resource_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+        rules=_RULES,
+    )
+    plan_governance = PlanGovernance(
+        governing_intent_ids=frozenset({"arqi_intent_1"}),
+        governing_api=("acme", "widgets"),
+    )
+    with pytest.raises(ProvisioningPlanNotFulfilledError) as exc_info:
         await applicator.validate(
-            item, identity=_make_identity(sub="usr_op", org_admin=False), control_session=session
+            item,
+            identity=_make_identity(),
+            control_session=_make_session(),
+            plan_governance=plan_governance,
+        )
+    assert exc_info.value.governing_intent_ids == frozenset({"arqi_intent_1"})
+    assert exc_info.value.governing_api == ("acme", "widgets")
+    assert "acme/widgets" in str(exc_info.value)
+    assert "arqi_intent_1" in str(exc_info.value)
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_governed_bind_never_half_wires_to_preexisting_credential(
+    mock_effects_repo: MagicMock,
+) -> None:
+    """Even when a PRE-EXISTING credential covers the same API, a governed bind
+    must NOT resolve to it: approving it plain would wire the agent to the old
+    credential while the plan's provision intent is still unfulfilled — a
+    half-wired grant. The plan-aware denial must win, without resolution ever
+    being attempted."""
+    mock_effects_repo.resolve_credentials_for_api = AsyncMock(return_value=["cred_preexisting"])
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+        rules=_RULES,
+    )
+    with pytest.raises(ProvisioningPlanNotFulfilledError):
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=_make_session(),
+            plan_governance=PlanGovernance(
+                governing_intent_ids=frozenset({"arqi_intent_1"}),
+                governing_api=("acme", "widgets"),
+            ),
+        )
+    mock_effects_repo.resolve_credentials_for_api.assert_not_awaited()
+
+
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_validate_governed_bind_with_stamped_id_passes_plan_guard(
+    mock_cred_repo: MagicMock,
+) -> None:
+    """A wizard-stamped resource_id satisfies the plan contract: the guard
+    passes and validation proceeds to the ordinary visibility check."""
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock())
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(resource_id="cred_stamped", rules=_RULES)
+    plan_governance = PlanGovernance(governing_intent_ids=frozenset({"arqi_intent_1"}))
+    await applicator.validate(
+        item,
+        identity=_make_identity(),
+        control_session=_make_session(),
+        plan_governance=plan_governance,
+    )
+    mock_cred_repo.get_by_id.assert_awaited_once()
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_ungoverned_bind_in_composite_passes_when_reference_resolves(
+    mock_effects_repo: MagicMock,
+) -> None:
+    """A composite request can mix plan chains with PLAIN reference binds to
+    credentials that already exist. A bind whose API no chain provisions gets
+    UNGOVERNED_PLAN from decide() and is satisfiable exactly as filed — the
+    plan context must not auto-deny it (the mixed-composite fix)."""
+    mock_effects_repo.resolve_credentials_for_api = AsyncMock(return_value=["cred_existing"])
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+        rules=_RULES,
+    )
+    await applicator.validate(
+        item,
+        identity=_make_identity(),
+        control_session=_make_session(),
+        plan_governance=UNGOVERNED_PLAN,
+    )
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_ungoverned_bind_in_composite_keeps_ambiguity_pending(
+    mock_effects_repo: MagicMock,
+) -> None:
+    """An AMBIGUOUS plain reference inside a composite keeps the documented
+    non-plan semantics: it raises (so the item stays pending for amendment)
+    instead of being converted into a misleading plan denial."""
+    mock_effects_repo.resolve_credentials_for_api = AsyncMock(return_value=["cred_1", "cred_2"])
+    ctx = _make_ctx()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+        rules=_RULES,
+    )
+    with pytest.raises(CredentialReferenceAmbiguousError):
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=_make_session(),
+            plan_governance=UNGOVERNED_PLAN,
         )
 
 
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_toolkit_reference_ambiguous_raises(
-    mock_effects_repo: MagicMock,
-) -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    mock_effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_a", "tk_b"])
-
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
-        resource_id=None,
-        to_id=None,
-        resource_reference={"vendor": "httpbin.org", "name": "httpbin"},
-    )
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ToolkitReferenceAmbiguousError):
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
+# --- effect classifier ---------------------------------------------------------
 
 
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_scope_grant_missing_resource_id_raises(
-    mock_effects_repo: MagicMock,
-) -> None:
-    """A scope-grant item with no resource_id must fail validate() as a 422
-    RequiredFieldMissingError, not slip through to a 500 mid-apply."""
-    ctx = _make_ctx()
-    session = _make_session()
-    item = _make_item(resource_type="scope", action="grant", resource_id=None)
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(RequiredFieldMissingError) as exc_info:
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
-    assert exc_info.value.field == "resource_id"
-    assert "<missing>" not in str(exc_info.value)
+def test_classify_credential_bind_is_admin() -> None:
+    # Theme-5 Phase 3: credential:bind moved to the ADMIN phase (the binding
+    # row lives in the admin DB) with a control-first rules prologue.
+    assert classify_effect("credential", "bind") is EffectPhase.ADMIN
 
 
-# --- unsupported combination ---
+def test_classify_scope_grant_is_admin() -> None:
+    assert classify_effect("scope", "grant") is EffectPhase.ADMIN
 
 
-async def test_unsupported_combination_returns_skipped() -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    item = _make_item(resource_type="unknown", action="magic")
-    applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
-
-    assert isinstance(effects, SkippedEffect)
-    assert effects.skipped is True
-    assert "unsupported" in effects.reason
+def test_classify_credential_provision_is_fulfilment_only() -> None:
+    assert classify_effect("credential", "provision") is EffectPhase.FULFILMENT_ONLY
 
 
-async def test_unsupported_combination_does_not_raise() -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    item = _make_item(resource_type="future_thing", action="activate")
-    applicator = EffectApplicator(ctx)
-    effects = await applicator.apply(item, identity=_make_identity(), control_session=session)
-
-    assert isinstance(effects, SkippedEffect)
-    assert effects.skipped is True
+def test_classify_retired_toolkit_pairs_are_unsupported() -> None:
+    # The retired vocabulary must classify UNSUPPORTED (hard failure), so a
+    # stored pre-Phase-3 row can never be silently skipped or half-applied.
+    assert classify_effect("toolkit", "create") is EffectPhase.UNSUPPORTED
+    assert classify_effect("toolkit", "bind") is EffectPhase.UNSUPPORTED
 
 
-# --- validation errors ---
+def test_classify_unknown_combination_is_unsupported() -> None:
+    assert classify_effect("unknown", "magic") is EffectPhase.UNSUPPORTED
 
 
-async def test_credential_bind_raises_on_missing_to_id() -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    item = _make_item(resource_type="credential", action="bind", to_id=None)
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ValueError, match="requires to_id"):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
+def test_is_admin_effect_true_for_admin_combinations() -> None:
+    assert is_admin_effect(_make_item(resource_type="credential", action="bind")) is True
+    assert is_admin_effect(_make_item(resource_type="scope", action="grant")) is True
 
 
-async def test_credential_bind_raises_on_missing_resource_id() -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    item = _make_item(resource_type="credential", action="bind", resource_id=None)
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ValueError, match="requires resource_id"):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
+def test_is_admin_effect_false_for_fulfilment_and_unsupported() -> None:
+    # Inert intents must never be classified as admin effects, or they'd be
+    # routed through the post-commit reconcile path instead of skipped.
+    assert is_admin_effect(_make_item(resource_type="credential", action="provision")) is False
+    assert is_admin_effect(_make_item(resource_type="unknown", action="magic")) is False
 
 
-async def test_toolkit_bind_raises_on_missing_ids_and_reference() -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
-        resource_id=None,
-        to_id=None,
-        resource_reference=None,
-    )
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ValueError, match="resource_reference with a vendor"):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
+def test_admin_effect_keys_are_exactly_the_admin_combinations() -> None:
+    assert set(admin_effect_keys()) == {("credential", "bind"), ("scope", "grant")}
 
 
-async def test_scope_grant_raises_on_missing_resource_id() -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    item = _make_item(resource_type="scope", action="grant", resource_id=None)
-    applicator = EffectApplicator(ctx)
-
-    with pytest.raises(ValueError, match="requires resource_id"):
-        await applicator.apply(item, identity=_make_identity(), control_session=session)
-
-
-# --- actor_type_from_id ---
+# --- actor_type_from_id --------------------------------------------------------
 
 
 def test_actor_type_from_id_user_prefix() -> None:
@@ -822,487 +926,218 @@ def test_actor_type_from_id_unknown_prefix_raises() -> None:
         actor_type_from_id("unknown_123")
 
 
-# --- effect classifier ---
-
-
-def test_classify_credential_bind_is_control_session() -> None:
-    assert classify_effect("credential", "bind") is EffectPhase.CONTROL_SESSION
-
-
-def test_classify_toolkit_bind_is_admin() -> None:
-    assert classify_effect("toolkit", "bind") is EffectPhase.ADMIN
-
-
-def test_classify_scope_grant_is_admin() -> None:
-    assert classify_effect("scope", "grant") is EffectPhase.ADMIN
-
-
-def test_classify_unknown_combination_is_unsupported() -> None:
-    assert classify_effect("unknown", "magic") is EffectPhase.UNSUPPORTED
-
-
-def test_is_admin_effect_true_for_admin_combinations() -> None:
-    assert is_admin_effect(_make_item(resource_type="toolkit", action="bind")) is True
-    assert is_admin_effect(_make_item(resource_type="scope", action="grant")) is True
-
-
-def test_is_admin_effect_false_for_control_and_unsupported() -> None:
-    assert is_admin_effect(_make_item(resource_type="credential", action="bind")) is False
-    assert is_admin_effect(_make_item(resource_type="unknown", action="magic")) is False
-
-
-def test_admin_effect_keys_are_exactly_the_admin_combinations() -> None:
-    assert set(admin_effect_keys()) == {("toolkit", "bind"), ("scope", "grant")}
-
-
-# --- provisioning-plan classification + guard (issues #619/#684) ---
-
-
-def test_classify_toolkit_create_is_fulfilment_only() -> None:
-    assert classify_effect("toolkit", "create") is EffectPhase.FULFILMENT_ONLY
-
-
-def test_classify_credential_provision_is_fulfilment_only() -> None:
-    assert classify_effect("credential", "provision") is EffectPhase.FULFILMENT_ONLY
-
-
-def test_fulfilment_only_intents_are_not_admin_effects() -> None:
-    # Inert intents must never be classified as admin effects, or they'd be
-    # routed through the post-commit reconcile path instead of skipped.
-    assert is_admin_effect(_make_item(resource_type="toolkit", action="create")) is False
-    assert is_admin_effect(_make_item(resource_type="credential", action="provision")) is False
-
-
-async def test_apply_fulfilment_only_intent_is_skipped() -> None:
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    for resource_type, action in (("toolkit", "create"), ("credential", "provision")):
-        item = _make_item(resource_type=resource_type, action=action, rules=None)
-        effect = await applicator.apply(item, identity=_make_identity(), control_session=session)
-        assert isinstance(effect, SkippedEffect)
-
-
-async def test_validate_fulfilment_only_intent_with_rules_is_rejected() -> None:
-    # A fulfilment-only intent can carry no enforceable rules (no binding key).
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    item = _make_item(
-        resource_type="toolkit",
-        action="create",
-        rules=[{"effect": "allow", "methods": ["GET"], "path": ".*"}],
-    )
-    with pytest.raises(RulesNotSupportedForBindError):
-        await applicator.validate(item, identity=_make_identity(), control_session=session)
-
-
-async def test_validate_credential_bind_in_plan_denies_when_unfulfilled() -> None:
-    # In a provisioning plan a credential:bind that the wizard hasn't fulfilled
-    # (missing to_id AND/OR resource_id) must be denied with the plan-aware error,
-    # and the error must name the intent the wizard is still awaiting so the
-    # DENY-reason surfaces enough context to close the loop.
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    plan_governance = PlanGovernance(governing_intent_ids=frozenset({"arqi_intent_1"}))
-    for to_id, resource_id in ((None, None), ("tk_001", None), (None, "cred_001")):
-        item = _make_item(action="bind", to_id=to_id, resource_id=resource_id)
-        with pytest.raises(ProvisioningPlanNotFulfilledError) as exc_info:
-            await applicator.validate(
-                item,
-                identity=_make_identity(),
-                control_session=session,
-                plan_governance=plan_governance,
-            )
-        assert exc_info.value.governing_intent_ids == frozenset({"arqi_intent_1"})
-        # credential:bind carries no governing_api — it's the "any-intent-lives" rule.
-        assert exc_info.value.governing_api is None
-        assert "arqi_intent_1" in str(exc_info.value)
-
-
-@patch(f"{_MODULE}.CredentialRepository")
-async def test_validate_credential_bind_in_plan_passes_when_fulfilled(
-    mock_cred_repo: MagicMock,
-) -> None:
-    # Both ids present → the plan guard passes and it proceeds to the DB
-    # visibility validator (mocked to a visible credential), i.e. no
-    # ProvisioningPlanNotFulfilledError.
-    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock(created_by="agnt_001"))
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    item = _make_item(action="bind", to_id="tk_001", resource_id="cred_001")
-    plan_governance = PlanGovernance(governing_intent_ids=frozenset({"arqi_intent_1"}))
-    # Should not raise the plan error (a DB-validator raise would be a different type).
-    try:
-        await applicator.validate(
-            item,
-            identity=_make_identity(),
-            control_session=session,
-            plan_governance=plan_governance,
-        )
-    except ProvisioningPlanNotFulfilledError:  # pragma: no cover - failure path
-        pytest.fail("a fulfilled credential:bind must not raise ProvisioningPlanNotFulfilledError")
-
-
-async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled() -> None:
-    # A reference-only toolkit:bind in a plan (no resolved id) must be denied —
-    # it can't resolve by the not-yet-visible credential->toolkit join. The
-    # error carries both the intent id(s) and the (vendor, name) tuple that
-    # tied the plan to this bind, so the DENY reason names the API the wizard
-    # is still expected to fulfil.
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
-        resource_id=None,
-        to_id=None,
-        resource_reference={"vendor": "acme", "name": "widgets"},
-    )
-    plan_governance = PlanGovernance(
-        governing_intent_ids=frozenset({"arqi_intent_1"}),
-        governing_api=("acme", "widgets"),
-    )
-    with pytest.raises(ProvisioningPlanNotFulfilledError) as exc_info:
-        await applicator.validate(
-            item,
-            identity=_make_identity(),
-            control_session=session,
-            plan_governance=plan_governance,
-        )
-    assert exc_info.value.governing_intent_ids == frozenset({"arqi_intent_1"})
-    assert exc_info.value.governing_api == ("acme", "widgets")
-    assert "acme/widgets" in str(exc_info.value)
-    assert "arqi_intent_1" in str(exc_info.value)
-
-
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_governed_bind_never_half_wires_to_preexisting_toolkit(
-    effects_repo: MagicMock,
-) -> None:
-    # Even when a PRE-EXISTING toolkit serves the same API, a governed bind
-    # must NOT resolve to it: approving it plain would wire the agent to the
-    # old toolkit while the rest of its chain (the new toolkit + credential)
-    # is denied — a half-wired grant. The plan-aware denial must win, without
-    # resolution ever being attempted.
-    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_preexisting"])
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
-        resource_id=None,
-        to_id=None,
-        resource_reference={"vendor": "acme", "name": "widgets"},
-    )
-    with pytest.raises(ProvisioningPlanNotFulfilledError):
-        await applicator.validate(
-            item,
-            identity=_make_identity(),
-            control_session=session,
-            plan_governance=PlanGovernance(
-                governing_intent_ids=frozenset({"arqi_intent_1"}),
-                governing_api=("acme", "widgets"),
-            ),
-        )
-    effects_repo.resolve_toolkits_for_api.assert_not_awaited()
-
-
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_ungoverned_bind_in_composite_passes_when_reference_resolves(
-    effects_repo: MagicMock,
-) -> None:
-    # A composite request can mix plan chains with PLAIN reference binds to
-    # toolkits that already exist. A bind whose API no chain provisions gets
-    # UNGOVERNED_PLAN from decide() and is satisfiable exactly as filed — the
-    # plan context must not auto-deny it (the mixed-composite fix).
-    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_existing"])
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
-        resource_id=None,
-        to_id=None,
-        resource_reference={"vendor": "acme", "name": "widgets"},
-    )
-    await applicator.validate(
-        item,
-        identity=_make_identity(),
-        control_session=session,
-        plan_governance=UNGOVERNED_PLAN,
-    )
-
-
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_ungoverned_bind_in_composite_keeps_ambiguity_pending(
-    effects_repo: MagicMock,
-) -> None:
-    # An AMBIGUOUS plain reference inside a composite keeps the documented
-    # non-plan semantics: it raises (so the item stays pending for amendment)
-    # instead of being converted into a misleading plan denial.
-    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_1", "tk_2"])
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
-        resource_id=None,
-        to_id=None,
-        resource_reference={"vendor": "acme", "name": "widgets"},
-    )
-    with pytest.raises(ToolkitReferenceAmbiguousError):
-        await applicator.validate(
-            item,
-            identity=_make_identity(),
-            control_session=session,
-            plan_governance=UNGOVERNED_PLAN,
-        )
-
-
-# --- plan governance (issue #778) --------------------------------------------
+# --- plan governance (issue #778, Phase 3 shape) -------------------------------
 #
-# ``plan_governance_for_items`` is the pure function that replaced the
-# request-wide ``is_plan`` flag. It returns a per-item mapping to
-# :class:`PlanGovernance` values (which live intent ids govern this bind, and
-# for ``toolkit:bind`` the ``(vendor, name)`` slug key that made those intents
-# relevant). Bind items not in the mapping are ungoverned.
+# ``plan_governance_for_items`` computes per-item governance from a request's
+# live fulfilment intents. Phase 3 collapsed a plan to the 2-item
+# ``credential:provision`` + ``credential:bind`` chain, and made credential:bind
+# governance **API-scoped**: a live intent for (vendor, name) governs a
+# reference-matching bind with no explicit resource_id. These tests exercise:
 #
-# These tests exercise the four things the flag used to get wrong:
-#
-#   1. an intent for API X should not govern an independent bind for API Y;
-#   2. non-live (withdrawn/denied) intents should not govern anything;
-#   3. the CLI's 4-item plan bundle (all items target the same API) still has
-#      every bind governed — the CLI behaviour is preserved;
-#   4. slug normalization ("httpbin.org" vs "httpbin-org") does not defeat
-#      governance.
-#
-# They also cover the extra facts the value object now carries: the
-# ``governing_intent_ids`` set, the ``governing_api`` tuple for toolkit binds,
-# and the ``is_governed`` boolean the ``validate()`` call-site branches on.
+#   1. an intent for API X does not govern an independent bind for API Y;
+#   2. non-live (withdrawn/denied) intents govern nothing;
+#   3. an explicit-id (wizard-stamped) bind is never governed;
+#   4. an unattributable bind (no vendor and no id) is governed conservatively;
+#   5. slug normalization ("httpbin.org" vs "httpbin-org") does not defeat
+#      governance;
+#   6. version is not part of the key — an intent covers all versions.
 
 
 def _intent(
     *,
-    kind: str = "toolkit_create",
-    vendor: str = "acme",
+    vendor: str | None = "acme",
     name: str | None = "widgets",
     item_id: str = "arqi_intent",
     status: str = "pending",
 ) -> MagicMock:
-    combos = {
-        "toolkit_create": ("toolkit", "create"),
-        "credential_provision": ("credential", "provision"),
-    }
-    resource_type, action = combos[kind]
-    ref: dict[str, Any] = {"vendor": vendor}
-    if name is not None:
-        ref["name"] = name
+    ref: dict[str, Any] | None = None
+    if vendor is not None:
+        ref = {"vendor": vendor}
+        if name is not None:
+            ref["name"] = name
     return _make_item(
-        resource_type=resource_type,
-        action=action,
+        resource_type="credential",
+        action="provision",
         resource_id=None,
         resource_reference=ref,
-        to_id=None,
+        item_id=item_id,
+        status=status,
+    )
+
+
+def _bind(
+    *,
+    vendor: str | None = "acme",
+    name: str | None = "widgets",
+    version: str | None = None,
+    resource_id: str | None = None,
+    item_id: str = "arqi_bind",
+    status: str = "pending",
+) -> MagicMock:
+    ref: dict[str, Any] | None = None
+    if vendor is not None or name is not None:
+        ref = {}
+        if vendor is not None:
+            ref["vendor"] = vendor
+        if name is not None:
+            ref["name"] = name
+        if version is not None:
+            ref["version"] = version
+    return _make_item(
+        resource_type="credential",
+        action="bind",
+        resource_id=resource_id,
+        resource_reference=ref,
+        rules=_RULES,
         item_id=item_id,
         status=status,
     )
 
 
 def test_plan_governance_empty_when_no_intents() -> None:
-    bind = _make_item(item_id="arqi_bind_1")
-    assert plan_governance_for_items([bind]) == {}
+    assert plan_governance_for_items([_bind(item_id="arqi_bind_1")]) == {}
 
 
-def test_plan_governance_matches_cli_four_item_bundle() -> None:
-    # The CLI's typical 4-item plan bundle: intents + binds all for the same API.
-    # Every bind should be governed and cite the intent(s) that put it under
-    # the plan.
+def test_plan_governance_matches_two_item_chain() -> None:
+    """The CLI's 2-item plan chain: provision + reference bind for the same API.
+    The bind is governed, citing the intent and the canonical API tuple."""
     items = [
-        _intent(kind="toolkit_create", vendor="acme", name="widgets", item_id="arqi_i1"),
-        _intent(kind="credential_provision", vendor="acme", name="widgets", item_id="arqi_i2"),
-        _make_item(
-            resource_type="credential",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            item_id="arqi_cbind",
-        ),
-        _make_item(
-            resource_type="toolkit",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            resource_reference={"vendor": "acme", "name": "widgets"},
-            item_id="arqi_tbind",
-        ),
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _bind(vendor="acme", name="widgets", item_id="arqi_b1"),
     ]
     governance = plan_governance_for_items(items)
-    assert set(governance.keys()) == {"arqi_cbind", "arqi_tbind"}
-    assert governance["arqi_cbind"].is_governed
-    # credential:bind is a "any-intent-lives" rule, so it names every live intent.
-    assert governance["arqi_cbind"].governing_intent_ids == frozenset({"arqi_i1", "arqi_i2"})
-    # governing_api is intentionally None on credential:bind (#778):
-    # the rule isn't tied to a specific API tuple.
-    assert governance["arqi_cbind"].governing_api is None
-    # toolkit:bind is api-scoped, so both facts are populated.
-    assert governance["arqi_tbind"].governing_intent_ids == frozenset({"arqi_i1", "arqi_i2"})
-    assert governance["arqi_tbind"].governing_api == ("acme", "widgets")
+    assert set(governance.keys()) == {"arqi_b1"}
+    assert governance["arqi_b1"].is_governed
+    assert governance["arqi_b1"].governing_intent_ids == frozenset({"arqi_i1"})
+    assert governance["arqi_b1"].governing_api == ("acme", "widgets")
 
 
-def test_plan_governance_leaves_independent_toolkit_bind_ungoverned() -> None:
-    # #778 core case: one intent for API X + an independent reference-only
-    # toolkit:bind for API Y must not flip the Y bind onto the plan contract.
+def test_plan_governance_leaves_independent_bind_ungoverned() -> None:
+    """#778 core case: an intent for API X + an independent reference-only
+    credential:bind for API Y must not flip the Y bind onto the plan contract."""
     items = [
         _intent(vendor="acme", name="widgets", item_id="arqi_intent"),
-        _make_item(
-            resource_type="toolkit",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            resource_reference={"vendor": "other", "name": "thing"},
-            item_id="arqi_independent_bind",
-        ),
+        _bind(vendor="other", name="thing", item_id="arqi_independent_bind"),
     ]
     governance = plan_governance_for_items(items)
-    # The Y bind isn't in the mapping — it stays on the plain contract. The
-    # credential-bind absence is expected (there is no credential-bind here).
     assert "arqi_independent_bind" not in governance
 
 
-def test_plan_governance_governs_unattributable_toolkit_bind_conservatively() -> None:
-    # A toolkit:bind with a vendor-less (or missing) reference can never
-    # resolve by reference — the plain contract would surface a bare
-    # ValueError (500, stranding the request pending). Inside a plan it is
-    # governed by every live intent so the operator gets a legible plan-aware
-    # denial instead.
+def test_plan_governance_skips_explicit_id_bind() -> None:
+    """A wizard-stamped bind with an explicit resource_id and no reference
+    resolves by its id under the plain contract — it isn't the wizard's to
+    satisfy (it may have been stamped by a previous wizard pass)."""
     items = [
         _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
-        _make_item(
-            resource_type="toolkit",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            resource_reference={"name": "widgets"},  # no vendor
-            item_id="arqi_vendorless_bind",
-        ),
+        _bind(vendor=None, name=None, resource_id="cred_stamped", item_id="arqi_stamped"),
+    ]
+    assert plan_governance_for_items(items) == {}
+
+
+def test_plan_governance_stamped_reference_bind_passes_via_validate_exemption() -> None:
+    """A reference bind the wizard stamped keeps its reference, so it stays in
+    the governance mapping — but validate()'s explicit-id exemption is what
+    lets it through. The mapping records the fact; the id is the release."""
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _bind(vendor="acme", name="widgets", resource_id="cred_stamped", item_id="arqi_stamped"),
+    ]
+    governance = plan_governance_for_items(items)
+    assert governance["arqi_stamped"].is_governed
+
+
+def test_plan_governance_governs_unattributable_bind_conservatively() -> None:
+    """A bind with a vendor-less (or missing) reference AND no explicit id can
+    never resolve by reference — the plain contract would surface a bare
+    resolution error stranding the operator. Inside a plan it is governed by
+    every live intent so the denial is legible and plan-aware."""
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _intent(vendor="beta", name="gadgets", item_id="arqi_i2"),
+        _bind(vendor=None, name="widgets", item_id="arqi_vendorless_bind"),
     ]
     governance = plan_governance_for_items(items)
     assert governance["arqi_vendorless_bind"].is_governed
-    assert governance["arqi_vendorless_bind"].governing_intent_ids == frozenset({"arqi_i1"})
+    assert governance["arqi_vendorless_bind"].governing_intent_ids == frozenset(
+        {"arqi_i1", "arqi_i2"}
+    )
     assert governance["arqi_vendorless_bind"].governing_api is None
 
 
-def test_plan_governance_governs_all_credential_binds_when_any_intent_lives() -> None:
-    # A credential:bind sharing a request with a live intent is always
-    # wizard-fulfilled: agents never carry credential ids at file time.
+def test_plan_governance_untargeted_intent_governs_matching_reference_binds() -> None:
+    """An intent with no usable reference can't be tied to one API, so it
+    conservatively backs every reference-carrying bind alongside any API-scoped
+    intents."""
     items = [
-        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
-        _make_item(
-            resource_type="credential",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            item_id="arqi_cbind_any",
-        ),
+        _intent(vendor=None, item_id="arqi_untargeted"),
+        _bind(vendor="acme", name="widgets", item_id="arqi_b1"),
     ]
     governance = plan_governance_for_items(items)
-    assert set(governance.keys()) == {"arqi_cbind_any"}
-    assert governance["arqi_cbind_any"].governing_intent_ids == frozenset({"arqi_i1"})
+    assert governance["arqi_b1"].governing_intent_ids == frozenset({"arqi_untargeted"})
 
 
 def test_plan_governance_ignores_withdrawn_intents() -> None:
-    # An abandoned plan must not carry over: subsequent binds revert to the
-    # plain contract on the next decide().
+    """An abandoned plan must not carry over: subsequent binds revert to the
+    plain contract on the next decide()."""
     items = [
-        _intent(vendor="acme", name="widgets", item_id="arqi_dead", status="withdrawn"),
-        _make_item(
-            resource_type="toolkit",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            resource_reference={"vendor": "acme", "name": "widgets"},
-            item_id="arqi_tbind",
-        ),
+        _intent(item_id="arqi_dead", status="withdrawn"),
+        _bind(vendor="acme", name="widgets", item_id="arqi_b1"),
     ]
     assert plan_governance_for_items(items) == {}
 
 
 def test_plan_governance_ignores_denied_intents() -> None:
     items = [
-        _intent(vendor="acme", name="widgets", item_id="arqi_dead", status="denied"),
-        _make_item(
-            resource_type="credential",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            item_id="arqi_cbind",
-        ),
+        _intent(item_id="arqi_dead", status="denied"),
+        _bind(vendor="acme", name="widgets", item_id="arqi_b1"),
     ]
     assert plan_governance_for_items(items) == {}
 
 
+def test_plan_governance_approved_intent_still_governs() -> None:
+    """An APPROVED (but not yet fulfilled) intent is still live: the wizard has
+    yet to stamp the bind, so the plan contract must keep holding it."""
+    items = [
+        _intent(item_id="arqi_live", status="approved"),
+        _bind(vendor="acme", name="widgets", item_id="arqi_b1"),
+    ]
+    governance = plan_governance_for_items(items)
+    assert governance["arqi_b1"].governing_intent_ids == frozenset({"arqi_live"})
+
+
 def test_plan_governance_normalizes_slug_vs_raw_domain() -> None:
-    # An agent files a reference with a raw domain (``httpbin.org``); the
-    # intent may have been stored slugified. Governance must match either way,
-    # and the ``governing_api`` field records the *slug* form so a diagnostic
-    # renders the canonical tuple rather than whichever spelling first arrived.
+    """An agent files a reference with a raw domain (``httpbin.org``); the
+    intent may have been stored slugified. Governance must match either way,
+    and ``governing_api`` records the *slug* form so a diagnostic renders the
+    canonical tuple rather than whichever spelling first arrived."""
     items = [
         _intent(vendor="httpbin-org", name=None, item_id="arqi_i1"),
-        _make_item(
-            resource_type="toolkit",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            resource_reference={"vendor": "httpbin.org"},
-            item_id="arqi_tbind",
-        ),
+        _bind(vendor="httpbin.org", name=None, item_id="arqi_b1"),
     ]
     governance = plan_governance_for_items(items)
-    assert set(governance.keys()) == {"arqi_tbind"}
-    assert governance["arqi_tbind"].governing_api == ("httpbin-org", None)
+    assert set(governance.keys()) == {"arqi_b1"}
+    assert governance["arqi_b1"].governing_api == ("httpbin-org", None)
 
 
-def test_plan_governance_intent_name_wildcards_all_versions() -> None:
-    # An intent's (vendor, name) matches a bind for the same API regardless
-    # of version — the intent covers all versions of that API.
+def test_plan_governance_intent_covers_all_versions() -> None:
+    """Version is excluded from the governance key — an intent for (vendor,
+    name) covers a bind for any version of that API."""
     items = [
         _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
-        _make_item(
-            resource_type="toolkit",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            resource_reference={"vendor": "acme", "name": "widgets", "version": "1.0.0"},
-            item_id="arqi_tbind",
-        ),
+        _bind(vendor="acme", name="widgets", version="1.0.0", item_id="arqi_b1"),
     ]
     governance = plan_governance_for_items(items)
-    assert set(governance.keys()) == {"arqi_tbind"}
-    assert governance["arqi_tbind"].governing_intent_ids == frozenset({"arqi_i1"})
+    assert set(governance.keys()) == {"arqi_b1"}
+    assert governance["arqi_b1"].governing_intent_ids == frozenset({"arqi_i1"})
 
 
 def test_plan_governance_excludes_already_decided_binds() -> None:
-    # decide() only re-validates PENDING or APPROVED items; a DENIED/WITHDRAWN
-    # bind is never re-validated so its governance doesn't matter and we omit
-    # it to keep the mapping tight against actual decide() behaviour.
+    """decide() only re-validates PENDING or APPROVED items; a DENIED/WITHDRAWN
+    bind is never re-validated so its governance doesn't matter and we omit
+    it to keep the mapping tight against actual decide() behaviour."""
     items = [
         _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
-        _make_item(
-            resource_type="toolkit",
-            action="bind",
-            resource_id=None,
-            to_id=None,
-            resource_reference={"vendor": "acme", "name": "widgets"},
-            item_id="arqi_dead_bind",
-            status="denied",
-        ),
+        _bind(vendor="acme", name="widgets", item_id="arqi_dead_bind", status="denied"),
     ]
     assert plan_governance_for_items(items) == {}
 

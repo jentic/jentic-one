@@ -237,21 +237,22 @@ def build_access_filters(
     raise ValueError(f"Unknown model for access scoping: {model.__name__}")
 
 
-def toolkit_owner_scope(identity: Identity) -> list[str] | None:
-    """Return the toolkit owner ids visible to ``identity``, or ``None`` for all.
+def credential_owner_scope(identity: Identity) -> list[str] | None:
+    """Return the credential owner ids visible to ``identity``, or ``None`` for all.
 
     ``None`` means an ``org:admin`` decider who may act across every owner. For
     everyone else the scope is their own ``sub`` plus, when they hold the
-    toolkit-read delegation scope and have a parent, the parent owner id —
-    mirroring :func:`build_access_filters` for the ``Toolkit`` model. Used to
-    confine reference-based and explicit ``toolkit:bind`` effects to toolkits
-    the decider can actually see.
+    credential-read delegation scope and have a parent, the parent owner id —
+    mirroring :func:`build_access_filters` for the ``Credential`` model. Used to
+    confine reference-based ``credential:bind`` effect resolution to credentials
+    the decider can actually see (theme-5 Phase 3, hard problem 8 — the
+    binding-widened half of that axis is pushed down separately as an id list).
     """
     if ORG_ADMIN in identity.permissions:
         return None
     if not identity.sub:
-        raise ValueError("empty sub reached toolkit owner scope")
+        raise ValueError("empty sub reached credential owner scope")
     owners = [identity.sub]
-    if OWNER_TOOLKITS_READ in identity.permissions and identity.parent_actor_id is not None:
+    if OWNER_CREDENTIALS_READ in identity.permissions and identity.parent_actor_id is not None:
         owners.append(identity.parent_actor_id)
     return owners

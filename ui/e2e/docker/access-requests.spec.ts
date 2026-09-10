@@ -32,14 +32,14 @@ test('access-requests queue renders the empty state on a clean backend', async (
 
 test('a filed access request surfaces in the pending queue', async ({ page, request }) => {
 	const reason = `e2e pending ${uniqueSuffix()}`;
-	await fileAccessRequest(request, { reason, resourceType: 'toolkit', action: 'bind' });
+	await fileAccessRequest(request, { reason, resourceType: 'credential', action: 'bind' });
 
 	await page.goto('/app/access-requests');
 	await expect(page.getByRole('heading', { name: 'Access requests' })).toBeVisible();
 
 	// The request lands as a pending row summarising its first item (resource ·
 	// action).
-	const row = page.getByRole('button', { name: /toolkit · bind/i }).first();
+	const row = page.getByRole('button', { name: /credential · bind/i }).first();
 	await expect(row).toBeVisible({ timeout: 15_000 });
 });
 
@@ -95,7 +95,7 @@ test('deny an admin-owned agent request from the queue', async ({ page, request 
 	const agent = await provisionAdminOwnedAgent(request, { name: `e2e-deny-${uniqueSuffix()}` });
 	await fileAccessRequestAsAgent(request, agent, {
 		reason: `e2e deny ${uniqueSuffix()}`,
-		resourceType: 'toolkit',
+		resourceType: 'credential',
 		action: 'bind',
 		resourceId: `e2e-deny-${uniqueSuffix()}`,
 	});
@@ -139,7 +139,7 @@ test('cannot approve a request you filed yourself (not_filer guard)', async ({ p
 			reason: `e2e self-review ${uniqueSuffix()}`,
 			items: [
 				{
-					resource_type: 'toolkit',
+					resource_type: 'credential',
 					action: 'bind',
 					resource_id: `e2e-self-${uniqueSuffix()}`,
 				},

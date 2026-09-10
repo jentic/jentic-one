@@ -18,6 +18,7 @@ export {
 	itemTargetLabel,
 	isSpecificResource,
 	isScopeGrant,
+	itemActionSummary,
 	scopeLabel,
 	summarizeAccessRequest,
 	ACCESS_REQUEST_STATUS_VARIANT,

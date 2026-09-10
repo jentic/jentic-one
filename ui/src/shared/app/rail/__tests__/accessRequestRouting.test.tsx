@@ -9,10 +9,10 @@ import { ACCESS_REQUEST_SHAPES } from '@/shared/app/rail/__tests__/accessRequest
 
 /**
  * Exhaustive routing coverage for every access-request shape the system can
- * produce: a *provisioning plan* (carries toolkit:create / credential:provision)
- * must open the setup wizard; everything else opens the plain approve/deny
- * dialog. `AccessRequestDecisionDialog` is the single place that decides this,
- * so we assert its `isProvisioningPlan` routing against the full shape catalog.
+ * produce: a *provisioning plan* (carries a credential:provision intent) must
+ * open the setup wizard; everything else opens the plain approve/deny dialog.
+ * `AccessRequestDecisionDialog` is the single place that decides this, so we
+ * assert its `isProvisioningPlan` routing against the full shape catalog.
  */
 describe('access-request routing (all shapes)', () => {
 	// Wizard drafts are module-scoped; cases share the plan fixtures.
@@ -36,7 +36,7 @@ describe('access-request routing (all shapes)', () => {
 		);
 		// The wizard renders from the request prop (no fetch needed on open).
 		await waitFor(() => expect(screen.getByText('Set up access')).toBeInTheDocument());
-		expect(screen.getByText('Create a toolkit')).toBeInTheDocument();
+		expect(screen.getByText('Connect a credential')).toBeInTheDocument();
 	});
 
 	// The rail only carries the request ID on the event token, so it opens this
@@ -55,11 +55,13 @@ describe('access-request routing (all shapes)', () => {
 			/>,
 		);
 		await waitFor(() => expect(screen.getByText('Set up access')).toBeInTheDocument());
-		expect(screen.getByText('Create a toolkit')).toBeInTheDocument();
+		expect(screen.getByText('Connect a credential')).toBeInTheDocument();
 	});
 
 	it('fetches by id and routes a plain request to the approve/deny dialog (rail path)', async () => {
-		const plain = ACCESS_REQUEST_SHAPES.find((s) => s.key === 'toolkit-bind-pending')!;
+		const plain = ACCESS_REQUEST_SHAPES.find(
+			(s) => s.key === 'credential-bind-reference-pending',
+		)!;
 		worker.use(http.get('/access-requests/:id', () => HttpResponse.json(plain.request)));
 		renderWithProviders(
 			<AccessRequestDecisionDialog

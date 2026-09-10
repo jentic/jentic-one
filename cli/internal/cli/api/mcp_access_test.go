@@ -456,8 +456,9 @@ func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
 		t.Fatalf("a pending filing is a normal result, not an error: %v", res.Content)
 	}
 
-	// The wire body: compose()'s exact plan — the 4-item provisioning chain
-	// first, then the toolkit bind, then the scope grant — plus the reason.
+	// The wire body: compose()'s exact plan — the 2-item provisioning chain
+	// first (theme-5 phase 3), then the reference bind, then the scope grant —
+	// plus the reason.
 	var wire struct {
 		Reason string `json:"reason"`
 		Items  []struct {
@@ -474,23 +475,26 @@ func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
 	if wire.Reason != "read invoices for the summary task" {
 		t.Errorf("reason on the wire = %q, want the argument mirrored", wire.Reason)
 	}
-	if len(wire.Items) != 6 {
-		t.Fatalf("items = %d, want the 4-item provision chain + toolkit bind + scope grant", len(wire.Items))
+	if len(wire.Items) != 4 {
+		t.Fatalf("items = %d, want the 2-item provision chain + reference bind + scope grant", len(wire.Items))
 	}
-	wantKinds := []string{"toolkit/create", "credential/provision", "credential/bind", "toolkit/bind", "toolkit/bind", "scope/grant"}
+	wantKinds := []string{"credential/provision", "credential/bind", "credential/bind", "scope/grant"}
 	for i, want := range wantKinds {
 		if got := wire.Items[i].ResourceType + "/" + wire.Items[i].Action; got != want {
 			t.Errorf("item %d = %s, want %s (compose() fulfilment order)", i, got, want)
 		}
 	}
-	if ref := wire.Items[1].ResourceReference; ref["security_scheme"] != "bearer" || ref["vendor"] != "stripe.com" {
+	if ref := wire.Items[0].ResourceReference; ref["security_scheme"] != "bearer" || ref["vendor"] != "stripe.com" {
 		t.Errorf("provision item reference = %v, want the auth type + API stamped on", ref)
 	}
-	if len(wire.Items[2].Rules) == 0 || !strings.Contains(string(wire.Items[2].Rules), `"methods":["GET"]`) {
-		t.Errorf("credential:bind rules = %s, want the proposed rules_json intact (never comma-split)", wire.Items[2].Rules)
+	if len(wire.Items[1].Rules) == 0 || !strings.Contains(string(wire.Items[1].Rules), `"methods":["GET"]`) {
+		t.Errorf("credential:bind rules = %s, want the proposed rules_json intact (never comma-split)", wire.Items[1].Rules)
 	}
-	if wire.Items[5].ResourceID == nil || *wire.Items[5].ResourceID != "catalog:import" {
-		t.Errorf("scope item = %+v, want resource_id catalog:import", wire.Items[5])
+	if ref := wire.Items[2].ResourceReference; ref["vendor"] != "github.com" {
+		t.Errorf("reference bind = %v, want the --toolkit api filed as a credential bind by reference", ref)
+	}
+	if wire.Items[3].ResourceID == nil || *wire.Items[3].ResourceID != "catalog:import" {
+		t.Errorf("scope item = %+v, want resource_id catalog:import", wire.Items[3])
 	}
 
 	payload := decodeToolJSON(t, res)

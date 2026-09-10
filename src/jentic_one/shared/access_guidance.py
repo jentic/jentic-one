@@ -25,3 +25,19 @@ def no_toolkit_serves_api_reason(api: str) -> str:
         f"No toolkit serves API {api}; provision and bind a credential for it "
         "first, then request the toolkit binding"
     )
+
+
+def no_credential_serves_api_reason(api: str) -> str:
+    """The canonical denial reason when no credential serves ``api`` yet.
+
+    Theme-5 Phase 3 successor of :func:`no_toolkit_serves_api_reason` for the
+    direct agent↔credential model: a ``credential:bind`` filed by API reference
+    can only resolve once a credential covering that API exists and is visible
+    to the approver. The recommended first step — provision a credential — is
+    the same one the broker's ``no_credential_binding`` directive names, so the
+    two layers never contradict each other (see issue #683).
+    """
+    return (
+        f"No credential covers API {api}; provision a credential for it first "
+        "(POST /credentials), then approve the credential binding"
+    )

@@ -5,6 +5,7 @@ import { Button } from '@/shared/ui/Button';
 import { Textarea } from '@/shared/ui/Textarea';
 import {
 	itemTargetLabel,
+	itemActionSummary,
 	isSpecificResource,
 	isScopeGrant,
 	scopeLabel,
@@ -26,12 +27,14 @@ import { OperationsSummary } from '@/shared/app/rail/OperationsSummary';
  *
  * Only a `credential.bind` item surfaces an enforceable allowlist: its
  * permission `rules` are written verbatim to the binding and enforced by the
- * broker (keyed per credential), so we render them read-only via
- * `OperationsSummary` (see `rulesAreEnforceable`). Rules attached to any other
- * item type — e.g. a `toolkit.bind` (agent↔toolkit), which has no credential to
- * key rules on — would NOT be enforced; rather than show a misleading allowlist
- * we render a non-enforceable notice. (The backend now rejects such rules at
- * file/amend time, so this guards legacy items only.)
+ * broker (keyed per `(agent, credential)` pair), so we render them read-only
+ * via `OperationsSummary` (see `rulesAreEnforceable`). A bind may instead
+ * carry a shared `rule_set_id` — the pointer is rendered so the reviewer sees
+ * WHICH policy governs the binding. Rules attached to any other item type —
+ * e.g. a historical `toolkit.bind` (a retired verb) — would NOT be enforced;
+ * rather than show a misleading allowlist we render a non-enforceable notice.
+ * (The backend rejects such rules at file/amend time, so this guards legacy
+ * items only.)
  * A `scope.grant` item grants a coarse PLATFORM capability (its `resource_id`
  * IS the scope string) — it gets its own "Platform scope" treatment so it's
  * never mistaken for a narrow per-resource grant.
@@ -78,7 +81,14 @@ export function AccessRequestItemCard({
 		.replace(/[^a-zA-Z0-9]/g, '')
 		.slice(0, 2)
 		.toUpperCase();
+	// HISTORICAL: `to_*` only exists on rows decided before toolkits were
+	// retired from this flow (the credential→toolkit assignment). Render the
+	// stored strings read-only; new items never carry them.
 	const assignedTo = item.to_id ? `${item.to_type ?? 'target'} ${item.to_id}` : null;
+	// Shared permission rule set governing a credential:bind (the alternative
+	// policy carrier to inline rules) — surfaced so the reviewer sees WHICH
+	// policy applies, not just that one exists.
+	const ruleSetId = item.rule_set_id ?? null;
 	const reasonRef = useRef<HTMLTextAreaElement>(null);
 
 	// Focus the reason field the moment the card enters its deny state, so the
@@ -125,7 +135,7 @@ export function AccessRequestItemCard({
 							{label}
 						</h4>
 						<p className="text-muted-foreground truncate text-xs">
-							{scopeGrant ? 'Platform scope' : item.resource_type}
+							{itemActionSummary(item)}
 						</p>
 					</div>
 					{!denying && (
@@ -173,6 +183,14 @@ export function AccessRequestItemCard({
 									&rarr; {assignedTo}
 								</span>
 							)}
+							{ruleSetId && (
+								<span
+									className="bg-accent-blue/10 text-accent-blue rounded px-1.5 py-0.5 font-medium"
+									title={`Governed by shared rule set ${ruleSetId}`}
+								>
+									Rule set {ruleSetId}
+								</span>
+							)}
 						</>
 					)}
 					{alreadySatisfied && (
@@ -192,7 +210,7 @@ export function AccessRequestItemCard({
 						<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 						<span>
 							{item.already_satisfied_by
-								? 'An existing toolkit already covers this item. '
+								? 'An existing credential already covers this item. '
 								: 'What this item asks for already exists. '}
 							{enforceable && rules.length > 0
 								? 'Approving records the decision and applies this item\u2019s access rules to the existing binding, replacing its current rules.'

@@ -91,13 +91,12 @@
         "type": "object"
       },
       "AccessRequestItemRequest": {
-        "description": "A single line-item in a file request.\n\n**Permission rules:** Rules control which upstream API operations the broker\nallows through a credential binding. They are enforced per (toolkit_id,\ncredential_id) pair, so they can only be attached to credential:bind items —\nnot toolkit:bind or scope:grant. You do not need toolkits:write scope to set\nrules; include them directly on the credential:bind item when filing the\naccess request, and the approver's decision persists them on the binding.",
+        "description": "A single line-item in a file request.\n\n**Permission rules:** Rules control which upstream API operations the broker\nallows through a direct agent↔credential binding. They are enforced per\n(agent, credential) pair, so they can only be attached to credential:bind\nitems — not scope:grant. Include them (or a shared ``rule_set_id``)\ndirectly on the credential:bind item when filing the access request, and\nthe approver's decision persists them on the binding.",
         "properties": {
           "action": {
             "enum": [
               "bind",
               "grant",
-              "create",
               "provision"
             ],
             "title": "Action",
@@ -129,11 +128,22 @@
           "resource_type": {
             "enum": [
               "credential",
-              "toolkit",
               "scope"
             ],
             "title": "Resource Type",
             "type": "string"
+          },
+          "rule_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Shared permission rule set for the binding (credential:bind only), as an alternative to inline rules. While attached, the set's ordered list is the binding's effective policy.",
+            "title": "Rule Set Id"
           },
           "rules": {
             "anyOf": [
@@ -149,28 +159,6 @@
             ],
             "description": "Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{\"effect\": \"allow\", \"path\": \".*\"}].",
             "title": "Rules"
-          },
-          "to_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "To Id"
-          },
-          "to_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "To Type"
           }
         },
         "required": [
@@ -196,7 +184,7 @@
                 "type": "null"
               }
             ],
-            "description": "Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind, toolkit:bind, and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous toolkit reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). Toolkit REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a toolkit this caller cannot see'; explicit-id targets are probed directly.",
+            "description": "Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous credential reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). API REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a credential this caller cannot see'; explicit-id targets are probed directly.",
             "title": "Already Satisfied"
           },
           "already_satisfied_by": {
@@ -208,7 +196,7 @@
                 "type": "null"
               }
             ],
-            "description": "For a satisfied toolkit:bind, the id of the toolkit the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.",
+            "description": "For a satisfied credential:bind, the id of the credential the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.",
             "title": "Already Satisfied By"
           },
           "applied_effects": {
@@ -298,6 +286,18 @@
           "resource_type": {
             "title": "Resource Type",
             "type": "string"
+          },
+          "rule_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Shared permission rule set attached to a credential:bind item, as an alternative policy carrier to inline rules.",
+            "title": "Rule Set Id"
           },
           "rules": {
             "anyOf": [
@@ -904,6 +904,17 @@
             ],
             "title": "Resource Id"
           },
+          "rule_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Set Id"
+          },
           "rules": {
             "anyOf": [
               {
@@ -917,17 +928,6 @@
               }
             ],
             "title": "Rules"
-          },
-          "to_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "To Id"
           }
         },
         "required": [

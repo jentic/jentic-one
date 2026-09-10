@@ -93,23 +93,22 @@ async def test_create_default_rules_applied_when_missing(
                     "resource_type": "credential",
                     "action": "bind",
                     "resource_id": "cred_1",
-                    "to_type": "toolkit",
-                    "to_id": "tk_1",
                 }
             ],
             created_by="user_1",
         )
         assert request.items[0].rules == [{"effect": "allow", "methods": ["GET"]}]
+        assert request.items[0].rule_set_id is None
         await session.commit()
 
 
-async def test_create_no_default_rules_for_non_rule_bearing_item(
+async def test_create_no_default_rules_when_rule_set_id_given(
     control_db: DatabaseSession,
     clean_access_requests: None,
     expires_at: dt.datetime,
 ) -> None:
-    # A toolkit:bind (agent↔toolkit) has no credential to key rules on, so the
-    # repo must NOT stamp a non-enforceable default allowlist onto it.
+    # A shared-set pointer IS a policy: the default-rule substitution must not
+    # fire (the stored item would then carry both carriers at once).
     async with control_db.session() as session:
         request = await AccessRequestRepository.create(
             session,
@@ -118,7 +117,38 @@ async def test_create_no_default_rules_for_non_rule_bearing_item(
             requested_by="agent@example.com",
             approve_url="https://example.com/approve",
             expires_at=expires_at,
-            items=[{"resource_type": "toolkit", "action": "bind", "resource_id": "tk_1"}],
+            items=[
+                {
+                    "resource_type": "credential",
+                    "action": "bind",
+                    "resource_id": "cred_1",
+                    "rule_set_id": "prs_1",
+                }
+            ],
+            created_by="user_1",
+        )
+        assert request.items[0].rules is None
+        assert request.items[0].rule_set_id == "prs_1"
+        await session.commit()
+
+
+async def test_create_no_default_rules_for_non_rule_bearing_item(
+    control_db: DatabaseSession,
+    clean_access_requests: None,
+    expires_at: dt.datetime,
+) -> None:
+    # A scope:grant has no credential to key rules on, so the repo must NOT
+    # stamp a non-enforceable default allowlist onto it (only credential:bind
+    # is in RULE_BEARING_COMBINATIONS).
+    async with control_db.session() as session:
+        request = await AccessRequestRepository.create(
+            session,
+            actor_id="actor_1",
+            reason=None,
+            requested_by="agent@example.com",
+            approve_url="https://example.com/approve",
+            expires_at=expires_at,
+            items=[{"resource_type": "scope", "action": "grant", "resource_id": "apis:read"}],
             created_by="user_1",
         )
         assert request.items[0].rules is None
@@ -368,7 +398,7 @@ async def test_find_pending_duplicate_null_to_id(
         await session.commit()
 
 
-async def test_find_pending_duplicate_reference_distinguishes_toolkit(
+async def test_find_pending_duplicate_reference_distinguishes_api(
     control_db: DatabaseSession,
     clean_access_requests: None,
     expires_at: dt.datetime,
@@ -385,7 +415,7 @@ async def test_find_pending_duplicate_reference_distinguishes_toolkit(
             expires_at=expires_at,
             items=[
                 {
-                    "resource_type": "toolkit",
+                    "resource_type": "credential",
                     "action": "bind",
                     "resource_reference": {"vendor": "github.com", "name": "repos"},
                 }
@@ -397,7 +427,7 @@ async def test_find_pending_duplicate_reference_distinguishes_toolkit(
         other = await AccessRequestRepository.find_pending_duplicate(
             session,
             actor_id="actor_1",
-            resource_type="toolkit",
+            resource_type="credential",
             action="bind",
             to_id=None,
             resource_id=None,
@@ -409,7 +439,7 @@ async def test_find_pending_duplicate_reference_distinguishes_toolkit(
         same = await AccessRequestRepository.find_pending_duplicate(
             session,
             actor_id="actor_1",
-            resource_type="toolkit",
+            resource_type="credential",
             action="bind",
             to_id=None,
             resource_id=None,
@@ -441,6 +471,76 @@ async def test_amend_item_rules(
         )
         assert item is not None
         assert item.rules == new_rules
+        await session.commit()
+
+
+async def test_amend_item_policy_carriers_mutually_exclusive(
+    control_db: DatabaseSession,
+    clean_access_requests: None,
+    expires_at: dt.datetime,
+) -> None:
+    """Amending one policy carrier detaches the other, both ways round — a
+    stored item carrying both inline rules AND a rule-set pointer would have an
+    ambiguous effective policy at apply time."""
+    async with control_db.session() as session:
+        request = await AccessRequestRepository.create(
+            session,
+            actor_id="actor_1",
+            reason=None,
+            requested_by="user@example.com",
+            approve_url="https://example.com/approve",
+            expires_at=expires_at,
+            items=[{"resource_type": "credential", "action": "bind", "resource_id": "cred_1"}],
+            created_by="user_1",
+        )
+        item_id = request.items[0].id
+        assert request.items[0].rules is not None  # the stamped default
+
+        item = await AccessRequestRepository.amend_item(session, item_id, rule_set_id="prs_1")
+        assert item is not None
+        assert item.rule_set_id == "prs_1"
+        assert item.rules is None
+
+        item = await AccessRequestRepository.amend_item(
+            session, item_id, rules=[{"effect": "deny"}]
+        )
+        assert item is not None
+        assert item.rules == [{"effect": "deny"}]
+        assert item.rule_set_id is None
+        await session.commit()
+
+
+async def test_amend_item_resource_id_preserves_policy(
+    control_db: DatabaseSession,
+    clean_access_requests: None,
+    expires_at: dt.datetime,
+) -> None:
+    """The wizard's id-stamping amend must not disturb the item's policy carrier."""
+    async with control_db.session() as session:
+        request = await AccessRequestRepository.create(
+            session,
+            actor_id="actor_1",
+            reason=None,
+            requested_by="user@example.com",
+            approve_url="https://example.com/approve",
+            expires_at=expires_at,
+            items=[
+                {
+                    "resource_type": "credential",
+                    "action": "bind",
+                    "resource_reference": {"vendor": "github.com"},
+                    "rule_set_id": "prs_keep",
+                }
+            ],
+            created_by="user_1",
+        )
+        item = await AccessRequestRepository.amend_item(
+            session, request.items[0].id, resource_id="cred_stamped"
+        )
+        assert item is not None
+        assert item.resource_id == "cred_stamped"
+        assert item.rule_set_id == "prs_keep"
+        assert item.rules is None
         await session.commit()
 
 

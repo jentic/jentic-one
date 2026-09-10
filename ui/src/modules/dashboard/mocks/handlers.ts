@@ -189,6 +189,8 @@ export const dashboardPendingAccessRequests: DashboardAccessRequest[] = [
 				id: 'ari_dash_2',
 				resource_type: 'credential',
 				action: 'bind',
+				// HISTORICAL shape: `to_*` only exists on rows filed before
+				// toolkits were retired — kept to exercise read-only rendering.
 				to_type: 'toolkit',
 				to_id: 'tk_stripe',
 				status: 'pending',

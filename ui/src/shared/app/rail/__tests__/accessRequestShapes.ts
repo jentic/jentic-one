@@ -2,12 +2,19 @@
  * Access-request shape catalog — the full space of request shapes the system
  * can produce, used to test that every shape routes to (and renders in) the
  * right decision surface. Each entry pairs a real `AccessRequest` with the
- * surface it should open, so `accessRequestShapes.test.tsx` can assert routing
+ * surface it should open, so `accessRequestRouting.test.tsx` can assert routing
  * exhaustively.
  *
  * Kept as a shared fixture (not a shipped feature): it documents the shapes as
  * data and backs the routing tests. If you add a new access-request shape,
  * add it here so the routing assertions cover it.
+ *
+ * Vocabulary note: `toolkit:create` / `toolkit:bind` are RETIRED verbs — the
+ * server 422s them at file time. New requests only carry `credential` /
+ * `scope` items; a plan is now a 2-item chain (credential:provision +
+ * credential:bind). Historical DECIDED rows can still carry toolkit fields
+ * (`to_type`/`to_id`, toolkit items) — one such shape is kept below to pin
+ * graceful degradation.
  */
 import type { AccessRequest, AccessRequestItem } from '@/shared/lib';
 
@@ -27,6 +34,7 @@ function item(
 		to_type: p.to_type ?? null,
 		to_id: p.to_id ?? null,
 		rules: p.rules ?? null,
+		rule_set_id: p.rule_set_id ?? null,
 		decided_by: p.decided_by ?? null,
 		decided_at: p.decided_at ?? null,
 		decision_reason: p.decision_reason ?? null,
@@ -79,14 +87,17 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 			'areq_plan_oauth',
 			'pending',
 			[
-				item({ resource_type: 'toolkit', action: 'create', resource_reference: API }),
 				item({
 					resource_type: 'credential',
 					action: 'provision',
 					resource_reference: { ...API, security_scheme: 'oauth2' },
 				}),
-				item({ resource_type: 'credential', action: 'bind', rules: RULES }),
-				item({ resource_type: 'toolkit', action: 'bind', resource_reference: API }),
+				item({
+					resource_type: 'credential',
+					action: 'bind',
+					resource_reference: API,
+					rules: RULES,
+				}),
 			],
 			"Fetch the user's PostHog dashboards",
 		),
@@ -97,15 +108,6 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 		routedTo: 'wizard',
 		request: req('areq_plan_noauth', 'pending', [
 			item({
-				resource_type: 'toolkit',
-				action: 'create',
-				resource_reference: {
-					vendor: 'open-meteo-com',
-					name: 'forecast',
-					version: '1.0.0',
-				},
-			}),
-			item({
 				resource_type: 'credential',
 				action: 'provision',
 				resource_reference: {
@@ -115,30 +117,41 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 					security_scheme: 'no_auth',
 				},
 			}),
-			item({ resource_type: 'credential', action: 'bind', rules: RULES }),
 			item({
-				resource_type: 'toolkit',
+				resource_type: 'credential',
 				action: 'bind',
 				resource_reference: {
 					vendor: 'open-meteo-com',
 					name: 'forecast',
 					version: '1.0.0',
 				},
+				rules: RULES,
+			}),
+		]),
+	},
+	{
+		key: 'plan-ruleset-pending',
+		title: 'Provisioning plan · shared rule set · pending',
+		routedTo: 'wizard',
+		request: req('areq_plan_ruleset', 'pending', [
+			item({
+				resource_type: 'credential',
+				action: 'provision',
+				resource_reference: { ...API, security_scheme: 'api_key' },
+			}),
+			item({
+				resource_type: 'credential',
+				action: 'bind',
+				resource_reference: API,
+				rule_set_id: 'prs_shared_0001',
 			}),
 		]),
 	},
 	{
 		key: 'plan-partially-denied',
-		title: 'Provisioning plan · plain-approved (guard denied the binds)',
+		title: 'Provisioning plan · plain-approved (guard denied the bind)',
 		routedTo: 'wizard',
 		request: req('areq_plan_denied', 'partially_approved', [
-			item({
-				resource_type: 'toolkit',
-				action: 'create',
-				status: 'approved',
-				resource_reference: API,
-				decided_by: OWNER,
-			}),
 			item({
 				resource_type: 'credential',
 				action: 'provision',
@@ -150,19 +163,11 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 				resource_type: 'credential',
 				action: 'bind',
 				status: 'denied',
+				resource_reference: API,
 				rules: RULES,
 				decided_by: OWNER,
 				decision_reason:
 					'credential:bind is part of a provisioning plan that has not been fulfilled yet. Approve this request from the setup wizard.',
-			}),
-			item({
-				resource_type: 'toolkit',
-				action: 'bind',
-				status: 'denied',
-				resource_reference: API,
-				decided_by: OWNER,
-				decision_reason:
-					'toolkit:bind is part of a provisioning plan that has not been fulfilled yet. Approve this request from the setup wizard.',
 			}),
 		]),
 	},
@@ -172,18 +177,11 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 		routedTo: 'wizard',
 		request: req('areq_plan_approved', 'approved', [
 			item({
-				resource_type: 'toolkit',
-				action: 'create',
-				status: 'approved',
-				resource_reference: API,
-				decided_by: OWNER,
-				decided_at: '2026-07-23T09:05:00Z',
-			}),
-			item({
 				resource_type: 'credential',
 				action: 'provision',
 				status: 'approved',
 				resource_reference: { ...API, security_scheme: 'oauth2' },
+				resource_id: 'cred_posthog_9f2',
 				decided_by: OWNER,
 				decided_at: '2026-07-23T09:05:00Z',
 			}),
@@ -192,18 +190,39 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 				action: 'bind',
 				status: 'approved',
 				resource_id: 'cred_posthog_9f2',
-				to_type: 'toolkit',
-				to_id: 'tk_posthog_a17',
+				resource_reference: API,
 				rules: RULES,
 				decided_by: OWNER,
 				decided_at: '2026-07-23T09:05:00Z',
 			}),
+		]),
+	},
+	{
+		// HISTORICAL: a plan decided before toolkits were retired — the bind
+		// still carries the credential→toolkit assignment (`to_*`) and the
+		// envelope carries the old 4-item chain's toolkit rows. Must render
+		// (read-only) without crashing; never re-filed.
+		key: 'plan-approved-legacy-toolkit',
+		title: 'Provisioning plan · approved · legacy toolkit fields',
+		routedTo: 'wizard',
+		request: req('areq_plan_legacy', 'approved', [
 			item({
-				resource_type: 'toolkit',
+				resource_type: 'credential',
+				action: 'provision',
+				status: 'approved',
+				resource_reference: { ...API, security_scheme: 'bearer' },
+				decided_by: OWNER,
+				decided_at: '2026-07-23T09:05:00Z',
+			}),
+			item({
+				resource_type: 'credential',
 				action: 'bind',
 				status: 'approved',
-				resource_id: 'tk_posthog_a17',
+				resource_id: 'cred_posthog_9f2',
 				resource_reference: API,
+				to_type: 'toolkit',
+				to_id: 'tk_posthog_a17',
+				rules: RULES,
 				decided_by: OWNER,
 				decided_at: '2026-07-23T09:05:00Z',
 			}),
@@ -212,11 +231,11 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 
 	// ── Single-item requests (open the plain approve/deny dialog) ─────────────
 	{
-		key: 'toolkit-bind-pending',
-		title: 'toolkit:bind · pending',
+		key: 'credential-bind-reference-pending',
+		title: 'credential:bind (by reference) · pending',
 		routedTo: 'plain',
-		request: req('areq_tk_bind', 'pending', [
-			item({ resource_type: 'toolkit', action: 'bind', resource_reference: API }),
+		request: req('areq_cred_ref_bind', 'pending', [
+			item({ resource_type: 'credential', action: 'bind', resource_reference: API }),
 		]),
 	},
 	{
@@ -229,16 +248,27 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 	},
 	{
 		key: 'credential-bind-pending',
-		title: 'credential:bind · pending (with rules)',
+		title: 'credential:bind (by id, with rules) · pending',
 		routedTo: 'plain',
 		request: req('areq_cred_bind', 'pending', [
 			item({
 				resource_type: 'credential',
 				action: 'bind',
 				resource_id: 'cred_abc123',
-				to_type: 'toolkit',
-				to_id: 'tk_xyz789',
 				rules: RULES,
+			}),
+		]),
+	},
+	{
+		key: 'credential-bind-ruleset-pending',
+		title: 'credential:bind (shared rule set) · pending',
+		routedTo: 'plain',
+		request: req('areq_cred_bind_rs', 'pending', [
+			item({
+				resource_type: 'credential',
+				action: 'bind',
+				resource_id: 'cred_abc123',
+				rule_set_id: 'prs_shared_0001',
 			}),
 		]),
 	},
@@ -260,17 +290,17 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 	},
 	{
 		key: 'denied',
-		title: 'toolkit:bind · denied',
+		title: 'credential:bind · denied',
 		routedTo: 'plain',
 		request: req('areq_denied', 'denied', [
 			item({
-				resource_type: 'toolkit',
+				resource_type: 'credential',
 				action: 'bind',
 				resource_reference: API,
 				status: 'denied',
 				decided_by: OWNER,
 				decision_reason:
-					'No toolkit serves API posthog-com/posthog-api; provision and bind a credential first.',
+					'No credential serves API posthog-com/posthog-api; provision one first.',
 			}),
 		]),
 	},
@@ -289,14 +319,31 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 	},
 	{
 		key: 'expired',
-		title: 'toolkit:bind · expired',
+		title: 'credential:bind · expired',
 		routedTo: 'plain',
 		request: req('areq_expired', 'expired', [
+			item({
+				resource_type: 'credential',
+				action: 'bind',
+				resource_reference: API,
+				status: 'pending',
+			}),
+		]),
+	},
+	{
+		// HISTORICAL: a decided single-item request in the retired toolkit
+		// vocabulary — still renders read-only from stored strings.
+		key: 'legacy-toolkit-bind-denied',
+		title: 'toolkit:bind (retired verb) · denied · historical',
+		routedTo: 'plain',
+		request: req('areq_legacy_tk_denied', 'denied', [
 			item({
 				resource_type: 'toolkit',
 				action: 'bind',
 				resource_reference: API,
-				status: 'pending',
+				status: 'denied',
+				decided_by: OWNER,
+				decision_reason: 'Denied before the toolkit flow was retired.',
 			}),
 		]),
 	},

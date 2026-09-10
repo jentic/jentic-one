@@ -20,6 +20,7 @@ def _make_item(**overrides: Any) -> MagicMock:
         "to_type": "toolkit",
         "to_id": "tk_xyz",
         "rules": None,
+        "rule_set_id": None,
         "status": "pending",
         "applied_effects": None,
         "decided_by": None,
