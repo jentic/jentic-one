@@ -1,12 +1,12 @@
-# Overlays and the update loop
+# Fix a spec with an overlay
 
 An **overlay** is an operator/agent-contributed patch to a registered API's OpenAPI
 spec — a small JSONPath-based document that fixes a broken or incomplete upstream
 spec without forking it. This page documents the **stacking contract** and how
-overlays interact with the Flow-3 catalog-update loop, so the behaviour is
+overlays interact with the catalog-update loop, so the behaviour is
 predictable rather than surprising. For the endpoint list and scopes, see
-[`reference/endpoints.md`](reference/endpoints.md); for the agent-facing authoring
-workflow, see the [`contribute-spec-fix`](../skills/contribute-spec-fix/SKILL.md) skill.
+[`reference/endpoints.md`](../reference/endpoints.md); for the agent-facing authoring
+workflow, see the [`contribute-spec-fix`](../../skills/contribute-spec-fix/SKILL.md) skill.
 
 ## Lifecycle
 
@@ -52,7 +52,7 @@ for pinning an overlay to an arbitrary historical revision, and we do not build
 per-target materialization until there is a concrete need. Treating
 `target_revision_id` as more than advisory is the trap this contract forecloses.
 
-## The update loop (Flow-3)
+## The update loop
 
 A background sweep conditionally re-fetches each registered API's upstream spec and,
 on a real change, emits an actionable event:
@@ -92,13 +92,3 @@ the notification (`POST /catalog/{api_id}:snooze`, requires `events:write`). Sno
 pins the accepted upstream digest; a *newer* upstream digest automatically re-lights
 the badge, so a real new change is never hidden. `jentic catalog outdated
 --include-snoozed` lists muted entries.
-
-## Invariants (summary)
-
-- The served spec always equals the API's current revision.
-- A confirm never silently discards a prior overlay's effect — it materializes over
-  it (cumulative).
-- Adopting an upstream change over a live overlay is operator-gated and attributed;
-  it never happens silently.
-- Rollback restores exactly the revision an overlay superseded; it does not unwind a
-  stack.

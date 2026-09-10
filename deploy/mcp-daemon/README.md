@@ -2,7 +2,7 @@
 
 Socket-activated service definitions for the isolated local MCP daemon —
 the top rung of the same-host hardening ladder in
-[`docs/security/mcp-daemon.md`](../../docs/security/mcp-daemon.md). One
+[`docs/security/same-host/mcp-daemon.md`](../../docs/security/same-host/mcp-daemon.md). One
 daemon holds ONE context's keys under a dedicated service user; agent
 runtimes reach it credential-lessly through
 `jentic mcp --connect unix:///run/jentic-mcp/mcp.sock`.
@@ -31,7 +31,7 @@ sudo chmod 700 /var/lib/jentic-mcp
 # 2. Provision the context the daemon will serve (as the service user).
 sudo -u _jentic-mcp XDG_CONFIG_HOME=/var/lib/jentic-mcp/config \
     XDG_STATE_HOME=/var/lib/jentic-mcp/state \
-    jentic setup   # or: jentic context add ...
+    jentic setup   # or: jentic context create ...
 
 # 3. Install the units, then edit both marked EDIT lines
 #    (context name, and the desktop uid(s) allowed to connect).
@@ -84,4 +84,4 @@ hold the context's key and token files with owner-only modes. The desktop
 user cannot read them; a caller admitted by the socket can only *use* them —
 every call is signed daemon-side and attributed to the daemon's context.
 Rotate or revoke by re-provisioning that one context. Details and the
-threat-model discussion: [`docs/security/mcp-daemon.md`](../../docs/security/mcp-daemon.md).
+threat-model discussion: [`docs/security/same-host/mcp-daemon.md`](../../docs/security/same-host/mcp-daemon.md).

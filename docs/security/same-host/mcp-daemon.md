@@ -11,7 +11,7 @@ This page is the daemon's security model. For the general ladder and the
 stdio-based recipes (sudo shim, container entry), see
 [mcp-same-host-hardening.md](mcp-same-host-hardening.md); ready-made systemd
 and launchd templates live in
-[`deploy/mcp-daemon/`](../../deploy/mcp-daemon/README.md).
+[`deploy/mcp-daemon/`](../../../deploy/mcp-daemon/README.md).
 
 ## The shape
 
@@ -96,7 +96,7 @@ on the first connection and nothing lingers holding keys in memory:
   template README.
 
 Templates for both, with the dedicated-service-user setup, are in
-[`deploy/mcp-daemon/`](../../deploy/mcp-daemon/README.md).
+[`deploy/mcp-daemon/`](../../../deploy/mcp-daemon/README.md).
 
 ## The relay's rules
 

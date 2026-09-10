@@ -1,10 +1,10 @@
-# Product Scope
+# Product scope
 
 > **Purpose.** This document gives the issue-intake harness (see
-> [`.harness/ISSUE_INTAKE_STANDARDS.md`](../.harness/ISSUE_INTAKE_STANDARDS.md)) a
+> [`.harness/ISSUE_INTAKE_STANDARDS.md`](../../.harness/ISSUE_INTAKE_STANDARDS.md)) a
 > rubric for scoring an issue's **product fit** (`fit:high/med/low`). It is grounded
 > only in **public** sources — `README.md`, `SECURITY.md`, `SUPPORT.md`,
-> `docs/security/hardening.md`, and the code in this repo. It deliberately does **not**
+> [`docs/security/README.md`](../security/README.md), and the code in this repo. It deliberately does **not**
 > restate internal roadmap/prioritization detail; where a finer-grained or
 > forward-looking judgment is needed, defer to the maintainers (label `needs-human`)
 > rather than guessing.
@@ -23,7 +23,7 @@ secures, and operates a Jentic One instance (`SECURITY.md` operator guidance;
 `SUPPORT.md` "community-supported for self-hosted deployments"). It must be
 installable and operable by a small team without Jentic's help.
 
-Deployment personas the public docs call out (`docs/security/hardening.md`):
+Deployment personas the public docs call out ([`docs/security/README.md`](../security/README.md)):
 
 - **Local coding-agent developer** — running Jentic One next to a local coding agent
   (e.g. Claude Code, Cursor) for dev / trying it out.
@@ -39,20 +39,11 @@ conversation, **not** a product issue (`README.md` Enterprise section, `SUPPORT.
 
 ## What's in scope (the product is about this)
 
-The runtime surfaces (from the public code / `README.md`):
-
-- **Broker** — stateless credential-injecting HTTP proxy; the data plane. One
-  upstream call per execution (single-call interceptor pipeline), run as its own
-  service.
-- **Registry** — catalogue of registered APIs (immutable revisions, operations,
-  security schemes, servers); **APIs only**. Operator/agent spec fixes are applied as
-  [overlays](overlays.md) (see the stacking contract + update loop there).
-- **Control** — credential storage + toolkit/credential bindings + access-request
-  lifecycle.
-- **Admin** — operator accounts, role-based permissions/access grants, async jobs,
-  append-only audit log, execution telemetry; serves the operator UI.
-- **Auth** — agent self-registration, token minting, OAuth client, service accounts,
-  and identity/`/me` discovery.
+The five runtime surfaces — **broker** (credential-injecting data plane),
+**registry** (API catalog), **control** (credentials, toolkits, access
+requests), **admin** (operators, jobs, audit, UI), and **auth** (agent
+registration and tokens). What each one owns, and how they fit together, is
+documented in [docs/architecture/](../architecture/README.md).
 
 Plus the supporting surfaces that make the above usable: **shared** infra, the
 **CLI** (`jenticctl` lifecycle + `jentic` agent/catalog/execute), **install /
@@ -63,12 +54,16 @@ Supported specifics worth knowing (so the harness doesn't mis-score them as out 
 scope):
 
 - **Credential schemes:** API key (header/query/cookie), basic, static bearer,
-  session token, and OAuth2 (client-credentials, authorization-code, implicit), plus
-  no-auth (`shared/models/credentials.py`).
+  session token, OAuth2 (client-credentials, authorization-code, implicit), and
+  AWS SigV4, plus
+  no-auth ([`shared/models/credentials.py`](../../src/jentic_one/shared/models/credentials.py)).
 - **Database backends:** Postgres **and** SQLite — SQLite is a supported *production*
-  target, not dev-only (`shared/db/backends/sqlite.py`).
-- **ML/embeddings** exist but are **registry-search-only**; core surfaces don't use
-  them (`tests/arch/test_no_ml_in_core_surfaces.py`).
+  target, not dev-only ([`shared/db/backends/sqlite.py`](../../src/jentic_one/shared/db/backends/sqlite.py)).
+- **Registry search is lexical** (Postgres and SQLite FTS strategies under
+  [`registry/repos/search/`](../../src/jentic_one/registry/repos/search/)). The registry's ingest pipeline has an
+  embeddings stage ([`registry/ingest/embeddings/`](../../src/jentic_one/registry/ingest/embeddings/)), but an arch test
+  keeps ML imports out of the core surfaces (broker, admin, control)
+  ([`tests/arch/test_no_ml_in_core_surfaces.py`](../../tests/arch/test_no_ml_in_core_surfaces.py)).
 
 An issue is **in scope** when it improves the security, correctness, reliability,
 usability, or operability of one of these surfaces for the audience above.
@@ -82,7 +77,7 @@ usability, or operability of one of these surfaces for the audience above.
 - **Not co-located with the agent for _real / high-value credentials_.** *(Grounded —
   security model.)* The "credentials never leave the data plane" guarantee does not
   hold when the agent runs as the same OS user / same host as the broker
-  (`SECURITY.md`, `docs/security/hardening.md`). **Nuance:** same-host use *is*
+  (`SECURITY.md`, [`docs/security/README.md`](../security/README.md)). **Nuance:** same-host use *is*
   supported for trying it out / non-real credentials — so a local/dev-mode request is
   **not** automatically out of scope; only "use real credentials in the agent's trust
   boundary" is.
@@ -113,12 +108,12 @@ Ordered by how strongly the public docs emphasize each.
    size.
 2. **Secure & auditable by default.** Default-deny permissions (a rule-less binding
    blocks everything); append-only audit log; operator-supplied encryption keyset
-   required (`SECURITY.md`, `control/web/schemas/toolkits.py`).
+   required (`SECURITY.md`, [`control/web/schemas/toolkits.py`](../../src/jentic_one/control/web/schemas/toolkits.py)).
 3. **Self-hostable & operable by a small team.** One-command install; tiered
-   self-serve hardening path (`README.md`, `docs/security/hardening.md`).
+   self-serve hardening path (`README.md`, [`docs/security/README.md`](../security/README.md)).
 4. **Telemetry opt-in / off by default / closed-schema; observability self-hosted.**
    No telemetry unless explicitly enabled; the event schema structurally can't carry
-   PII (`SECURITY.md`, `tests/arch/test_telemetry_no_pii.py`).
+   PII (`SECURITY.md`, [`tests/arch/test_telemetry_no_pii.py`](../../tests/arch/test_telemetry_no_pii.py)).
 5. **Public-Beta honesty.** Pre-1.0; breaking changes acceptable; not recommended for
    production yet — correctness/security outrank polish that assumes stability
    (`README.md`).

@@ -91,28 +91,59 @@ class DatabaseConfig(BaseModel):
       connection fields are ignored.
     """
 
-    backend: Literal["postgres", "sqlite"] = "postgres"
-    host: str = "localhost"
-    port: int = 5432
-    name: str = ""
-    user: str = "postgres"
-    password: SecretStr = SecretStr("")
-    pool_max: int = 10
-    # Interpolated into `CREATE SCHEMA IF NOT EXISTS "{schema_name}"` and
-    # search_path by the migration runner; the identifier pattern is
-    # defense-in-depth so a hostile config value cannot escape the quoted
-    # identifier (SEC-2).
-    schema_name: str = Field(default="public", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
-    # SQLite: filesystem path to the database file (":memory:" for in-memory).
-    path: str | None = None
-    # SQLite concurrency knobs (ignored for non-SQLite backends). ``journal_mode``
-    # is set per-connection but is persistent per database file — ``WAL`` lets a
-    # reader and a writer proceed concurrently instead of blocking each other.
-    # ``busy_timeout_ms`` is per-connection: when a write hits a held lock SQLite
-    # waits up to this long for the lock to clear instead of failing instantly
-    # with ``database is locked``.
-    busy_timeout_ms: int = 5000
-    journal_mode: str = "WAL"
+    backend: Literal["postgres", "sqlite"] = Field(
+        default="postgres",
+        description=(
+            "Database engine for this connection: ``postgres`` uses the server "
+            "connection fields; ``sqlite`` uses ``path`` and ignores them."
+        ),
+    )
+    host: str = Field(default="localhost", description="PostgreSQL server hostname.")
+    port: int = Field(default=5432, description="PostgreSQL server port.")
+    name: str = Field(
+        default="",
+        description="PostgreSQL database name. Required for the ``postgres`` backend.",
+    )
+    user: str = Field(default="postgres", description="PostgreSQL role to connect as.")
+    password: SecretStr = Field(
+        default=SecretStr(""), description="Password for the PostgreSQL role."
+    )
+    pool_max: int = Field(
+        default=10,
+        description="Maximum connections in the PostgreSQL connection pool (ignored for SQLite).",
+    )
+    # The identifier pattern is defense-in-depth so a hostile config value
+    # cannot escape the quoted identifier (SEC-2).
+    schema_name: str = Field(
+        default="public",
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+        description=(
+            "PostgreSQL schema for this connection: created if missing by the "
+            "migration runner (``CREATE SCHEMA IF NOT EXISTS``) and put first on "
+            "``search_path``, so several connections can share one database."
+        ),
+    )
+    path: str | None = Field(
+        default=None,
+        description=(
+            "SQLite: filesystem path to the database file (``:memory:`` for "
+            "in-memory). Required for the ``sqlite`` backend."
+        ),
+    )
+    busy_timeout_ms: int = Field(
+        default=5000,
+        description=(
+            "SQLite: per-connection wait for a held write lock, in milliseconds, "
+            "before failing with ``database is locked``."
+        ),
+    )
+    journal_mode: str = Field(
+        default="WAL",
+        description=(
+            "SQLite journal mode (persistent per database file). ``WAL`` lets a "
+            "writer and readers proceed concurrently instead of blocking each other."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_backend(self) -> DatabaseConfig:
@@ -212,14 +243,42 @@ class ObservabilityConfig(BaseModel):
 class AdminAuthConfig(BaseModel):
     """Admin authentication settings."""
 
-    jwt_secret: SecretStr = SecretStr("")
-    jwt_ttl_seconds: int = Field(default=3600, gt=0)
-    # Absolute cap on a web session: `POST /auth/refresh` re-mints the login
-    # JWT (sliding session) only while `now - auth_time` stays inside this
-    # window, so a leaked token cannot be kept alive indefinitely.
-    session_ttl_seconds: int = Field(default=43200, gt=0)
-    failed_login_lockout_threshold: int = 5
-    failed_login_lockout_seconds: int = 900
+    jwt_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "HMAC secret that signs admin login JWTs. Required in production "
+            "(empty or placeholder values are rejected at startup); in "
+            "development an ephemeral per-process secret is generated when empty."
+        ),
+    )
+    jwt_ttl_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description=(
+            "Lifetime of one admin login JWT. ``POST /auth/refresh`` re-mints "
+            "the token, so this bounds a single token, not the session."
+        ),
+    )
+    session_ttl_seconds: int = Field(
+        default=43200,
+        gt=0,
+        description=(
+            "Absolute cap on a web session: refresh re-mints the login JWT only "
+            "while ``now - auth_time`` stays inside this window, so a leaked "
+            "token cannot be kept alive indefinitely. Must be >= "
+            "``jwt_ttl_seconds``."
+        ),
+    )
+    failed_login_lockout_threshold: int = Field(
+        default=5,
+        description=("Consecutive failed logins after which an admin account is locked."),
+    )
+    failed_login_lockout_seconds: int = Field(
+        default=900,
+        description=(
+            "How long a locked admin account stays locked before logins are accepted again."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_or_generate_secret_in_dev(self) -> AdminAuthConfig:
@@ -273,20 +332,76 @@ class SigningKeyConfig(BaseModel):
 class IdpConfig(BaseModel):
     """External OIDC identity provider configuration."""
 
-    enabled: bool = False
-    provider: str = "oidc"
-    issuer: str = ""
-    client_id: str = ""
-    client_secret: SecretStr = SecretStr("")
-    scopes: list[str] = Field(default_factory=lambda: ["openid", "email", "profile"])
-    authorization_endpoint: str | None = None
-    exchange_endpoint: str | None = None
-    userinfo_endpoint: str | None = None
-    # Google `hd` (hosted-domain) restriction. When set, only accounts whose
-    # userinfo carries a matching `hd` claim should be admitted. OSS surfaces the
-    # claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's
-    # admission policy.
-    hosted_domain: str | None = None
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable login via an external OIDC identity provider. When false no "
+            "IdP adapter is built; /authorize stays routed and (unless "
+            "auth.local_login.enabled provides the password form) ends in an "
+            "OAuth server_error redirect because no sign-in path exists."
+        ),
+    )
+    provider: str = Field(
+        default="oidc",
+        description=(
+            "Adapter selector: ``google`` supplies Google's well-known endpoints "
+            "and ``hd`` claim handling; any other value uses the generic "
+            "standards-compliant OIDC adapter."
+        ),
+    )
+    issuer: str = Field(
+        default="",
+        description=(
+            "OIDC issuer base URL. Default authorization/token/userinfo "
+            "endpoints are derived from it when the explicit ``*_endpoint`` "
+            "keys are unset."
+        ),
+    )
+    client_id: str = Field(
+        default="",
+        description="OAuth client ID registered with the identity provider.",
+    )
+    client_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description="OAuth client secret, sent on the authorization-code exchange.",
+    )
+    scopes: list[str] = Field(
+        default_factory=lambda: ["openid", "email", "profile"],
+        description="OAuth scopes requested on the IdP authorization redirect.",
+    )
+    authorization_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "Explicit IdP authorization endpoint URL; overrides the "
+            "issuer-derived or provider well-known default."
+        ),
+    )
+    exchange_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "Explicit IdP token (code-exchange) endpoint URL; overrides the "
+            "issuer-derived or provider well-known default."
+        ),
+    )
+    userinfo_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "Explicit IdP userinfo endpoint URL; overrides the issuer-derived "
+            "or provider well-known default."
+        ),
+    )
+    hosted_domain: str | None = Field(
+        default=None,
+        description=(
+            "Google ``hd`` (hosted-domain) hint. **Not an access control in "
+            "the OSS build**: the claim is surfaced (see "
+            "IdpClaims.hosted_domain) but never compared — the default "
+            "admission policy admits every brand-new email (with zero "
+            "permissions until an operator grants some). Restricting sign-in "
+            "to a domain requires configuring it at the IdP or installing a "
+            "custom admission policy."
+        ),
+    )
 
 
 class PlatformClientConfig(BaseModel):
@@ -327,22 +442,70 @@ _LOCAL_DEV_KEY_KID = "local-dev-key"
 class OAuthRateLimitConfig(BaseModel):
     """Pre-auth rate limit tunables for OAuth endpoints."""
 
-    authorize_rpm: int = 30
-    authorize_burst: int = 30
-    exchange_rpm: int = 60
-    exchange_burst: int = 60
-    # Anonymous dynamic client registration (POST /oauth-clients).
-    registration_rpm: int = 10
-    registration_burst: int = 5
-    # Approval-pending status poll (GET /oauth/approval/status). One tab polls
-    # at 12 rpm, so 120/60 keeps ~10 concurrent pending tabs behind one NAT
-    # inside the bucket; the page also honors Retry-After with backoff, so
-    # saturation degrades to a slower cadence rather than a thundering retry.
-    # Lives in its own namespace so polling can never drain the /authorize
-    # (or registration) quota.
-    approval_status_rpm: int = 120
-    approval_status_burst: int = 60
-    trusted_proxies: list[str] = Field(default_factory=list)
+    authorize_rpm: int = Field(
+        default=30,
+        description=(
+            "Sustained requests/minute allowed on the unauthenticated "
+            "``/authorize`` endpoints, keyed per ``client_id``+IP — except "
+            "the local-login routes, which carry no query ``client_id`` and "
+            "fall back to a bare-IP key. Behind a proxy, set "
+            "``auth.oauth_rate_limit.trusted_proxies`` or every client "
+            "shares the proxy's IP bucket."
+        ),
+    )
+    authorize_burst: int = Field(
+        default=30,
+        description="Burst allowance on top of ``authorize_rpm``.",
+    )
+    exchange_rpm: int = Field(
+        default=60,
+        description=(
+            "Sustained requests/minute allowed per ``client_id``+IP on the "
+            "token endpoint (also reused per-IP for token revocation)."
+        ),
+    )
+    exchange_burst: int = Field(
+        default=60,
+        description="Burst allowance on top of ``exchange_rpm``.",
+    )
+    registration_rpm: int = Field(
+        default=10,
+        description=(
+            "Sustained requests/minute allowed per IP on anonymous dynamic "
+            "client registration (``POST /oauth-clients``)."
+        ),
+    )
+    registration_burst: int = Field(
+        default=5,
+        description="Burst allowance on top of ``registration_rpm``.",
+    )
+    trusted_proxies: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is "
+            "honored when deriving the per-client rate-limit identity. Empty "
+            "(default) means the socket address is used as-is — behind a "
+            "reverse proxy every request then carries the proxy's IP and all "
+            "clients share one bucket, so list the proxy IPs when deploying "
+            "behind one."
+        ),
+    )
+    approval_status_rpm: int = Field(
+        default=120,
+        description=(
+            "Sustained requests/minute allowed on the approval-pending status "
+            "poll (``GET /oauth/approval/status``). Its own namespace, so "
+            "polling can never drain the ``/authorize`` or registration "
+            "quota: one pending tab polls at 12 rpm, so the default keeps "
+            "~10 concurrent pending tabs behind one NAT inside the bucket, "
+            "and the page honors ``Retry-After`` with backoff, so saturation "
+            "degrades to a slower cadence rather than a thundering retry."
+        ),
+    )
+    approval_status_burst: int = Field(
+        default=60,
+        description="Burst allowance on top of ``approval_status_rpm``.",
+    )
 
 
 class LocalLoginConfig(BaseModel):
@@ -358,7 +521,14 @@ class LocalLoginConfig(BaseModel):
     mode in v1).
     """
 
-    enabled: bool = False
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Offer a first-party password login form on the /authorize flow. "
+            "Off by default; when auth.idp.enabled is true the external IdP "
+            "always wins and the form is never offered."
+        ),
+    )
 
 
 class AuthConfig(BaseModel):
@@ -536,7 +706,16 @@ class UpstreamClientConfig(BaseModel):
     """
 
     connect_timeout_s: float = 5.0
-    read_timeout_s: float = 30.0
+    read_timeout_s: float = Field(
+        default=30.0,
+        description=(
+            "Per-read *between-bytes* gap timeout (seconds, httpx semantics) on "
+            "upstream responses — not a whole-stream cap. Pairs with "
+            "``broker.resilience.request_deadline_s``, which must be sized above "
+            "it so one healthy slow attempt isn't pre-empted by the envelope "
+            "deadline."
+        ),
+    )
     write_timeout_s: float = 30.0
     pool_timeout_s: float = 2.0
     # Negotiate HTTP/2 via ALPN, falling back to 1.1 when the upstream doesn't
@@ -661,21 +840,32 @@ class EgressConfig(BaseModel):
     credential-stealing SSRF can never be allowlisted by accident.
     """
 
-    # CIDRs exempted from the private-IP block (e.g. ["10.50.0.0/16"]). The
-    # metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted even if a
-    # covering range is listed.
     allowed_private_subnets: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            "CIDRs exempted from the private-IP egress block (e.g. "
+            '``["10.50.0.0/16"]``). The cloud-metadata IPs (169.254.169.254 / '
+            "fd00:ec2::254) are never exempted, even when a listed range covers "
+            "them. Accepts a YAML list or a comma-separated string."
+        ),
     )
-    # Domain suffixes (e.g. [".svc.cluster.local"]) whose resolved private IP is
-    # permitted. The resolved IP must still fall in an allowed subnet.
     allowed_internal_domains: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            'Domain suffixes (e.g. ``[".svc.cluster.local"]``) whose resolved '
+            "private IP is permitted. The resolved IP must still fall in an "
+            "allowed subnet. Accepts a YAML list or a comma-separated string."
+        ),
     )
-    # Pin the outbound connection to the IP validated at connect time, closing the
-    # DNS-rebinding TOCTOU between pre-request validation and the runner's own
-    # resolution. On by default; disable only to debug egress issues.
-    dns_pinning_enabled: bool = True
+    dns_pinning_enabled: bool = Field(
+        default=True,
+        description=(
+            "Pin the outbound connection to the IP validated at connect time, "
+            "closing the DNS-rebinding TOCTOU between pre-request validation "
+            "and the runner's own resolution. Disable only to debug egress "
+            "issues."
+        ),
+    )
 
     @field_validator("allowed_private_subnets")
     @classmethod
@@ -696,19 +886,43 @@ class BrokerResilienceConfig(BaseModel):
     backpressure / async-credential / retention knobs are future work.
     """
 
-    max_in_flight: int = 200
-    shed_retry_after_s: int = 5
-    # Overall wall-clock budget (seconds) for one upstream call, enforced by the
-    # always-on DeadlineRunner *outside* the circuit breaker (and, once it lands,
-    # the retry loop) — distinct from the per-attempt connect/read timeout on the
-    # transport client. Exceeding it returns 504 with a `wait` agent directive.
-    # 0 disables the budget (unbounded call). Size ABOVE upstream read timeouts so
-    # a single healthy slow attempt isn't pre-empted by the envelope deadline.
-    request_deadline_s: float = 30.0
-    # Fraction of ``max_in_flight`` at/above which ``/ready`` reports unready so
-    # the LB drains this instance *before* it hits the hard admission shed wall.
-    # Kept < 1.0 for that headroom.
-    readiness_saturation_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
+    max_in_flight: int = Field(
+        default=200,
+        description=(
+            "Hard admission cap on concurrently executing brokered calls, "
+            "**per broker process** — replicas multiply it. At the cap, new "
+            "requests are shed with 429 + ``Retry-After: shed_retry_after_s``."
+        ),
+    )
+    shed_retry_after_s: int = Field(
+        default=5,
+        description=(
+            "``Retry-After`` (seconds) returned with the 429 when admission "
+            "sheds at ``max_in_flight``."
+        ),
+    )
+    request_deadline_s: float = Field(
+        default=30.0,
+        description=(
+            "Overall wall-clock budget (seconds) for one upstream call, "
+            "enforced by the always-on DeadlineRunner outside the circuit "
+            "breaker — distinct from the per-attempt connect/read timeout on "
+            "the transport client. Exceeding it returns 504 with a ``wait`` "
+            "agent directive; 0 disables the budget. Size ABOVE upstream "
+            "read timeouts so a single healthy slow attempt isn't pre-empted "
+            "by the envelope deadline."
+        ),
+    )
+    readiness_saturation_threshold: float = Field(
+        default=0.9,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Fraction of ``max_in_flight`` at/above which ``/ready`` reports "
+            "unready, so the LB drains this instance before it hits the hard "
+            "admission shed wall. Kept < 1.0 for that headroom."
+        ),
+    )
     upstream: UpstreamClientConfig = Field(default_factory=UpstreamClientConfig)
     backend: StateBackendConfig = Field(default_factory=StateBackendConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
@@ -824,7 +1038,15 @@ class SecurityConfig(BaseModel):
 class BrokerConfig(BaseModel):
     """Broker surface configuration."""
 
-    upstream_timeout_s: float = 30.0
+    upstream_timeout_s: float = Field(
+        default=30.0,
+        description=(
+            "Timeout (seconds) handed to the execution runner for one upstream "
+            "call on the buffered sync path and the async job worker. Distinct "
+            "from the transport-level ``broker.resilience.upstream`` timeouts "
+            "and the ``request_deadline_s`` envelope."
+        ),
+    )
     resolve_cache_ttl_seconds: float = 3.0
     # Short TTL (seconds) for the per-instance toolkit-derivation cache.
     # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
@@ -902,8 +1124,15 @@ class IngestConfig(BaseModel):
 class CatalogConfig(BaseModel):
     """Public API catalog settings (manifest source + staleness)."""
 
-    manifest_url: str = (
-        "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+    manifest_url: str = Field(
+        default=(
+            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+        ),
+        description=(
+            "Manifest source for the public API catalog. Full default: "
+            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/"
+            "apis/openapi/apis.json"
+        ),
     )
     # Lazy refresh-on-read: a manifest older than this is refreshed on the next
     # list()/get(). Zero disables auto-refresh (manual :refresh only).
@@ -996,16 +1225,16 @@ class ServerConfig(BaseModel):
 
 
 class TelemetryConfig(BaseModel):
-    """Anonymous product-telemetry settings (issue #446).
+    """Anonymous product-telemetry settings.
 
     Defaults to **OFF**: an instance whose config omits this block (non-onboarded
     or hand-rolled) sends nothing. The onboarding CLI writes ``enabled``
-    explicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in
-    the prompt, not the code default. ``instance_id`` seeds the durable admin-DB
-    identity row on first startup for opted-in instances. ``host_os`` is the
-    operator's OS family, stamped by the CLI at install time so a Docker-run
-    instance reports the host's OS rather than the container's; sent once per
-    boot, on the ``instance_booted`` event.
+    explicitly (a yes-default ``[Y]/n`` prompt), which is where the
+    on-by-default install experience comes from. ``instance_id`` seeds the
+    durable admin-DB identity row on first startup for opted-in instances.
+    ``host_os`` is the operator's OS family, stamped by the CLI at install
+    time so a Docker-run instance reports the host's OS rather than the
+    container's; sent once per boot, on the ``instance_booted`` event.
     """
 
     enabled: bool = False
@@ -1049,8 +1278,8 @@ class ReleaseCheckConfig(BaseModel):
     Powers ``GET /system/version``: the backend asks GitHub for the newest
     published release of ``repo`` and compares it against the running build so the
     web console can surface an "update available" banner (and the user menu can
-    always show the current version). This is about *jentic-one's own* release —
-    distinct from ``CatalogConfig``, which tracks the public *API catalog*.
+    always show the current version). This covers *jentic-one's own* release;
+    ``CatalogConfig`` tracks the public *API catalog* instead.
 
     Runs only on a ``local`` backend (a self-hosted install the operator can
     actually update); the hosted platform (``server.backend == "remote"``) skips
@@ -1074,11 +1303,11 @@ class EntitlementConfig(BaseModel):
     """AWS Marketplace license gate for the Marketplace-listed deployment.
 
     Powers the entitlement checker (``integrations/aws_marketplace``): on
-    startup — and every ``refresh_interval_seconds`` after — the process asks
+    startup, and every ``refresh_interval_seconds`` after, the process asks
     AWS whether this deployment's Marketplace subscription is still active, and
     locks the HTTP surface (503, health excepted) when it definitively is not.
-    Defaults to **OFF**: a non-Marketplace install that omits this block runs
-    exactly as before — nothing is wired, no AWS call is ever made.
+    Defaults to **OFF**: a non-Marketplace install that omits this block wires
+    nothing and never makes an AWS call.
 
     Failure posture: an *unreachable* or *erroring* AWS API is never grounds
     for lockout by itself — the last definitive verdict holds for

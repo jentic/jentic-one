@@ -20,10 +20,10 @@ import (
 )
 
 // cosignCertIdentityRegexp / cosignOIDCIssuer pin the keyless-signing identity
-// the release job uses (docs/releasing.md). Shared by the installer shell copy;
+// the release job uses (docs/development/releasing.md). Shared by the installer shell copy;
 // keep the two in lockstep. The identity is the release workflow's OIDC subject.
 const (
-	cosignCertIdentityRegexp = `^https://github.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/`
+	cosignCertIdentityRegexp = `^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v`
 	cosignOIDCIssuer         = "https://token.actions.githubusercontent.com"
 )
 
@@ -131,9 +131,9 @@ func verifyCosign(ctx context.Context, tag string, checksums, sig, cert []byte, 
 	if err != nil {
 		return "", err
 	}
-	// The certificate identity embeds the release tag; the regexp is
-	// tag-agnostic (matches any refs/tags/...) to avoid brittleness, matching
-	// docs/releasing.md's runbook.
+	// The certificate identity embeds the release tag; the regexp pins the
+	// workflow path and requires a version tag (refs/tags/v...) without
+	// binding to one release, matching docs/development/releasing.md's runbook.
 	_ = tag
 	cmd := exec.CommandContext(ctx, "cosign", "verify-blob", //nolint:gosec // fixed argv; only file paths (under our stageDir) and pinned identity flags vary.
 		"--certificate", certPath,

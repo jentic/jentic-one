@@ -2,8 +2,8 @@
 
 This is the single use-case both callers run: the **sync router** awaits it and
 adapts the result to a FastAPI ``Response``; the **async worker** runs it and
-persists the result. Neither re-implements the steps (00-overview "Composition
-root — one pipeline, two callers").
+persists the result. Neither re-implements the steps ("one pipeline, two
+callers" — see docs/architecture/broker-execution.md).
 
 The path is an **ordered chain of small stages**, not a god-method, so every
 deferred capability slots in as a new stage / runner decorator at a defined

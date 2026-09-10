@@ -27,13 +27,16 @@ app:
   service:
     type: ClusterIP
     port: 8000
+  # The app boots at ~150Mi RSS and each concurrent password / client-secret
+  # verification adds 64Mi (argon2id memory_cost=65536), so its floor is
+  # higher than the other surfaces'.
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 500m
-      memory: 256Mi
+      memory: 1Gi
 
 registry:
   enabled: false
@@ -61,13 +64,15 @@ admin:
   service:
     type: ClusterIP
     port: 8000
+  # Admin serves the password/login endpoints in parts mode; same argon2
+  # arithmetic as the app (64Mi per concurrent verification).
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 500m
-      memory: 256Mi
+      memory: 1Gi
 
 control:
   enabled: false
@@ -108,6 +113,9 @@ global:
       format: json
       level: info
     metrics:
+      # NOTE: `otlp` needs a reachable collector — with `otel.enabled: false`
+      # (the default above) the SDK logs an export failure every interval.
+      # Set `none` if you don't run a collector, or enable the otel sidecar.
       exporter: otlp
   postgresql:
     enabled: false
@@ -149,7 +157,8 @@ global:
   # and reuses it verbatim on upgrades (rotating would orphan everything
   # already encrypted and revoke live sessions; the Secret is kept on
   # uninstall for the same reason). `existingSecret` mounts your own Secret
-  # instead (must hold the same keys — see deploy/README.md). Both are
+  # instead (must hold the same keys — see docs/installation/helm.md
+  # "Secrets"). Both are
   # mutually exclusive with per-service `configFile.contents`, which the dev
   # overlays use to inline dev secrets.
   appSecrets:
@@ -163,7 +172,7 @@ global:
   # deploy/helm/values/local-*.yaml. In production, do NOT put real passwords
   # in a values file: replace `common.db-env` in your subchart deployments
   # with a Secret-backed `valueFrom: secretKeyRef:` block, or pass an
-  # `existingSecret` reference. See deploy/README.md "Production secrets".
+  # `existingSecret` reference. See docs/installation/helm.md "Secrets".
   databases:
     registry:
       host: ""
@@ -190,7 +199,7 @@ postgresql:
   # image — the former Bitnami dependency pinned the frozen `bitnamilegacy`
   # image (no CVE fixes since Aug 2025), which the Trivy publish gate and the
   # AWS Marketplace scan both reject. Dev/eval-grade single instance;
-  # production should use a managed database (deploy/README.md).
+  # production should use a managed database (docs/installation/helm.md).
   image:
     registry: docker.io
     repository: postgres

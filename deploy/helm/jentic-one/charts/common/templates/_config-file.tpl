@@ -12,7 +12,8 @@ convention cannot express. The smoke overlays use it to supply a dev-only
 credential-encryption keyset so credential writes don't 500 in-cluster.
 
 DEVELOPMENT-ONLY: contents land in a plain ConfigMap (not a Secret). Fine for
-local kind/smoke clusters; never put real secrets here. See deploy/README.md.
+local kind/smoke clusters; never put real secrets here. See
+docs/installation/helm.md "Secrets".
 Production secrets use global.appSecrets instead (_app-secrets.tpl) — the two
 are mutually exclusive since both claim JENTIC_CONFIG_FILE.
 

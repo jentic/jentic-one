@@ -11,8 +11,7 @@ them through a single authenticated gateway without managing each API's
 credentials yourself. The `jentic` CLI is the agent-facing entrypoint.
 
 The same loop is also exposed over **MCP** by the local `jentic mcp` stdio
-server — available in the `jentic` CLI from the next release; check
-`jentic mcp --help`. If your session has `jentic` MCP tools, prefer them; use
+server. If your session has `jentic` MCP tools, prefer them; use
 the CLI for `setup`/`access` recovery and anything not exposed over MCP. Both
 surfaces talk to the same instance — check `backend`/`host` in the identity
 stamp on MCP tool results if in doubt.
@@ -488,9 +487,14 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   including the exact broker URL and headers — before committing side effects.
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
-- Add `--json` to force machine-readable output on a terminal (works on
-  `search`, `execute`, `inspect`, `apis`, `access`, `doctor`). `context view`
-  has no `--json` flag — it emits JSON automatically in agent/non-TTY mode.
+- Add `--json` to force machine-readable output on a terminal. It exists on
+  **leaf** commands (`search`, `execute`, `inspect`, `apis list`,
+  `access list`, `doctor`); the bare group commands (`jentic apis`,
+  `jentic access`) reject it. Don't rely on non-TTY output being JSON
+  automatically: `register` persists `mode: human`, which wins over TTY
+  detection — set `JENTIC_MODE=agent` (or pass `--json` explicitly) when you
+  need parseable output. (`context view` has no `--json` flag at all — it
+  follows the same mode rules.)
 - **Correlation & retries**: export `JENTIC_SESSION_ID=<your session id>` and
   every request carries it as `X-Jentic-Session-Id`, so operators can group all
   of your calls in server logs; each `execute` also sends a fresh W3C
@@ -520,7 +524,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   may be bound to a **different backend** than this CLI — typically the hosted
   cloud workspace vs the local install. The symptom of a mismatch is *silent
   wrong answers*, not errors: an API the user just imported "doesn't exist",
-  credentials "disappeared", or operation ids from one surface don't resolve
+  credentials "disappeared", or call targets from one surface don't resolve
   on the other. Before concluding anything is missing or broken, check where
   each surface points — `jentic context view` shows this CLI's active
   environment/`base_url`, and `jentic api GET /instance` reports which backend

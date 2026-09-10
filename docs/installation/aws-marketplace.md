@@ -12,7 +12,7 @@ on every upgrade. A bundled PostgreSQL runs in-cluster by default; an
 external database such as RDS is supported.
 
 For self-hosted installs outside AWS Marketplace, use the
-[quickstart](../quickstart.md) instead.
+[installation index](README.md) instead.
 
 ## Prerequisites
 
@@ -77,25 +77,27 @@ aws ecr get-login-password --region us-east-1 \
     709825985650.dkr.ecr.us-east-1.amazonaws.com
 
 helm install jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
-  --version <version> --namespace jentic-one --create-namespace \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
+  --version <version> --namespace jentic-one --create-namespace --timeout 30m \
   --set global.serviceAccount.name=jentic-one \
   --set global.awsmp.licenseSecret=<from-launch-page>
 ```
 
 No passwords or further configuration are required at install time.
+(`--timeout 30m`: the chart's migrate hook runs inside Helm's timeout, and
+the 5-minute default can `SIGTERM` a long migration mid-run — see
+[helm.md](helm.md#2-install).)
 
 ## Post-install: set the canonical base URL
 
-Required before agents can connect. Set it to the URL your agents will reach
-the app at (your ingress or load-balancer URL). Agent token exchange compares
-this value byte-for-byte against the `--url` agents register with — a
-mismatch (including `localhost` vs `127.0.0.1`) fails with `invalid_grant`
-*after* the agent is approved:
+Required before agents can connect — set it to the URL your agents will reach
+the app at (your ingress or load-balancer URL). Why the value must match what
+agents register with byte-for-byte (including the `localhost` vs `127.0.0.1`
+trap): [Helm guide, step 3](helm.md#3-set-the-canonical-base-url).
 
 ```bash
 helm upgrade jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
   --version <version> -n jentic-one --reuse-values \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=https://jentic.example.com
 ```
@@ -106,52 +108,80 @@ helm upgrade jentic-one \
 kubectl -n jentic-one get pods
 # expect: app, broker, postgresql — all Running
 
-kubectl -n jentic-one port-forward svc/jentic-one-app 8000:8000
+kubectl -n jentic-one port-forward svc/jentic-one-app 8000:8000 &
 curl -s http://localhost:8000/health   # {"status":"ok","version":"<version>"}
 ```
 
-Open `<your URL>/app` to create the first admin user, then connect an agent:
+Create the first admin **before** exposing the app publicly — the one-time
+setup endpoint is unauthenticated by design and closes only once a user
+exists. Do it over the port-forward above (open
+`http://localhost:8000/app/setup`), or run the one-shot inside the app pod:
+
+```bash
+read -rs ADMIN_PASSWORD   # run this line by itself; it waits for input
+printf '%s\n' "$ADMIN_PASSWORD" | kubectl -n jentic-one exec -i deploy/jentic-one-app -- \
+  python -m jentic_one create-admin --email admin@example.com
+```
+
+Confirm `curl -s http://localhost:8000/admin/health` shows
+`setup_required: false`, then connect an agent:
 
 ```bash
 jentic register --url <app URL> --broker-url <broker URL>
 ```
 
 Expose the broker Service (port 8000 in-cluster) alongside the app — it is
-the data plane every agent call goes through. See the
-[quickstart](../quickstart.md) for the first brokered call.
+the data plane every agent call goes through. See
+[the first brokered call](../guides/first-call.md) to take it from there.
 
 ## External database
 
 To use RDS/Aurora PostgreSQL instead of the bundled database, disable the
-bundled instance and point each surface at your endpoint. Explicit passwords
-always take precedence over the generated ones:
+bundled instance and point each surface at your endpoint:
 
 ```bash
 --set postgresql.enabled=false \
 --set global.postgresql.enabled=false \
 --set global.databases.registry.host=<endpoint> \
 --set global.databases.control.host=<endpoint> \
---set global.databases.admin.host=<endpoint> \
---set global.databases.registry.password=<...> \
---set global.databases.control.password=<...> \
---set global.databases.admin.password=<...>
+--set global.databases.admin.host=<endpoint>
 ```
+
+Keep the passwords out of `--set` flags and values files: mount your own
+Secret with `global.appSecrets.existingSecret`, carrying the three
+`db-password-{registry,control,admin}` keys — the worked shape (and why a
+per-variable `secretKeyRef` via `extraEnv` does **not** work) is in the
+[Helm guide's Secrets section](helm.md#secrets). Quick path for a trial
+only: append `--set global.databases.<surface>.password=<…>` for the three
+surfaces (explicit passwords always win over generated ones) — **warning:**
+those values land in your shell history and are readable later via
+`helm get values`, so rotate them before real data touches the instance.
 
 Create the three roles and schemas (`registry`, `control`, `admin`) on the
 instance first.
 
 ## Upgrades and removal
 
+0. Take a [backup](../operations/backup-restore.md) — it is the rollback.
+
 Upgrade to a new version with `--reset-values`, re-passing your explicit
 overrides:
 
 ```bash
 helm upgrade jentic-one \
-  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/jentic-one \
-  --version <new-version> -n jentic-one --reset-values \
+  oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/jentic/charts/jentic-one \
+  --version <new-version> -n jentic-one --reset-values --timeout 30m \
   --set global.serviceAccount.name=jentic-one \
+  --set global.awsmp.licenseSecret=<from-launch-page> \
   --set app.extraEnv.JENTIC__AUTH__CANONICAL_BASE_URL=<url>
 ```
+
+"Your explicit overrides" means **every** `--set` from your install, not
+just these — on the external-database shape that includes the
+`postgresql.enabled=false` pair and the three `global.databases.*.host`
+values, or the upgrade re-enables the bundled database. `helm get values
+jentic-one -n jentic-one` prints what the release is currently running with;
+re-pass all of it.
 
 Do **not** use `--reuse-values` across chart versions: it reuses the old
 chart's baked defaults — including the image tag — so the pods keep running

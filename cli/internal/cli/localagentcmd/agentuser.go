@@ -360,7 +360,7 @@ func (a *Cmd) createAgentAccount(ctx context.Context, operator string, fields ag
 	// unavailable), which also closes the sibling-traversal leak a blanket 700 could
 	// not. Real secrets keep their own 0700 modes regardless; the sensitivity rules
 	// (DangerReason) still gate what may be granted. See
-	// docs/security/local-agent/sandbox-exec-plan.md.
+	// docs/security/same-host/sandbox-confinement-design.md.
 
 	// Optional passwordless launch (per the operator's consent toggle): a scoped
 	// sudoers rule so `jentic run` need not prompt for the operator's password to

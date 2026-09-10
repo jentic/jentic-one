@@ -16,7 +16,7 @@ package localagentcmd
 // volume provisioning plus a smoke-spawn to honour the invariant that a
 // failed isolation keeps the working non-isolated entry. Docker-equipped
 // operators are pointed at the documented manual recipe instead
-// (docs/security/mcp-same-host-hardening.md, Recipe 3).
+// (docs/security/same-host/mcp-same-host-hardening.md, Recipe 3).
 //
 // The whole step is BEST-EFFORT and consent-gated: it never runs sudo
 // unattended (interactive sessions only), and any failure leaves the working
@@ -45,7 +45,7 @@ import (
 // containerRecipePointer is the manual container-isolation pointer printed
 // where Docker is present. It names the shipped doc so the operator can build
 // the rung by hand; nothing is rewritten automatically (see the file comment).
-const containerRecipePointer = "Prefer a container? The manual recipe is docs/security/mcp-same-host-hardening.md (Recipe 3)."
+const containerRecipePointer = "Prefer a container? The manual recipe is docs/security/same-host/mcp-same-host-hardening.md (Recipe 3)."
 
 // offerMCPIsolation runs the optional isolation step over the entries that
 // were just written. interactive gates the whole step: a non-interactive run
