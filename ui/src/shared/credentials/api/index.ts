@@ -290,6 +290,37 @@ export {
 	type ServerVarDef,
 } from './apis-hooks';
 
+export {
+	useAgentsForPicker,
+	useConfirmConnectSession,
+	useConnectSession,
+	usePollConnectSessionStatus,
+	useStartAndConfirmVendorConnect,
+	useStartIntegrationConnect,
+	useVendorAuthCapabilities,
+	useVendors,
+	type StartAndConfirmResult,
+	type StartAndConfirmVars,
+} from './vendors-hooks';
+
+export type {
+	ConfirmRequest,
+	ConfirmResponse,
+	ConnectRequest,
+	ConnectResponse,
+	PermissionRule,
+	ReviewScope,
+	ReviewSession,
+	ScopeClassification,
+	SessionStatus,
+	StatusResponse,
+	VendorAuthCapabilities,
+	VendorFlow,
+	VendorListResponse,
+	VendorScopeCatalog,
+	VendorSummary,
+} from './vendors-types';
+
 // Re-export the API/catalog response models so view code can stay within the
 // module boundary (the lint rule blocks direct `@/shared/api` imports).
 export type {

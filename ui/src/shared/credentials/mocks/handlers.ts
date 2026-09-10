@@ -439,4 +439,11 @@ export const credentialsHandlers = [
 		if (!spec) return new HttpResponse(null, { status: 404 });
 		return HttpResponse.json(spec);
 	}),
+
+	// Verified-vendor registry — surfaces the "one-click sign-in" tiles at the
+	// top of the API picker. Empty by default; wire real fixtures when a test
+	// needs the vendor path.
+	http.get('/vendors', () => {
+		return HttpResponse.json({ data: [] });
+	}),
 ];
