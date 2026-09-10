@@ -41,6 +41,10 @@ CODE_RESOLVE_FAILED = "RESOLVE_FAILED"
 CODE_BROKER_DENIED = "BROKER_DENIED"
 CODE_TRANSPORT_ERROR = "TRANSPORT_ERROR"
 CODE_INTERNAL_ERROR = "INTERNAL_ERROR"
+#: request_access's partially-approved arm (Go: ``ux.CodePartialApproval``) —
+#: some items granted, some not; the model must proceed only with what was
+#: approved. Same wire string on both doors so a model sees one taxonomy.
+CODE_PARTIAL_APPROVAL = "PARTIAL_APPROVAL"
 
 #: error codes whose default recovery pointer is ``get_started`` (Go:
 #: ``softErrorExtra``'s code-keyed mapping). ``get_started`` never ports to
