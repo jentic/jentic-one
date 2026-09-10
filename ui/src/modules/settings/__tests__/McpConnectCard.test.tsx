@@ -46,6 +46,21 @@ describe('McpConnectCard', () => {
 		await checkA11y(container);
 	});
 
+	it('treats an explicit mcp_enabled: false exactly like the absent field', async () => {
+		// Pinned separately from the absent-field case above so the gate's
+		// contract survives the global /instance mock ever growing the field.
+		useInstanceHandler({
+			backend: 'local',
+			canonical_base_url: 'https://jentic.example.test',
+			host: 'jentic.example.test',
+			mcp_enabled: false,
+		});
+		renderWithProviders(<McpConnectCard />);
+
+		expect(await screen.findByText(/does not serve the HTTP MCP endpoint/)).toBeInTheDocument();
+		expect(screen.queryByText('https://jentic.example.test/mcp')).not.toBeInTheDocument();
+	});
+
 	it('falls back to the browser origin when no canonical base URL is configured', async () => {
 		useInstanceHandler({
 			backend: 'local',
