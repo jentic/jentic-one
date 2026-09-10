@@ -92,30 +92,42 @@ def _provider_clauses(identity: Identity, model: type[Any]) -> list[ColumnElemen
 
 
 def _binding_visibility_clause(
-    model: type[Any], bound_toolkit_ids: list[str] | None
+    model: type[Any],
+    bound_toolkit_ids: list[str] | None,
+    bound_credential_ids: list[str] | None = None,
 ) -> ColumnElement[bool] | None:
-    """Extra visibility a bound-toolkit set grants for ``Toolkit``/``Credential``.
+    """Extra visibility bindings grant for ``Toolkit``/``Credential``.
 
     Returns ``None`` when there is nothing to add (no ids, or a model whose
     visibility is not widened by bindings). A toolkit is visible directly by id;
     a credential is visible when it is bound (via ``ToolkitCredentialBinding``) to
-    one of those toolkits. Both stay within the control DB — the ids are supplied
-    by the caller, so no admin table is referenced here.
+    one of those toolkits, **or directly by id** when it appears in
+    ``bound_credential_ids`` (theme 5 phase 1 — the agent's own direct
+    ``agent_credential_bindings``, resolved by the service from the admin DB,
+    suspended bindings already excluded). Both stay within the control DB — the
+    ids are supplied by the caller, so no admin table is referenced here.
     """
-    if not bound_toolkit_ids:
-        return None
     if model is Toolkit:
+        if not bound_toolkit_ids:
+            return None
         return Toolkit.id.in_(bound_toolkit_ids)
     if model is Credential:
-        # Alias so the subquery keeps its own FROM even when the outer query
-        # also selects from ToolkitCredentialBinding (e.g. the served-APIs
-        # aggregation join) — otherwise auto-correlation strips it away.
-        tcb = aliased(ToolkitCredentialBinding)
-        subq = select(tcb.credential_id).where(
-            tcb.toolkit_id.in_(bound_toolkit_ids),
-            tcb.credential_id == Credential.id,
-        )
-        return exists(subq)
+        clauses: list[ColumnElement[bool]] = []
+        if bound_toolkit_ids:
+            # Alias so the subquery keeps its own FROM even when the outer query
+            # also selects from ToolkitCredentialBinding (e.g. the served-APIs
+            # aggregation join) — otherwise auto-correlation strips it away.
+            tcb = aliased(ToolkitCredentialBinding)
+            subq = select(tcb.credential_id).where(
+                tcb.toolkit_id.in_(bound_toolkit_ids),
+                tcb.credential_id == Credential.id,
+            )
+            clauses.append(exists(subq))
+        if bound_credential_ids:
+            clauses.append(Credential.id.in_(bound_credential_ids))
+        if not clauses:
+            return None
+        return or_(*clauses) if len(clauses) > 1 else clauses[0]
     return None
 
 
@@ -124,6 +136,7 @@ def build_access_filters(
     model: type[Any],
     *,
     bound_toolkit_ids: list[str] | None = None,
+    bound_credential_ids: list[str] | None = None,
     include_shared: bool = False,
 ) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy filter expressions scoping queries to the caller's visibility.
@@ -142,6 +155,14 @@ def build_access_filters(
     :meth:`PrerequisiteRepository.list_toolkit_ids_for_agent`) and passes them in;
     this module stays single-DB and free of admin imports. ``None``/empty leaves
     the owner-only behaviour unchanged.
+
+    ``bound_credential_ids`` is the direct-binding analogue for the
+    ``Credential`` model (theme 5 phase 1): an agent may always read a
+    credential it holds an active (non-suspended) ``agent_credential_bindings``
+    row for — the ids come from
+    :meth:`PrerequisiteRepository.list_credential_ids_for_agent`, resolved
+    admin-side by the service exactly like the toolkit ids. Read call sites
+    only; writes stay owner-scoped.
 
     ``include_shared`` (READ call sites only) invokes any registered
     access-filter providers (see :func:`register_access_filter_provider`) and
@@ -171,7 +192,7 @@ def build_access_filters(
         else:
             owner_clause = col == identity.sub
         clauses: list[ColumnElement[bool]] = [owner_clause]
-        binding_clause = _binding_visibility_clause(model, bound_toolkit_ids)
+        binding_clause = _binding_visibility_clause(model, bound_toolkit_ids, bound_credential_ids)
         if binding_clause is not None:
             clauses.append(binding_clause)
         if include_shared:

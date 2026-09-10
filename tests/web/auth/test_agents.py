@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
@@ -23,8 +24,9 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.repos.agent_toolkit_binding_repo import AgentToolkitBindingRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import InviteState
+from jentic_one.shared.models import InviteState, StoredCredentialType
 from jentic_one.shared.models.events import EventType
 from tests.web.auth.conftest import _build_app
 
@@ -243,6 +245,168 @@ def test_toolkit_crud(admin_client: TestClient, toolkit_agent_id: str) -> None:
     # Unbind nonexistent -> 404
     resp = admin_client.delete(f"/agents/{agent_id}/toolkits/tk-abc")
     assert resp.status_code == 404
+
+
+@pytest.fixture()
+async def binding_agent_id(web_context: Context, owner_user_id: str) -> AsyncGenerator[str, None]:
+    """An agent for direct credential-binding tests, with full binding cleanup."""
+    async with web_context.admin_db.transaction() as session:
+        agent = await AgentRepository.create(
+            session,
+            name="credential-binding-agent",
+            owner_id=owner_user_id,
+            registered_by=owner_user_id,
+            created_by="usr_test",
+        )
+    yield agent.id
+
+    async with web_context.admin_db.session() as session:
+        await session.execute(delete(ActorScopeGrant).where(ActorScopeGrant.actor_id == agent.id))
+        await session.execute(
+            delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent.id)
+        )
+        await session.execute(delete(Agent).where(Agent.id == agent.id))
+        await session.commit()
+
+
+@pytest.fixture()
+async def control_credential_id(
+    web_context: Context, owner_user_id: str
+) -> AsyncGenerator[str, None]:
+    """A control-DB credential created by the owner user."""
+    async with web_context.control_db.session() as session:
+        credential = Credential(
+            type=StoredCredentialType.API_KEY,
+            name="Binding Test Credential",
+            api_vendor="stripe",
+            api_name="payments",
+            api_version="v1",
+            created_by=owner_user_id,
+        )
+        session.add(credential)
+        await session.commit()
+        credential_id = credential.id
+    yield credential_id
+
+    async with web_context.control_db.session() as session:
+        await session.execute(delete(Credential).where(Credential.id == credential_id))
+        await session.commit()
+
+
+def test_credential_binding_lifecycle(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    agent_id = binding_agent_id
+
+    # Bind — 201, enriched with the control-DB name and served API.
+    resp = admin_client.post(
+        f"/agents/{agent_id}/credentials", json={"credential_id": control_credential_id}
+    )
+    assert resp.status_code == 201
+    binding = resp.json()
+    assert binding["credential_id"] == control_credential_id
+    assert binding["agent_id"] == agent_id
+    assert binding["name"] == "Binding Test Credential"
+    assert binding["suspended"] is False
+    assert binding["serves"] == [
+        {"api_vendor": "stripe", "api_name": "payments", "api_version": "v1"}
+    ]
+
+    # List
+    resp = admin_client.get(f"/agents/{agent_id}/credentials")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert len(data) == 1
+    assert data[0]["name"] == "Binding Test Credential"
+
+    # Duplicate bind -> 409
+    resp = admin_client.post(
+        f"/agents/{agent_id}/credentials", json={"credential_id": control_credential_id}
+    )
+    assert resp.status_code == 409
+    assert resp.json()["type"] == "credential_binding_conflict"
+
+    # Default unbind -> suspend, binding survives
+    resp = admin_client.delete(f"/agents/{agent_id}/credentials/{control_credential_id}")
+    assert resp.status_code == 204
+    resp = admin_client.get(f"/agents/{agent_id}/credentials")
+    data = resp.json()["data"]
+    assert len(data) == 1
+    assert data[0]["suspended"] is True
+
+    # Resume -> suspended lifted
+    resp = admin_client.post(f"/agents/{agent_id}/credentials/{control_credential_id}:resume")
+    assert resp.status_code == 200
+    assert resp.json()["suspended"] is False
+
+    # Purge -> row gone
+    resp = admin_client.delete(
+        f"/agents/{agent_id}/credentials/{control_credential_id}", params={"purge": "true"}
+    )
+    assert resp.status_code == 204
+    resp = admin_client.get(f"/agents/{agent_id}/credentials")
+    assert resp.json()["data"] == []
+
+    # Unbind nonexistent -> 404
+    resp = admin_client.delete(f"/agents/{agent_id}/credentials/{control_credential_id}")
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_binding_not_found"
+
+
+def test_bind_unknown_credential_is_404(admin_client: TestClient, binding_agent_id: str) -> None:
+    resp = admin_client.post(
+        f"/agents/{binding_agent_id}/credentials", json={"credential_id": "cred_missing"}
+    )
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+
+
+@pytest.fixture()
+async def foreign_credential_id(web_context: Context) -> AsyncGenerator[str, None]:
+    """A control-DB credential created by an unrelated user."""
+    async with web_context.control_db.session() as session:
+        credential = Credential(
+            type=StoredCredentialType.API_KEY,
+            name="Someone Elses Credential",
+            api_vendor="slack",
+            created_by="usr_someone_else",
+        )
+        session.add(credential)
+        await session.commit()
+        credential_id = credential.id
+    yield credential_id
+
+    async with web_context.control_db.session() as session:
+        await session.execute(delete(Credential).where(Credential.id == credential_id))
+        await session.commit()
+
+
+def test_bind_visibility(
+    owner_client: TestClient,
+    binding_agent_id: str,
+    control_credential_id: str,
+    foreign_credential_id: str,
+) -> None:
+    """The bind path checks credential visibility — unlike the toolkit route.
+
+    The owner holds ``agents:write`` but no ``credentials:*`` scope, so they
+    can bind a credential they created and get a 404 (not a 403 — existence
+    must not leak) for one created by someone else.
+    """
+    # Own credential -> 201
+    resp = owner_client.post(
+        f"/agents/{binding_agent_id}/credentials",
+        json={"credential_id": control_credential_id},
+    )
+    assert resp.status_code == 201
+
+    # Foreign credential -> 404, indistinguishable from nonexistent
+    resp = owner_client.post(
+        f"/agents/{binding_agent_id}/credentials",
+        json={"credential_id": foreign_credential_id},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
 
 
 @pytest.fixture()

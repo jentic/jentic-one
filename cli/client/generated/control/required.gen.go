@@ -84,9 +84,19 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string             { return []string{"token"} }
-func (ConnectChallengeResponse) RequiredFields() []string { return []string{"authorize_url", "state"} }
-func (CreateAdminRequest) RequiredFields() []string       { return []string{"email", "password"} }
+func (ClaimRequest) RequiredFields() []string                { return []string{"token"} }
+func (ConnectChallengeResponse) RequiredFields() []string    { return []string{"authorize_url", "state"} }
+func (CreateAdminRequest) RequiredFields() []string          { return []string{"email", "password"} }
+func (CredentialAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
+func (CredentialAgentResponse) RequiredFields() []string {
+	return []string{"agent_id", "agent_name", "bound_at", "status", "suspended"}
+}
+func (CredentialBindRequest) RequiredFields() []string         { return []string{"credential_id"} }
+func (CredentialBindingEntry) RequiredFields() []string        { return []string{"bound_at", "credential_id"} }
+func (CredentialBindingListResponse) RequiredFields() []string { return []string{"data"} }
+func (CredentialBindingResponse) RequiredFields() []string {
+	return []string{"agent_id", "bound_at", "credential_id", "id", "suspended"}
+}
 func (CredentialCreateResponse) RequiredFields() []string { return []string{"credential", "secret"} }
 func (CredentialListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
 func (CredentialRedactedResponse) RequiredFields() []string {
@@ -237,8 +247,17 @@ func (RegisterRequest) RequiredFields() []string           { return []string{"cl
 func (RegisterResponse) RequiredFields() []string {
 	return []string{"client_id", "registration_access_token", "registration_client_uri", "status"}
 }
-func (RegistrationStatusResponse) RequiredFields() []string  { return []string{"client_id", "status"} }
-func (RevokeRequest) RequiredFields() []string               { return []string{"token"} }
+func (RegistrationStatusResponse) RequiredFields() []string { return []string{"client_id", "status"} }
+func (RevokeRequest) RequiredFields() []string              { return []string{"token"} }
+func (RuleSetAttachRequest) RequiredFields() []string       { return []string{"rule_set_id"} }
+func (RuleSetCreateRequest) RequiredFields() []string       { return []string{"name"} }
+func (RuleSetListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }
+func (RuleSetResponse) RequiredFields() []string {
+	return []string{"binding_count", "created_at", "name", "rule_set_id", "rules"}
+}
+func (RuleSetSummaryResponse) RequiredFields() []string {
+	return []string{"created_at", "name", "rule_count", "rule_set_id"}
+}
 func (SearchLinksResponse) RequiredFields() []string         { return []string{"inspect"} }
 func (SearchRequest) RequiredFields() []string               { return []string{"query"} }
 func (SearchResponse) RequiredFields() []string              { return []string{"data", "has_more"} }

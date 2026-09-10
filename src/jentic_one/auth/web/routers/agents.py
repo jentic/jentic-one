@@ -10,6 +10,7 @@ from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
+    CredentialBindingView,
     ToolkitBindingView,
 )
 from jentic_one.auth.web.deps import get_agent_auth_service, get_agent_service
@@ -25,6 +26,9 @@ from jentic_one.auth.web.schemas.agents import (
     ApiKeyInfoResponse,
     ApiKeyResponse,
     ClaimRequest,
+    CredentialBindingListResponse,
+    CredentialBindingResponse,
+    CredentialBindRequest,
     DenyRequest,
     JwksUpdateRequest,
     ToolkitBindingListResponse,
@@ -272,6 +276,95 @@ async def unbind_toolkit(
     """Unbind a toolkit from an agent."""
     await agent_svc.unbind_toolkit(agent_id, toolkit_id=toolkit_id, identity=identity)
     return Response(status_code=204)
+
+
+def _credential_binding_response(view: CredentialBindingView) -> CredentialBindingResponse:
+    return CredentialBindingResponse(
+        id=view.id,
+        agent_id=view.agent_id,
+        credential_id=view.credential_id,
+        name=view.name,
+        bound_at=view.bound_at,
+        suspended=view.suspended,
+        rule_set_id=view.rule_set_id,
+        serves=view.serves,
+    )
+
+
+@router.get("/agents/{agent_id}/credentials", operation_id="listAgentCredentials")
+async def list_credentials(
+    agent_id: str,
+    request: Request,
+    identity: Identity = get_current_identity(allow_expired_password=True),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> CredentialBindingListResponse:
+    """List direct credential bindings for an agent — requires agents:read or self."""
+    view = await agent_svc.get_agent(agent_id, identity=identity)
+    _check_read_access(identity, view, request)
+    bindings = await agent_svc.list_credentials(agent_id, identity=identity)
+    return CredentialBindingListResponse(data=[_credential_binding_response(b) for b in bindings])
+
+
+@router.post("/agents/{agent_id}/credentials", status_code=201, operation_id="bindAgentCredential")
+async def bind_credential(
+    agent_id: str,
+    body: CredentialBindRequest,
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> CredentialBindingResponse:
+    """Directly bind a credential to an agent (theme 5 phase 1).
+
+    The caller must be able to see the target credential; a credential that
+    does not exist or is outside the caller's visibility returns 404.
+    """
+    binding = await agent_svc.bind_credential(
+        agent_id, credential_id=body.credential_id, identity=identity
+    )
+    return _credential_binding_response(binding)
+
+
+@router.delete(
+    "/agents/{agent_id}/credentials/{credential_id}",
+    status_code=204,
+    operation_id="unbindAgentCredential",
+)
+async def unbind_credential(
+    agent_id: str,
+    credential_id: str,
+    purge: bool = Query(
+        default=False,
+        description=(
+            "Default false: the binding is suspended (reversible; its permission"
+            " rules survive and :resume restores access). true deletes the"
+            " binding row outright."
+        ),
+    ),
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> Response:
+    """Unbind a credential from an agent — suspend by default, purge on request."""
+    await agent_svc.unbind_credential(
+        agent_id, credential_id=credential_id, purge=purge, identity=identity
+    )
+    return Response(status_code=204)
+
+
+@router.post(
+    "/agents/{agent_id}/credentials/{credential_id}:resume",
+    status_code=200,
+    operation_id="resumeAgentCredentialBinding",
+)
+async def resume_credential_binding(
+    agent_id: str,
+    credential_id: str,
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> CredentialBindingResponse:
+    """Lift a suspended credential binding — the reverse of the default unbind."""
+    binding = await agent_svc.resume_credential(
+        agent_id, credential_id=credential_id, identity=identity
+    )
+    return _credential_binding_response(binding)
 
 
 @router.post("/agents/{agent_id}:generate-api-key", status_code=200)

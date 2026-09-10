@@ -24,6 +24,26 @@ class ToolkitBindingEntry(BaseModel):
     serves: list[ServedApiRef] = []
 
 
+class CredentialBindingEntry(BaseModel):
+    """Direct agent↔credential binding summary for the /me response (theme 5 phase 1)."""
+
+    credential_id: str
+    # Human-readable credential name (control DB), same rationale as the
+    # toolkit entry's name (issue #686). Null when the credential no longer
+    # exists or its name could not be resolved.
+    name: str | None = None
+    bound_at: datetime
+    # A suspended binding is a reversible cut-off: it keeps its permission
+    # rules but is excluded from broker derivation, so the agent should not
+    # expect to execute through it until an operator resumes it.
+    suspended: bool = False
+    # Shared permission rule set this binding points at (None = inline rules)
+    # — tells the agent which policy object governs it (theme 5, Q-04).
+    rule_set_id: str | None = None
+    # The API this credential serves. Empty when unresolvable.
+    serves: list[ServedApiRef] = []
+
+
 class MeUser(BaseModel):
     """Identity response for a user actor."""
 
@@ -59,6 +79,9 @@ class MeAgent(BaseModel):
     parent_agent_id: str | None = None
     approved_by: str | None = None
     toolkit_bindings: list[ToolkitBindingEntry]
+    # Direct agent↔credential bindings (theme 5 phase 1). Coexists with
+    # toolkit_bindings until the toolkit path is removed.
+    credential_bindings: list[CredentialBindingEntry] = []
 
 
 class MeServiceAccount(BaseModel):

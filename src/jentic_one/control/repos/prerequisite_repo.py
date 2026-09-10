@@ -25,6 +25,26 @@ class BoundAgentRow(NamedTuple):
     bound_at: datetime
 
 
+class CredentialBoundAgentRow(NamedTuple):
+    """Result row for agents directly bound to a credential (theme 5 phase 1)."""
+
+    binding_id: str
+    agent_id: str
+    agent_name: str
+    agent_status: str
+    bound_at: datetime
+    suspended: bool
+    rule_set_id: str | None
+
+
+class AgentCredentialBindingRow(NamedTuple):
+    """Direct agent↔credential binding existence-check row (theme 5 phase 1)."""
+
+    binding_id: str
+    suspended: bool
+    rule_set_id: str | None
+
+
 class UserDisplayRow(NamedTuple):
     """Display fields for a user, resolved cross-DB for labelling only."""
 
@@ -152,6 +172,29 @@ class PrerequisiteRepository:
         return [row[0] for row in result.fetchall()]
 
     @staticmethod
+    async def list_credential_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
+        """Return the credential ids the agent is directly and actively bound to.
+
+        The direct-binding analogue of ``list_toolkit_ids_for_agent`` above
+        (theme 5 phase 1): an agent must be able to read a credential it is
+        bound to even when it owns nothing — same orphaned-agent rationale as
+        issues #665/#682, minus the toolkit hop. Suspended bindings grant no
+        visibility: a suspension is a cut-off, so the agent keeps seeing the
+        binding (with its flag) in ``/me`` but loses the widened read of the
+        credential itself until resumed. Runs against an admin session and
+        returns plain ids for ``build_access_filters`` (the control scoping
+        module must not import admin ORM models or query across databases).
+        """
+        result = await session.execute(
+            text(
+                "SELECT credential_id FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND suspended = false"
+            ),
+            {"agent_id": agent_id},
+        )
+        return [row[0] for row in result.fetchall()]
+
+    @staticmethod
     async def delete_agent_toolkit_bindings_for_toolkit(
         session: AsyncSession, *, toolkit_id: str
     ) -> int:
@@ -204,3 +247,119 @@ class PrerequisiteRepository:
                 {"toolkit_id": toolkit_id, "limit": limit},
             )
         return [BoundAgentRow(*row) for row in result.fetchall()]
+
+    @staticmethod
+    async def list_agents_for_credential(
+        session: AsyncSession,
+        *,
+        credential_id: str,
+        cursor: tuple[datetime, str] | None = None,
+        limit: int = 50,
+    ) -> list[CredentialBoundAgentRow]:
+        """Return agents directly bound to a credential, paginated by (bound_at DESC, id DESC).
+
+        The reverse lookup behind ``GET /credentials/{id}/agents`` (theme 5
+        phase 1) — the direct-binding analogue of ``list_agents_for_toolkit``
+        above, reading ``agent_credential_bindings`` instead of the toolkit
+        join table. Suspended bindings are included (with their flag) so the
+        credential-detail view can show a reversible cut-off, not hide it.
+        """
+        if cursor is not None:
+            cursor_ts, cursor_id = cursor
+            result = await session.execute(
+                text(
+                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id "
+                    "FROM agent_credential_bindings b "
+                    "JOIN agents a ON a.id = b.agent_id "
+                    "WHERE b.credential_id = :credential_id "
+                    "AND (b.bound_at < :cursor_ts "
+                    "     OR (b.bound_at = :cursor_ts AND b.id < :cursor_id)) "
+                    "ORDER BY b.bound_at DESC, b.id DESC "
+                    "LIMIT :limit"
+                ),
+                {
+                    "credential_id": credential_id,
+                    "cursor_ts": cursor_ts,
+                    "cursor_id": cursor_id,
+                    "limit": limit,
+                },
+            )
+        else:
+            result = await session.execute(
+                text(
+                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id "
+                    "FROM agent_credential_bindings b "
+                    "JOIN agents a ON a.id = b.agent_id "
+                    "WHERE b.credential_id = :credential_id "
+                    "ORDER BY b.bound_at DESC, b.id DESC "
+                    "LIMIT :limit"
+                ),
+                {"credential_id": credential_id, "limit": limit},
+            )
+        return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
+
+    @staticmethod
+    async def get_agent_credential_binding(
+        session: AsyncSession, *, agent_id: str, credential_id: str
+    ) -> AgentCredentialBindingRow | None:
+        """Return the direct binding's (id, suspended, rule_set_id), or ``None``.
+
+        Existence check for the per-binding permission endpoints (theme 5
+        phase 1): the binding row lives in the admin DB while the rules live
+        in the control DB, so the rules endpoints bridge the same seam the
+        reverse lookup above does. ``rule_set_id`` rides along so the dry-run
+        endpoint can evaluate an attached shared set instead of inline rules.
+        """
+        result = await session.execute(
+            text(
+                "SELECT id, suspended, rule_set_id FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
+            ),
+            {"agent_id": agent_id, "credential_id": credential_id},
+        )
+        row = result.fetchone()
+        if row is None:
+            return None
+        return AgentCredentialBindingRow(
+            binding_id=str(row[0]),
+            suspended=bool(row[1]),
+            rule_set_id=str(row[2]) if row[2] is not None else None,
+        )
+
+    @staticmethod
+    async def set_binding_rule_set(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
+    ) -> bool:
+        """Point a direct binding at a shared rule set (or back to inline rules).
+
+        Cross-DB write (control surface → admin table), same raw-SQL seam as
+        ``delete_agent_toolkit_bindings_for_toolkit`` above. ``None`` detaches:
+        the binding's inline ``agent_permission_rules`` rows apply again.
+        Returns ``False`` when no such binding exists.
+        """
+        result = await session.execute(
+            text(
+                "UPDATE agent_credential_bindings SET rule_set_id = :rule_set_id "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
+            ),
+            {"rule_set_id": rule_set_id, "agent_id": agent_id, "credential_id": credential_id},
+        )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
+    async def count_bindings_for_rule_set(session: AsyncSession, rule_set_id: str) -> int:
+        """Count direct bindings referencing a shared rule set (admin DB).
+
+        Guards rule-set deletion: a set still pointed at by bindings must not
+        vanish under them (the pointer is FK-less across the DB seam, so the
+        application enforces the invariant).
+        """
+        result = await session.execute(
+            text("SELECT COUNT(*) FROM agent_credential_bindings WHERE rule_set_id = :rule_set_id"),
+            {"rule_set_id": rule_set_id},
+        )
+        return int(result.scalar_one())

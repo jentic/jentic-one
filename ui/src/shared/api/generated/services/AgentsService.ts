@@ -12,6 +12,9 @@ import type { ApiKeyHistoryResponse } from '../models/ApiKeyHistoryResponse';
 import type { ApiKeyInfoResponse } from '../models/ApiKeyInfoResponse';
 import type { ApiKeyResponse } from '../models/ApiKeyResponse';
 import type { ClaimRequest } from '../models/ClaimRequest';
+import type { CredentialBindingListResponse } from '../models/CredentialBindingListResponse';
+import type { CredentialBindingResponse } from '../models/CredentialBindingResponse';
+import type { CredentialBindRequest } from '../models/CredentialBindRequest';
 import type { jentic_one__auth__web__schemas__agents__DenyRequest } from '../models/jentic_one__auth__web__schemas__agents__DenyRequest';
 import type { JwksUpdateRequest } from '../models/JwksUpdateRequest';
 import type { OAuthGrantListResponse } from '../models/OAuthGrantListResponse';
@@ -209,6 +212,135 @@ export class AgentsService {
             url: '/agents/{agent_id}/api-key/history',
             path: {
                 'agent_id': agentId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * List Credentials
+     * List direct credential bindings for an agent — requires agents:read or self.
+     * @returns CredentialBindingListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listAgentCredentials({
+        agentId,
+    }: {
+        agentId: string,
+    }): CancelablePromise<CredentialBindingListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/agents/{agent_id}/credentials',
+            path: {
+                'agent_id': agentId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Bind Credential
+     * Directly bind a credential to an agent (theme 5 phase 1).
+     *
+     * The caller must be able to see the target credential; a credential that
+     * does not exist or is outside the caller's visibility returns 404.
+     * @returns CredentialBindingResponse Successful Response
+     * @throws ApiError
+     */
+    public static bindAgentCredential({
+        agentId,
+        requestBody,
+    }: {
+        agentId: string,
+        requestBody: CredentialBindRequest,
+    }): CancelablePromise<CredentialBindingResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/agents/{agent_id}/credentials',
+            path: {
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Unbind Credential
+     * Unbind a credential from an agent — suspend by default, purge on request.
+     * @returns void
+     * @throws ApiError
+     */
+    public static unbindAgentCredential({
+        agentId,
+        credentialId,
+        purge = false,
+    }: {
+        agentId: string,
+        credentialId: string,
+        /**
+         * Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.
+         */
+        purge?: boolean,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/agents/{agent_id}/credentials/{credential_id}',
+            path: {
+                'agent_id': agentId,
+                'credential_id': credentialId,
+            },
+            query: {
+                'purge': purge,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Resume Credential Binding
+     * Lift a suspended credential binding — the reverse of the default unbind.
+     * @returns CredentialBindingResponse Successful Response
+     * @throws ApiError
+     */
+    public static resumeAgentCredentialBinding({
+        agentId,
+        credentialId,
+    }: {
+        agentId: string,
+        credentialId: string,
+    }): CancelablePromise<CredentialBindingResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/agents/{agent_id}/credentials/{credential_id}:resume',
+            path: {
+                'agent_id': agentId,
+                'credential_id': credentialId,
             },
             errors: {
                 400: `Bad Request`,

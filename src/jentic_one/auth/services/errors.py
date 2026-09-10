@@ -45,6 +45,36 @@ class ToolkitBindingNotFoundError(AuthServiceError):
         self.toolkit_id = toolkit_id
 
 
+class CredentialBindingConflictError(AuthServiceError):
+    """Raised when a direct agent↔credential binding already exists."""
+
+    def __init__(self, agent_id: str, credential_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' is already bound to credential '{credential_id}'")
+        self.agent_id = agent_id
+        self.credential_id = credential_id
+
+
+class CredentialBindingNotFoundError(AuthServiceError):
+    """Raised when a direct agent↔credential binding does not exist."""
+
+    def __init__(self, agent_id: str, credential_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' has no binding to credential '{credential_id}'")
+        self.agent_id = agent_id
+        self.credential_id = credential_id
+
+
+class CredentialNotVisibleError(AuthServiceError):
+    """Raised when the bind target credential does not exist or is not visible.
+
+    One error for both cases so the response does not leak whether a
+    credential id exists outside the caller's visibility.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(f"Credential '{credential_id}' not found")
+        self.credential_id = credential_id
+
+
 class InvalidGrantError(AuthServiceError):
     """Raised when a token grant is invalid (expired, consumed, or not found)."""
 
