@@ -992,6 +992,13 @@ class ServerConfig(BaseModel):
     hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
     which backend they reached — not an authorization signal. Defaults to
     ``local``; the hosted platform sets ``remote`` in its own config."""
+    advertised_broker_url: str = ""
+    """Client-reachable broker base URL published by ``GET /capabilities``
+    (``urls.broker``). Empty (the default) publishes ``null`` — the deployment's
+    internal control-plane→broker URL (``server.mcp.broker_url``, e.g.
+    ``http://broker:8100``) is topology-private and never published on the
+    unauthenticated document. Set this to the broker's public http(s) URL to
+    let clients discover where to route data-plane traffic."""
     mcp: McpConfig = Field(default_factory=McpConfig)
 
 

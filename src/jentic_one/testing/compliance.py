@@ -19,6 +19,7 @@ from typing import Any
 
 from jentic_one.registry.repos.search.protocol import SearchStrategy
 from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.web.capabilities import CapabilityContributor
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 #: Dialect names a backend can report from ``DatabaseBackend.dialect_name``.
@@ -187,4 +188,34 @@ class BaseUnregisteredUrlHandlerComplianceTest:
         handler = self.handler_factory()
         assert inspect.iscoroutinefunction(inspect.unwrap(type(handler).__call__)), (
             f"{type(handler).__name__}.__call__ must be `async def` — the broker router awaits it."
+        )
+
+
+class BaseCapabilityContributorComplianceTest:
+    """Subclass and override ``contributor_factory`` to prove a
+    ``CapabilityContributor`` conforms.
+
+    ``contributor_factory`` returns a ready contributor instance, e.g.::
+
+        class TestMyContributorCompliance(BaseCapabilityContributorComplianceTest):
+            def contributor_factory(self) -> CapabilityContributor:
+                return MyFeatureContributor()
+
+    The contributor must be **class-shaped** (an instance with ``__call__``),
+    not a bare ``def`` — ``assert_signature_matches`` inspects
+    ``type(contributor).__call__``, which a plain function cannot satisfy. The
+    ``isinstance`` check alone carries little weight here (``runtime_checkable``
+    on a ``__call__``-only protocol matches every callable); the signature
+    check is the real guard.
+    """
+
+    def contributor_factory(self) -> CapabilityContributor:
+        raise NotImplementedError("Subclass must override contributor_factory()")
+
+    def test_is_capability_contributor(self) -> None:
+        assert isinstance(self.contributor_factory(), CapabilityContributor)
+
+    def test_call_signature(self) -> None:
+        assert_signature_matches(
+            type(self.contributor_factory()), CapabilityContributor, "__call__"
         )
