@@ -805,6 +805,11 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # OAuth consent screen (presented after IdP login, before issuing the code).
         "consentPage",
         "consentSubmit",
+        # Inline first-agent creation on the zero-agents consent page (P4):
+        # same browser-mid-flow caller as the consent submit (no platform
+        # token yet); bound by the consent handle + a signed single-use
+        # agent-create blob, rate limited like the other consent endpoints.
+        "consentAgentCreate",
         # Local-account login form on the /authorize flow: the caller is a
         # browser mid-authorization with no token yet. Config-gated
         # (auth.local_login.enabled → 404) and rate limited instead.

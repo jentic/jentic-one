@@ -20,6 +20,18 @@ admin SPA session, offers inline approve/deny via POST /oauth/approval/decision
 authorize request, which now proceeds normally to the IdP redirect; on denial
 it closes the loop with a standard ``error=access_denied`` redirect when the
 redirect_uri is registered for the client.
+
+Inline agent creation (P4): a consenting user who owns zero active agents used
+to dead-end on a terminal empty-state page (the G12(b) first-run dead-end —
+deferred provisioning means a first-time user reaching consent owns nothing,
+and the MCP client just times out). The zero-agents arm now renders a
+create-agent form instead: POST /oauth/consent/agent verifies a signed,
+single-use ``agent-create``-purpose blob bound to the consent handle AND the
+authenticated subject, re-validates the handle and the zero-agents predicate
+(an agent appearing in between skips creation), creates the agent as the
+consenting user through the same ``AgentService.create`` path the SPA uses
+(default agent scopes, same audit + event), and re-enters GET /oauth/consent
+where the new agent renders pre-selected.
 """
 
 from __future__ import annotations
@@ -42,6 +54,7 @@ from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.core.idp import IdpClaims
+from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import (
     ConsentAgentNotEligibleError,
@@ -49,6 +62,8 @@ from jentic_one.auth.services.errors import (
     UserNotAdmittedError,
 )
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
+from jentic_one.auth.services.schemas.agents import AgentCreatePayload
+from jentic_one.auth.web.deps import get_agent_service
 from jentic_one.auth.web.flow import (
     CONSENT_SECURITY_HEADERS,
     CONSENT_STATE_MAX_AGE_SECONDS,
@@ -57,6 +72,7 @@ from jentic_one.auth.web.flow import (
     SPA_TOKEN_STORAGE_KEY,
     STATE_MAX_AGE_SECONDS,
     SessionContinuation,
+    agent_create_signing_key,
     approval_state_key,
     check_approval_status_rate_limit,
     check_rate_limit,
@@ -89,10 +105,12 @@ from jentic_one.shared.auth.permission_catalog import (
     compute_implies_transitive,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.db import DatabaseIntegrityError
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus, OAuthConsentModel
 from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.web import get_current_identity
-from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.deps import derive_origin, get_ctx
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 logger = structlog.get_logger(__name__)
@@ -687,7 +705,10 @@ _AGENT_OPTION_TEMPLATE = """<label class="agent">
     </ul>
 </label>"""
 
-# Zero active agents → an empty-state page, HTTP 200, no code minted.
+# Zero active agents AND no provisionable subject on the handle → a terminal
+# empty-state page, HTTP 200, no code minted. (The normal zero-agents arm now
+# renders the inline create-agent form below — P4; this template survives only
+# as the fallback for a malformed handle that names no subject.)
 _NO_AGENTS_PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -710,6 +731,59 @@ _NO_AGENTS_PAGE_TEMPLATE = """<!DOCTYPE html>
             have an administrator approve it, then retry the connection
             from your application.
         </p>
+    </div>
+</body>
+</html>
+"""
+
+
+# The zero-agents create-agent form (P4): rendered in place of the terminal
+# empty state when the consent handle names a provisionable subject. Static
+# page structure only — every dynamic value is HTML-escaped before it is
+# formatted in; no page script, so no JSON seam is needed.
+_CREATE_AGENT_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Create an agent | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>{page_css}</style>
+</head>
+<body>
+    <div class="card">
+        {logo_block}
+        <div class="user-info">
+            <div class="label">Signed in as</div>
+            <div class="email">{user_email}</div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> connects through an agent
+            &mdash; create your first one to continue</h1>
+        <div class="origin">{redirect_origin}</div>
+        <p class="description">
+            An agent is the identity this application will act as on
+            Jentic One: it belongs to you and carries its own set of
+            permissions, separate from your account. You don't have one
+            yet &mdash; name it to continue.
+        </p>
+        {error_block}
+        <form method="post" action="/oauth/consent/agent">
+            <label class="field-label" for="agent_name">Agent name</label>
+            <input type="text" id="agent_name" name="agent_name" value="{agent_name}"
+                   maxlength="255" required autofocus autocomplete="off"
+                   placeholder="e.g. my-assistant">
+            <input type="hidden" name="consent_token" value="{consent_token}">
+            <input type="hidden" name="create_state" value="{create_state}">
+            <button type="submit" class="primary block">Create agent and continue</button>
+        </form>
+        <div class="footer">
+            The agent is created with the platform's default agent
+            permissions, owned by you.<br>
+            You will still review and approve the connection on the
+            next screen.
+        </div>
     </div>
 </body>
 </html>
@@ -1416,6 +1490,102 @@ def _effective_agent_scopes(
     return [s for s in effective if s in agent_scopes]
 
 
+# ---------- inline agent creation on the consent page (P4) ----------
+
+#: Server-side ceiling for the inline agent name — matches the SPA creation
+#: path's ``AgentCreateRequest`` (min_length=1, max_length=255) and the
+#: ``agents.name`` column (String(255)).
+_AGENT_NAME_MAX_LENGTH = 255
+
+_AGENT_NAME_ERROR_MESSAGE = f"Enter an agent name (1\u2013{_AGENT_NAME_MAX_LENGTH} characters)."
+
+
+def _consent_user_key(params: dict[str, object]) -> str | None:
+    """A stable, non-PII identifier for the human the consent handle authenticated.
+
+    The agent-create blob is bound to this value so a blob minted for one
+    subject can never drive a create for another (a mid-window handle rewrite
+    or a spliced form must fail closed). Local-login handles pin the
+    provisioned ``user_id``; IdP handles pin the external subject (the user
+    row may not exist yet — deferred provisioning). ``None`` means the handle
+    names no provisionable subject at all, so no create form is offered.
+    """
+    local_user_id = params.get("local_user_id")
+    if local_user_id:
+        return f"local:{local_user_id}"
+    claims_data = params.get("claims")
+    if isinstance(claims_data, dict) and claims_data.get("external_subject"):
+        return f"idp:{claims_data['external_subject']}"
+    return None
+
+
+def _mint_agent_create_state(ctx: Context, *, consent_token: str, user_key: str) -> str:
+    """Sign the agent-create blob: bound to the consent handle AND the subject.
+
+    The handle rides in as a digest (never the raw handle — the blob lives in
+    page HTML and must not become a second copy of the capability), plus the
+    subject key and ``iat``. Same signer/mechanism as the other flow blobs,
+    fifth distinct purpose + derived key (mutual rejection with
+    ``state``/``approval``/``login``/``session``).
+    """
+    return sign_payload(
+        {
+            "ch_digest": hashlib.sha256(consent_token.encode()).hexdigest(),
+            "user_key": user_key,
+            # Per-mint entropy: without it two mints inside the same second
+            # are byte-identical (same payload → same HMAC), so the fresh
+            # blob a validation re-render embeds would already be burned.
+            "n": secrets.token_urlsafe(8),
+            "iat": str(int(time.time())),
+        },
+        agent_create_signing_key(ctx),
+        purpose="agent-create",
+    )
+
+
+async def _consume_agent_create_state(create_state: str, request: Request) -> bool:
+    """Atomically spend the agent-create blob; ``False`` on replay.
+
+    ``set_if_absent`` on a used-marker makes the first submit win and every
+    replay inside the TTL lose — a captured form must not keep creating
+    agents. A validation re-render mints a FRESH blob, so the burn here never
+    strands a user mid-retry.
+    """
+    backend = get_consent_backend(request)
+    digest = hashlib.sha256(create_state.encode()).hexdigest()
+    return await backend.set_if_absent(
+        f"agent-create-used:{digest}", b"1", ttl_s=float(CONSENT_STATE_MAX_AGE_SECONDS)
+    )
+
+
+def _render_agent_create_page(
+    params: dict[str, object],
+    *,
+    consent_token: str,
+    create_state: str,
+    agent_name: str = "",
+    error: str | None = None,
+) -> HTMLResponse:
+    """Render the inline create-agent form (P4) with the consent-page posture."""
+    app_name = str(params.get("client_name") or "Unknown Application")
+    user_email = str(params.get("user_email") or "unknown")
+    redirect_uri = str(params.get("redirect_uri") or "")
+    error_block = f'<div class="error" role="alert">{html_mod.escape(error)}</div>' if error else ""
+    html = _CREATE_AGENT_PAGE_TEMPLATE.format(
+        app_name=html_mod.escape(app_name),
+        user_email=html_mod.escape(user_email),
+        redirect_origin=html_mod.escape(_redirect_origin(redirect_uri)),
+        error_block=error_block,
+        agent_name=html_mod.escape(agent_name, quote=True),
+        consent_token=html_mod.escape(consent_token, quote=True),
+        create_state=html_mod.escape(create_state, quote=True),
+        fonts_url=FONTS_URL,
+        page_css=AUTH_PAGE_CSS,
+        logo_block=LOGO_BLOCK_HTML,
+    )
+    return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
+
+
 def _render_agent_options(
     agents: list[AgentConsentOption],
     candidate_scopes: list[str],
@@ -1484,6 +1654,7 @@ async def consent_page(
             oauth_client=oauth_client,
             consent_token=ch,
             authorize_svc=authorize_svc,
+            ctx=ctx,
         )
 
     scopes = [s.strip() for s in scope.split() if s.strip()]
@@ -1517,14 +1688,17 @@ async def _render_agent_consent_page(
     oauth_client: OAuthClientView,
     consent_token: str,
     authorize_svc: AuthorizeService,
+    ctx: Context,
 ) -> HTMLResponse:
     """The agent-picker consent variant for ``consent_model='agent'`` clients.
 
     Lists only the consenting user's own ``status='active'`` agents; zero
-    agents (or an unresolvable user — deferred provisioning means the row may
-    not exist yet) renders the empty-state page with no code minted. The
-    user identity is resolved read-only: rendering consent must not create a
-    user row (the Deny contract).
+    agents renders the inline create-agent form (P4) so a first-run user can
+    mint their first agent without leaving the flow — unless the handle names
+    no provisionable subject at all (malformed), which keeps the terminal
+    empty state. The user identity is resolved read-only: rendering consent
+    must not create a user row (the Deny contract); provisioning happens only
+    on the create submit, an affirmative user action.
     """
     app_name = str(params.get("client_name") or "Unknown Application")
     app_description = str(params.get("client_description") or "This application")
@@ -1542,13 +1716,21 @@ async def _render_agent_consent_page(
         user_id = await authorize_svc.resolve_existing_user_id(claims) if claims else None
     agents = await authorize_svc.list_consentable_agents(user_id) if user_id else []
     if not agents:
-        html = _NO_AGENTS_PAGE_TEMPLATE.format(
-            app_name=html_mod.escape(app_name),
-            fonts_url=FONTS_URL,
-            page_css=AUTH_PAGE_CSS,
-            logo_block=LOGO_BLOCK_HTML,
+        user_key = _consent_user_key(params)
+        if user_key is None:
+            # No local user and no IdP claims on the handle: nothing to
+            # provision from, so no create form — the pre-P4 empty state.
+            html = _NO_AGENTS_PAGE_TEMPLATE.format(
+                app_name=html_mod.escape(app_name),
+                fonts_url=FONTS_URL,
+                page_css=AUTH_PAGE_CSS,
+                logo_block=LOGO_BLOCK_HTML,
+            )
+            return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
+        create_state = _mint_agent_create_state(ctx, consent_token=consent_token, user_key=user_key)
+        return _render_agent_create_page(
+            params, consent_token=consent_token, create_state=create_state
         )
-        return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
     requested = [s.strip() for s in scope.split() if s.strip()]
     allowlist = (
@@ -1773,6 +1955,177 @@ async def _approve_agent_consent(
         )
         return RedirectResponse(url="/error?error=invalid_agent_selection", status_code=302)
     return grant_id_value, effective
+
+
+@router.post(
+    "/oauth/consent/agent",
+    operation_id="consentAgentCreate",
+    summary="Create the consenting user's first agent inline (consent page)",
+    response_model=None,
+    dependencies=[Depends(check_rate_limit)],
+)
+async def consent_agent_create(
+    request: Request,
+    consent_token: str = Form(..., json_schema_extra=SENSITIVE),
+    create_state: str = Form(..., json_schema_extra=SENSITIVE),
+    agent_name: str = Form(...),
+    ctx: Context = Depends(get_ctx),
+    authorize_svc: AuthorizeService = Depends(get_authorize_service),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> HTMLResponse | RedirectResponse:
+    """Create the consenting user's first agent from the zero-agents consent page (P4).
+
+    The form is rendered only when the consenting user owns zero active
+    agents (the G12(b) first-run dead-end). This submit verifies the signed
+    single-use ``agent-create`` blob (bound to the consent handle AND the
+    authenticated subject — no ambient credential is honored, so a cross-site
+    form cannot drive it: it would need both the unguessable handle and a
+    blob minted for that very handle), re-validates the handle and the D7
+    client gate, provisions the user row if deferred provisioning left none
+    (an affirmative user action, unlike rendering), re-checks the zero-agents
+    predicate (an agent appearing in between skips creation — idempotent),
+    creates the agent through the same ``AgentService.create`` path as the
+    SPA (owner = the consenting user, default agent scopes, same audit +
+    event), and 303-redirects back into ``GET /oauth/consent`` where the new
+    agent renders pre-selected.
+
+    Failure arms: expired/tampered/replayed blob and expired handle → the
+    consent flow's standard ``invalid_consent`` error redirect; a gated
+    client → ``access_denied``; an invalid agent name → the form re-rendered
+    with the error inline and a fresh blob.
+    """
+    try:
+        blob = verify_payload(
+            create_state,
+            agent_create_signing_key(ctx),
+            purpose="agent-create",
+            max_age=CONSENT_STATE_MAX_AGE_SECONDS,
+        )
+    except InvalidGrantError:
+        logger.warning("oauth_consent_agent_create_invalid_state")
+        return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+
+    if not await _consume_agent_create_state(create_state, request):
+        logger.warning("oauth_consent_agent_create_replayed")
+        return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+
+    params = await _load_consent_handle(consent_token, request)
+    if params is None:
+        # Consent handle expired or unknown — same arm as the consent submit.
+        logger.warning("oauth_consent_invalid_handle", stage="agent_create")
+        return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+
+    user_key = _consent_user_key(params)
+    if (
+        blob.get("ch_digest") != hashlib.sha256(consent_token.encode()).hexdigest()
+        or user_key is None
+        or blob.get("user_key") != user_key
+    ):
+        # The blob was minted for a different handle or a different subject —
+        # a spliced form fails closed with the standard error.
+        logger.warning("oauth_consent_agent_create_binding_mismatch")
+        return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+
+    client_id = str(params.get("client_id") or "")
+    oauth_client: OAuthClientView | None = None
+    if not is_platform_client(client_id, ctx):
+        # Mid-flow D7 re-check (see consent_submit): a client denied between
+        # the form render and this submit must not cause resource creation.
+        oauth_client = await get_cached_oauth_client(request, client_id, ctx)
+        if oauth_client is None or not client_gate_passes(oauth_client):
+            logger.warning(
+                "oauth_client_gate_failed_midflow", client_id=client_id, stage="agent_create"
+            )
+            return RedirectResponse(url="/error?error=access_denied", status_code=302)
+    if oauth_client is None or oauth_client.consent_model != OAuthConsentModel.AGENT.value:
+        # Only the agent-picker consent variant ever renders the create form;
+        # platform and consent_model='user' clients have no zero-agents arm.
+        logger.warning("oauth_consent_agent_create_wrong_consent_model", client_id=client_id)
+        return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+
+    # HTTP-level name validation BEFORE any side effect (no user row is
+    # provisioned for a submit that only re-renders the form). Business
+    # validation beyond the length ceiling stays in the service layer.
+    name = agent_name.strip()
+    if not name or len(name) > _AGENT_NAME_MAX_LENGTH:
+        fresh = _mint_agent_create_state(ctx, consent_token=consent_token, user_key=user_key)
+        return _render_agent_create_page(
+            params,
+            consent_token=consent_token,
+            create_state=fresh,
+            agent_name=name,
+            error=_AGENT_NAME_ERROR_MESSAGE,
+        )
+
+    claims = _claims_from_params(params)
+    raw_local_user_id = params.get("local_user_id")
+    if raw_local_user_id:
+        user_id = str(raw_local_user_id)
+    else:
+        resolved = await authorize_svc.resolve_existing_user_id(claims) if claims else None
+        if resolved is None:
+            if claims is None:
+                # _consent_user_key above guarantees claims exist on this arm;
+                # belt and braces for a malformed handle.
+                logger.warning("oauth_consent_missing_claims", client_id=client_id)
+                return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
+            # Deferred provisioning: creating an agent is an affirmative user
+            # action, so the user row is provisioned here (same admission
+            # policy + audit as the consent approve arm — never at render).
+            try:
+                resolved = await authorize_svc.provision_from_claims(claims)
+            except UserNotAdmittedError:
+                logger.warning("oauth_user_not_admitted", client_id=client_id)
+                return RedirectResponse(url="/error?error=access_denied", status_code=302)
+            except InvalidGrantError:
+                logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
+                return RedirectResponse(url="/error?error=server_error", status_code=302)
+        user_id = resolved
+
+    # Idempotency/race re-check: if an agent appeared between the form render
+    # and this submit (another tab, an admin, a parallel submit), create
+    # nothing — just re-enter consent, which now renders the picker.
+    agents = await authorize_svc.list_consentable_agents(user_id)
+    if not agents:
+        # Owner is ALWAYS the consenting user resolved from the server-side
+        # handle — the form carries no owner input. Scopes=None applies the
+        # platform's DEFAULT_AGENT_SCOPES, exactly like the SPA path; the
+        # service records the same REGISTER audit + agent.created event.
+        identity = Identity(
+            sub=user_id,
+            email=str(params.get("user_email") or ""),
+            actor_type=ActorType.USER,
+            origin=derive_origin(request.headers.get("user-agent")),
+        )
+        try:
+            view = await agent_svc.create(
+                AgentCreatePayload(name=name, description=None, scopes=None),
+                owner_id=user_id,
+                identity=identity,
+            )
+        except DatabaseIntegrityError:
+            # The owner FK refused (user row vanished mid-flow) — the shared
+            # browser-facing error, never a raw 500.
+            logger.warning("oauth_consent_agent_create_failed", client_id=client_id)
+            return RedirectResponse(url="/error?error=server_error", status_code=302)
+        logger.info(
+            "oauth_consent_agent_created",
+            client_id=client_id,
+            agent_id=view.id,
+            user_id=user_id,
+        )
+    else:
+        logger.info(
+            "oauth_consent_agent_create_skipped_existing", client_id=client_id, user_id=user_id
+        )
+
+    # 303 (POST → GET) back into the consent page: with exactly one agent the
+    # picker pre-checks it, so the user approves in the same breath. The
+    # handle was just re-validated against the state backend, so this stays a
+    # fixed same-origin path — never request-derived beyond the handle id.
+    return RedirectResponse(
+        url=f"/oauth/consent?{urlencode({'ch': consent_token})}", status_code=303
+    )
 
 
 def _error_redirect(

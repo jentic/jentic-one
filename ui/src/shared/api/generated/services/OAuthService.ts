@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { Body_consentAgentCreate } from '../models/Body_consentAgentCreate';
 import type { Body_consentSubmit } from '../models/Body_consentSubmit';
 import type { Body_loginSubmit } from '../models/Body_loginSubmit';
 import type { IntrospectRequest } from '../models/IntrospectRequest';
@@ -416,6 +417,49 @@ export class OAuthService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/consent',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Create the consenting user's first agent inline (consent page)
+     * Create the consenting user's first agent from the zero-agents consent page (P4).
+     *
+     * The form is rendered only when the consenting user owns zero active
+     * agents (the G12(b) first-run dead-end). This submit verifies the signed
+     * single-use ``agent-create`` blob (bound to the consent handle AND the
+     * authenticated subject — no ambient credential is honored, so a cross-site
+     * form cannot drive it: it would need both the unguessable handle and a
+     * blob minted for that very handle), re-validates the handle and the D7
+     * client gate, provisions the user row if deferred provisioning left none
+     * (an affirmative user action, unlike rendering), re-checks the zero-agents
+     * predicate (an agent appearing in between skips creation — idempotent),
+     * creates the agent through the same ``AgentService.create`` path as the
+     * SPA (owner = the consenting user, default agent scopes, same audit +
+     * event), and 303-redirects back into ``GET /oauth/consent`` where the new
+     * agent renders pre-selected.
+     *
+     * Failure arms: expired/tampered/replayed blob and expired handle → the
+     * consent flow's standard ``invalid_consent`` error redirect; a gated
+     * client → ``access_denied``; an invalid agent name → the form re-rendered
+     * with the error inline and a fresh blob.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static consentAgentCreate({
+        formData,
+    }: {
+        formData: Body_consentAgentCreate,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/oauth/consent/agent',
             formData: formData,
             mediaType: 'application/x-www-form-urlencoded',
             errors: {

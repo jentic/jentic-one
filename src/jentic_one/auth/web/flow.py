@@ -372,6 +372,19 @@ def session_signing_key(ctx: Context) -> str:
     return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "session")
 
 
+def agent_create_signing_key(ctx: Context) -> str:
+    """Signing key for the consent-page inline agent-create blob (P4).
+
+    Fifth purpose in the matrix, same mutual-rejection discipline: only the
+    zero-agents consent page mints it (bound to the consent handle AND the
+    authenticated subject) and only ``POST /oauth/consent/agent`` redeems it
+    (single-use). A ``state``/``approval``/``login``/``session`` blob can
+    never drive the create form, and an agent-create blob can never open the
+    login form, the IdP callback, or the approval endpoints.
+    """
+    return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "agent-create")
+
+
 def sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:
     """Encode and HMAC-sign a payload with a purpose discriminator."""
     payload["_purpose"] = purpose

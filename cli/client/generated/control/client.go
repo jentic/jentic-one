@@ -1417,6 +1417,13 @@ type BindingWarningSchema struct {
 	Message string `json:"message"`
 }
 
+// BodyConsentAgentCreate defines model for Body_consentAgentCreate.
+type BodyConsentAgentCreate struct {
+	AgentName    string `json:"agent_name"`
+	ConsentToken string `json:"consent_token"`
+	CreateState  string `json:"create_state"`
+}
+
 // BodyConsentSubmit defines model for Body_consentSubmit.
 type BodyConsentSubmit struct {
 	Action       string  `json:"action"`
@@ -3922,6 +3929,9 @@ type ApprovalDecisionEndpointJSONRequestBody = OAuthApprovalDecisionRequest
 // ConsentSubmitFormdataRequestBody defines body for ConsentSubmit for application/x-www-form-urlencoded ContentType.
 type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
 
+// ConsentAgentCreateFormdataRequestBody defines body for ConsentAgentCreate for application/x-www-form-urlencoded ContentType.
+type ConsentAgentCreateFormdataRequestBody = BodyConsentAgentCreate
+
 // IntrospectEndpointJSONRequestBody defines body for IntrospectEndpoint for application/json ContentType.
 type IntrospectEndpointJSONRequestBody = IntrospectRequest
 
@@ -6337,6 +6347,62 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
 	ConsentSubmitWithFormdataBody(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
+	//
+	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	//
+	// The form is rendered only when the consenting user owns zero active
+	// agents (the G12(b) first-run dead-end). This submit verifies the signed
+	// single-use ``agent-create`` blob (bound to the consent handle AND the
+	// authenticated subject — no ambient credential is honored, so a cross-site
+	// form cannot drive it: it would need both the unguessable handle and a
+	// blob minted for that very handle), re-validates the handle and the D7
+	// client gate, provisions the user row if deferred provisioning left none
+	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// predicate (an agent appearing in between skips creation — idempotent),
+	// creates the agent through the same ``AgentService.create`` path as the
+	// SPA (owner = the consenting user, default agent scopes, same audit +
+	// event), and 303-redirects back into ``GET /oauth/consent`` where the new
+	// agent renders pre-selected.
+	//
+	// Failure arms: expired/tampered/replayed blob and expired handle → the
+	// consent flow's standard ``invalid_consent`` error redirect; a gated
+	// client → ``access_denied``; an invalid agent name → the form re-rendered
+	// with the error inline and a fresh blob.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+	ConsentAgentCreateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConsentAgentCreateWithFormdataBody Create the consenting user's first agent inline (consent page)
+	//
+	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	//
+	// The form is rendered only when the consenting user owns zero active
+	// agents (the G12(b) first-run dead-end). This submit verifies the signed
+	// single-use ``agent-create`` blob (bound to the consent handle AND the
+	// authenticated subject — no ambient credential is honored, so a cross-site
+	// form cannot drive it: it would need both the unguessable handle and a
+	// blob minted for that very handle), re-validates the handle and the D7
+	// client gate, provisions the user row if deferred provisioning left none
+	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// predicate (an agent appearing in between skips creation — idempotent),
+	// creates the agent through the same ``AgentService.create`` path as the
+	// SPA (owner = the consenting user, default agent scopes, same audit +
+	// event), and 303-redirects back into ``GET /oauth/consent`` where the new
+	// agent renders pre-selected.
+	//
+	// Failure arms: expired/tampered/replayed blob and expired handle → the
+	// consent flow's standard ``invalid_consent`` error redirect; a gated
+	// client → ``access_denied``; an invalid agent name → the form re-rendered
+	// with the error inline and a fresh blob.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+	ConsentAgentCreateWithFormdataBody(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IntrospectEndpointWithBody Introspect Endpoint
 	//
@@ -10286,6 +10352,82 @@ func (c *Client) ConsentSubmitWithBody(ctx context.Context, contentType string, 
 // Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
 func (c *Client) ConsentSubmitWithFormdataBody(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConsentSubmitRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
+//
+// Create the consenting user's first agent from the zero-agents consent page (P4).
+//
+// The form is rendered only when the consenting user owns zero active
+// agents (the G12(b) first-run dead-end). This submit verifies the signed
+// single-use “agent-create“ blob (bound to the consent handle AND the
+// authenticated subject — no ambient credential is honored, so a cross-site
+// form cannot drive it: it would need both the unguessable handle and a
+// blob minted for that very handle), re-validates the handle and the D7
+// client gate, provisions the user row if deferred provisioning left none
+// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// predicate (an agent appearing in between skips creation — idempotent),
+// creates the agent through the same “AgentService.create“ path as the
+// SPA (owner = the consenting user, default agent scopes, same audit +
+// event), and 303-redirects back into “GET /oauth/consent“ where the new
+// agent renders pre-selected.
+//
+// Failure arms: expired/tampered/replayed blob and expired handle → the
+// consent flow's standard “invalid_consent“ error redirect; a gated
+// client → “access_denied“; an invalid agent name → the form re-rendered
+// with the error inline and a fresh blob.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+func (c *Client) ConsentAgentCreateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentAgentCreateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConsentAgentCreateWithFormdataBody Create the consenting user's first agent inline (consent page)
+//
+// Create the consenting user's first agent from the zero-agents consent page (P4).
+//
+// The form is rendered only when the consenting user owns zero active
+// agents (the G12(b) first-run dead-end). This submit verifies the signed
+// single-use “agent-create“ blob (bound to the consent handle AND the
+// authenticated subject — no ambient credential is honored, so a cross-site
+// form cannot drive it: it would need both the unguessable handle and a
+// blob minted for that very handle), re-validates the handle and the D7
+// client gate, provisions the user row if deferred provisioning left none
+// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// predicate (an agent appearing in between skips creation — idempotent),
+// creates the agent through the same “AgentService.create“ path as the
+// SPA (owner = the consenting user, default agent scopes, same audit +
+// event), and 303-redirects back into “GET /oauth/consent“ where the new
+// agent renders pre-selected.
+//
+// Failure arms: expired/tampered/replayed blob and expired handle → the
+// consent flow's standard “invalid_consent“ error redirect; a gated
+// client → “access_denied“; an invalid agent name → the form re-rendered
+// with the error inline and a fresh blob.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+func (c *Client) ConsentAgentCreateWithFormdataBody(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentAgentCreateRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -18574,6 +18716,46 @@ func NewConsentSubmitRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewConsentAgentCreateRequestWithFormdataBody calls the generic ConsentAgentCreate builder with application/x-www-form-urlencoded body
+func NewConsentAgentCreateRequestWithFormdataBody(server string, body ConsentAgentCreateFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewConsentAgentCreateRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewConsentAgentCreateRequestWithBody constructs an http.Request for the ConsentAgentCreate method, with any body, and a specified content type
+func NewConsentAgentCreateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/consent/agent")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewIntrospectEndpointRequest calls the generic IntrospectEndpoint builder with application/json body
 func NewIntrospectEndpointRequest(server string, body IntrospectEndpointJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -22708,6 +22890,62 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
 	ConsentSubmitWithFormdataBodyWithResponse(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error)
+
+	// ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
+	//
+	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	//
+	// The form is rendered only when the consenting user owns zero active
+	// agents (the G12(b) first-run dead-end). This submit verifies the signed
+	// single-use ``agent-create`` blob (bound to the consent handle AND the
+	// authenticated subject — no ambient credential is honored, so a cross-site
+	// form cannot drive it: it would need both the unguessable handle and a
+	// blob minted for that very handle), re-validates the handle and the D7
+	// client gate, provisions the user row if deferred provisioning left none
+	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// predicate (an agent appearing in between skips creation — idempotent),
+	// creates the agent through the same ``AgentService.create`` path as the
+	// SPA (owner = the consenting user, default agent scopes, same audit +
+	// event), and 303-redirects back into ``GET /oauth/consent`` where the new
+	// agent renders pre-selected.
+	//
+	// Failure arms: expired/tampered/replayed blob and expired handle → the
+	// consent flow's standard ``invalid_consent`` error redirect; a gated
+	// client → ``access_denied``; an invalid agent name → the form re-rendered
+	// with the error inline and a fresh blob.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+	ConsentAgentCreateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error)
+
+	// ConsentAgentCreateWithFormdataBodyWithResponse Create the consenting user's first agent inline (consent page)
+	//
+	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	//
+	// The form is rendered only when the consenting user owns zero active
+	// agents (the G12(b) first-run dead-end). This submit verifies the signed
+	// single-use ``agent-create`` blob (bound to the consent handle AND the
+	// authenticated subject — no ambient credential is honored, so a cross-site
+	// form cannot drive it: it would need both the unguessable handle and a
+	// blob minted for that very handle), re-validates the handle and the D7
+	// client gate, provisions the user row if deferred provisioning left none
+	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// predicate (an agent appearing in between skips creation — idempotent),
+	// creates the agent through the same ``AgentService.create`` path as the
+	// SPA (owner = the consenting user, default agent scopes, same audit +
+	// event), and 303-redirects back into ``GET /oauth/consent`` where the new
+	// agent renders pre-selected.
+	//
+	// Failure arms: expired/tampered/replayed blob and expired handle → the
+	// consent flow's standard ``invalid_consent`` error redirect; a gated
+	// client → ``access_denied``; an invalid agent name → the form re-rendered
+	// with the error inline and a fresh blob.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+	ConsentAgentCreateWithFormdataBodyWithResponse(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error)
 
 	// IntrospectEndpointWithBodyWithResponse Introspect Endpoint
 	//
@@ -33394,6 +33632,75 @@ func (r ConsentSubmitHTTPResp) ContentType() string {
 	return ""
 }
 
+type ConsentAgentCreateHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConsentAgentCreateHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ConsentAgentCreateHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConsentAgentCreateHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConsentAgentCreateHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConsentAgentCreateHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type IntrospectEndpointHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -40474,6 +40781,74 @@ func (c *ClientWithResponses) ConsentSubmitWithFormdataBodyWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseConsentSubmitHTTPResp(rsp)
+}
+
+// ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
+//
+// Create the consenting user's first agent from the zero-agents consent page (P4).
+//
+// The form is rendered only when the consenting user owns zero active
+// agents (the G12(b) first-run dead-end). This submit verifies the signed
+// single-use “agent-create“ blob (bound to the consent handle AND the
+// authenticated subject — no ambient credential is honored, so a cross-site
+// form cannot drive it: it would need both the unguessable handle and a
+// blob minted for that very handle), re-validates the handle and the D7
+// client gate, provisions the user row if deferred provisioning left none
+// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// predicate (an agent appearing in between skips creation — idempotent),
+// creates the agent through the same “AgentService.create“ path as the
+// SPA (owner = the consenting user, default agent scopes, same audit +
+// event), and 303-redirects back into “GET /oauth/consent“ where the new
+// agent renders pre-selected.
+//
+// Failure arms: expired/tampered/replayed blob and expired handle → the
+// consent flow's standard “invalid_consent“ error redirect; a gated
+// client → “access_denied“; an invalid agent name → the form re-rendered
+// with the error inline and a fresh blob.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+func (c *ClientWithResponses) ConsentAgentCreateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error) {
+	rsp, err := c.ConsentAgentCreateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentAgentCreateHTTPResp(rsp)
+}
+
+// ConsentAgentCreateWithFormdataBodyWithResponse Create the consenting user's first agent inline (consent page)
+//
+// Create the consenting user's first agent from the zero-agents consent page (P4).
+//
+// The form is rendered only when the consenting user owns zero active
+// agents (the G12(b) first-run dead-end). This submit verifies the signed
+// single-use “agent-create“ blob (bound to the consent handle AND the
+// authenticated subject — no ambient credential is honored, so a cross-site
+// form cannot drive it: it would need both the unguessable handle and a
+// blob minted for that very handle), re-validates the handle and the D7
+// client gate, provisions the user row if deferred provisioning left none
+// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// predicate (an agent appearing in between skips creation — idempotent),
+// creates the agent through the same “AgentService.create“ path as the
+// SPA (owner = the consenting user, default agent scopes, same audit +
+// event), and 303-redirects back into “GET /oauth/consent“ where the new
+// agent renders pre-selected.
+//
+// Failure arms: expired/tampered/replayed blob and expired handle → the
+// consent flow's standard “invalid_consent“ error redirect; a gated
+// client → “access_denied“; an invalid agent name → the form re-rendered
+// with the error inline and a fresh blob.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+func (c *ClientWithResponses) ConsentAgentCreateWithFormdataBodyWithResponse(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error) {
+	rsp, err := c.ConsentAgentCreateWithFormdataBody(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentAgentCreateHTTPResp(rsp)
 }
 
 // IntrospectEndpointWithBodyWithResponse Introspect Endpoint
@@ -49810,6 +50185,60 @@ func ParseConsentSubmitHTTPResp(rsp *http.Response) (*ConsentSubmitHTTPResp, err
 	}
 
 	response := &ConsentSubmitHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseConsentAgentCreateHTTPResp parses an HTTP response from a ConsentAgentCreateWithResponse call
+func ParseConsentAgentCreateHTTPResp(rsp *http.Response) (*ConsentAgentCreateHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConsentAgentCreateHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

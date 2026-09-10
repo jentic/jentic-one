@@ -347,7 +347,7 @@ h1 {
 	letter-spacing: 0.5px;
 	margin-bottom: 6px;
 }
-input[type="email"], input[type="password"] {
+input[type="email"], input[type="password"], input[type="text"] {
 	width: 100%;
 	padding: 12px 14px;
 	background: hsl(var(--input-bg));
