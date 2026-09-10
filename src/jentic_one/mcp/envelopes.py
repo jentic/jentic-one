@@ -142,6 +142,12 @@ def soft_error_result(ctx: Context, err: ToolError) -> mcp_types.CallToolResult:
     if next_tool in SERVED_TOOLS:
         payload["next_tool"] = next_tool
     for key, value in (err.extra or {}).items():
+        # The same lane filter guards the ``extra`` pass-through: without it a
+        # call site could smuggle a dangling pointer past the seam via
+        # ``extra={"next_tool": …}`` (``setdefault`` would insert it whenever
+        # the filter above dropped the field).
+        if key == "next_tool" and value not in SERVED_TOOLS:
+            continue
         payload.setdefault(key, value)
     payload["instance"] = instance_stamp(ctx)
     return _text_result(payload, is_error=True)

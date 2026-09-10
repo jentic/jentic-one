@@ -83,3 +83,15 @@ def test_every_emittable_pointer_resolves_in_the_served_surface() -> None:
             payload = _payload(soft_error_result(_ctx(), err))
             emitted = payload.get("next_tool")
             assert emitted is None or emitted in SERVED_TOOLS
+
+
+def test_extra_carried_pointers_cannot_bypass_the_lane_filter() -> None:
+    """The ``extra`` pass-through is also an emission path: a call site
+    passing ``extra={"next_tool": …}`` must hit the same SERVED_TOOLS
+    projection, or the invariant above is only true for the ``next_tool``
+    keyword. Unserved pointers are dropped; served ones still ride."""
+    dangling = ToolError(CODE_TRANSPORT_ERROR, "boom", extra={"next_tool": "get_started"})
+    assert "next_tool" not in _payload(soft_error_result(_ctx(), dangling))
+
+    served = ToolError(CODE_TRANSPORT_ERROR, "boom", extra={"next_tool": "whoami"})
+    assert _payload(soft_error_result(_ctx(), served))["next_tool"] == "whoami"
