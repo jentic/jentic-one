@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
 from jentic_one.control.core.schema.access_requests import AccessRequest
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.basic_credentials import BasicCredential
 from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.control.core.schema.permission_rule_sets import (
+    PermissionRuleSet,
+    PermissionRuleSetRule,
+)
 from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
 from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
@@ -21,6 +26,7 @@ from jentic_one.shared.db.base import ControlBase
 __all__ = [
     "AccessRequest",
     "AccessRequestItem",
+    "AgentPermissionRule",
     "BasicCredential",
     "ConnectNonce",
     "ControlBase",
@@ -28,6 +34,8 @@ __all__ = [
     "CustomerAPIKey",
     "OAuthClientCredential",
     "OAuthToken",
+    "PermissionRuleSet",
+    "PermissionRuleSetRule",
     "Sigv4Credential",
     "TokenValueCredential",
     "Toolkit",

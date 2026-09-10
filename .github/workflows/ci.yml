@@ -13,8 +13,9 @@ on:
     # PR is based on the previous phase's branch, not main) still gets full CI.
     # GitHub reads this pull_request filter from the PR's BASE branch, so a PR based
     # on cli-v2-phase-0 only triggers this workflow if cli-v2-phase-0's own ci.yml
-    # lists that base pattern here.
-    branches: [main, 'cli-v2-*']
+    # lists that base pattern here. Same for `feat/theme-5-*` (the theme-5
+    # toolkit-removal stacked-PR chain).
+    branches: [main, 'cli-v2-*', 'feat/theme-5-*']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
