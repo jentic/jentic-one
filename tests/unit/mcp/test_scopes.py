@@ -90,7 +90,12 @@ async def test_scope_failure_renders_not_authenticated(
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "NOT_AUTHENTICATED"
-    assert payload["next_tool"] == "get_started"
+    # The code-keyed stdio default pointer is get_started, which this mount
+    # does not serve — the lane-aware filter (#1254) drops it rather than
+    # pointing the model at a tool absent from tools/list. The get_started
+    # spelling still rides the actionable prose (shared contract).
+    assert "next_tool" not in payload
+    assert "get_started" in payload["actionable_step"]
 
 
 async def test_search_catalog_scope_failure_is_the_agent_fixable_special_case() -> None:
@@ -101,7 +106,10 @@ async def test_search_catalog_scope_failure_is_the_agent_fixable_special_case() 
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    assert payload["next_tool"] == "request_access"
+    # request_access stays stdio-only, so the pointer is dropped on this lane
+    # (#1254); the actionable prose still names it (shared contract spelling).
+    assert "next_tool" not in payload
+    assert "request_access" in payload["actionable_step"]
     assert "capabilities:read" in payload["error"]
     prefix, _, tail = payload["error"].partition("scope: ")
     assert prefix == "reading the catalog requires the capabilities:read "

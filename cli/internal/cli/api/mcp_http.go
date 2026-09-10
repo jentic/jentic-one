@@ -18,7 +18,8 @@ package api
 //     the client side — this is the §3.7.5 credential-less posture.
 //   - TCP loopback (--listen 127.0.0.1:…): no peer identity exists on TCP,
 //     so a bearer token is REQUIRED (--token-file); --allow-unauthenticated
-//     is the explicit, loopback-only opt-out.
+//     is the explicit, loopback-only opt-out (mutually exclusive with
+//     --token-file — the pair is a refused contradiction).
 //   - TCP non-loopback: refused unless --allow-non-loopback AND TLS
 //     (--tls-cert/--tls-key) AND a token are all present (phase acceptance).
 //
@@ -155,7 +156,13 @@ func resolveMCPBindPosture(opts *mcpHTTPOptions) (*mcpBindPosture, error) {
 
 	// Loopback TCP: no peer identity exists, so require the token unless the
 	// operator explicitly accepts that every local uid may use this
-	// context's keys (the documented single-user-machine trade-off).
+	// context's keys (the documented single-user-machine trade-off). The two
+	// flags contradict each other — one configures the bearer gate, the
+	// other disables it — so presenting both is refused rather than letting
+	// either silently win (#1242).
+	if opts.tokenFile != "" && opts.allowUnauthenticated {
+		return nil, errors.New("--token-file and --allow-unauthenticated are contradictory: the token file configures the bearer gate and --allow-unauthenticated disables it — pass exactly one")
+	}
 	if len(token) == 0 && !opts.allowUnauthenticated {
 		return nil, fmt.Errorf("refusing the loopback bind %q without auth: TCP has no peer identity, so provide --token-file (or pass --allow-unauthenticated to accept that every local user may act as this context)", opts.listen)
 	}

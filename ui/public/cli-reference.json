@@ -2809,7 +2809,7 @@
               "name": "allow-unauthenticated",
               "type": "bool",
               "default": "false",
-              "usage": "serve loopback --listen without a token — every local user may then act as this context; loopback-only"
+              "usage": "serve loopback --listen without a token — every local user may then act as this context; loopback-only, mutually exclusive with --token-file"
             },
             {
               "name": "bearer-file",
