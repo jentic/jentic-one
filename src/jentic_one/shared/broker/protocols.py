@@ -194,6 +194,80 @@ class ToolkitDeriverProtocol(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class BoundCredential:
+    """One direct agent→credential binding candidate for an API identity.
+
+    Carries the binding's ``rule_set_id`` alongside the credential id so the
+    rule evaluator can honour an attached shared rule set without a second
+    admin-DB round-trip after credential selection.
+    """
+
+    credential_id: str
+    rule_set_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialDerivation:
+    """Result of direct-binding credential derivation (theme-5 Phase 2).
+
+    The direct-binding twin of :class:`ToolkitDerivation` — ``credentials`` is
+    the intersection of the agent's **active** (non-suspended) direct bindings
+    with the credentials whose stored identity covers the API. The remaining
+    fields explain an empty set so the denial picks the right directive:
+
+    - ``agent_bound_any`` — the agent has at least one active direct binding.
+    - ``api_served`` — at least one active credential (bound to this agent or
+      not) covers the API. Deliberately a *bool*, not ids: covering credentials
+      can belong to other owners, so carrying their ids here would invite a
+      cross-tenant leak into a directive (mirrors the ``api_served_toolkits``
+      truthiness-only caveat).
+    - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
+      but none of its bound credentials cover the operation identity.
+    """
+
+    credentials: tuple[BoundCredential, ...]
+    agent_bound_any: bool
+    api_served: bool
+    identity_mismatch: IdentityMismatch | None
+
+
+@runtime_checkable
+class CredentialDeriverProtocol(Protocol):
+    """Derives which of an agent's directly-bound credentials cover an API identity.
+
+    Empty ``credentials`` → 403, one → use it, many → name/id header
+    disambiguation then most-specific-wins (a genuine unaddressed tie → 409).
+    """
+
+    async def derive_credentials(
+        self, *, agent_id: str, vendor: str, name: str, version: str
+    ) -> CredentialDerivation: ...
+
+
+@runtime_checkable
+class AgentRuleEvaluatorProtocol(Protocol):
+    """Evaluates direct-binding permission rules against an inbound request.
+
+    Keyed on ``(agent_id, credential_id)`` — no vendor pooling (direct bindings
+    evaluate strictly against the specific binding). When the binding carries a
+    ``rule_set_id`` the shared ``permission_rule_set_rules`` list is evaluated
+    *instead of* the inline rows. First-match-wins over the ordered list; an
+    exhausted list defaults to deny (secure-by-default).
+    """
+
+    async def evaluate(
+        self,
+        *,
+        agent_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
+        method: str,
+        path: str,
+        operation_id: str | None,
+    ) -> RuleEvaluation: ...
+
+
+@dataclass(frozen=True, slots=True)
 class IdempotencyClaim:
     """Outcome of an idempotency claim attempt.
 

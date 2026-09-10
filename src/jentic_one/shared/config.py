@@ -839,6 +839,19 @@ class BrokerConfig(BaseModel):
     # Caches the ordered toolkit_permission_rules per toolkit_id. Same staleness
     # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
     rule_cache_ttl_s: float = 3.0
+    # Upper bound on entries in each per-worker permission-rule LRU (toolkit and
+    # direct-binding evaluators alike). Size against agents x credentials for the
+    # direct path — each active (agent, credential) binding is one entry — and
+    # against toolkits x vendors for the toolkit path. Eviction is LRU by entry
+    # count (the TTL only bounds staleness, never memory).
+    rule_cache_max_entries: int = 5_000
+    # Theme-5 Phase 2 cutover flag: when True, agent/user/service-account callers
+    # are authorized through **direct agent→credential bindings**
+    # (agent_credential_bindings + agent_permission_rules / permission_rule_sets)
+    # instead of toolkit derivation. Toolkit keys (ActorType.TOOLKIT) always keep
+    # the legacy toolkit path — they authenticate *as* a toolkit and are retired
+    # separately (Phase 4). False (default) keeps the toolkit path byte-identical.
+    direct_bindings_enabled: bool = False
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
