@@ -1153,17 +1153,27 @@ def _scope_grant_instruction(env: CallEnv, view: AccessRequestView) -> str | Non
     There is nothing to re-mint on the mount: ``resolve_effective_scopes``
     draws agent scopes live from ``actor_scope_grants`` on every request, so
     an approved grant is active on the very next tool call — UNLESS this
-    session's consent/client ceiling excludes it. ``env.identity.permissions``
-    is already the full intersection (live scopes ∩ client allowed_scopes ∩
-    consent-grant scopes), re-resolved per request, and permissions carry
-    literal scope names — so a granted scope's membership decides the wording.
-    Never promise "retry and it works" when the scope is absent.
+    session's consent/client ceiling excludes it. The instruction speaks only
+    to the grant's OWN actor: when a different identity polls (an org:admin
+    user watching an agent's approved request), this session's ceilings say
+    nothing about the grantee's, so no instruction is emitted at all.
+    Membership is judged the way ``require_scopes`` judges it — the caller's
+    permissions expanded through ``compute_effective``, with ``org:admin``
+    covering every scope — because that expanded set is what every scope gate
+    on this mount tests; a literal-membership probe would tell an org:admin
+    session (which passes every gate) that a retry will fail when it would
+    succeed. Never promise "retry and it works" when the scope is outside
+    the session's ceiling.
     """
+    if view.actor_id != env.identity.sub:
+        return None
     granted = _granted_scopes(view)
     if not granted:
         return None
-    held = set(env.identity.permissions)
-    missing = sorted(scope for scope in granted if scope not in held)
+    caller = compute_effective(set(env.identity.permissions))
+    missing: list[str] = []
+    if "org:admin" not in caller:
+        missing = sorted(scope for scope in granted if scope not in caller)
     if not missing:
         return (
             f"The granted scope(s) ({', '.join(sorted(granted))}) are active now — "

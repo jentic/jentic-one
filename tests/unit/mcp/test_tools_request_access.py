@@ -40,14 +40,14 @@ from jentic_one.shared.models import ActorType
 _NOW = datetime(2026, 9, 10, tzinfo=UTC)
 
 
-def _env(permissions: list[str] | None = None) -> CallEnv:
+def _env(permissions: list[str] | None = None, *, sub: str = "agnt_1") -> CallEnv:
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(canonical_base_url="https://auth.example.com")
     ctx.config.server = ServerConfig()
     ctx.instance_id = None
     return CallEnv(
         ctx=ctx,
-        identity=Identity(sub="agnt_1", permissions=permissions or [], actor_type=ActorType.AGENT),
+        identity=Identity(sub=sub, permissions=permissions or [], actor_type=ActorType.AGENT),
         credential="jak_test",
         base_url="https://auth.example.com",
         session_id=None,
@@ -487,6 +487,40 @@ async def test_granted_scope_absent_from_session_never_promises_a_retry(service:
     assert "retry" not in payload["instruction"].split("Do not assume")[0], (
         "the missing-scope wording must not promise a retry"
     )
+
+
+async def test_org_admin_poller_reads_active_now(service: None) -> None:
+    """org:admin passes every scope gate on this mount (require_scopes'
+    bypass in the compute_effective expansion) without literally holding the
+    granted scope — the instruction judges membership the same way, or it
+    would tell an org:admin session that a retry will fail when it would
+    succeed."""
+    _FakeAccessRequestService.get_results["acr_1"] = _view(
+        "approved",
+        items=[_item("scope", "grant", status="approved", resource_id="catalog:import")],
+    )
+    env = _env(["org:admin"])  # no literal catalog:import membership
+    result = await dispatch_tool_call(env, "request_access", {"request_id": "acr_1"})
+    assert not result.is_error
+    payload = _payload(result)
+    assert "active now" in payload["instruction"]
+    assert "re-authorization" not in payload["instruction"]
+
+
+async def test_foreign_actor_poll_carries_no_scope_instruction(service: None) -> None:
+    """The grant belongs to view.actor_id, not to whoever polls: an org:admin
+    user session polling an agent's approved request must not be told 'this
+    session's consent does not cover it' while the grant is fully live for
+    the agent — another identity's ceilings say nothing, so nothing is said."""
+    _FakeAccessRequestService.get_results["acr_1"] = _view(
+        "approved",
+        items=[_item("scope", "grant", status="approved", resource_id="catalog:import")],
+    )
+    env = _env(["org:admin"], sub="usr_admin")  # sub differs from the grant's actor_id
+    result = await dispatch_tool_call(env, "request_access", {"request_id": "acr_1"})
+    assert not result.is_error
+    payload = _payload(result)
+    assert "instruction" not in payload, "the honesty wording speaks only to the grant's own actor"
 
 
 async def test_partial_approval_carries_the_honesty_instruction_too(service: None) -> None:
