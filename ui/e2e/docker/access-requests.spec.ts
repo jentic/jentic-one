@@ -139,7 +139,7 @@ test('cannot approve a request you filed yourself (not_filer guard)', async ({ p
 			reason: `e2e self-review ${uniqueSuffix()}`,
 			items: [
 				{
-					resource_type: 'toolkit',
+					resource_type: 'credential',
 					action: 'bind',
 					resource_id: `e2e-self-${uniqueSuffix()}`,
 				},
