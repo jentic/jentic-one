@@ -109,11 +109,19 @@ class ExecutionHandler:
         credential_name: str | None = None
         signing = None
         if self._credential_injector is not None and api_vendor:
+            # Direct-binding path (theme-5 Phase 2): the web edge selected the
+            # credential and derived the allowed set before enqueueing; replay
+            # both so the worker's injection honours the same binding boundary
+            # (Q-02) and picks the same credential. Absent keys (legacy jobs,
+            # toolkit path) keep the unfiltered legacy behaviour.
+            allowed = payload.get("allowed_credential_ids")
             injection = await self._credential_injector.inject(
                 api_vendor=api_vendor,
                 api_name=api_name or "",
                 api_version=api_version or "",
                 identity=_worker_identity(created_by, actor_type),
+                credential_id=payload.get("credential_id"),
+                allowed_credential_ids=list(allowed) if allowed is not None else None,
                 trace_id=trace_id,
             )
             applied = _apply_injection(upstream_url, injection)
@@ -196,6 +204,7 @@ class ExecutionHandler:
             created_by=created_by,
             actor_type=actor_type,
             toolkit_id=payload.get("toolkit_id"),
+            credential_id=credential_id,
             operation_id=payload.get("operation_id"),
             origin=origin,
         )
@@ -223,6 +232,7 @@ class ExecutionHandler:
         created_by: str,
         actor_type: str,
         toolkit_id: str | None = None,
+        credential_id: str | None = None,
         operation_id: str | None = None,
         origin: str | None = None,
     ) -> None:
@@ -272,6 +282,7 @@ class ExecutionHandler:
                 actor_id=created_by,
                 actor_type=actor_type,
                 toolkit_id=toolkit_id,
+                credential_id=credential_id,
                 operation_id=operation_id,
                 trace_id=event_trace_id,
                 config=self._security_config,
