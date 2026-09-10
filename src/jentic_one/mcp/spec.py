@@ -24,11 +24,10 @@ import mcp.types as mcp_types
 
 #: The tools this mount serves — the subset of the pinned surface whose
 #: dispatch is clean in-process (registry search/inspect/catalog + the catalog
-#: import loop, admin jobs, auth whoami) or a server-side broker proxy (the
-#: execute family). ``get_started`` never ports — it diagnoses *the local
-#: machine's* CLI setup, and over HTTP there is no local machine; and
-#: ``request_access`` (access-request filing + polling) queues behind this
-#: wave's PR B. Both stay stdio-only until then.
+#: import loop, admin jobs, auth whoami, control access requests) or a
+#: server-side broker proxy (the execute family). ``get_started`` never ports
+#: — it diagnoses *the local machine's* CLI setup, and over HTTP there is no
+#: local machine; it stays stdio-only.
 SERVED_TOOLS: tuple[str, ...] = (
     "whoami",
     "search_apis",
@@ -38,6 +37,7 @@ SERVED_TOOLS: tuple[str, ...] = (
     "get_execution_result",
     "search_catalog",
     "import_api",
+    "request_access",
 )
 
 

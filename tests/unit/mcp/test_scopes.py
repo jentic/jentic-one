@@ -106,9 +106,10 @@ async def test_search_catalog_scope_failure_is_the_agent_fixable_special_case() 
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    # request_access stays stdio-only, so the pointer is dropped on this lane
-    # (#1254); the actionable prose still names it (shared contract spelling).
-    assert "next_tool" not in payload
+    # request_access is served on this lane since PR B, so #1254's lane filter
+    # lets the pointer ride; the actionable prose names it too (shared
+    # contract spelling).
+    assert payload["next_tool"] == "request_access"
     assert "request_access" in payload["actionable_step"]
     assert "capabilities:read" in payload["error"]
     prefix, _, tail = payload["error"].partition("scope: ")

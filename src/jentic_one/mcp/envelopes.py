@@ -42,6 +42,10 @@ CODE_RESOLVE_FAILED = "RESOLVE_FAILED"
 CODE_BROKER_DENIED = "BROKER_DENIED"
 CODE_TRANSPORT_ERROR = "TRANSPORT_ERROR"
 CODE_INTERNAL_ERROR = "INTERNAL_ERROR"
+#: request_access's partially-approved arm (Go: ``ux.CodePartialApproval``) —
+#: some items granted, some not; the model must proceed only with what was
+#: approved. Same wire string on both doors so a model sees one taxonomy.
+CODE_PARTIAL_APPROVAL = "PARTIAL_APPROVAL"
 
 #: error codes whose default recovery pointer is ``get_started`` (Go:
 #: ``softErrorExtra``'s code-keyed mapping). The pointer *spellings* stay the
@@ -137,9 +141,9 @@ def soft_error_result(ctx: Context, err: ToolError) -> mcp_types.CallToolResult:
         next_tool = _DEFAULT_NEXT_TOOL
     # Lane-aware pointer filter (#1254): only emit a ``next_tool`` the caller
     # can actually see in THIS mount's ``tools/list``. Handlers keep raising
-    # the shared stdio pointer spellings (``get_started``, ``request_access``,
-    # …) so the contract never forks — the projection onto the served subset
-    # happens here, at the one seam every soft error renders through.
+    # the shared stdio pointer spellings (e.g. ``get_started``) so the
+    # contract never forks — the projection onto the served subset happens
+    # here, at the one seam every soft error renders through.
     if next_tool in SERVED_TOOLS:
         payload["next_tool"] = next_tool
     for key, value in (err.extra or {}).items():

@@ -82,9 +82,8 @@ def test_handlers_cover_served_tools_exactly() -> None:
 
 def test_unserved_phase1_tools_stay_stdio_only_for_now() -> None:
     """``get_started`` never ports (it diagnoses the local machine's CLI
-    setup — over HTTP there is no local machine) and ``request_access``
-    queues behind the import_api PR — pinned so serving one is a conscious
-    decision."""
+    setup — over HTTP there is no local machine) — pinned so serving it is a
+    conscious decision."""
     specs = load_spec()
     deferred = set(specs) - set(SERVED_TOOLS)
-    assert deferred == {"get_started", "request_access"}
+    assert deferred == {"get_started"}
