@@ -810,6 +810,13 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # token yet); bound by the consent handle + a signed single-use
         # agent-create blob, rate limited like the other consent endpoints.
         "consentAgentCreate",
+        # Pending-agent status poll (P4 hybrid awaiting page): anonymous by
+        # design like approvalStatusEndpoint — the polling browser has no
+        # platform token — and keyed by the signed agent-status blob the
+        # consent flow minted for one specific agent, never a bare agent id.
+        # Returns only the pending/approved/denied tri-state; rate limited in
+        # the approval-status bucket instead.
+        "consentAgentStatus",
         # Local-account login form on the /authorize flow: the caller is a
         # browser mid-authorization with no token yet. Config-gated
         # (auth.local_login.enabled → 404) and rate limited instead.

@@ -127,6 +127,10 @@ def _mock_authorize_svc(
     svc.owner_has_any_agents = AsyncMock(
         return_value=bool(agents) if has_any_agents is None else has_any_agents
     )
+    # Hybrid arm inputs (P4): no pending agent, agents:write held — keeps the
+    # picker tests on the pre-hybrid ACTIVE arm.
+    svc.newest_pending_agent = AsyncMock(return_value=None)
+    svc.user_can_create_active_agent = AsyncMock(return_value=True)
     svc.provision_from_claims = AsyncMock(return_value="usr_owner")
     svc.record_consent_decision = AsyncMock()
     svc.issue_authorization_code = AsyncMock(return_value="code_grant")

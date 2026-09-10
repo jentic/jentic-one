@@ -24,11 +24,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
-from jentic_one.auth.services.authorize_service import AgentConsentOption
+from jentic_one.auth.services.authorize_service import AgentConsentOption, PendingAgentRef
 from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.flow import (
     agent_create_signing_key,
+    agent_status_signing_key,
     approval_state_key,
     login_signing_key,
     session_signing_key,
@@ -38,7 +39,7 @@ from jentic_one.auth.web.flow import (
 )
 from jentic_one.auth.web.routers import authorize, local_login
 from jentic_one.shared.config import AuthConfig, LocalLoginConfig
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.state.backend import MemoryStateBackend
 
@@ -76,6 +77,9 @@ def _client_view(
 def _make_app() -> tuple[TestClient, MemoryStateBackend, MagicMock]:
     app = FastAPI()
     app.include_router(authorize.router)
+    # The status poll answers verification failures through the shared
+    # service-error handler (InvalidGrantError → 400), same as production.
+    app.add_exception_handler(AuthServiceError, service_error_handler)
 
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(
@@ -125,16 +129,23 @@ def _seed_consent_handle(
     asyncio.run(backend.set(f"consent-handle:{handle}", payload, ttl_s=300.0))
 
 
-def _mint_blob(ctx: MagicMock, *, handle: str = _HANDLE, user_key: str = "idp:ext-create-1") -> str:
-    return sign_payload(
-        {
-            "ch_digest": hashlib.sha256(handle.encode()).hexdigest(),
-            "user_key": user_key,
-            "iat": str(int(time.time())),
-        },
-        agent_create_signing_key(ctx),
-        purpose="agent-create",
-    )
+def _mint_blob(
+    ctx: MagicMock,
+    *,
+    handle: str = _HANDLE,
+    user_key: str = "idp:ext-create-1",
+    nonce: str | None = None,
+) -> str:
+    payload: dict[str, str | None] = {
+        "ch_digest": hashlib.sha256(handle.encode()).hexdigest(),
+        "user_key": user_key,
+        "iat": str(int(time.time())),
+    }
+    if nonce is not None:
+        # Mirrors the mint site's per-mint entropy — lets a test hold two
+        # DISTINCT valid blobs for the same handle+subject+second.
+        payload["n"] = nonce
+    return sign_payload(payload, agent_create_signing_key(ctx), purpose="agent-create")
 
 
 def _extract_create_state(html: str) -> str:
@@ -148,6 +159,8 @@ def _mock_authorize_svc(
     user_id: str | None = None,
     agents: list[AgentConsentOption] | None = None,
     has_any_agents: bool | None = None,
+    pending_agent: PendingAgentRef | None = None,
+    can_create_active: bool = True,
 ) -> MagicMock:
     svc = MagicMock()
     svc.resolve_existing_user_id = AsyncMock(return_value=user_id)
@@ -157,6 +170,11 @@ def _mock_authorize_svc(
     svc.owner_has_any_agents = AsyncMock(
         return_value=bool(agents) if has_any_agents is None else has_any_agents
     )
+    # The hybrid arm inputs (P4 security review): no pending agent and an
+    # agents:write-holding user by default, so the pre-hybrid tests keep
+    # exercising the original ACTIVE arm unchanged.
+    svc.newest_pending_agent = AsyncMock(return_value=pending_agent)
+    svc.user_can_create_active_agent = AsyncMock(return_value=can_create_active)
     svc.provision_from_claims = AsyncMock(return_value="usr_new")
     svc.issue_authorization_code = AsyncMock(return_value="code_x")
     svc.record_consent_decision = AsyncMock()
@@ -167,6 +185,7 @@ def _mock_agent_svc() -> MagicMock:
     svc = MagicMock()
     view = MagicMock()
     view.id = "agnt_created"
+    view.name = "created-agent"
     svc.create = AsyncMock(return_value=view)
     return svc
 
@@ -290,7 +309,8 @@ def test_only_nonactive_agents_keeps_terminal_empty_state(
     """A user whose agents were all disabled/archived by an admin owns zero
     ACTIVE agents but is NOT first-run: the create form must not render — it
     would let the owner mint a fresh active agent and sidestep the admin
-    action. The terminal empty state stays."""
+    action. The terminal empty state stays, with the out-of-service copy
+    (NOT the first-run "you don't have one yet" lie — review-lap eyeball)."""
     client, backend, _ctx = _make_app()
     _seed_consent_handle(backend)
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
@@ -300,7 +320,9 @@ def test_only_nonactive_agents_keeps_terminal_empty_state(
     resp = client.get("/oauth/consent", params={"ch": _HANDLE})
 
     assert resp.status_code == 200
-    assert "you don't have one yet" in resp.text
+    assert "you have no available agents" in resp.text
+    assert "Contact your" in resp.text
+    assert "you don't have one yet" not in resp.text
     assert 'action="/oauth/consent/agent"' not in resp.text
     svc.owner_has_any_agents.assert_awaited_once_with("usr_new")
 
@@ -342,6 +364,7 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     assert payload.name == "my-assistant"  # whitespace-stripped
     assert payload.scopes is None  # platform default scopes, never invented
     assert call.kwargs["owner_id"] == "usr_new"
+    assert call.kwargs["status"] is ActorStatus.ACTIVE  # agents:write holder → ACTIVE arm
     identity = call.kwargs["identity"]
     assert identity.sub == "usr_new"
     assert identity.actor_type == ActorType.USER
@@ -469,8 +492,8 @@ def test_create_wrong_purpose_blob_rejected(
 ) -> None:
     """Purpose discrimination: a blob signed under any sibling flow purpose
     (with that purpose's own derived key) can never drive the create form —
-    the fifth purpose rejects all four siblings, same discipline as the
-    state/approval/login/session matrix."""
+    the fifth purpose rejects all five siblings, same discipline as the
+    state/approval/login/session/agent-status matrix."""
     client, backend, ctx = _make_app()
     _seed_consent_handle(backend)
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
@@ -488,6 +511,7 @@ def test_create_wrong_purpose_blob_rejected(
         ("approval", approval_state_key(ctx)),
         ("login", login_signing_key(ctx)),
         ("session", session_signing_key(ctx)),
+        ("agent-status", agent_status_signing_key(ctx)),
     ]
     for purpose, key in siblings:
         foreign = sign_payload(dict(payload), key, purpose=purpose)
@@ -780,14 +804,278 @@ def test_create_gated_client_rejected_midflow(
     agent_svc.create.assert_not_awaited()
 
 
-# ---------- the fifth purpose in the matrix: rejected in ALL directions ----------
+# ---------- the hybrid arms (P4 security review) ----------
+
+
+def _mint_status_blob(ctx: MagicMock, *, handle: str = _HANDLE, agent_id: str = "agnt_p") -> str:
+    return sign_payload(
+        {
+            "ch_digest": hashlib.sha256(handle.encode()).hexdigest(),
+            "agent_id": agent_id,
+            "iat": str(int(time.time())),
+        },
+        agent_status_signing_key(ctx),
+        purpose="agent-status",
+    )
+
+
+def _extract_awaiting_config(html: str) -> dict[str, object]:
+    marker = '<script id="agent-approval-config" type="application/json">'
+    start = html.index(marker) + len(marker)
+    raw = html[start : html.index("</script>", start)]
+    parsed = json.loads(raw)
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_form_copy_tells_the_truth_per_arm(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+) -> None:
+    """The create form's footer never promises the wrong outcome (security
+    review): an agents:write holder reads the immediate-use wording, an
+    unpermissioned resolved user reads "will need administrator approval",
+    and a not-yet-provisioned IdP subject (arm undecidable at render) reads
+    the neutral "may need"."""
+    client, backend, _ctx = _make_app()
+    _seed_consent_handle(backend)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+
+    # Resolved user WITH agents:write → the original immediate-use wording.
+    mock_authorize_cls.return_value = _mock_authorize_svc(user_id="usr_new", agents=[])
+    body = client.get("/oauth/consent", params={"ch": _HANDLE}).text
+    assert "default agent\n            permissions" in body
+    assert "administrator approval" not in body
+
+    # Resolved user WITHOUT agents:write → "will need administrator approval".
+    mock_authorize_cls.return_value = _mock_authorize_svc(
+        user_id="usr_new", agents=[], can_create_active=False
+    )
+    body = client.get("/oauth/consent", params={"ch": _HANDLE}).text
+    assert "will need administrator approval" in body
+
+    # Unprovisioned IdP subject → neutral "may need administrator approval".
+    mock_authorize_cls.return_value = _mock_authorize_svc(user_id=None, agents=[])
+    body = client.get("/oauth/consent", params={"ch": _HANDLE}).text
+    assert "may need administrator approval" in body
+
+
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_pending_agent_reentry_renders_awaiting_page(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+) -> None:
+    """A flow (re-)entry while the user's only agents sit in PENDING parks on
+    the awaiting page — not the create form, not the terminal empty state —
+    with a status blob bound to THIS handle and THIS agent."""
+    client, backend, ctx = _make_app()
+    _seed_consent_handle(backend)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(
+        user_id="usr_new",
+        agents=[],
+        has_any_agents=True,
+        pending_agent=PendingAgentRef(id="agnt_p", name="my-pending"),
+    )
+    mock_authorize_cls.return_value = svc
+
+    resp = client.get("/oauth/consent", params={"ch": _HANDLE})
+
+    assert resp.status_code == 200
+    body = resp.text
+    assert "awaiting\n            administrator approval" in body
+    assert "my-pending" in body
+    assert 'action="/oauth/consent/agent"' not in body  # no create form
+    assert 'name="agent_id"' not in body  # no picker
+    config = _extract_awaiting_config(body)
+    assert config["continue_url"] == f"/oauth/consent?ch={_HANDLE}"
+    status_url = str(config["status_url"])
+    assert status_url.startswith("/oauth/consent/agent/status?st=")
+    blob = status_url.removeprefix("/oauth/consent/agent/status?st=")
+    from urllib.parse import unquote
+
+    payload = verify_payload(
+        unquote(blob), agent_status_signing_key(ctx), purpose="agent-status", max_age=300
+    )
+    assert payload["ch_digest"] == hashlib.sha256(_HANDLE.encode()).hexdigest()
+    assert payload["agent_id"] == "agnt_p"
+
+
+@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_create_unpermissioned_lands_pending_and_awaiting_page(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+    mock_agent_svc_cls: MagicMock,
+) -> None:
+    """The hybrid's pending arm: a consenting user without agents:write gets
+    a PENDING agent (the /register posture) and the awaiting page — never an
+    immediately-ACTIVE agent (the security-review bypass)."""
+    client, backend, ctx = _make_app()
+    _seed_consent_handle(backend)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(user_id="usr_new", agents=[], can_create_active=False)
+    mock_authorize_cls.return_value = svc
+    agent_svc = _mock_agent_svc()
+    mock_agent_svc_cls.return_value = agent_svc
+
+    resp = client.post(
+        "/oauth/consent/agent",
+        data={"consent_token": _HANDLE, "create_state": _mint_blob(ctx), "agent_name": "gated"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 200  # the awaiting page, not the 303 re-entry
+    agent_svc.create.assert_awaited_once()
+    assert agent_svc.create.await_args.kwargs["status"] is ActorStatus.PENDING
+    config = _extract_awaiting_config(resp.text)
+    assert config["continue_url"] == f"/oauth/consent?ch={_HANDLE}"
+    # The status blob is bound to the agent the create just minted.
+    from urllib.parse import unquote
+
+    blob = str(config["status_url"]).removeprefix("/oauth/consent/agent/status?st=")
+    payload = verify_payload(
+        unquote(blob), agent_status_signing_key(ctx), purpose="agent-status", max_age=300
+    )
+    assert payload["agent_id"] == "agnt_created"
+    svc.user_can_create_active_agent.assert_awaited_once_with("usr_new")
+
+
+@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_parallel_submits_create_exactly_one_agent(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+    mock_agent_svc_cls: MagicMock,
+) -> None:
+    """The per-subject slot claim (security review): two DISTINCT valid blobs
+    (two GET renders) whose submits both pass the plain-read zero-agents
+    check still create exactly one agent — the loser just re-enters consent."""
+    client, backend, ctx = _make_app()
+    _seed_consent_handle(backend)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    # owner_has_any_agents stays False for BOTH submits — modelling the
+    # in-flight window in which the first insert has not committed.
+    svc = _mock_authorize_svc(user_id="usr_new", agents=[], has_any_agents=False)
+    mock_authorize_cls.return_value = svc
+    agent_svc = _mock_agent_svc()
+    mock_agent_svc_cls.return_value = agent_svc
+
+    first = client.post(
+        "/oauth/consent/agent",
+        data={
+            "consent_token": _HANDLE,
+            "create_state": _mint_blob(ctx, nonce="a"),
+            "agent_name": "winner",
+        },
+        follow_redirects=False,
+    )
+    second = client.post(
+        "/oauth/consent/agent",
+        data={
+            "consent_token": _HANDLE,
+            "create_state": _mint_blob(ctx, nonce="b"),
+            "agent_name": "loser",
+        },
+        follow_redirects=False,
+    )
+
+    assert first.status_code == 303
+    assert second.status_code == 303  # loser re-enters consent, creates nothing
+    assert second.headers["location"] == f"/oauth/consent?ch={_HANDLE}"
+    agent_svc.create.assert_awaited_once()
+    assert agent_svc.create.await_args.args[0].name == "winner"
+
+
+# ---------- the pending-agent status poll ----------
+
+
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+def test_status_poll_collapses_lifecycle_into_tri_state(
+    mock_authorize_cls: MagicMock,
+) -> None:
+    """ACTIVE → approved (the picker's own predicate), REJECTED → denied,
+    and everything else — pending, disabled, archived, a vanished row —
+    reads as pending so the endpoint is no lifecycle/deletion oracle."""
+    client, _backend, ctx = _make_app()
+    svc = MagicMock()
+    mock_authorize_cls.return_value = svc
+
+    expectations = [
+        ("pending", "pending"),
+        ("active", "approved"),
+        ("rejected", "denied"),
+        ("disabled", "pending"),
+        ("archived", "pending"),
+        (None, "pending"),
+    ]
+    for raw, expected in expectations:
+        svc.get_agent_status = AsyncMock(return_value=raw)
+        resp = client.get("/oauth/consent/agent/status", params={"st": _mint_status_blob(ctx)})
+        assert resp.status_code == 200, raw
+        assert resp.json() == {"status": expected}, raw
+        assert resp.headers["cache-control"] == "no-store"
+        svc.get_agent_status.assert_awaited_once_with("agnt_p")
+
+
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+def test_status_poll_rejects_foreign_and_expired_blobs(
+    mock_authorize_cls: MagicMock,
+) -> None:
+    """The poll accepts ONLY a live agent-status blob: garbage, expired, and
+    every sibling purpose (including the agent-create form blob riding the
+    same page family) get a 400 — and the agent id is never read from
+    anything but the verified blob."""
+    client, _backend, ctx = _make_app()
+    svc = MagicMock()
+    svc.get_agent_status = AsyncMock(return_value="active")
+    mock_authorize_cls.return_value = svc
+
+    assert client.get("/oauth/consent/agent/status", params={"st": "garbage"}).status_code == 400
+
+    stale = sign_payload(
+        {
+            "ch_digest": hashlib.sha256(_HANDLE.encode()).hexdigest(),
+            "agent_id": "agnt_p",
+            "iat": str(int(time.time()) - 4000),
+        },
+        agent_status_signing_key(ctx),
+        purpose="agent-status",
+    )
+    assert client.get("/oauth/consent/agent/status", params={"st": stale}).status_code == 400
+
+    siblings = [
+        ("state", state_signing_key(ctx)),
+        ("approval", approval_state_key(ctx)),
+        ("login", login_signing_key(ctx)),
+        ("session", session_signing_key(ctx)),
+        ("agent-create", agent_create_signing_key(ctx)),
+    ]
+    payload = {
+        "ch_digest": hashlib.sha256(_HANDLE.encode()).hexdigest(),
+        "agent_id": "agnt_p",
+        "iat": str(int(time.time())),
+    }
+    for purpose, key in siblings:
+        foreign = sign_payload(dict(payload), key, purpose=purpose)
+        resp = client.get("/oauth/consent/agent/status", params={"st": foreign})
+        assert resp.status_code == 400, purpose
+    svc.get_agent_status.assert_not_awaited()
+
+
+# ---------- purposes five & six in the matrix: rejected in ALL directions ----------
 
 
 def test_agent_create_purpose_rejected_at_every_other_endpoint() -> None:
     """The remaining matrix cells (P3 precedent, #1300 review F4): an
     agent-create blob — which rides in page HTML, the most exposed of the
-    five — never opens the login form, the IdP callback, or the anonymous
-    approval-status poll."""
+    six — never opens the login form, the IdP callback, the anonymous
+    approval-status poll, or the pending-agent status poll."""
     app = FastAPI()
     app.include_router(authorize.router)
     app.include_router(local_login.router)
@@ -824,6 +1112,56 @@ def test_agent_create_purpose_rejected_at_every_other_endpoint() -> None:
     resp = client.get("/oauth/approval/status", params={"st": blob})
     assert resp.status_code == 400
 
+    # Pending-agent status poll (the sixth purpose's own door) → 400.
+    resp = client.get("/oauth/consent/agent/status", params={"st": blob})
+    assert resp.status_code == 400
+
+
+def test_agent_status_purpose_rejected_at_every_other_endpoint() -> None:
+    """The sixth purpose's reverse directions: an agent-status blob — which
+    also rides in page HTML — never opens the login form, the IdP callback,
+    the anonymous approval-status poll, or the create submit."""
+    app = FastAPI()
+    app.include_router(authorize.router)
+    app.include_router(local_login.router)
+    app.add_exception_handler(AuthServiceError, service_error_handler)
+
+    ctx = MagicMock()
+    ctx.config.auth = AuthConfig(
+        canonical_base_url="https://auth.example.com",
+        local_login=LocalLoginConfig(enabled=True),
+        platform_clients=[],
+    )
+    ctx.config.admin.auth.jwt_secret.get_secret_value.return_value = _JWT_SECRET
+    app.state.ctx = ctx
+    app.state.auth_state_backend = MemoryStateBackend()
+    client = TestClient(app)
+
+    blob = _mint_status_blob(ctx)
+
+    resp = client.get("/login", params={"ls": blob}, follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/error?error=invalid_state"
+
+    resp = client.get(
+        "/oauth/callback",
+        params={"code": "upstream-code", "state": blob},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/error?error=invalid_state"
+
+    resp = client.get("/oauth/approval/status", params={"st": blob})
+    assert resp.status_code == 400
+
+    resp = client.post(
+        "/oauth/consent/agent",
+        data={"consent_token": _HANDLE, "create_state": blob, "agent_name": "nope"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/error?error=invalid_consent"
+
 
 def test_agent_create_key_is_purpose_derived() -> None:
     """The fifth purpose has its own derived key: a blob whose _purpose field
@@ -841,9 +1179,34 @@ def test_agent_create_key_is_purpose_derived() -> None:
         approval_state_key(ctx),
         login_signing_key(ctx),
         session_signing_key(ctx),
+        agent_status_signing_key(ctx),
     ):
         forged = sign_payload(dict(payload), wrong_key, purpose="agent-create")
         with pytest.raises(InvalidGrantError):
             verify_payload(
                 forged, agent_create_signing_key(ctx), purpose="agent-create", max_age=300
+            )
+
+
+def test_agent_status_key_is_purpose_derived() -> None:
+    """Same discipline for the sixth purpose: forging _purpose="agent-status"
+    under any sibling key (including agent-create's) fails verification."""
+    ctx = MagicMock()
+    ctx.config.admin.auth.jwt_secret.get_secret_value.return_value = _JWT_SECRET
+    payload = {
+        "ch_digest": hashlib.sha256(_HANDLE.encode()).hexdigest(),
+        "agent_id": "agnt_p",
+        "iat": str(int(time.time())),
+    }
+    for wrong_key in (
+        state_signing_key(ctx),
+        approval_state_key(ctx),
+        login_signing_key(ctx),
+        session_signing_key(ctx),
+        agent_create_signing_key(ctx),
+    ):
+        forged = sign_payload(dict(payload), wrong_key, purpose="agent-status")
+        with pytest.raises(InvalidGrantError):
+            verify_payload(
+                forged, agent_status_signing_key(ctx), purpose="agent-status", max_age=300
             )

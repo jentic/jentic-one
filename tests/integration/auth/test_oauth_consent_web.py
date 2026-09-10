@@ -12,6 +12,7 @@ consent handle the callback would have written.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import time
@@ -24,12 +25,16 @@ from sqlalchemy import delete, select
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
+from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos import ExternalIdentityRepository
+from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.web.routers import authorize
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorStatus
+from jentic_one.shared.models import ActorStatus, ActorType
+from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.audit import AuditAction
 from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -38,6 +43,7 @@ from tests.integration.auth.seeds import (
     REDIRECT_URI,
     seed_agent,
     seed_client,
+    seed_permissions,
     seed_user,
 )
 
@@ -312,6 +318,10 @@ async def test_inline_agent_create_end_to_end(
     final consent grant bound to the new agent."""
     ctx = integration_context
     owner_id = await seed_user(ctx, "usr_w_p4creator")
+    # The hybrid's ACTIVE arm requires the consenting user to pass the same
+    # gate as POST /agents — grant agents:write (the pending arm has its own
+    # end-to-end test below).
+    await seed_permissions(ctx, owner_id, ["agents:write"])
     await seed_client(ctx, allowed_scopes=["apis:read", "apis:write"])
     await _link_external_identity(ctx, user_id=owner_id, external_subject="ext-w-p4creator")
 
@@ -460,7 +470,8 @@ async def test_inline_agent_create_not_offered_when_agents_all_disabled(
     """A user whose agents were all taken out of service by an admin owns
     zero ACTIVE agents but is not first-run: the create form must not render
     (it would mint a fresh active agent past the admin action) — the terminal
-    empty state stays, against the real any-status predicate."""
+    empty state stays, against the real any-status predicate, and its copy
+    owns up to the situation instead of claiming "you don't have one yet"."""
     ctx = integration_context
     owner_id = await seed_user(ctx, "usr_w_p4disabled")
     await seed_client(ctx, allowed_scopes=["apis:read"])
@@ -480,7 +491,9 @@ async def test_inline_agent_create_not_offered_when_agents_all_disabled(
         )
         resp = await client.get("/oauth/consent", params={"ch": handle})
         assert resp.status_code == 200
-        assert "you don't have one yet" in resp.text
+        assert "you have no available agents" in resp.text
+        assert "Contact your" in resp.text
+        assert "you don't have one yet" not in resp.text
         assert 'action="/oauth/consent/agent"' not in resp.text
         assert 'name="agent_id"' not in resp.text
 
@@ -493,3 +506,280 @@ async def test_inline_agent_create_not_offered_when_agents_all_disabled(
             agents = list(rows)
             assert len(agents) == 1
             assert agents[0].status == ActorStatus.DISABLED.value
+
+
+def _extract_create_state(html: str) -> str:
+    marker = 'name="create_state" value="'
+    start = html.index(marker) + len(marker)
+    return html[start : html.index('"', start)]
+
+
+def _extract_awaiting_config(html: str) -> dict[str, object]:
+    marker = '<script id="agent-approval-config" type="application/json">'
+    start = html.index(marker) + len(marker)
+    parsed = json.loads(html[start : html.index("</script>", start)])
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+def _admin_identity(admin_id: str) -> Identity:
+    return Identity(
+        sub=admin_id,
+        email=f"{admin_id}@grants.test",
+        actor_type=ActorType.USER,
+        origin=Origin.API,
+    )
+
+
+async def _delete_agents_for(ctx: Context, owner_id: str) -> None:
+    """Remove inline-created agents (stamped created_by=<user>, so the
+    SEED_MARKER-scoped clean_grants fixture would not remove them)."""
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(delete(Agent).where(Agent.owner_id == owner_id))
+
+
+async def test_inline_agent_create_pending_arm_end_to_end(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """The hybrid's PENDING arm against real services (security review): a
+    consenting user WITHOUT agents:write walks form → create → real PENDING
+    row with NO scope grants (the /register posture) + REGISTER audit + the
+    requires-action queue event → awaiting page whose poll reports pending →
+    admin approves through the real AgentService → poll flips to approved,
+    default scopes appear → the continue leg re-enters consent with the
+    now-active agent pre-selected → approve mints the grant. Also pins that a
+    PENDING agent never reaches the picker (the re-entry renders the awaiting
+    page, not a picker or the create form)."""
+    ctx = integration_context
+    owner_id = await seed_user(ctx, "usr_w_p4pending")  # no permission grants
+    admin_id = await seed_user(ctx, "usr_w_p4admin")
+    await seed_client(ctx, allowed_scopes=["apis:read", "apis:write"])
+    await _link_external_identity(ctx, user_id=owner_id, external_subject="ext-w-p4pending")
+
+    app = _make_app(ctx)
+    try:
+        async with _web_client(app) as client:
+            # --- render: the form's footer tells the pending truth ---------
+            handle = await _seed_handle(
+                app, external_subject="ext-w-p4pending", email=f"{owner_id}@grants.test"
+            )
+            resp = await client.get("/oauth/consent", params={"ch": handle})
+            assert resp.status_code == 200
+            assert 'action="/oauth/consent/agent"' in resp.text
+            assert "will need administrator approval" in resp.text
+            create_state = _extract_create_state(resp.text)
+
+            # --- create: the awaiting page, not the 303 re-entry -----------
+            resp = await client.post(
+                "/oauth/consent/agent",
+                data={
+                    "consent_token": handle,
+                    "create_state": create_state,
+                    "agent_name": "gated-agent",
+                },
+            )
+            assert resp.status_code == 200
+            assert "awaiting" in resp.text
+            config = _extract_awaiting_config(resp.text)
+            assert config["continue_url"] == f"/oauth/consent?ch={handle}"
+
+            # --- the real rows: PENDING, no scopes, audit + queue event ----
+            async with ctx.admin_db.session() as session:
+                agent_row = (
+                    await session.execute(select(Agent).where(Agent.owner_id == owner_id))
+                ).scalar_one()
+                agent_id = agent_row.id
+                assert agent_row.status == ActorStatus.PENDING.value
+                scope_rows = list(
+                    (
+                        await session.execute(
+                            select(ActorScopeGrant.scope).where(
+                                ActorScopeGrant.actor_id == agent_id
+                            )
+                        )
+                    ).scalars()
+                )
+                assert scope_rows == []  # approve() grants defaults, like /register
+                audit = list(
+                    (
+                        await session.execute(
+                            select(AuditEntry).where(
+                                AuditEntry.target_id == agent_id,
+                                AuditEntry.action == AuditAction.REGISTER.value,
+                            )
+                        )
+                    ).scalars()
+                )
+                assert len(audit) == 1
+                assert audit[0].actor_id == owner_id
+                queue_events = list(
+                    (
+                        await session.execute(
+                            select(Event).where(
+                                Event.actor_id == agent_id,
+                                Event.type == "agent.self_registered",
+                            )
+                        )
+                    ).scalars()
+                )
+                assert len(queue_events) == 1
+                assert queue_events[0].requires_action is True
+
+            # --- poll: pending ---------------------------------------------
+            resp = await client.get(str(config["status_url"]))
+            assert resp.status_code == 200
+            assert resp.json() == {"status": "pending"}
+
+            # --- re-entry mid-approval: the awaiting page again (and NEVER
+            # a picker offering the pending agent, nor a fresh create form) --
+            resp = await client.get("/oauth/consent", params={"ch": handle})
+            assert resp.status_code == 200
+            assert 'name="agent_id"' not in resp.text
+            assert 'action="/oauth/consent/agent"' not in resp.text
+            reentry_config = _extract_awaiting_config(resp.text)
+            assert reentry_config["continue_url"] == f"/oauth/consent?ch={handle}"
+
+            # --- admin approves through the real service --------------------
+            await AgentService(ctx).approve(agent_id, identity=_admin_identity(admin_id))
+
+            # --- poll flips, default scopes appear ---------------------------
+            resp = await client.get(str(config["status_url"]))
+            assert resp.status_code == 200
+            assert resp.json() == {"status": "approved"}
+            async with ctx.admin_db.session() as session:
+                scopes_after_approve = set(
+                    (
+                        await session.execute(
+                            select(ActorScopeGrant.scope).where(
+                                ActorScopeGrant.actor_id == agent_id
+                            )
+                        )
+                    ).scalars()
+                )
+            assert scopes_after_approve == set(DEFAULT_AGENT_SCOPES)
+
+            # --- the continue leg: consent with the agent pre-selected ------
+            resp = await client.get(str(config["continue_url"]))
+            assert resp.status_code == 200
+            assert f'value="{agent_id}" required checked' in resp.text
+
+            # --- and the approval mints the grant ----------------------------
+            resp = await client.post(
+                "/oauth/consent",
+                data={"consent_token": handle, "action": "approve", "agent_id": agent_id},
+            )
+            assert resp.status_code == 302
+            assert resp.headers["location"].startswith(f"{REDIRECT_URI}?code=")
+            grants = await _grant_rows_for_agent(ctx, agent_id)
+            assert len(grants) == 1
+            assert grants[0].user_id == owner_id
+    finally:
+        await _delete_agents_for(ctx, owner_id)
+
+
+async def test_inline_agent_create_pending_deny_is_terminal(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """The deny leg: an admin denying the pending agent flips the poll to
+    ``denied`` (the page renders its terminal message client-side), and a
+    fresh flow entry lands on the out-of-service terminal empty state — the
+    REJECTED agent is neither pickable nor re-creatable."""
+    ctx = integration_context
+    owner_id = await seed_user(ctx, "usr_w_p4denied")
+    admin_id = await seed_user(ctx, "usr_w_p4dadmin")
+    await seed_client(ctx, allowed_scopes=["apis:read"])
+    await _link_external_identity(ctx, user_id=owner_id, external_subject="ext-w-p4denied")
+
+    app = _make_app(ctx)
+    try:
+        async with _web_client(app) as client:
+            handle = await _seed_handle(
+                app, external_subject="ext-w-p4denied", email=f"{owner_id}@grants.test"
+            )
+            resp = await client.get("/oauth/consent", params={"ch": handle})
+            create_state = _extract_create_state(resp.text)
+            resp = await client.post(
+                "/oauth/consent/agent",
+                data={
+                    "consent_token": handle,
+                    "create_state": create_state,
+                    "agent_name": "doomed-agent",
+                },
+            )
+            assert resp.status_code == 200
+            config = _extract_awaiting_config(resp.text)
+            async with ctx.admin_db.session() as session:
+                agent_id = (
+                    await session.execute(select(Agent.id).where(Agent.owner_id == owner_id))
+                ).scalar_one()
+
+            await AgentService(ctx).deny(
+                agent_id, reason="not this one", identity=_admin_identity(admin_id)
+            )
+
+            resp = await client.get(str(config["status_url"]))
+            assert resp.status_code == 200
+            assert resp.json() == {"status": "denied"}
+
+            # A fresh flow entry: REJECTED is not pending, not active, and
+            # not first-run → the truthful terminal empty state.
+            handle2 = await _seed_handle(
+                app, external_subject="ext-w-p4denied", email=f"{owner_id}@grants.test"
+            )
+            resp = await client.get("/oauth/consent", params={"ch": handle2})
+            assert resp.status_code == 200
+            assert "you have no available agents" in resp.text
+            assert 'action="/oauth/consent/agent"' not in resp.text
+            assert 'name="agent_id"' not in resp.text
+    finally:
+        await _delete_agents_for(ctx, owner_id)
+
+
+async def test_inline_agent_create_parallel_submits_create_exactly_one(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """The parallel-submit race (security review): N blobs from N GET renders
+    fired concurrently must create exactly ONE agent — the per-subject
+    ``set_if_absent`` slot claim arbitrates what the plain-read zero-agents
+    predicate cannot. Losers re-enter consent (303) or land on the winner's
+    picker; either way exactly one row exists afterwards."""
+    ctx = integration_context
+    owner_id = await seed_user(ctx, "usr_w_p4parallel")
+    await seed_permissions(ctx, owner_id, ["agents:write"])
+    await seed_client(ctx, allowed_scopes=["apis:read"])
+    await _link_external_identity(ctx, user_id=owner_id, external_subject="ext-w-p4parallel")
+
+    app = _make_app(ctx)
+    try:
+        async with _web_client(app) as client:
+            handle = await _seed_handle(
+                app, external_subject="ext-w-p4parallel", email=f"{owner_id}@grants.test"
+            )
+            blobs = []
+            for _ in range(3):
+                resp = await client.get("/oauth/consent", params={"ch": handle})
+                assert resp.status_code == 200
+                blobs.append(_extract_create_state(resp.text))
+            assert len(set(blobs)) == 3  # three distinct single-use blobs
+
+            async def submit(blob: str, name: str) -> int:
+                resp = await client.post(
+                    "/oauth/consent/agent",
+                    data={"consent_token": handle, "create_state": blob, "agent_name": name},
+                )
+                return resp.status_code
+
+            results = await asyncio.gather(
+                *(submit(blob, f"racer-{i}") for i, blob in enumerate(blobs))
+            )
+            assert all(code == 303 for code in results)
+
+            async with ctx.admin_db.session() as session:
+                agents = list(
+                    (
+                        await session.execute(select(Agent).where(Agent.owner_id == owner_id))
+                    ).scalars()
+                )
+            assert len(agents) == 1  # the slot claim let exactly one through
+    finally:
+        await _delete_agents_for(ctx, owner_id)

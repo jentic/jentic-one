@@ -21,6 +21,7 @@ from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.config import PlatformClientConfig, SigningKeyConfig
@@ -52,6 +53,9 @@ async def clean_grants(integration_context: Context) -> AsyncGenerator[None, Non
             await session.execute(delete(ExternalIdentity))
             await session.execute(delete(OAuthClient).where(OAuthClient.created_by == SEED_MARKER))
             await session.execute(delete(Agent).where(Agent.created_by == SEED_MARKER))
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.created_by == SEED_MARKER)
+            )
             await session.execute(delete(User).where(User.created_by == SEED_MARKER))
             await session.commit()
 
