@@ -76,7 +76,7 @@ test('a real filed access request surfaces in the rail live feed', async ({ page
 	const agent = await provisionAdminOwnedAgent(request, { name: `e2e-rail-${uniqueSuffix()}` });
 	await fileAccessRequestAsAgent(request, agent, {
 		reason: `e2e rail ${uniqueSuffix()}`,
-		resourceType: 'toolkit',
+		resourceType: 'credential',
 		action: 'bind',
 		resourceId: `e2e-rail-${uniqueSuffix()}`,
 	});
