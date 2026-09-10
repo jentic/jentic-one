@@ -1755,6 +1755,98 @@ components:
       - password
       title: CreateAdminRequest
       type: object
+    CredentialBindRequest:
+      description: Request body for directly binding a credential to an agent.
+      properties:
+        credential_id:
+          maxLength: 255
+          minLength: 1
+          title: Credential Id
+          type: string
+      required:
+      - credential_id
+      title: CredentialBindRequest
+      type: object
+    CredentialBindingEntry:
+      description: Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
+      properties:
+        bound_at:
+          format: date-time
+          title: Bound At
+          type: string
+        credential_id:
+          title: Credential Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        serves:
+          default: []
+          items:
+            $ref: '#/components/schemas/ServedApiRef'
+          title: Serves
+          type: array
+        suspended:
+          default: false
+          title: Suspended
+          type: boolean
+      required:
+      - credential_id
+      - bound_at
+      title: CredentialBindingEntry
+      type: object
+    CredentialBindingListResponse:
+      description: List of direct credential bindings.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/CredentialBindingResponse'
+          title: Data
+          type: array
+      required:
+      - data
+      title: CredentialBindingListResponse
+      type: object
+    CredentialBindingResponse:
+      description: Direct agent↔credential binding representation in API responses.
+      properties:
+        agent_id:
+          title: Agent Id
+          type: string
+        bound_at:
+          format: date-time
+          title: Bound At
+          type: string
+        credential_id:
+          title: Credential Id
+          type: string
+        id:
+          title: Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        serves:
+          default: []
+          items:
+            $ref: '#/components/schemas/ServedApiRef'
+          title: Serves
+          type: array
+        suspended:
+          title: Suspended
+          type: boolean
+      required:
+      - id
+      - agent_id
+      - credential_id
+      - bound_at
+      - suspended
+      title: CredentialBindingResponse
+      type: object
     CredentialCreateResponse:
       description: 'Create response: redacted + secret shown once.'
       properties:
@@ -2840,6 +2932,12 @@ components:
           - type: string
           - type: 'null'
           title: Approved By
+        credential_bindings:
+          default: []
+          items:
+            $ref: '#/components/schemas/CredentialBindingEntry'
+          title: Credential Bindings
+          type: array
         id:
           title: Id
           type: string
@@ -9101,6 +9199,292 @@ paths:
       security:
       - BearerAuth: []
       summary: Get Agent Api Key History
+      tags:
+      - Agents
+  /agents/{agent_id}/credentials:
+    get:
+      description: List direct credential bindings for an agent — requires agents:read or self.
+      operationId: listAgentCredentials
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialBindingListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List Credentials
+      tags:
+      - Agents
+    post:
+      description: |-
+        Directly bind a credential to an agent (theme 5 phase 1).
+
+        The caller must be able to see the target credential; a credential that
+        does not exist or is outside the caller's visibility returns 404.
+      operationId: bindAgentCredential
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialBindRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialBindingResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Bind Credential
+      tags:
+      - Agents
+  /agents/{agent_id}/credentials/{credential_id}:
+    delete:
+      description: Unbind a credential from an agent — suspend by default, purge on request.
+      operationId: unbindAgentCredential
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.'
+        in: query
+        name: purge
+        required: false
+        schema:
+          default: false
+          description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.'
+          title: Purge
+          type: boolean
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Unbind Credential
+      tags:
+      - Agents
+  /agents/{agent_id}/credentials/{credential_id}:resume:
+    post:
+      description: Lift a suspended credential binding — the reverse of the default unbind.
+      operationId: resumeAgentCredentialBinding
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialBindingResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Resume Credential Binding
       tags:
       - Agents
   /agents/{agent_id}/jwks:

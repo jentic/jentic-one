@@ -1555,6 +1555,36 @@ type CreateAdminRequest struct {
 	Password  string  `json:"password"`
 }
 
+// CredentialBindRequest Request body for directly binding a credential to an agent.
+type CredentialBindRequest struct {
+	CredentialId string `json:"credential_id"`
+}
+
+// CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
+type CredentialBindingEntry struct {
+	BoundAt      time.Time       `json:"bound_at"`
+	CredentialId string          `json:"credential_id"`
+	Name         *string         `json:"name,omitempty"`
+	Serves       *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended    *bool           `json:"suspended,omitempty"`
+}
+
+// CredentialBindingListResponse List of direct credential bindings.
+type CredentialBindingListResponse struct {
+	Data []CredentialBindingResponse `json:"data"`
+}
+
+// CredentialBindingResponse Direct agent↔credential binding representation in API responses.
+type CredentialBindingResponse struct {
+	AgentId      string          `json:"agent_id"`
+	BoundAt      time.Time       `json:"bound_at"`
+	CredentialId string          `json:"credential_id"`
+	Id           string          `json:"id"`
+	Name         *string         `json:"name,omitempty"`
+	Serves       *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended    bool            `json:"suspended"`
+}
+
 // CredentialCreateResponse Create response: redacted + secret shown once.
 type CredentialCreateResponse struct {
 	// Credential Redacted credential response (for read/list/patch).
@@ -1990,15 +2020,16 @@ type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
 type MeAgent struct {
-	ApprovedBy      *string               `json:"approved_by,omitempty"`
-	Id              string                `json:"id"`
-	Name            string                `json:"name"`
-	ParentAgentId   *string               `json:"parent_agent_id,omitempty"`
-	Scopes          []string              `json:"scopes"`
-	Status          string                `json:"status"`
-	TokenScopes     []string              `json:"token_scopes"`
-	ToolkitBindings []ToolkitBindingEntry `json:"toolkit_bindings"`
-	Type            *MeAgentType          `json:"type,omitempty"`
+	ApprovedBy         *string                   `json:"approved_by,omitempty"`
+	CredentialBindings *[]CredentialBindingEntry `json:"credential_bindings,omitempty"`
+	Id                 string                    `json:"id"`
+	Name               string                    `json:"name"`
+	ParentAgentId      *string                   `json:"parent_agent_id,omitempty"`
+	Scopes             []string                  `json:"scopes"`
+	Status             string                    `json:"status"`
+	TokenScopes        []string                  `json:"token_scopes"`
+	ToolkitBindings    []ToolkitBindingEntry     `json:"toolkit_bindings"`
+	Type               *MeAgentType              `json:"type,omitempty"`
 }
 
 // MeAgentType defines model for MeAgent.Type.
@@ -3494,6 +3525,12 @@ type ListAgentsParams struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// UnbindAgentCredentialParams defines parameters for UnbindAgentCredential.
+type UnbindAgentCredentialParams struct {
+	// Purge Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.
+	Purge *bool `form:"purge,omitempty" json:"purge,omitempty"`
+}
+
 // ListAgentOauthGrantsParams defines parameters for ListAgentOauthGrants.
 type ListAgentOauthGrantsParams struct {
 	// Status Filter by grant lifecycle state.
@@ -3852,6 +3889,9 @@ type CreateAgentJSONRequestBody = AgentCreateRequest
 
 // UpdateAgentJSONRequestBody defines body for UpdateAgent for application/json ContentType.
 type UpdateAgentJSONRequestBody = AgentPatchRequest
+
+// BindAgentCredentialJSONRequestBody defines body for BindAgentCredential for application/json ContentType.
+type BindAgentCredentialJSONRequestBody = CredentialBindRequest
 
 // UpdateAgentJwksJSONRequestBody defines body for UpdateAgentJwks for application/json ContentType.
 type UpdateAgentJwksJSONRequestBody = JwksUpdateRequest
@@ -5151,6 +5191,51 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 	GetAgentApiKeyHistory(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAgentCredentials List Credentials
+	//
+	// List direct credential bindings for an agent — requires agents:read or self.
+	//
+	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
+	ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BindAgentCredentialWithBody Bind Credential
+	//
+	// Directly bind a credential to an agent (theme 5 phase 1).
+	//
+	// The caller must be able to see the target credential; a credential that
+	// does not exist or is outside the caller's visibility returns 404.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+	BindAgentCredentialWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BindAgentCredential Bind Credential
+	//
+	// Directly bind a credential to an agent (theme 5 phase 1).
+	//
+	// The caller must be able to see the target credential; a credential that
+	// does not exist or is outside the caller's visibility returns 404.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+	BindAgentCredential(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnbindAgentCredential Unbind Credential
+	//
+	// Unbind a credential from an agent — suspend by default, purge on request.
+	//
+	// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
+	UnbindAgentCredential(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeAgentCredentialBinding Resume Credential Binding
+	//
+	// Lift a suspended credential binding — the reverse of the default unbind.
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
+	ResumeAgentCredentialBinding(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateAgentJwksWithBody Update Agent Jwks
 	//
@@ -7960,6 +8045,101 @@ func (c *Client) GetAgentApiKeyInfo(ctx context.Context, agentId string, reqEdit
 // Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentApiKeyHistoryRequest(c.Server, agentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAgentCredentials List Credentials
+//
+// List direct credential bindings for an agent — requires agents:read or self.
+//
+// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
+func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentCredentialsRequest(c.Server, agentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BindAgentCredentialWithBody Bind Credential
+//
+// Directly bind a credential to an agent (theme 5 phase 1).
+//
+// The caller must be able to see the target credential; a credential that
+// does not exist or is outside the caller's visibility returns 404.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+func (c *Client) BindAgentCredentialWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBindAgentCredentialRequestWithBody(c.Server, agentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BindAgentCredential Bind Credential
+//
+// Directly bind a credential to an agent (theme 5 phase 1).
+//
+// The caller must be able to see the target credential; a credential that
+// does not exist or is outside the caller's visibility returns 404.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+func (c *Client) BindAgentCredential(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBindAgentCredentialRequest(c.Server, agentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UnbindAgentCredential Unbind Credential
+//
+// Unbind a credential from an agent — suspend by default, purge on request.
+//
+// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
+func (c *Client) UnbindAgentCredential(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnbindAgentCredentialRequest(c.Server, agentId, credentialId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeAgentCredentialBinding Resume Credential Binding
+//
+// Lift a suspended credential binding — the reverse of the default unbind.
+//
+// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
+func (c *Client) ResumeAgentCredentialBinding(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeAgentCredentialBindingRequest(c.Server, agentId, credentialId)
 	if err != nil {
 		return nil, err
 	}
@@ -13303,6 +13483,196 @@ func NewGetAgentApiKeyHistoryRequest(server string, agentId string) (*http.Reque
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListAgentCredentialsRequest constructs an http.Request for the ListAgentCredentials method
+func NewListAgentCredentialsRequest(server string, agentId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/credentials", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBindAgentCredentialRequest calls the generic BindAgentCredential builder with application/json body
+func NewBindAgentCredentialRequest(server string, agentId string, body BindAgentCredentialJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBindAgentCredentialRequestWithBody(server, agentId, "application/json", bodyReader)
+}
+
+// NewBindAgentCredentialRequestWithBody constructs an http.Request for the BindAgentCredential method, with any body, and a specified content type
+func NewBindAgentCredentialRequestWithBody(server string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/credentials", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUnbindAgentCredentialRequest constructs an http.Request for the UnbindAgentCredential method
+func NewUnbindAgentCredentialRequest(server string, agentId string, credentialId string, params *UnbindAgentCredentialParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/credentials/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Purge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "purge", *params.Purge, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeAgentCredentialBindingRequest constructs an http.Request for the ResumeAgentCredentialBinding method
+func NewResumeAgentCredentialBindingRequest(server string, agentId string, credentialId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/credentials/%s:resume", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -21387,6 +21757,57 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 	GetAgentApiKeyHistoryWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentApiKeyHistoryHTTPResp, error)
 
+	// ListAgentCredentialsWithResponse List Credentials
+	//
+	// List direct credential bindings for an agent — requires agents:read or self.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
+	ListAgentCredentialsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ListAgentCredentialsHTTPResp, error)
+
+	// BindAgentCredentialWithBodyWithResponse Bind Credential
+	//
+	// Directly bind a credential to an agent (theme 5 phase 1).
+	//
+	// The caller must be able to see the target credential; a credential that
+	// does not exist or is outside the caller's visibility returns 404.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+	BindAgentCredentialWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error)
+
+	// BindAgentCredentialWithResponse Bind Credential
+	//
+	// Directly bind a credential to an agent (theme 5 phase 1).
+	//
+	// The caller must be able to see the target credential; a credential that
+	// does not exist or is outside the caller's visibility returns 404.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+	BindAgentCredentialWithResponse(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error)
+
+	// UnbindAgentCredentialWithResponse Unbind Credential
+	//
+	// Unbind a credential from an agent — suspend by default, purge on request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
+	UnbindAgentCredentialWithResponse(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*UnbindAgentCredentialHTTPResp, error)
+
+	// ResumeAgentCredentialBindingWithResponse Resume Credential Binding
+	//
+	// Lift a suspended credential binding — the reverse of the default unbind.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
+	ResumeAgentCredentialBindingWithResponse(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*ResumeAgentCredentialBindingHTTPResp, error)
+
 	// UpdateAgentJwksWithBodyWithResponse Update Agent Jwks
 	//
 	// Update an agent's JWKS (public keys for JWT-bearer authentication).
@@ -26241,6 +26662,331 @@ func (r GetAgentApiKeyHistoryHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAgentApiKeyHistoryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListAgentCredentialsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CredentialBindingListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAgentCredentialsHTTPResp) GetJSON200() *CredentialBindingListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAgentCredentialsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAgentCredentialsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAgentCredentialsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAgentCredentialsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BindAgentCredentialHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CredentialBindingResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r BindAgentCredentialHTTPResp) GetJSON201() *CredentialBindingResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r BindAgentCredentialHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BindAgentCredentialHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BindAgentCredentialHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BindAgentCredentialHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UnbindAgentCredentialHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UnbindAgentCredentialHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UnbindAgentCredentialHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UnbindAgentCredentialHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UnbindAgentCredentialHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeAgentCredentialBindingHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CredentialBindingResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetJSON200() *CredentialBindingResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeAgentCredentialBindingHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeAgentCredentialBindingHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeAgentCredentialBindingHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeAgentCredentialBindingHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -38470,6 +39216,87 @@ func (c *ClientWithResponses) GetAgentApiKeyHistoryWithResponse(ctx context.Cont
 	return ParseGetAgentApiKeyHistoryHTTPResp(rsp)
 }
 
+// ListAgentCredentialsWithResponse List Credentials
+//
+// List direct credential bindings for an agent — requires agents:read or self.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
+func (c *ClientWithResponses) ListAgentCredentialsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ListAgentCredentialsHTTPResp, error) {
+	rsp, err := c.ListAgentCredentials(ctx, agentId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAgentCredentialsHTTPResp(rsp)
+}
+
+// BindAgentCredentialWithBodyWithResponse Bind Credential
+//
+// Directly bind a credential to an agent (theme 5 phase 1).
+//
+// The caller must be able to see the target credential; a credential that
+// does not exist or is outside the caller's visibility returns 404.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+func (c *ClientWithResponses) BindAgentCredentialWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error) {
+	rsp, err := c.BindAgentCredentialWithBody(ctx, agentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBindAgentCredentialHTTPResp(rsp)
+}
+
+// BindAgentCredentialWithResponse Bind Credential
+//
+// Directly bind a credential to an agent (theme 5 phase 1).
+//
+// The caller must be able to see the target credential; a credential that
+// does not exist or is outside the caller's visibility returns 404.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+func (c *ClientWithResponses) BindAgentCredentialWithResponse(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error) {
+	rsp, err := c.BindAgentCredential(ctx, agentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBindAgentCredentialHTTPResp(rsp)
+}
+
+// UnbindAgentCredentialWithResponse Unbind Credential
+//
+// Unbind a credential from an agent — suspend by default, purge on request.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
+func (c *ClientWithResponses) UnbindAgentCredentialWithResponse(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*UnbindAgentCredentialHTTPResp, error) {
+	rsp, err := c.UnbindAgentCredential(ctx, agentId, credentialId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnbindAgentCredentialHTTPResp(rsp)
+}
+
+// ResumeAgentCredentialBindingWithResponse Resume Credential Binding
+//
+// Lift a suspended credential binding — the reverse of the default unbind.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
+func (c *ClientWithResponses) ResumeAgentCredentialBindingWithResponse(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*ResumeAgentCredentialBindingHTTPResp, error) {
+	rsp, err := c.ResumeAgentCredentialBinding(ctx, agentId, credentialId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeAgentCredentialBindingHTTPResp(rsp)
+}
+
 // UpdateAgentJwksWithBodyWithResponse Update Agent Jwks
 //
 // Update an agent's JWKS (public keys for JWT-bearer authentication).
@@ -43976,6 +44803,274 @@ func ParseGetAgentApiKeyHistoryHTTPResp(rsp *http.Response) (*GetAgentApiKeyHist
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ApiKeyHistoryResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListAgentCredentialsHTTPResp parses an HTTP response from a ListAgentCredentialsWithResponse call
+func ParseListAgentCredentialsHTTPResp(rsp *http.Response) (*ListAgentCredentialsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAgentCredentialsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CredentialBindingListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBindAgentCredentialHTTPResp parses an HTTP response from a BindAgentCredentialWithResponse call
+func ParseBindAgentCredentialHTTPResp(rsp *http.Response) (*BindAgentCredentialHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BindAgentCredentialHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CredentialBindingResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUnbindAgentCredentialHTTPResp parses an HTTP response from a UnbindAgentCredentialWithResponse call
+func ParseUnbindAgentCredentialHTTPResp(rsp *http.Response) (*UnbindAgentCredentialHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UnbindAgentCredentialHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResumeAgentCredentialBindingHTTPResp parses an HTTP response from a ResumeAgentCredentialBindingWithResponse call
+func ParseResumeAgentCredentialBindingHTTPResp(rsp *http.Response) (*ResumeAgentCredentialBindingHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeAgentCredentialBindingHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CredentialBindingResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

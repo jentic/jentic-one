@@ -84,9 +84,15 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string             { return []string{"token"} }
-func (ConnectChallengeResponse) RequiredFields() []string { return []string{"authorize_url", "state"} }
-func (CreateAdminRequest) RequiredFields() []string       { return []string{"email", "password"} }
+func (ClaimRequest) RequiredFields() []string                  { return []string{"token"} }
+func (ConnectChallengeResponse) RequiredFields() []string      { return []string{"authorize_url", "state"} }
+func (CreateAdminRequest) RequiredFields() []string            { return []string{"email", "password"} }
+func (CredentialBindRequest) RequiredFields() []string         { return []string{"credential_id"} }
+func (CredentialBindingEntry) RequiredFields() []string        { return []string{"bound_at", "credential_id"} }
+func (CredentialBindingListResponse) RequiredFields() []string { return []string{"data"} }
+func (CredentialBindingResponse) RequiredFields() []string {
+	return []string{"agent_id", "bound_at", "credential_id", "id", "suspended"}
+}
 func (CredentialCreateResponse) RequiredFields() []string { return []string{"credential", "secret"} }
 func (CredentialListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
 func (CredentialRedactedResponse) RequiredFields() []string {
