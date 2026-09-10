@@ -26,8 +26,7 @@ from jentic_one.registry.repos.search.sqlite_lexical import SqliteLexicalStrateg
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import AppConfig, SearchConfig
-from jentic_one.shared.context import Context
-from jentic_one.shared.web.capabilities import CapabilityContributor
+from jentic_one.shared.web.capabilities import CapabilityContributor, CapabilityView
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 from jentic_one.testing import (
     BaseBrokerComplianceTest,
@@ -72,7 +71,7 @@ class _NoopHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):
 class _NoopCapabilityContributor:
     """Class-shaped contributor matching the seam signature exactly."""
 
-    def __call__(self, ctx: Context) -> Mapping[str, object]:
+    def __call__(self, view: CapabilityView) -> Mapping[str, bool]:
         return {}
 
 
