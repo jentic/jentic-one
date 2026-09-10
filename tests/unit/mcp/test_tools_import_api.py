@@ -12,9 +12,10 @@ itself; every promote failure is a per-revision map entry, never a hard error).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,6 +24,7 @@ from mcp.shared.exceptions import MCPError
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call, validate_api_id
+from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     OverlaySupersedeForbiddenError,
@@ -30,9 +32,25 @@ from jentic_one.registry.services.errors import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
+from jentic_one.shared.jobs.worker import _ERROR_MAX_LEN
 from jentic_one.shared.models import ActorType
 
 _NOW = datetime(2026, 9, 10, tzinfo=UTC)
+
+
+def _real_duplicate_job_error() -> str:
+    """``job.error`` exactly as the worker writes it for a duplicate ingest.
+
+    The construction is the real pipeline, end to end: ``ImportHandler``
+    wraps the per-source failure as ``IngestJobError("all 1 import source(s)
+    failed: source[0]: " + DuplicateRevisionError().message)``
+    (``import_service.py``), and the worker's requeue/terminal writes truncate
+    it to ``_ERROR_MAX_LEN`` (``worker.py``). Fixtures use this — never a
+    hand-crafted string — so a reword on either side breaks the tests.
+    """
+    wrapped = "all 1 import source(s) failed: source[0]: " + DuplicateRevisionError().message
+    return wrapped[:_ERROR_MAX_LEN]
+
 
 #: the import-job result body the worker writes for one draft revision
 #: (``import_service.py`` — ``{"revisions": [...]}``); the Go fixture's twin.
@@ -170,7 +188,7 @@ def services(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_missing_api_id_is_invalid_params(services: None) -> None:
     with pytest.raises(MCPError) as err:
-        await tools_mod.handle_import_api(_env(["catalog:import"]), {})
+        await tools_mod.handle_import_api(_env(["catalog:import", "jobs:read"]), {})
     assert "api_id" in str(err.value)
     assert "search_catalog" in str(err.value)
 
@@ -190,7 +208,7 @@ async def test_traversal_api_id_is_invalid_params(services: None, bad: str) -> N
     """The Go ``validateAPIID`` contract: traversal-shaped ids are refused as
     a correctable protocol error before any service call."""
     with pytest.raises(MCPError) as err:
-        await tools_mod.handle_import_api(_env(["catalog:import"]), {"api_id": bad})
+        await tools_mod.handle_import_api(_env(["catalog:import", "jobs:read"]), {"api_id": bad})
     assert "search_catalog" in str(err.value)
     assert _FakeCatalogService.filed == []
 
@@ -218,6 +236,27 @@ async def test_missing_scope_is_broker_denied_pointing_at_request_access(
     assert _FakeCatalogService.filed == []
 
 
+async def test_missing_jobs_read_degrades_to_the_filed_envelope_without_polling(
+    services: None,
+) -> None:
+    """In-process tracking rides the same jobs:read gate the Go client's poll
+    leg does (GET /jobs/{id}). An identity with catalog:import but not
+    jobs:read files successfully and gets the queued envelope — NOT an error
+    (the filing succeeded) — and the job service is never touched. Both
+    scopes ride DEFAULT_AGENT_SCOPES, so defaults are unaffected."""
+    env = _env(["catalog:import"])  # no jobs:read
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    assert not result.is_error, "a missing poll scope degrades; the filing still succeeded"
+    payload = _payload(result)
+    assert payload["schema_version"] == "1"
+    assert payload["job_id"] == "job_9"
+    assert payload["status"] == "queued"
+    assert "revisions" not in payload
+    assert "promoted" not in payload
+    assert _FakeCatalogService.filed == ["googleapis.com/sheets"]
+    assert _FakeJobService.polls == 0, "no jobs:read → no job polling"
+
+
 # ── three-outcome tracking (Go: CompletesAndPromotes / StillRunning / PollFailure) ──
 
 
@@ -227,7 +266,7 @@ async def test_completed_import_promotes_and_returns_the_go_envelope(services: N
     promoted} with the instance stamp joined. Uses the ``id`` alias and an
     umbrella api_id with its literal slash, like the Go test."""
     _FakeJobService.statuses = [_job("running"), _job("completed")]
-    env = _env(["catalog:import", "apis:write"])
+    env = _env(["catalog:import", "jobs:read", "apis:write"])
     result = await dispatch_tool_call(env, "import_api", {"id": "googleapis.com/sheets"})
     assert not result.is_error, result.content
     payload = _payload(result)
@@ -248,7 +287,7 @@ async def test_budget_lapse_returns_the_running_job_as_a_normal_result(
     import_api (idempotent) or watching the job with get_execution_result."""
     monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_BUDGET_SECONDS", 0.0)
     _FakeJobService.statuses = [_job("running")]
-    env = _env(["catalog:import"])
+    env = _env(["catalog:import", "jobs:read"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert not result.is_error, result.content
     payload = _payload(result)
@@ -264,7 +303,7 @@ async def test_job_poll_failure_is_a_soft_error_never_still_running(services: No
     de-duplicates nothing. The job_id rides the extras so the model can keep
     watching THIS job."""
     _FakeJobService.poll_error = RuntimeError("job store down")
-    env = _env(["catalog:import"])
+    env = _env(["catalog:import", "jobs:read"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert result.is_error, "a job-poll failure must never look like still-running"
     payload = _payload(result)
@@ -274,13 +313,38 @@ async def test_job_poll_failure_is_a_soft_error_never_still_running(services: No
     assert "job store down" in payload["error"]
 
 
+async def test_hung_poll_trips_the_hard_ceiling_and_maps_to_the_poll_failure_arm(
+    services: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wait budget only gates BETWEEN polls — a single hung poll would
+    hold the ASGI request open indefinitely without the ``asyncio.timeout``
+    ceiling. The lapse is UNKNOWN state: INTERNAL_ERROR with the job_id,
+    never a clean "still running"."""
+    monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_BUDGET_SECONDS", 0.01)
+    monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_GRACE_SECONDS", 0.02)
+
+    async def _hang(self: Any, job_id: str) -> JobView:
+        await asyncio.Event().wait()  # never set — a poll that never returns
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(_FakeJobService, "get_by_id", _hang)
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    assert result.is_error, "a ceiling lapse must never look like still-running"
+    payload = _payload(result)
+    assert payload["error_code"] == "INTERNAL_ERROR"
+    assert payload["job_id"] == "job_9"
+    assert payload["next_tool"] == "get_execution_result"
+    assert "timed out" in payload["error"]
+
+
 # ── failed-job arm (Go: FailedJobIsSoftError; DEAD_LETTER is terminal) ───────
 
 
 @pytest.mark.parametrize("terminal", ["failed", "dead_letter", "cancelled"])
 async def test_failed_job_is_internal_error_with_job_extras(services: None, terminal: str) -> None:
     _FakeJobService.statuses = [_job(terminal, error="spec fetch failed")]
-    env = _env(["catalog:import"])
+    env = _env(["catalog:import", "jobs:read"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert result.is_error
     payload = _payload(result)
@@ -294,19 +358,24 @@ async def test_failed_job_is_internal_error_with_job_extras(services: None, term
 # ── duplicate-content short-circuit ──────────────────────────────────────────
 
 
+def test_duplicate_fragment_pins_the_real_worker_error_message() -> None:
+    """Couples ``_DUPLICATE_CONTENT_FRAGMENT`` to the real ``job.error``: the
+    ``ImportHandler`` wrapper around ``DuplicateRevisionError().message``,
+    truncated to the worker's ``_ERROR_MAX_LEN``. A reword of the exception
+    message (or a wrapper change that pushes the fragment past the truncation
+    point) fails here first, not in production."""
+    assert tools_mod._DUPLICATE_CONTENT_FRAGMENT in _real_duplicate_job_error()
+
+
 async def test_duplicate_content_short_circuits_on_a_non_terminal_requeued_job(
     services: None,
 ) -> None:
     """The worker treats a duplicate ingest as retryable (backoff to
     DEAD_LETTER, ~30s+), so the handler matches the stable leading fragment of
-    ``job.error`` on EVERY poll — including a non-terminal requeued state —
-    and short-circuits instead of burning the wait budget."""
-    duplicate_error = (
-        "attempt 1/5 failed: all 1 import source(s) failed: source[0]: A revision with "
-        "identical content already exists for this API"  # truncated at 128 chars
-    )
-    _FakeJobService.statuses = [_job("queued", error=duplicate_error)]
-    env = _env(["catalog:import"])
+    ``job.error`` on EVERY non-completed poll — including a non-terminal
+    requeued state — and short-circuits instead of burning the wait budget."""
+    _FakeJobService.statuses = [_job("queued", error=_real_duplicate_job_error())]
+    env = _env(["catalog:import", "jobs:read"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert not result.is_error, "already-present content is a convergence, not a failure"
     payload = _payload(result)
@@ -318,13 +387,31 @@ async def test_duplicate_content_short_circuits_on_a_non_terminal_requeued_job(
     assert _FakeJobService.polls == 1, "the short-circuit must not keep polling"
 
 
+async def test_completed_job_with_stale_duplicate_error_reports_the_completed_result(
+    services: None,
+) -> None:
+    """The worker never clears ``job.error`` (requeue writes it; neither claim
+    nor completion resets it), so an import that failed once with the
+    duplicate message and succeeded on a later attempt carries the stale
+    fragment forever. A COMPLETED job's result is always more honest than its
+    residual error: the normal completed envelope — revisions AND the promote
+    leg — never already_imported."""
+    _FakeJobService.statuses = [_job("completed", error=_real_duplicate_job_error())]
+    env = _env(["catalog:import", "jobs:read", "apis:write"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    assert not result.is_error, result.content
+    payload = _payload(result)
+    assert payload["status"] == "completed", "a stale requeue error must not mask completion"
+    assert payload["revisions"] == [_DRAFT_REVISION]
+    assert payload["promoted"] == {"rev_1": "live"}
+    assert _FakeRevisionService.promotes == [("googleapis.com", "sheets", "v4", "rev_1")]
+
+
 async def test_duplicate_content_dead_letter_via_get_execution_result(services: None) -> None:
     """A duplicate import job polled later reports already_imported, never a
     scary dead_letter — the same detection, placed before the generic payload
     assembly in handle_get_execution_result."""
-    _FakeJobService.statuses = [
-        _job("dead_letter", error="… A revision with identical content already exists for …")
-    ]
+    _FakeJobService.statuses = [_job("dead_letter", error=_real_duplicate_job_error())]
     env = _env(["jobs:read"])
     result = await dispatch_tool_call(env, "get_execution_result", {"job_id": "job_9"})
     assert not result.is_error
@@ -332,6 +419,20 @@ async def test_duplicate_content_dead_letter_via_get_execution_result(services: 
     assert payload["status"] == "already_imported"
     assert payload["job_id"] == "job_9"
     assert payload["next_tool"] == "search_apis"
+
+
+async def test_completed_job_with_stale_duplicate_error_polls_normally(services: None) -> None:
+    """The COMPLETED exemption, on the poll side: a completed import job whose
+    ``job.error`` still carries the duplicate fragment reports its normal
+    completed payload (result attached), never already_imported."""
+    _FakeJobService.statuses = [_job("completed", error=_real_duplicate_job_error())]
+    env = _env(["jobs:read"])
+    result = await dispatch_tool_call(env, "get_execution_result", {"job_id": "job_9"})
+    assert not result.is_error
+    payload = _payload(result)
+    assert payload["status"] == "completed", "a stale requeue error must not mask completion"
+    assert payload["kind"] == "import"
+    assert payload["result"] == {"revisions": [_DRAFT_REVISION]}
 
 
 async def test_execution_jobs_never_trip_the_duplicate_detection(services: None) -> None:
@@ -359,7 +460,7 @@ async def test_promote_without_apis_write_soft_fails_without_calling_the_service
     ``apis:write`` becomes a per-revision map entry, and the service is never
     touched; the import itself still succeeds."""
     _FakeJobService.statuses = [_job("completed")]
-    env = _env(["catalog:import"])  # no apis:write
+    env = _env(["catalog:import", "jobs:read"])  # no apis:write
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert not result.is_error, "a promote failure is never a hard error"
     payload = _payload(result)
@@ -386,7 +487,7 @@ async def test_promote_state_conflict_is_a_soft_map_entry(services: None) -> Non
     _FakeRevisionService.promote_error = RevisionStateConflictError(
         "rev_1", "imported", ["draft"], "promote"
     )
-    env = _env(["catalog:import", "apis:write"])
+    env = _env(["catalog:import", "jobs:read", "apis:write"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert not result.is_error
     promoted = _payload(result)["promoted"]
@@ -400,11 +501,47 @@ async def test_non_draft_revisions_map_to_their_state_verbatim(services: None) -
     ``promoteRevisions`` skip."""
     _FakeJobService.statuses = [_job("completed")]
     _FakeJobResultService.body = {"revisions": [{**_DRAFT_REVISION, "state": "imported"}]}
-    env = _env(["catalog:import", "apis:write"])
+    env = _env(["catalog:import", "jobs:read", "apis:write"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert not result.is_error
     assert _payload(result)["promoted"] == {"rev_1": "imported"}
     assert _FakeRevisionService.promotes == []
+
+
+async def test_malformed_revision_entries_get_explicit_promote_failures(services: None) -> None:
+    """A non-dict row or a revision_id-less dict never vanishes silently —
+    each gets an explicit index-keyed "promote failed: malformed revision
+    entry" map entry, and the promote service is never called for it."""
+    _FakeJobService.statuses = [_job("completed")]
+    _FakeJobResultService.body = {"revisions": ["not-a-dict", {"state": "draft"}]}
+    env = _env(["catalog:import", "jobs:read", "apis:write"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    assert not result.is_error
+    assert _payload(result)["promoted"] == {
+        "revision[0]": "promote failed: malformed revision entry",
+        "revision[1]": "promote failed: malformed revision entry",
+    }
+    assert _FakeRevisionService.promotes == []
+
+
+# ── DB-gate refusal ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("blocked", ["registry", "admin"])
+async def test_db_gate_refusal_is_a_soft_internal_error(services: None, blocked: str) -> None:
+    """import_api needs BOTH the registry DB (the catalog) and the admin DB
+    (the job rides it): a deployment shape missing either refuses softly —
+    INTERNAL_ERROR, before any filing — never an unhandled crash. (The
+    happy-path fixtures never exercise this arm: a MagicMock ctx is always
+    truthy.)"""
+    env = _env(["catalog:import", "jobs:read"])
+    cast(MagicMock, env.ctx).is_db_allowed.side_effect = lambda db: db != blocked
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    assert result.is_error
+    payload = _payload(result)
+    assert payload["error_code"] == "INTERNAL_ERROR"
+    assert "not available on this deployment" in payload["error"]
+    assert _FakeCatalogService.filed == [], "the DB gate must refuse before filing"
 
 
 # ── filing-time error arms ───────────────────────────────────────────────────
@@ -412,7 +549,7 @@ async def test_non_draft_revisions_map_to_their_state_verbatim(services: None) -
 
 async def test_unknown_catalog_entry_is_resolve_failed(services: None) -> None:
     _FakeCatalogService.import_error = CatalogEntryNotFoundError("nope/nothing")
-    env = _env(["catalog:import"])
+    env = _env(["catalog:import", "jobs:read"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "nope/nothing"})
     assert result.is_error
     payload = _payload(result)
@@ -428,7 +565,7 @@ async def test_overlay_supersede_refusal_maps_to_broker_denied(services: None) -
     _FakeCatalogService.import_error = OverlaySupersedeForbiddenError(
         "googleapis.com/sheets", "ovl_1"
     )
-    env = _env(["catalog:import"])
+    env = _env(["catalog:import", "jobs:read"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert result.is_error
     payload = _payload(result)
@@ -442,7 +579,7 @@ async def test_result_fetch_failure_points_at_the_job_poll(services: None) -> No
     the model polls get_execution_result rather than re-importing blind."""
     _FakeJobService.statuses = [_job("completed")]
     _FakeJobResultService.error = RuntimeError("result store down")
-    env = _env(["catalog:import", "apis:write"])
+    env = _env(["catalog:import", "jobs:read", "apis:write"])
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert result.is_error
     payload = _payload(result)
