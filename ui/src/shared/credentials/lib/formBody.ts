@@ -236,9 +236,12 @@ export function validateCreate(
 			break;
 		case CredentialType.OAUTH2:
 			if (!state.clientId.trim()) errors.clientId = 'Client ID is required.';
-			if (!state.clientSecret) errors.clientSecret = 'Client secret is required.';
 			{
 				const grant = state.grantType.trim();
+				// Device flow (RFC 8628) is a public-client flow — no secret.
+				if (grant !== 'device_code' && !state.clientSecret) {
+					errors.clientSecret = 'Client secret is required.';
+				}
 				// The implicit grant has no token endpoint, so a Token URL is N/A.
 				// Every other grant exchanges a token and requires it.
 				if (grant !== 'implicit') {
@@ -248,14 +251,19 @@ export function validateCreate(
 						errors.tokenUrl = 'Token URL must be a valid http(s) URL.';
 					}
 				}
-				// The authorization_code grant is a browser redirect flow, so an
-				// Authorize URL is mandatory — without it the credential is
-				// created but can never connect (the backend's begin_connect
-				// raises NotConnectableError). Validate the format for any grant
-				// when a value is present.
-				if (grant === 'authorization_code' && !state.authorizeUrl.trim()) {
+				// Redirect-based grants (auth-code) and RFC 8628 device flow both
+				// need the "where the flow starts" URL — auth-code redirects the
+				// browser there, device flow POSTs to it for user_code +
+				// verification_uri. Without it the credential is created but can
+				// never connect.
+				if (
+					(grant === 'authorization_code' || grant === 'device_code') &&
+					!state.authorizeUrl.trim()
+				) {
 					errors.authorizeUrl =
-						'Authorize URL is required for the authorization code grant.';
+						grant === 'device_code'
+							? 'Device authorization URL is required for the device code grant.'
+							: 'Authorize URL is required for the authorization code grant.';
 				} else if (state.authorizeUrl.trim() && !isValidHttpUrl(state.authorizeUrl)) {
 					errors.authorizeUrl = 'Authorize URL must be a valid http(s) URL.';
 				}
