@@ -448,6 +448,15 @@ func TestMCPSession_ResourcesWorkPreAuth(t *testing.T) {
 	wantURIs = append(wantURIs, skillIndexURI)
 	for _, name := range names {
 		wantURIs = append(wantURIs, skillURIScheme+name)
+		// Shipped references are listed too — EXCEPT the CLI-lane file
+		// (skillgen.CLIOnlyReference): this server is an MCP session, so the
+		// CLI lane is never listed here (it stays public over HTTP).
+		for _, ref := range skillgen.BundledReferences(name) {
+			if ref == skillgen.CLIOnlyReference {
+				continue
+			}
+			wantURIs = append(wantURIs, skillURIScheme+name+"/references/"+ref)
+		}
 	}
 	for _, want := range wantURIs {
 		r, ok := uris[want]
@@ -459,7 +468,18 @@ func TestMCPSession_ResourcesWorkPreAuth(t *testing.T) {
 		}
 	}
 	if len(uris) != len(wantURIs) {
-		t.Errorf("resources = %d, want exactly the bundled set + index (%d)", len(uris), len(wantURIs))
+		t.Errorf("resources = %d, want exactly the bundled set + index + lane-filtered references (%d)", len(uris), len(wantURIs))
+	}
+	// The jentic skill ships references, so the filter must be exercised for
+	// real: the MCP-lane and shared files are listed, the CLI-lane one is not.
+	if _, ok := uris["skill://jentic/references/mcp.md"]; !ok {
+		t.Errorf("resources/list must include the jentic MCP-lane reference")
+	}
+	if _, ok := uris["skill://jentic/references/recovery.md"]; !ok {
+		t.Errorf("resources/list must include the shared recovery reference")
+	}
+	if _, ok := uris["skill://jentic/references/cli.md"]; ok {
+		t.Errorf("resources/list must NOT include the CLI-lane cli.md reference")
 	}
 
 	res, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://jentic"})
@@ -488,6 +508,45 @@ func TestMCPSession_ResourcesWorkPreAuth(t *testing.T) {
 	// handler panic or a silent empty read.
 	if _, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://no-such-skill"}); err == nil {
 		t.Errorf("reading an unregistered skill URI must fail")
+	}
+
+	// A listed reference reads its embedded bytes verbatim, stamped
+	// source=bundled with the OWNING skill's content version.
+	ref, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://jentic/references/mcp.md"})
+	if err != nil {
+		t.Fatalf("reading a listed reference must work pre-auth: %v", err)
+	}
+	if len(ref.Contents) != 1 {
+		t.Fatalf("reference contents = %d, want 1", len(ref.Contents))
+	}
+	wantRef, err := skillgen.RawBundledReference("jentic", "mcp.md")
+	if err != nil {
+		t.Fatalf("RawBundledReference: %v", err)
+	}
+	if ref.Contents[0].Text != string(wantRef) {
+		t.Errorf("reference read must serve the bundled bytes verbatim (len %d vs %d)", len(ref.Contents[0].Text), len(wantRef))
+	}
+	if ref.Contents[0].Meta[skillMetaSource] != string(skillgen.SourceBundled) {
+		t.Errorf("reference meta source = %v, want bundled", ref.Contents[0].Meta[skillMetaSource])
+	}
+	wantVersion := skillgen.ParseDocMeta(want).Version
+	if ref.Contents[0].Meta[skillMetaVersion] != wantVersion {
+		t.Errorf("reference meta version = %v, want the owning skill's %q", ref.Contents[0].Meta[skillMetaVersion], wantVersion)
+	}
+
+	// The never-listed CLI-lane reference is refused at read time too (the
+	// lane filter is registration-time, and the SDK refuses what is not
+	// registered) — same for malformed reference-shaped URIs.
+	for _, uri := range []string{
+		"skill://jentic/references/cli.md",
+		"skill://jentic/references/../jentic.md",
+		"skill://jentic/references/nope.md",
+		"skill://jentic/references/",
+		"skill://no-such-skill/references/mcp.md",
+	} {
+		if _, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri}); err == nil {
+			t.Errorf("reading %q must fail (unlisted/malformed reference)", uri)
+		}
 	}
 }
 

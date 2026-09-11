@@ -87,6 +87,13 @@ func applySharedFile(a Adapter, c Canonical, target string, norm []byte, out Out
 // exists, it is treated as user content (refuse without Force) — unless it
 // carries a legacy managed block, which is our own pre-migration write and is
 // safely rewritten.
+//
+// A skill that ships reference files (skills/<name>/references/*.md) also gets
+// them written as verbatim sibling files under <skill dir>/references/ — the
+// CLI lane's set only, never mcp.md (renderedReferences) — owned by this same
+// managed lifecycle: written and refreshed here, deleted by removeOwnedFile.
+// The SKILL.md's relative `references/…` pointers resolve against them, so a
+// rendered install reads its lane offline exactly like the raw document does.
 func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outcome, opts ApplyOptions) (Outcome, error) {
 	if !out.Created && !opts.Force {
 		if ownedFileUserEdited(target, norm, c.Name) {
@@ -101,16 +108,60 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	}
 	out.Changed = changed
 	out.Skipped = !changed
-	if !changed || opts.DryRun {
+	if opts.DryRun {
 		return out, nil
 	}
-	if err := writeTarget(target, newBytes); err != nil {
+	if changed {
+		if err := writeTarget(target, newBytes); err != nil {
+			return out, err
+		}
+		if err := writeSidecar(target, c, newBytes); err != nil {
+			return out, err
+		}
+	}
+	// References refresh even when the SKILL.md itself is unchanged (their
+	// content can move independently); an up-to-date set is a no-op write-skip
+	// inside applyOwnedReferences, so idempotence holds.
+	refChanged, err := applyOwnedReferences(target, c.Name)
+	if err != nil {
 		return out, err
 	}
-	if err := writeSidecar(target, c, newBytes); err != nil {
-		return out, err
+	if refChanged {
+		out.Changed = true
+		out.Skipped = false
 	}
 	return out, nil
+}
+
+// applyOwnedReferences writes the rendered reference set (verbatim embed
+// bytes) as sibling files under <skill dir>/references/, skipping files that
+// are already current. These files are managed mirrors like the SKILL.md body
+// — regenerated on every apply, not edit-guarded: the skill dir is
+// generator-owned territory (see pruneEmptyDirs), and the sidecar guard
+// protects the one file an operator might legitimately tune (the SKILL.md
+// frontmatter/body), not the verbatim lane documents.
+func applyOwnedReferences(target, name string) (changed bool, err error) {
+	refs := renderedReferences(name)
+	if len(refs) == 0 {
+		return false, nil
+	}
+	refDir := filepath.Join(filepath.Dir(target), "references")
+	for _, ref := range refs {
+		data, err := RawBundledReference(name, ref)
+		if err != nil {
+			return changed, err
+		}
+		path := filepath.Join(refDir, ref)
+		if existing, rerr := os.ReadFile(path); rerr == nil && //nolint:gosec // path derives from adapter rules + embed names.
+			normalizeNewlines(string(existing)) == normalizeNewlines(string(data)) {
+			continue
+		}
+		if err := writeTarget(path, data); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
+	return changed, nil
 }
 
 // ownedFileUserEdited reports whether an existing owned-file SKILL.md holds
@@ -256,9 +307,13 @@ func removeSharedFile(target string, norm []byte, c Canonical, out RemoveOutcome
 	return out, nil
 }
 
-// removeOwnedFile deletes an owned-file SKILL.md and its sidecar. If the user
-// added their own content beyond a clean Jentic write, the file is preserved
-// (rewritten without our provenance) unless forced.
+// removeOwnedFile deletes an owned-file SKILL.md, its sidecar, and its managed
+// sibling reference files (the rendered CLI-lane set applyOwnedReferences
+// writes). If the user added their own content beyond a clean Jentic write,
+// the file is preserved (rewritten without our provenance) unless forced.
+// Reference removal is name-scoped — only the files this generator would have
+// written are deleted; anything else a user parked under references/ survives,
+// and pruneEmptyDirs then removes only genuinely empty dirs.
 func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome, opts RemoveOptions) (RemoveOutcome, error) {
 	if !opts.Force && ownedFileUserEdited(target, norm, name) {
 		out.UserEdits = true
@@ -272,6 +327,11 @@ func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome,
 		return out, fmt.Errorf("remove %s: %w", target, err)
 	}
 	_ = os.Remove(sidecarPath(target))
+	refDir := filepath.Join(filepath.Dir(target), "references")
+	for _, ref := range renderedReferences(name) {
+		_ = os.Remove(filepath.Join(refDir, ref))
+	}
+	pruneEmptyDirs(refDir)
 	pruneEmptyDirs(filepath.Dir(target))
 	out.Removed = true
 	return out, nil

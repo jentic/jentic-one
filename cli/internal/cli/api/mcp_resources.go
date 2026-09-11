@@ -74,9 +74,16 @@ const skillProvenanceNote = " Served from the connected Jentic One backend when 
 
 // registerResources declares the skill:// resource surface: one resource per
 // bundled skill (the shipped set is the stable, pre-auth-listable surface —
-// BundledNames is its single source of truth) plus the index manifest. The
-// URIs stay valid whatever the backend serves; a hosted set that has drifted
-// from this binary shows up in the index read, not in resources/list.
+// BundledNames is its single source of truth) plus the index manifest, plus
+// one resource per shipped skill *reference* EXCEPT the CLI-lane file
+// (skillgen.CLIOnlyReference — this server is an MCP session, and its
+// consumers never need the CLI lane: the CLI on this machine carries that
+// lane itself). The SDK answers unregistered URIs with resource-not-found,
+// so the lane filter at registration time is also the read-time refusal:
+// skill://<name>/references/cli.md is never listed and never readable here,
+// while the same bytes stay public over the backend's HTTP routes. The URIs
+// stay valid whatever the backend serves; a hosted set that has drifted from
+// this binary shows up in the index read, not in resources/list.
 func (s *mcpServer) registerResources() {
 	for _, name := range skillgen.BundledNames() {
 		raw, err := skillgen.RawBundled(name)
@@ -95,6 +102,20 @@ func (s *mcpServer) registerResources() {
 			Description: meta.Description + skillProvenanceNote,
 			MIMEType:    skillMarkdownMIME,
 		}, s.handleSkillResource)
+		for _, ref := range skillgen.BundledReferences(name) {
+			if ref == skillgen.CLIOnlyReference {
+				continue
+			}
+			s.server.AddResource(&mcp.Resource{
+				URI:   skillURIScheme + name + "/references/" + ref,
+				Name:  name + "/references/" + ref,
+				Title: "Jentic skill reference: " + name + "/" + ref,
+				Description: "A level-3 reference document of the " + name + " skill (read the skill first; " +
+					"it points at this file when the material applies). Served from the copy embedded in " +
+					"this binary — the same bytes the backend serves at GET /skills/" + name + "/references/" + ref + ".",
+				MIMEType: skillMarkdownMIME,
+			}, s.handleSkillReferenceResource)
+		}
 	}
 	s.server.AddResource(&mcp.Resource{
 		URI:   skillIndexURI,
@@ -134,6 +155,39 @@ func (s *mcpServer) handleSkillResource(ctx context.Context, req *mcp.ReadResour
 	}
 	s.logger.Info("skill resource read", "skill", name, "source", doc.source, "version", doc.version)
 	return skillReadResult(req.Params.URI, skillMarkdownMIME, doc), nil
+}
+
+// handleSkillReferenceResource reads one skill://<name>/references/<file>
+// document. Only registered URIs reach here (the SDK answers unknown URIs —
+// including the never-registered CLI-lane cli.md — with resource-not-found
+// itself), so the (name, file) pair is always a bundled reference outside
+// CLIOnlyReferences. References are served from the EMBED, deliberately not
+// hosted-first like the skill documents: a reference has no frontmatter, so
+// the hosted shape gate the document handler relies on (frontmatter name
+// match) does not exist for it, and the MCP-lane reference describes THIS
+// binary's own tool surface, which the embed matches by construction. The
+// provenance stamp is therefore always source=bundled, with the version of
+// the OWNING skill's bundled frontmatter (a reference has none of its own).
+func (s *mcpServer) handleSkillReferenceResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	rest := strings.TrimPrefix(req.Params.URI, skillURIScheme)
+	name, file, ok := strings.Cut(rest, "/references/")
+	if !ok {
+		return nil, fmt.Errorf("malformed skill reference URI %q", req.Params.URI)
+	}
+	raw, err := skillgen.RawBundledReference(name, file)
+	if err != nil {
+		return nil, err
+	}
+	version := "1"
+	if skillRaw, err := skillgen.RawBundled(name); err == nil {
+		version = skillgen.ParseDocMeta(skillRaw).Version
+	}
+	s.logger.Info("skill reference read", "skill", name, "reference", file, "source", skillgen.SourceBundled)
+	return skillReadResult(req.Params.URI, skillMarkdownMIME, skillDoc{
+		raw:     raw,
+		source:  skillgen.SourceBundled,
+		version: version,
+	}), nil
 }
 
 // skillDocFor resolves one skill's bytes hosted-first: the connected backend's

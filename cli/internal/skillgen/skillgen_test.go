@@ -553,6 +553,120 @@ func TestOwnedFilePruneRespectsCursorBoundary(t *testing.T) {
 	}
 }
 
+// TestOwnedFileWritesLaneFilteredReferences pins the D12 sibling-file
+// delivery: a dir-adapter install of a skill that ships references writes the
+// CLI lane's set (cli.md + recovery.md) verbatim under references/, never the
+// MCP-lane mcp.md; re-apply is idempotent; remove cleans the siblings and
+// prunes the skill dir.
+func TestOwnedFileWritesLaneFilteredReferences(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("claude")
+	c := jenticContent(t)
+
+	out, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refDir := filepath.Join(filepath.Dir(out.Path), "references")
+	for _, ref := range []string{"cli.md", "recovery.md"} {
+		data, err := os.ReadFile(filepath.Join(refDir, ref))
+		if err != nil {
+			t.Fatalf("sibling reference %s not written: %v", ref, err)
+		}
+		want, _ := RawBundledReference("jentic", ref)
+		if string(data) != string(want) {
+			t.Errorf("%s must be the verbatim embed bytes", ref)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(refDir, "mcp.md")); !os.IsNotExist(err) {
+		t.Error("the MCP-lane mcp.md must never be written into a rendered CLI install")
+	}
+
+	// Idempotent re-apply: nothing changes, references included.
+	out2, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out2.Changed || !out2.Skipped {
+		t.Errorf("re-apply with current references should be skipped: %+v", out2)
+	}
+
+	// A drifted sibling is refreshed even when the SKILL.md is unchanged.
+	if err := os.WriteFile(filepath.Join(refDir, "cli.md"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out3, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out3.Changed {
+		t.Error("a drifted sibling reference must be refreshed on apply")
+	}
+	cur, _ := os.ReadFile(filepath.Join(refDir, "cli.md"))
+	want, _ := RawBundledReference("jentic", "cli.md")
+	if string(cur) != string(want) {
+		t.Error("drifted sibling not restored to the embed bytes")
+	}
+
+	// Remove owns the whole lifecycle: siblings deleted, dirs pruned.
+	rout, err := Remove(ad, c, env, RemoveOptions{})
+	if err != nil || !rout.Removed {
+		t.Fatalf("remove failed: %+v err=%v", rout, err)
+	}
+	if _, err := os.Stat(refDir); !os.IsNotExist(err) {
+		t.Error("references/ should be pruned after remove")
+	}
+	if _, err := os.Stat(filepath.Dir(rout.Path)); !os.IsNotExist(err) {
+		t.Error("skills/<name> should be pruned after remove")
+	}
+}
+
+// TestOwnedFileDryRunWritesNoReferences pins that --dry-run stays write-free
+// for the sibling files too.
+func TestOwnedFileDryRunWritesNoReferences(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("cursor")
+	c := jenticContent(t)
+
+	out, err := Apply(ad, c, env, ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(out.Path), "references")); !os.IsNotExist(err) {
+		t.Error("dry run must not write sibling references")
+	}
+}
+
+// TestAgentsPointerCarriesHostedReferenceLinks pins the managed-block half of
+// D12: AGENTS.md cannot carry sibling files, so the pointer block names the
+// rendered (CLI-lane) references as hosted URLs, BaseURL-interpolated at
+// render time — and never the MCP-lane file.
+func TestAgentsPointerCarriesHostedReferenceLinks(t *testing.T) {
+	body := agentsPointerBody(jenticContent(t))
+	for _, want := range []string{
+		"GET http://example.test/skills/jentic.md",
+		"GET http://example.test/skills/jentic/references/cli.md",
+		"GET http://example.test/skills/jentic/references/recovery.md",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("pointer block missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "mcp.md") {
+		t.Errorf("pointer block must not name the MCP-lane reference:\n%s", body)
+	}
+
+	// Without a BaseURL the links degrade to root-relative, like the skill link.
+	c := jenticContent(t)
+	c.BaseURL = ""
+	rel := agentsPointerBody(c)
+	if !strings.Contains(rel, "GET /skills/jentic/references/cli.md") {
+		t.Errorf("empty-BaseURL pointer must be root-relative:\n%s", rel)
+	}
+}
+
 // TestOwnedFileEditGuardViaSidecar proves a user edit to the SKILL.md body is
 // detected via the sidecar hash and refused without --force.
 func TestOwnedFileEditGuardViaSidecar(t *testing.T) {

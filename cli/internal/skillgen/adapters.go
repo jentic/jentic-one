@@ -324,14 +324,29 @@ func (a agentsAdapter) Detect(env DetectEnv) bool {
 // the honest analogue of progressive disclosure for a format that lacks it
 // (decision 2 in the plan). Pointer-for-all keeps the behavior uniform and the
 // context bounded.
+//
+// A skill that ships references gets one pointer line per rendered reference
+// (the CLI lane's set — never mcp.md). AGENTS.md cannot carry sibling files,
+// so the source document's RELATIVE `references/…` pointers are represented
+// here as hosted URLs, BaseURL-interpolated at render time — the same
+// render-time-only BaseURL doctrine as the skill link (validateBaseURL is the
+// single choke point every BaseURL passes through).
 func agentsPointerBody(c Canonical) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s\n\n", titleFor(c))
 	fmt.Fprintf(&b, "%s\n\n", strings.TrimSpace(c.Description))
+	base := strings.TrimRight(c.BaseURL, "/")
 	if c.BaseURL != "" {
-		fmt.Fprintf(&b, "See the full skill: GET %s/skills/%s.md\n", strings.TrimRight(c.BaseURL, "/"), c.Name)
+		fmt.Fprintf(&b, "See the full skill: GET %s/skills/%s.md\n", base, c.Name)
 	} else {
 		fmt.Fprintf(&b, "See the full skill: GET /skills/%s.md\n", c.Name)
+	}
+	for _, ref := range renderedReferences(c.Name) {
+		if c.BaseURL != "" {
+			fmt.Fprintf(&b, "Skill reference (%s): GET %s/skills/%s/references/%s\n", ref, base, c.Name, ref)
+		} else {
+			fmt.Fprintf(&b, "Skill reference (%s): GET /skills/%s/references/%s\n", ref, c.Name, ref)
+		}
 	}
 	return b.String()
 }
