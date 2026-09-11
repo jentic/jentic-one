@@ -23,7 +23,9 @@ import {
 	useVendorAuthCapabilities,
 } from '@/shared/credentials/api/vendors-hooks';
 import type {
+	AuthCodeConfirmResponse,
 	ConfirmResponse,
+	DeviceFlowConfirmResponse,
 	PermissionRule,
 	ReviewScope,
 	ReviewSession,
@@ -167,6 +169,13 @@ function VendorSelfConnectFlow({
 			setSession({ id: result.session_id, pollToken: result.poll_token });
 			setChallenge(result.challenge);
 			setPhase('awaiting');
+			// Auth-code flows: pop the authorize URL open right away so the
+			// human's next click is at the vendor, not back on this dialog.
+			// Device flows: no auto-open — the user needs to copy the
+			// user_code first, then click Open Vendor.
+			if (result.challenge.kind === 'authorization_code') {
+				window.open(result.challenge.authorize_url, '_blank', 'noopener,noreferrer');
+			}
 		} catch {
 			// surfaced via ErrorAlert below.
 		}
@@ -337,6 +346,9 @@ function VendorApproveFlow({
 			});
 			setChallenge(result);
 			setPhase('awaiting');
+			if (result.kind === 'authorization_code') {
+				window.open(result.authorize_url, '_blank', 'noopener,noreferrer');
+			}
 		} catch {
 			// surfaced via ErrorAlert below.
 		}
@@ -673,6 +685,13 @@ function ScopeClassificationBadge({ classification }: { classification: ScopeCla
 	);
 }
 
+/**
+ * Renders the "waiting for user to approve at vendor" step. Discriminates
+ * on ``challenge.kind`` and hands off to one of two focused subcomponents —
+ * the shapes are genuinely different (device code panel vs. redirect
+ * prompt), so a single component with `challenge.user_code &&` branches
+ * would just be pretending they're one thing.
+ */
 function AwaitingStep({
 	display,
 	challenge,
@@ -681,6 +700,37 @@ function AwaitingStep({
 }: {
 	display: VendorDisplay;
 	challenge: ConfirmResponse;
+	status: string;
+	onCancel: () => void;
+}) {
+	if (challenge.kind === 'device_flow') {
+		return (
+			<DeviceCodeAwaitingStep
+				display={display}
+				challenge={challenge}
+				status={status}
+				onCancel={onCancel}
+			/>
+		);
+	}
+	return (
+		<RedirectAwaitingStep
+			display={display}
+			challenge={challenge}
+			status={status}
+			onCancel={onCancel}
+		/>
+	);
+}
+
+function DeviceCodeAwaitingStep({
+	display,
+	challenge,
+	status,
+	onCancel,
+}: {
+	display: VendorDisplay;
+	challenge: DeviceFlowConfirmResponse;
 	status: string;
 	onCancel: () => void;
 }) {
@@ -727,20 +777,74 @@ function AwaitingStep({
 				</Button>
 			)}
 
-			<div className="border-border bg-muted/20 flex items-center gap-2.5 rounded-lg border px-3 py-2.5">
-				<Loader2 className="text-muted-foreground h-4 w-4 shrink-0 animate-spin" />
-				<p className="text-muted-foreground text-xs">
-					{status === 'polling' || status === 'pending'
-						? `Waiting for you to approve at ${display.displayName}…`
-						: 'Checking status…'}
-				</p>
+			<PollingStatusLine display={display} status={status} />
+			<CancelBar onCancel={onCancel} />
+		</div>
+	);
+}
+
+function RedirectAwaitingStep({
+	display,
+	challenge,
+	status,
+	onCancel,
+}: {
+	display: VendorDisplay;
+	challenge: AuthCodeConfirmResponse;
+	status: string;
+	onCancel: () => void;
+}) {
+	return (
+		<div className="space-y-5">
+			<div className="flex items-center gap-3">
+				<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
+				<div>
+					<p className="text-foreground text-base font-semibold">
+						Almost there — approve on {display.displayName}
+					</p>
+					<p className="text-muted-foreground text-xs">
+						Complete the sign-in in the {display.displayName} window that just opened.
+					</p>
+				</div>
 			</div>
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3">
-				<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-					Cancel
-				</Button>
-			</div>
+			<Button
+				type="button"
+				variant="primary"
+				className="w-full"
+				onClick={(): void => {
+					window.open(challenge.authorize_url, '_blank', 'noopener,noreferrer');
+				}}
+			>
+				<ExternalLink className="h-4 w-4" />
+				Re-open {display.displayName}
+			</Button>
+
+			<PollingStatusLine display={display} status={status} />
+			<CancelBar onCancel={onCancel} />
+		</div>
+	);
+}
+
+function PollingStatusLine({ display, status }: { display: VendorDisplay; status: string }) {
+	return (
+		<div className="border-border bg-muted/20 flex items-center gap-2.5 rounded-lg border px-3 py-2.5">
+			<Loader2 className="text-muted-foreground h-4 w-4 shrink-0 animate-spin" />
+			<p className="text-muted-foreground text-xs">
+				{status === 'polling' || status === 'pending'
+					? `Waiting for you to approve at ${display.displayName}…`
+					: 'Checking status…'}
+			</p>
+		</div>
+	);
+}
+
+function CancelBar({ onCancel }: { onCancel: () => void }) {
+	return (
+		<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3">
+			<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+				Cancel
+			</Button>
 		</div>
 	);
 }
