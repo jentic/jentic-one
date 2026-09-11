@@ -216,7 +216,7 @@ class ConnectSessionService:
         self,
         *,
         vendor_key: str,
-        agent_id: str,
+        agent_id: str | None,
         initiator_actor_id: str,
         requested_scopes: list[str] | None = None,
         preferred_flow: str | None = None,
@@ -224,9 +224,13 @@ class ConnectSessionService:
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
 
-        Actor-type checks live in the router (agent callers have `agent_id`
-        forced to their own identity; user callers must supply it). The
-        service takes both fields as-given.
+        Actor-type checks live in the router (agent callers have
+        ``agent_id`` forced to their own identity and refuse a payload
+        override; user callers may omit it). ``agent_id`` is currently
+        allowed to be None — credentials still bind through toolkits, so
+        the eventual agent-credential permission grant is a no-op when
+        no agent is named. Will become mandatory once agent-credential
+        bindings replace toolkit membership.
         """
         entry = self._vendors.get(vendor_key)
         flow = self._vendors.resolve_flow(vendor_key, preferred_flow)
@@ -259,7 +263,12 @@ class ConnectSessionService:
             credential = await CredentialRepository.create(
                 session,
                 type=handler.stored_type.value,
-                name=f"{entry.display_name} ({agent_id})",
+                # Credential name is display-only + user-editable; scoping
+                # by ``agent_id`` here would collapse to ``(None)`` in the
+                # UI once ``agent_id`` is optional and be redundant even
+                # when present (the eventual agent-credential binding row
+                # is the source of truth for "which agent uses this").
+                name=entry.display_name,
                 api_vendor=api_scope.vendor,
                 api_name=api_scope.name,
                 catalog_api_id=entry.vendor,
@@ -385,14 +394,18 @@ class ConnectSessionService:
         async with self._ctx.control_db.transaction() as session:
             # Persist proposed permission rules against the (agent, credential)
             # pair. Broker won't read this yet (theme-5 pending), but the row
-            # is the durable capture of what the human approved.
-            await AgentCredentialPermissionRepository.upsert(
-                session,
-                agent_id=row.agent_id,
-                credential_id=row.credential_id,
-                rules=permission_rules,
-                created_by=caller_actor_id,
-            )
+            # is the durable capture of what the human approved. Skipped when
+            # no agent is named — nothing to bind rules against until
+            # ``agent_id`` becomes mandatory (once agent-credential bindings
+            # replace toolkit membership).
+            if row.agent_id is not None:
+                await AgentCredentialPermissionRepository.upsert(
+                    session,
+                    agent_id=row.agent_id,
+                    credential_id=row.credential_id,
+                    rules=permission_rules,
+                    created_by=caller_actor_id,
+                )
             await ConnectSessionRepository.update_fields(session, row.id, state="polling")
 
         _logger.info(
@@ -778,21 +791,33 @@ class ConnectSessionService:
         *,
         error_code: str | None = None,
     ) -> None:
+        """Log the terminal outcome, then delete the credential + session.
+
+        A failed / expired / cancelled session leaves an unusable
+        ``pending`` credential behind, which shows up in the credentials
+        list as a stale row the user then has to hand-delete. We take
+        the credential with us: cascade-drops the ``connect_sessions``
+        row (FK ``ondelete=CASCADE``) plus every flow-specific aux row
+        (device_authorization_credentials, oauth_client_credentials,
+        oauth_tokens, etc. via ``all, delete-orphan``). The SPA polling
+        ``/status`` sees the session vanish and treats the 404 as
+        terminal-failed — cleaner than a lingering ``failed`` row it
+        would have to garbage-collect later.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+        if row is None:
+            return
+        _logger.info(
+            "connect_session.terminal",
+            session_id=session_id,
+            state=state,
+            error_code=error_code,
+            error_detail=detail,
+            credential_id=row.credential_id,
+        )
         async with self._ctx.control_db.transaction() as session:
-            row = await ConnectSessionRepository.get_by_id(session, session_id)
-            if row is None:
-                return
-            await ConnectSessionRepository.update_fields(
-                session,
-                session_id,
-                state=state,
-                error_code=error_code,
-                error_detail=detail,
-            )
-            credential = await CredentialRepository.get_by_id(session, row.credential_id)
-            if credential is not None and credential.state == "pending":
-                credential.state = "failed"
-                await session.flush()
+            await CredentialRepository.delete(session, row.credential_id)
 
     # ---- redirect-based (auth-code / MCP) completion ----------------------
 

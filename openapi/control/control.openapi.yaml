@@ -14721,8 +14721,12 @@ paths:
       description: |-
         Both entrypoints (agent + UI) use this endpoint.
 
-        Agent callers: `agent_id` in the payload is ignored; the calling agent's
-        own identity is used. UI/user callers: `agent_id` is required.
+        Agent callers: `agent_id` in the payload is refused (the caller *is*
+        the agent — spoofing another agent's id is a permission-boundary
+        violation). The caller's own identity is injected instead. UI / user
+        callers: `agent_id` is optional and currently ignored downstream,
+        since credentials still bind through toolkits — it becomes mandatory
+        once agent-credential bindings replace toolkit membership.
       operationId: integrationsConnect
       requestBody:
         content:

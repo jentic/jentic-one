@@ -65,19 +65,26 @@ async def integrations_connect(
 ) -> IntegrationsConnectResponse | JSONResponse:
     """Both entrypoints (agent + UI) use this endpoint.
 
-    Agent callers: `agent_id` in the payload is ignored; the calling agent's
-    own identity is used. UI/user callers: `agent_id` is required.
+    Agent callers: `agent_id` in the payload is refused (the caller *is*
+    the agent — spoofing another agent's id is a permission-boundary
+    violation). The caller's own identity is injected instead. UI / user
+    callers: `agent_id` is optional and currently ignored downstream,
+    since credentials still bind through toolkits — it becomes mandatory
+    once agent-credential bindings replace toolkit membership.
     """
-    # Resolve which agent the credential will be bound to.
     if identity.actor_type == ActorType.AGENT:
-        agent_id = identity.sub
-    else:
-        if not body.agent_id:
+        if body.agent_id is not None:
             return JSONResponse(
-                status_code=400,
-                content={"detail": "agent_id is required for non-agent callers"},
+                status_code=403,
+                content={
+                    "detail": (
+                        "agent callers must not pass agent_id — the caller's identity is used"
+                    )
+                },
             )
-        agent_id = body.agent_id
+        agent_id: str | None = identity.sub
+    else:
+        agent_id = body.agent_id or None
 
     try:
         created = await svc.create_session(

@@ -346,17 +346,19 @@ async def test_get_status_rejects_wrong_poll_token(
 # ---------------------------------------------------------------------------
 
 
-async def test_mark_terminal_from_callback_moves_session_and_credential_to_failed(
+async def test_mark_terminal_from_callback_deletes_credential_and_cascades_session(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
 ) -> None:
     # Callback landings that carry no code (vendor returned ``error=…``,
-    # or the user hit Cancel at the IdP) MUST leave BOTH the session and
-    # the pending credential in ``failed`` — otherwise the dangling
-    # ``pending`` credential would sit indefinitely, and the poll
-    # scanner would never touch it (auth-code has no aux row for the
-    # scanner to find).
+    # or the user hit Cancel at the IdP) MUST clean up: the ``pending``
+    # credential is unusable, and leaving a ``failed`` row behind means
+    # the human then has to hand-delete it out of the credentials list.
+    # Deleting the credential cascades the ``connect_sessions`` row and
+    # every flow-specific aux row (device_authorization_credentials,
+    # oauth_client_credentials, oauth_tokens) via SQLAlchemy
+    # ``all, delete-orphan`` — one write, everything gone.
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
@@ -369,19 +371,21 @@ async def test_mark_terminal_from_callback_moves_session_and_credential_to_faile
         caller_actor_id=_USER_ID,
         caller_actor_type="USER",
     )
+    # Capture the credential id BEFORE the terminal call — the session
+    # is about to vanish with the credential.
+    async with ctx.control_db.session() as session:
+        pre = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert pre is not None
+    credential_id = pre.credential_id
 
     await svc.mark_terminal_from_callback(created.session_id, "access_denied")
 
     async with ctx.control_db.session() as session:
-        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
-        assert row is not None
-        assert row.state == "failed"
-        # Error surface for the UI + audit — the shared "callback_error"
-        # code lets ops distinguish this from vendor-side flow failures.
-        assert row.error_code == "callback_error"
-        credential = await CredentialRepository.get_by_id(session, row.credential_id)
-        assert credential is not None
-        assert credential.state == "failed"
+        # Session gone (FK ``ondelete=CASCADE`` from credentials.id).
+        assert await ConnectSessionRepository.get_by_id(session, created.session_id) is None
+        # Credential gone. The SPA polling ``/status`` will 404 on the
+        # next tick and transition to terminal-failed.
+        assert await CredentialRepository.get_by_id(session, credential_id) is None
 
 
 # ---------------------------------------------------------------------------

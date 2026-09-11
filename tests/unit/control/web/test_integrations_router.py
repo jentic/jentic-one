@@ -71,9 +71,9 @@ def _build_app(*, svc: Any, identity: Identity = _USER_IDENTITY) -> FastAPI:
 
 
 def test_connect_uses_agent_identity_when_caller_is_agent() -> None:
-    # Agent callers cannot spoof another agent — the router overrides
-    # `agent_id` in the payload with the caller's own identity. This is
-    # the load-bearing anti-spoofing property of the endpoint.
+    # Agent callers get their own identity injected — the payload
+    # ``agent_id`` is refused outright (see the dedicated test below).
+    # This is the load-bearing anti-spoofing property of the endpoint.
     svc = AsyncMock(spec=ConnectSessionService)
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
@@ -85,27 +85,53 @@ def test_connect_uses_agent_identity_when_caller_is_agent() -> None:
     )
     app = _build_app(svc=svc, identity=_AGENT_IDENTITY)
     with TestClient(app) as client:
-        resp = client.post(
-            "/integrations:connect",
-            json={"vendor": "gh", "agent_id": "agnt_impostor"},
-        )
+        resp = client.post("/integrations:connect", json={"vendor": "gh"})
     assert resp.status_code == 201
     call = svc.create_session.await_args
     assert call is not None
-    # Payload agent_id ("agnt_impostor") MUST NOT reach the service —
-    # the caller's identity is used instead.
     assert call.kwargs["agent_id"] == "agnt_scout"
     assert call.kwargs["initiator_actor_id"] == "agnt_scout"
 
 
-def test_connect_requires_agent_id_when_caller_is_user() -> None:
+def test_connect_refuses_agent_caller_passing_agent_id() -> None:
+    # Agent callers are refused if they pass ``agent_id`` in the payload —
+    # the caller *is* the agent, so binding to a different id is a
+    # permission-boundary violation. This holds even when the passed id
+    # matches the caller's own identity (belt + braces: the caller has
+    # no legitimate reason to send it).
     svc = AsyncMock(spec=ConnectSessionService)
+    app = _build_app(svc=svc, identity=_AGENT_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/integrations:connect",
+            json={"vendor": "gh", "agent_id": "agnt_scout"},
+        )
+    assert resp.status_code == 403
+    svc.create_session.assert_not_called()
+
+
+def test_connect_allows_user_caller_without_agent_id() -> None:
+    # ``agent_id`` is optional today — credentials still bind through
+    # toolkits, so the eventual permission grant is a no-op when no
+    # agent is named. Will become mandatory once agent-credential
+    # bindings replace toolkit membership.
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.create_session = AsyncMock(
+        return_value=CreatedSession(
+            session_id="sess_1",
+            approval_url="https://example.com/app/credentials?approve=sess_1&poll_token=tok",
+            poll_token="tok",
+            resolved_flow="device_authorization",
+        )
+    )
     app = _build_app(svc=svc, identity=_USER_IDENTITY)
     with TestClient(app) as client:
         resp = client.post("/integrations:connect", json={"vendor": "gh"})
-    assert resp.status_code == 400
-    assert "agent_id is required" in resp.json()["detail"]
-    svc.create_session.assert_not_called()
+    assert resp.status_code == 201
+    call = svc.create_session.await_args
+    assert call is not None
+    assert call.kwargs["agent_id"] is None
+    assert call.kwargs["initiator_actor_id"] == "usr_alice"
 
 
 def test_connect_maps_unknown_vendor_to_400() -> None:
@@ -113,7 +139,7 @@ def test_connect_maps_unknown_vendor_to_400() -> None:
     svc.create_session = AsyncMock(side_effect=UnknownVendorError("nope"))
     app = _build_app(svc=svc, identity=_USER_IDENTITY)
     with TestClient(app) as client:
-        resp = client.post("/integrations:connect", json={"vendor": "nope", "agent_id": "agnt_1"})
+        resp = client.post("/integrations:connect", json={"vendor": "nope"})
     assert resp.status_code == 400
 
 

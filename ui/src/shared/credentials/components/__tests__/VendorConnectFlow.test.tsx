@@ -90,18 +90,20 @@ describe('VendorConnectFlow — self mode', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('renders the configure step with vendor header, agent picker, and scope catalog', async () => {
+	it('renders the configure step with vendor header + scope catalog (no agent picker)', async () => {
 		renderWithProviders(
 			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
 		);
 		// Vendor header comes from the ``vendor`` prop, so it's up
-		// immediately; scope + agent data hydrate from the two queries.
+		// immediately; scope data hydrates from the capabilities query.
 		expect(await screen.findByText('GitHub')).toBeInTheDocument();
 		expect(await screen.findByText('repo')).toBeInTheDocument();
 		expect(await screen.findByText('read:user')).toBeInTheDocument();
-		// Agent picker uses the standard ``<select>`` primitive; the
-		// mock agent must reach the DOM as an <option>.
-		expect(await screen.findByRole('option', { name: 'Scout' })).toBeInTheDocument();
+		// Agent picker is intentionally NOT rendered — credentials still
+		// bind through toolkits, so surfacing the choice would suggest
+		// something the UI can't actually deliver on today. Comes back
+		// once agent-credential bindings replace toolkit membership.
+		expect(screen.queryByLabelText(/which agent uses this/i)).toBeNull();
 	});
 
 	it('start-and-confirm transitions to the awaiting step with a device_code challenge', async () => {
@@ -146,11 +148,13 @@ describe('VendorConnectFlow — self mode', () => {
 		);
 		const user = userEvent.setup();
 
-		// Pick an agent + the pre-defaulted scope, then hit Continue.
-		const agentSelect = await screen.findByLabelText(/which agent uses this/i);
-		await user.selectOptions(agentSelect, 'agnt_1');
-		// read:user is default-selected, so Continue is enabled right
-		// away; no additional scope click needed.
+		// Wait for capabilities to hydrate — the button reads
+		// disabled=(selectedScopes.size === 0), and selectedScopes is
+		// seeded from the default scopes on ``capabilities.data``.
+		// Clicking before those land leaves it disabled and the
+		// mutation never fires. Awaiting a scope row proves the seed
+		// has run.
+		await screen.findByText('read:user');
 		await user.click(await screen.findByRole('button', { name: /continue to github/i }));
 
 		// The awaiting step shows the vendor's ``user_code`` verbatim —

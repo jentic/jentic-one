@@ -9,7 +9,6 @@ import {
 	CopyButton,
 	ErrorAlert,
 	Label,
-	Select,
 	Skeleton,
 	VendorIcon,
 	toast,
@@ -99,10 +98,8 @@ function VendorSelfConnectFlow({
 	onDone: () => void;
 }) {
 	const capabilities = useVendorAuthCapabilities(vendor.key);
-	const agents = useAgentsForPicker();
 
 	const queryClient = useQueryClient();
-	const [agentId, setAgentId] = useState('');
 	const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set());
 	const [scopesTouched, setScopesTouched] = useState(false);
 	const [phase, setPhase] = useState<Phase>('configure');
@@ -131,7 +128,17 @@ function VendorSelfConnectFlow({
 	});
 
 	useEffect(() => {
-		if (phase !== 'awaiting' || !polling.data) return;
+		if (phase !== 'awaiting') return;
+		// A 404 on /status means the backend deleted the session
+		// (unhappy terminal: the credential + its session were cleaned
+		// up rather than left as dangling ``failed`` rows). Treat as
+		// terminal-failed and stop polling.
+		const err = polling.error as { status?: number } | undefined;
+		if (err?.status === 404) {
+			setPhase('terminal');
+			return;
+		}
+		if (!polling.data) return;
 		const status = polling.data.status;
 		if (status === 'connected' || status === 'failed' || status === 'expired') {
 			setPhase('terminal');
@@ -146,7 +153,7 @@ function VendorSelfConnectFlow({
 				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
 			}
 		}
-	}, [phase, polling.data, vendor.display_name, queryClient]);
+	}, [phase, polling.data, polling.error, vendor.display_name, queryClient]);
 
 	const toggleScope = (name: string) => {
 		setScopesTouched(true);
@@ -162,7 +169,10 @@ function VendorSelfConnectFlow({
 		try {
 			const result = await startMutation.mutateAsync({
 				vendor: vendor.key,
-				agent_id: agentId,
+				// agent_id intentionally omitted — credentials still bind
+				// through toolkits, so the picker was purely cosmetic. Will
+				// be surfaced again as a required field once agent-credential
+				// bindings replace toolkit membership.
 				requested_scopes: Array.from(selectedScopes),
 				permission_rules: derivePermissionRules(scopes, selectedScopes),
 			});
@@ -223,14 +233,6 @@ function VendorSelfConnectFlow({
 				subtitle={`You'll approve this connection on ${display.displayName} in a moment.`}
 			/>
 
-			<AgentPickerField
-				agents={agents.data?.data ?? []}
-				loading={agents.isLoading}
-				error={agents.error as Error | null}
-				value={agentId}
-				onChange={setAgentId}
-			/>
-
 			<ScopeChooseField
 				loading={capabilities.isLoading}
 				error={capabilities.error as Error | null}
@@ -257,7 +259,7 @@ function VendorSelfConnectFlow({
 					variant="primary"
 					onClick={(): void => void startFlow()}
 					loading={startMutation.isPending}
-					disabled={!agentId || selectedScopes.size === 0}
+					disabled={selectedScopes.size === 0}
 				>
 					Continue to {vendor.display_name}
 				</Button>
@@ -310,7 +312,16 @@ function VendorApproveFlow({
 	});
 
 	useEffect(() => {
-		if (phase !== 'awaiting' || !polling.data) return;
+		if (phase !== 'awaiting') return;
+		// See ``VendorSelfConnectFlow`` for the 404-as-terminal rationale
+		// (backend deletes the session on unhappy terminal outcomes so
+		// no dangling ``failed`` credential lingers in the UI).
+		const err = polling.error as { status?: number } | undefined;
+		if (err?.status === 404) {
+			setPhase('terminal');
+			return;
+		}
+		if (!polling.data) return;
 		const status = polling.data.status;
 		if (status === 'connected' || status === 'failed' || status === 'expired') {
 			setPhase('terminal');
@@ -325,7 +336,7 @@ function VendorApproveFlow({
 				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
 			}
 		}
-	}, [phase, polling.data, session, queryClient]);
+	}, [phase, polling.data, polling.error, session, queryClient]);
 
 	const toggleScope = (name: string) => {
 		setSelectedScopes((prev) => {
@@ -474,71 +485,6 @@ function VendorHeader({ display, subtitle }: { display: VendorDisplay; subtitle:
 				<p className="text-foreground text-base font-semibold">{display.displayName}</p>
 				<p className="text-muted-foreground text-xs">{subtitle}</p>
 			</div>
-		</div>
-	);
-}
-
-function AgentPickerField({
-	agents,
-	loading,
-	error,
-	value,
-	onChange,
-}: {
-	agents: Array<{ id: string; name: string; description?: string | null }>;
-	loading: boolean;
-	error: Error | null;
-	value: string;
-	onChange: (id: string) => void;
-}) {
-	if (loading) {
-		return (
-			<div className="space-y-2">
-				<Label>Which agent uses this?</Label>
-				<Skeleton className="h-10 w-full" />
-			</div>
-		);
-	}
-	if (error) return <ErrorAlert message={error.message} />;
-	if (agents.length === 0) {
-		return (
-			<div className="border-border bg-muted/30 rounded-lg border border-dashed p-4 text-center">
-				<p className="text-foreground text-sm font-medium">No agents yet</p>
-				<p className="text-muted-foreground mt-1 text-xs">
-					Create an agent first — this integration will belong to it.
-				</p>
-			</div>
-		);
-	}
-	const selected = agents.find((a) => a.id === value);
-	return (
-		<div className="space-y-2">
-			<Label htmlFor="vc-agent" required>
-				Which agent uses this?
-			</Label>
-			<Select id="vc-agent" value={value} onChange={(e): void => onChange(e.target.value)}>
-				<option value="">Select an agent…</option>
-				{agents.map((a) => (
-					<option key={a.id} value={a.id}>
-						{a.name}
-					</option>
-				))}
-			</Select>
-			{selected && (
-				<div className="bg-muted/40 border-border flex items-center gap-2.5 rounded-lg border px-3 py-2">
-					<AgentBadge id={selected.id} name={selected.name} size="sm" />
-					<div className="min-w-0 flex-1">
-						<p className="text-foreground truncate text-sm font-medium">
-							{selected.name}
-						</p>
-						{selected.description && (
-							<p className="text-muted-foreground truncate text-xs">
-								{selected.description}
-							</p>
-						)}
-					</div>
-				</div>
-			)}
 		</div>
 	);
 }

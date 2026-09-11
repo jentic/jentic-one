@@ -53,7 +53,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("vendor", sa.String(255), nullable=False),
-        sa.Column("agent_id", sa.String(30), nullable=False),
+        # Nullable until credentials bind directly to agents (see the
+        # ``connect_sessions`` ORM model). Will become NOT NULL once
+        # agent-credential bindings replace toolkit membership.
+        sa.Column("agent_id", sa.String(30), nullable=True),
         sa.Column("initiator_actor_id", sa.String(30), nullable=False),
         sa.Column("state", sa.String(30), nullable=False),
         sa.Column("preferred_flow", sa.String(50), nullable=True),
