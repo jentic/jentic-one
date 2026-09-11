@@ -110,7 +110,9 @@ def test_client_credentials_missing_client_id(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    # §5.2: a missing parameter is invalid_request (fix the request), not
+    # invalid_grant (restart authorization).
+    assert data["error"] == "invalid_request"
 
 
 @patch("jentic_one.auth.web.routers.oauth.ServiceAccountAuthService")
@@ -122,7 +124,11 @@ def test_client_credentials_invalid_secret(
 ) -> None:
     mock_sa_auth = MagicMock()
     mock_sa_auth.authenticate_client_credentials = AsyncMock(
-        side_effect=InvalidGrantError("invalid_client")
+        # The REAL service raise (service_account_auth_service.py): §5.2
+        # names failed client authentication invalid_client.
+        side_effect=InvalidGrantError(
+            "client authentication failed", oauth_error_code="invalid_client"
+        )
     )
     mock_sa_auth_cls.return_value = mock_sa_auth
 
@@ -138,7 +144,7 @@ def test_client_credentials_invalid_secret(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    assert data["error"] == "invalid_client"
 
 
 @patch("jentic_one.auth.web.routers.oauth.ServiceAccountAuthService")

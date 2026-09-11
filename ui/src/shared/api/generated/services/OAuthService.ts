@@ -682,6 +682,15 @@ export class OAuthService {
     /**
      * Token Endpoint
      * Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+     *
+     * Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+     * ``error_description``), NOT platform Problem Details — reshaped by
+     * ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+     * failed client authentication answers ``invalid_client`` (status 401 with a
+     * ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+     * 400 otherwise). On the refresh arm, a revoked consent grant answers
+     * ``invalid_grant`` with ``error_description: "consent grant has been
+     * revoked"`` — terminal; restart the authorization flow.
      * @returns TokenResponse Successful Response
      * @throws ApiError
      */
@@ -705,8 +714,8 @@ export class OAuthService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad Request`,
-                422: `Unprocessable Entity`,
+                400: `RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): \`{"error": "invalid_request" | "invalid_grant" | "invalid_client" | "unsupported_grant_type", "error_description": "..."}\`. \`invalid_request\` covers malformed/missing parameters; a revoked consent grant surfaces on the refresh arm as \`invalid_grant\` with \`error_description: "consent grant has been revoked"\` — clients should treat it as terminal and restart the authorization flow. A client whose authentication fails after attempting HTTP Basic (\`Authorization\` header, RFC 6749 §2.3.1) gets the same \`invalid_client\` dialect body with status 401 and a \`WWW-Authenticate: Basic\` challenge, per §5.2.`,
+                429: `Per-client+IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

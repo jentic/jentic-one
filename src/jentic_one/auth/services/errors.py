@@ -46,11 +46,24 @@ class ToolkitBindingNotFoundError(AuthServiceError):
 
 
 class InvalidGrantError(AuthServiceError):
-    """Raised when a token grant is invalid (expired, consumed, or not found)."""
+    """Raised when a token grant is invalid (expired, consumed, or not found).
 
-    def __init__(self, reason: str = "invalid_grant") -> None:
+    ``oauth_error_code`` is the RFC 6749 §5.2 error code the token endpoint's
+    dialect reshaping (``_TokenRoute`` in ``auth/web/routers/oauth.py``) emits
+    as the top-level ``error`` member. It defaults to ``invalid_grant``; raise
+    sites whose condition §5.2 names differently (``invalid_request`` for
+    malformed/missing parameters, ``invalid_client``,
+    ``unsupported_grant_type``) override it. The platform Problem Details
+    handler ignores it (every subclass instance still maps to
+    ``type=invalid_grant`` there).
+    """
+
+    def __init__(
+        self, reason: str = "invalid_grant", *, oauth_error_code: str = "invalid_grant"
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.oauth_error_code = oauth_error_code
 
 
 class UserNotAdmittedError(AuthServiceError):

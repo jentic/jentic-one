@@ -6699,6 +6699,15 @@ type ClientInterface interface {
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -6708,6 +6717,15 @@ type ClientInterface interface {
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -6716,6 +6734,15 @@ type ClientInterface interface {
 	// TokenEndpointWithFormdataBody Token Endpoint
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
@@ -10875,6 +10902,15 @@ func (c *Client) SessionContinueEndpoint(ctx context.Context, body SessionContin
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -10894,6 +10930,15 @@ func (c *Client) TokenEndpointWithBody(ctx context.Context, contentType string, 
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -10912,6 +10957,15 @@ func (c *Client) TokenEndpoint(ctx context.Context, body TokenEndpointJSONReques
 // TokenEndpointWithFormdataBody Token Endpoint
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+//
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
@@ -23388,6 +23442,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -23397,6 +23460,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -23405,6 +23477,15 @@ type ClientWithResponsesInterface interface {
 	// TokenEndpointWithFormdataBodyWithResponse Token Endpoint
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -34312,10 +34393,6 @@ type TokenEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TokenResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -34325,16 +34402,6 @@ type TokenEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r TokenEndpointHTTPResp) GetJSON200() *TokenResponse {
 	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r TokenEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r TokenEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -41458,6 +41525,15 @@ func (c *ClientWithResponses) SessionContinueEndpointWithResponse(ctx context.Co
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -41473,6 +41549,15 @@ func (c *ClientWithResponses) TokenEndpointWithBodyWithResponse(ctx context.Cont
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -41487,6 +41572,15 @@ func (c *ClientWithResponses) TokenEndpointWithResponse(ctx context.Context, bod
 // TokenEndpointWithFormdataBodyWithResponse Token Endpoint
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+//
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -50969,19 +51063,11 @@ func ParseTokenEndpointHTTPResp(rsp *http.Response) (*TokenEndpointHTTPResp, err
 		}
 		response.JSON200 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
+	case rsp.StatusCode == 400:
+		break // No content-type
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
+	case rsp.StatusCode == 429:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail
