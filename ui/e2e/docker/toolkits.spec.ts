@@ -98,6 +98,11 @@ test('bind a credential with full access, then edit rules and dry-run against th
 		.getByRole('dialog')
 		.getByRole('button', { name: /^bind credential$/i })
 		.click();
+	// Key issuance is retired (phase 4), so a fresh toolkit has no agents and
+	// no keys — the wizard now holds open on the "link an agent?" prompt
+	// instead of closing into silence. Acknowledge and dismiss it.
+	await expect(page.getByTestId('bind-link-agent-prompt')).toBeVisible();
+	await page.getByRole('button', { name: /^not now$/i }).click();
 	const bindingRow = page.getByTestId('binding-row').filter({ hasText: credName });
 	await expect(bindingRow).toBeVisible();
 	await expect(bindingRow.getByTestId('binding-warning')).toHaveCount(0);
