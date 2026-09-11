@@ -866,13 +866,18 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
 
 
 #: Operations whose request-validation failures are reshaped at the router into
-#: RFC 7591 §3.2.2 ``400 {"error": "invalid_client_metadata"}`` responses (see
-#: ``_Rfc7591Route`` in ``auth/web/routers/oauth_client_registration.py``).
-#: They never emit the FastAPI 422, so the auto-generated 422 response is
-#: dropped from the spec (the 400 is documented on the route decorator).
-RFC7591_ERROR_OPERATION_IDS: frozenset[str] = frozenset(
+#: their governing spec's error dialect, so the FastAPI 422 can never be
+#: returned and the auto-generated 422 response is dropped from the spec:
+#: the DCR door's RFC 7591 §3.2.2 ``400 {"error": "invalid_client_metadata"}``
+#: (``_Rfc7591Route`` in ``auth/web/routers/oauth_client_registration.py``) and
+#: the token endpoint's RFC 6749 §5.2 dialect (``_TokenRoute`` in
+#: ``auth/web/routers/oauth.py`` — body parsing runs entirely inside
+#: ``_parse_token_request``, which answers §5.2 ``invalid_request``). The
+#: route-specific error responses are documented on the route decorators.
+ROUTER_RESHAPED_422_OPERATION_IDS: frozenset[str] = frozenset(
     {
         "registerOauthClientEndpoint",
+        "tokenEndpoint",
     }
 )
 
@@ -1097,9 +1102,10 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     operation.get("responses", {}).pop("403", None)
                 else:
                     _stamp_scope_metadata(method, path, operation, operation_auth)
-                if op_id in RFC7591_ERROR_OPERATION_IDS:
-                    # Validation failures are reshaped to the RFC 7591 400 at
-                    # the router; the framework 422 can never be returned.
+                if op_id in ROUTER_RESHAPED_422_OPERATION_IDS:
+                    # Validation failures are reshaped to the governing spec's
+                    # dialect at the router; the framework 422 can never be
+                    # returned.
                     operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
 
