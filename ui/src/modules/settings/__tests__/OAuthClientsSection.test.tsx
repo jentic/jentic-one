@@ -431,6 +431,40 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		expect(screen.getByRole('button', { name: 'Disabled 1' })).toBeInTheDocument();
 	});
 
+	it('renders a failed delete inline in the dialog (no toast) and keeps it open for retry', async () => {
+		const user = userEvent.setup();
+		// The backend refuses (e.g. a conflicting concurrent decision) — the
+		// dialog must surface the error inline and stay open; the row survives.
+		worker.use(
+			http.post('/admin/oauth-clients/:id\\:delete', () =>
+				HttpResponse.json(
+					{ title: 'Conflict', detail: 'client has a decision in flight' },
+					{ status: 409 },
+				),
+			),
+		);
+		renderSettingsPage();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(screen.getByRole('button', { name: 'Actions for Internal Dashboard' }));
+		await user.click(
+			await screen.findByRole('menuitem', { name: 'Delete Internal Dashboard' }),
+		);
+
+		const dialog = await screen.findByRole('dialog', { name: 'Delete OAuth client' });
+		await user.type(within(dialog).getByLabelText(/Type/), 'delete');
+		await user.click(within(dialog).getByRole('button', { name: /Delete client/ }));
+
+		// One error surface: inline in the dialog (post-attempt), never a toast.
+		expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
+		expect(screen.getByRole('dialog', { name: 'Delete OAuth client' })).toBeInTheDocument();
+		expect(screen.queryByText('Internal Dashboard deleted')).not.toBeInTheDocument();
+
+		// The row is untouched — closing the dialog lands back on the intact roster.
+		await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+		expect(await screen.findByText('Internal Dashboard')).toBeInTheDocument();
+	});
+
 	it('deletes from the detail sheet danger zone and closes the sheet (its row is gone)', async () => {
 		const user = userEvent.setup();
 		renderSettingsPage();
