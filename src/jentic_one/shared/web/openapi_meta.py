@@ -660,8 +660,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": (
             "Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). "
             "Registered clients integrate with Jentic One via the standard Authorization Code + "
-            "PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. "
-            "Deactivating a client immediately invalidates all tokens issued through it."
+            "PKCE flow. Admins can create, list, update, rotate secrets, and disable clients. "
+            "Disabling a client immediately invalidates all tokens issued through it."
         ),
     },
     {

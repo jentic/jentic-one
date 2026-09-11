@@ -5054,11 +5054,13 @@ type ClientInterface interface {
 	// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
 	CreateOauthClient(ctx context.Context, body CreateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeactivateOauthClient Deactivate OAuth client
+	// DeactivateOauthClient Disable OAuth client
 	//
-	// Soft-delete an OAuth client by setting active=False.
+	// Disable an OAuth client — the reversible kill switch (sets active=false).
 	//
-	// Deactivated clients can no longer initiate authorization flows.
+	// Disabled clients can no longer initiate authorization flows and their
+	// outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+	// The row is kept; this is not a delete.
 	//
 	// Corresponds with DELETE /admin/oauth-clients/{id} (the `DeactivateOauthClient` operationId).
 	DeactivateOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5184,7 +5186,12 @@ type ClientInterface interface {
 
 	// ArchiveAgent Archive Agent
 	//
-	// Soft-archive an agent — revokes scope grants and toolkit bindings.
+	// Archive an agent — terminal-but-kept.
+	//
+	// The row is retained for history, but the action is not reversible and
+	// the agent's authority is swept: scope grants, toolkit bindings, and
+	// OAuth consent grants are revoked. For the reversible kill switch use
+	// ``:disable`` / ``:enable`` instead.
 	//
 	// Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
 	ArchiveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6872,7 +6879,11 @@ type ClientInterface interface {
 
 	// ArchiveServiceAccount Archive Service Account
 	//
-	// Soft-archive a service account — revokes scope grants.
+	// Archive a service account — terminal-but-kept.
+	//
+	// The row is retained for history, but the action is not reversible and
+	// the account's scope grants are revoked. For the reversible kill switch
+	// use ``:disable`` / ``:enable`` instead.
 	//
 	// Corresponds with DELETE /service-accounts/{service_account_id} (the `ArchiveServiceAccount` operationId).
 	ArchiveServiceAccount(ctx context.Context, serviceAccountId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7261,7 +7272,12 @@ type ClientInterface interface {
 
 	// DeleteUser Delete User
 	//
-	// Soft-delete a user.
+	// Delete a user account (terminal-but-kept).
+	//
+	// The row is retained — the account is anonymized (tombstone email) and
+	// deactivated so history and audit references stay resolvable — but the
+	// action is terminal: there is no re-enable arm. For the reversible kill
+	// switch use ``:disable`` / ``:enable`` instead.
 	//
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7832,11 +7848,13 @@ func (c *Client) CreateOauthClient(ctx context.Context, body CreateOauthClientJS
 	return c.Client.Do(req)
 }
 
-// DeactivateOauthClient Deactivate OAuth client
+// DeactivateOauthClient Disable OAuth client
 //
-// Soft-delete an OAuth client by setting active=False.
+// Disable an OAuth client — the reversible kill switch (sets active=false).
 //
-// Deactivated clients can no longer initiate authorization flows.
+// Disabled clients can no longer initiate authorization flows and their
+// outstanding tokens stop resolving. Re-enable by patching “active: true“.
+// The row is kept; this is not a delete.
 //
 // Corresponds with DELETE /admin/oauth-clients/{id} (the `DeactivateOauthClient` operationId).
 func (c *Client) DeactivateOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8092,7 +8110,12 @@ func (c *Client) CreateAgent(ctx context.Context, body CreateAgentJSONRequestBod
 
 // ArchiveAgent Archive Agent
 //
-// Soft-archive an agent — revokes scope grants and toolkit bindings.
+// Archive an agent — terminal-but-kept.
+//
+// The row is retained for history, but the action is not reversible and
+// the agent's authority is swept: scope grants, toolkit bindings, and
+// OAuth consent grants are revoked. For the reversible kill switch use
+// “:disable“ / “:enable“ instead.
 //
 // Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
 func (c *Client) ArchiveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -11250,7 +11273,11 @@ func (c *Client) CreateServiceAccount(ctx context.Context, body CreateServiceAcc
 
 // ArchiveServiceAccount Archive Service Account
 //
-// Soft-archive a service account — revokes scope grants.
+// Archive a service account — terminal-but-kept.
+//
+// The row is retained for history, but the action is not reversible and
+// the account's scope grants are revoked. For the reversible kill switch
+// use “:disable“ / “:enable“ instead.
 //
 // Corresponds with DELETE /service-accounts/{service_account_id} (the `ArchiveServiceAccount` operationId).
 func (c *Client) ArchiveServiceAccount(ctx context.Context, serviceAccountId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12069,7 +12096,12 @@ func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequ
 
 // DeleteUser Delete User
 //
-// Soft-delete a user.
+// Delete a user account (terminal-but-kept).
+//
+// The row is retained — the account is anonymized (tombstone email) and
+// deactivated so history and audit references stay resolvable — but the
+// action is terminal: there is no re-enable arm. For the reversible kill
+// switch use “:disable“ / “:enable“ instead.
 //
 // Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -21713,11 +21745,13 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
 	CreateOauthClientWithResponse(ctx context.Context, body CreateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOauthClientHTTPResp, error)
 
-	// DeactivateOauthClientWithResponse Deactivate OAuth client
+	// DeactivateOauthClientWithResponse Disable OAuth client
 	//
-	// Soft-delete an OAuth client by setting active=False.
+	// Disable an OAuth client — the reversible kill switch (sets active=false).
 	//
-	// Deactivated clients can no longer initiate authorization flows.
+	// Disabled clients can no longer initiate authorization flows and their
+	// outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+	// The row is kept; this is not a delete.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21857,7 +21891,12 @@ type ClientWithResponsesInterface interface {
 
 	// ArchiveAgentWithResponse Archive Agent
 	//
-	// Soft-archive an agent — revokes scope grants and toolkit bindings.
+	// Archive an agent — terminal-but-kept.
+	//
+	// The row is retained for history, but the action is not reversible and
+	// the agent's authority is swept: scope grants, toolkit bindings, and
+	// OAuth consent grants are revoked. For the reversible kill switch use
+	// ``:disable`` / ``:enable`` instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23703,7 +23742,11 @@ type ClientWithResponsesInterface interface {
 
 	// ArchiveServiceAccountWithResponse Archive Service Account
 	//
-	// Soft-archive a service account — revokes scope grants.
+	// Archive a service account — terminal-but-kept.
+	//
+	// The row is retained for history, but the action is not reversible and
+	// the account's scope grants are revoked. For the reversible kill switch
+	// use ``:disable`` / ``:enable`` instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -24130,7 +24173,12 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteUserWithResponse Delete User
 	//
-	// Soft-delete a user.
+	// Delete a user account (terminal-but-kept).
+	//
+	// The row is retained — the account is anonymized (tombstone email) and
+	// deactivated so history and audit references stay resolvable — but the
+	// action is terminal: there is no re-enable arm. For the reversible kill
+	// switch use ``:disable`` / ``:enable`` instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -39032,11 +39080,13 @@ func (c *ClientWithResponses) CreateOauthClientWithResponse(ctx context.Context,
 	return ParseCreateOauthClientHTTPResp(rsp)
 }
 
-// DeactivateOauthClientWithResponse Deactivate OAuth client
+// DeactivateOauthClientWithResponse Disable OAuth client
 //
-// Soft-delete an OAuth client by setting active=False.
+// Disable an OAuth client — the reversible kill switch (sets active=false).
 //
-// Deactivated clients can no longer initiate authorization flows.
+// Disabled clients can no longer initiate authorization flows and their
+// outstanding tokens stop resolving. Re-enable by patching “active: true“.
+// The row is kept; this is not a delete.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -39254,7 +39304,12 @@ func (c *ClientWithResponses) CreateAgentWithResponse(ctx context.Context, body 
 
 // ArchiveAgentWithResponse Archive Agent
 //
-// Soft-archive an agent — revokes scope grants and toolkit bindings.
+// Archive an agent — terminal-but-kept.
+//
+// The row is retained for history, but the action is not reversible and
+// the agent's authority is swept: scope grants, toolkit bindings, and
+// OAuth consent grants are revoked. For the reversible kill switch use
+// “:disable“ / “:enable“ instead.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41982,7 +42037,11 @@ func (c *ClientWithResponses) CreateServiceAccountWithResponse(ctx context.Conte
 
 // ArchiveServiceAccountWithResponse Archive Service Account
 //
-// Soft-archive a service account — revokes scope grants.
+// Archive a service account — terminal-but-kept.
+//
+// The row is retained for history, but the action is not reversible and
+// the account's scope grants are revoked. For the reversible kill switch
+// use “:disable“ / “:enable“ instead.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -42667,7 +42726,12 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 
 // DeleteUserWithResponse Delete User
 //
-// Soft-delete a user.
+// Delete a user account (terminal-but-kept).
+//
+// The row is retained — the account is anonymized (tombstone email) and
+// deactivated so history and audit references stay resolvable — but the
+// action is terminal: there is no re-enable arm. For the reversible kill
+// switch use “:disable“ / “:enable“ instead.
 //
 // Returns a wrapper object for the known response body format(s).
 //

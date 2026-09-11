@@ -8111,9 +8111,11 @@ paths:
   /admin/oauth-clients/{id}:
     delete:
       description: |-
-        Soft-delete an OAuth client by setting active=False.
+        Disable an OAuth client — the reversible kill switch (sets active=false).
 
-        Deactivated clients can no longer initiate authorization flows.
+        Disabled clients can no longer initiate authorization flows and their
+        outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+        The row is kept; this is not a delete.
       operationId: deactivateOauthClient
       parameters:
       - in: path
@@ -8176,7 +8178,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Deactivate OAuth client
+      summary: Disable OAuth client
       tags:
       - OAuth Clients
     get:
@@ -8913,7 +8915,13 @@ paths:
       - Agents
   /agents/{agent_id}:
     delete:
-      description: Soft-archive an agent — revokes scope grants and toolkit bindings.
+      description: |-
+        Archive an agent — terminal-but-kept.
+
+        The row is retained for history, but the action is not reversible and
+        the agent's authority is swept: scope grants, toolkit bindings, and
+        OAuth consent grants are revoked. For the reversible kill switch use
+        ``:disable`` / ``:enable`` instead.
       operationId: archiveAgent
       parameters:
       - in: path
@@ -17403,7 +17411,12 @@ paths:
       - Service Accounts
   /service-accounts/{service_account_id}:
     delete:
-      description: Soft-archive a service account — revokes scope grants.
+      description: |-
+        Archive a service account — terminal-but-kept.
+
+        The row is retained for history, but the action is not reversible and
+        the account's scope grants are revoked. For the reversible kill switch
+        use ``:disable`` / ``:enable`` instead.
       operationId: archiveServiceAccount
       parameters:
       - in: path
@@ -19645,7 +19658,13 @@ paths:
       - Users
   /users/{user_id}:
     delete:
-      description: Soft-delete a user.
+      description: |-
+        Delete a user account (terminal-but-kept).
+
+        The row is retained — the account is anonymized (tombstone email) and
+        deactivated so history and audit references stay resolvable — but the
+        action is terminal: there is no re-enable arm. For the reversible kill
+        switch use ``:disable`` / ``:enable`` instead.
       operationId: deleteUser
       parameters:
       - in: path
@@ -20358,7 +20377,7 @@ tags:
   name: Monitoring
 - description: Runtime, DB-backed platform configuration. Lets an operator set, read, and list configuration that previously required hand-editing backend YAML and restarting the server — starting with credential provider configs (e.g. Pipedream). A successful write rebuilds the in-process provider registry so the change takes effect without a restart. Secret fields (e.g. `client_secret`) are encrypted at rest and redacted on read. **Topology note:** in the combined (single-process) deployment a write takes effect immediately for all surfaces. In a multi-process deployment the control/broker processes pick up the new config at their next boot, not the instant the admin write lands; cross-process propagation is a tracked follow-up.
   name: Configuration
-- description: Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). Registered clients integrate with Jentic One via the standard Authorization Code + PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. Deactivating a client immediately invalidates all tokens issued through it.
+- description: Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). Registered clients integrate with Jentic One via the standard Authorization Code + PKCE flow. Admins can create, list, update, rotate secrets, and disable clients. Disabling a client immediately invalidates all tokens issued through it.
   name: OAuth Clients
 - description: MCP (Model Context Protocol) transport reporting. The `jentic mcp` stdio server terminates all MCP protocol traffic locally; the control plane only sees plain HTTP. This tag covers the small reporting surface behind it — today, the config-registration report `jentic setup`/`jentic skill init` send after writing an MCP server entry for a detected agent runtime, which feeds the config-written → first-session → first-execute adoption funnel.
   name: MCP
