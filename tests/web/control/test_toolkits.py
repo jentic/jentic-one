@@ -12,6 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from jentic_one.control.repos import ToolkitKeyRepository
+from jentic_one.control.services.toolkits.key_gen import generate_toolkit_key
 from jentic_one.shared.context import Context
 
 pytestmark = pytest.mark.integration
@@ -29,6 +31,25 @@ def _create_toolkit(client: TestClient, name: str = "test-toolkit") -> dict[str,
     return resp.json()  # type: ignore[no-any-return]
 
 
+async def _seed_key(web_context: Context, toolkit_id: str, *, label: str | None = None) -> str:
+    """Fabricate a toolkit key row directly — the create endpoint is retired
+    (410), but list/patch/delete still operate on surviving rows."""
+    _plaintext, hashed, preview, lookup = generate_toolkit_key()
+    async with web_context.control_db.session() as session:
+        key = await ToolkitKeyRepository.create(
+            session,
+            toolkit_id=toolkit_id,
+            hashed_key=hashed,
+            key_preview=preview,
+            lookup_hash=lookup,
+            label=label,
+            created_by="usr_webtest_tk_owner",
+        )
+        key_id = key.id
+        await session.commit()
+    return key_id
+
+
 # --- Create ---
 
 
@@ -37,15 +58,16 @@ def test_create_toolkit(tk_owner_client: TestClient) -> None:
     assert data["toolkit"]["toolkit_id"].startswith("tk_")
     assert data["toolkit"]["name"] == "create-test"
     assert data["toolkit"]["active"] is True
-    assert data["toolkit"]["key_count"] == 1
+    assert data["toolkit"]["key_count"] == 0
     assert data["toolkit"]["credential_count"] == 0
-    assert data["api_key"].startswith("jntc_live_")
+    # Toolkit keys are retired (theme-5 Phase 4): create mints no key.
+    assert "api_key" not in data
 
 
 def test_create_returns_key_and_credential_counts(tk_owner_client: TestClient) -> None:
     data = _create_toolkit(tk_owner_client, name="counts-test")
     toolkit = data["toolkit"]
-    assert toolkit["key_count"] == 1
+    assert toolkit["key_count"] == 0
     assert toolkit["credential_count"] == 0
 
 
@@ -61,7 +83,7 @@ def test_get_toolkit(tk_owner_client: TestClient) -> None:
     data = resp.json()
     assert data["toolkit_id"] == toolkit_id
     assert data["name"] == "get-test"
-    assert data["key_count"] == 1
+    assert data["key_count"] == 0
 
 
 def test_get_toolkit_not_found(tk_owner_client: TestClient) -> None:
@@ -102,7 +124,7 @@ def test_update_toolkit(tk_owner_client: TestClient) -> None:
     data = resp.json()
     assert data["name"] == "update-test-renamed"
     assert data["active"] is False
-    assert data["key_count"] == 1
+    assert data["key_count"] == 0
 
 
 def test_update_toolkit_not_found(tk_owner_client: TestClient) -> None:
@@ -174,14 +196,20 @@ def test_bound_orphan_writer_can_bind_credential(bound_orphan_writer_client: Tes
     assert body["credential_id"] == "cred_001"
 
 
-def test_bound_orphan_writer_can_create_key(bound_orphan_writer_client: TestClient) -> None:
-    """The same bound agent can issue a key on its bound toolkit."""
+def test_bound_orphan_writer_key_create_is_retired(
+    bound_orphan_writer_client: TestClient,
+) -> None:
+    """Key issuance is retired for every caller, including a bound writer.
+
+    The route survives so scripted callers get an actionable 410 naming the
+    successor surface (service accounts), never a bare 404.
+    """
     resp = bound_orphan_writer_client.post(
         "/toolkits/tk_target/keys",
         json={"label": "bound-orphan-key"},
     )
-    assert resp.status_code == 201, resp.text
-    assert resp.json()["api_key"].startswith("jntc_live_")
+    assert resp.status_code == 410, resp.text
+    assert resp.json()["type"] == "toolkit_keys_retired"
 
 
 def test_unbound_writer_denied_with_403_not_404(unbound_writer_client: TestClient) -> None:
@@ -220,35 +248,44 @@ def test_admin_writer_bypasses_scoping(admin_writer_client: TestClient) -> None:
 # --- Keys ---
 
 
-def test_create_and_list_keys(tk_owner_client: TestClient) -> None:
-    created = _create_toolkit(tk_owner_client, name="keys-test")
+def test_create_key_returns_410_toolkit_keys_retired(tk_owner_client: TestClient) -> None:
+    """POST /toolkits/{id}/keys always refuses — toolkit keys are retired."""
+    created = _create_toolkit(tk_owner_client, name="keys-retired-test")
     toolkit_id = created["toolkit"]["toolkit_id"]
 
     resp = tk_owner_client.post(
         f"/toolkits/{toolkit_id}/keys",
         json={"label": "secondary-key"},
     )
-    assert resp.status_code == 201
-    key_data = resp.json()
-    assert key_data["key"]["toolkit_id"] == toolkit_id
-    assert key_data["key"]["label"] == "secondary-key"
-    assert key_data["api_key"].startswith("jntc_live_")
+    assert resp.status_code == 410, resp.text
+    body = resp.json()
+    assert body["type"] == "toolkit_keys_retired"
+    # The refusal names the successor surface (U-03: every denial points
+    # somewhere that still exists).
+    assert "service account" in body["detail"]
+
+
+async def test_list_keys(tk_owner_client: TestClient, web_context: Context) -> None:
+    """Surviving key rows are still listable through the read route."""
+    created = _create_toolkit(tk_owner_client, name="keys-list-test")
+    toolkit_id = created["toolkit"]["toolkit_id"]
+    await _seed_key(web_context, toolkit_id, label="key-one")
+    await _seed_key(web_context, toolkit_id, label="key-two")
 
     resp = tk_owner_client.get(f"/toolkits/{toolkit_id}/keys")
     assert resp.status_code == 200
     keys = resp.json()
     assert len(keys["data"]) == 2
+    assert {k["label"] for k in keys["data"]} == {"key-one", "key-two"}
+    for key in keys["data"]:
+        assert key["toolkit_id"] == toolkit_id
+        assert "api_key" not in key
 
 
-def test_update_key(tk_owner_client: TestClient) -> None:
+async def test_update_key(tk_owner_client: TestClient, web_context: Context) -> None:
     created = _create_toolkit(tk_owner_client, name="key-update-test")
     toolkit_id = created["toolkit"]["toolkit_id"]
-
-    resp = tk_owner_client.post(
-        f"/toolkits/{toolkit_id}/keys",
-        json={"label": "to-revoke"},
-    )
-    key_id = resp.json()["key"]["key_id"]
+    key_id = await _seed_key(web_context, toolkit_id, label="to-revoke")
 
     resp = tk_owner_client.patch(
         f"/toolkits/{toolkit_id}/keys/{key_id}",
@@ -258,15 +295,10 @@ def test_update_key(tk_owner_client: TestClient) -> None:
     assert resp.json()["revoked"] is True
 
 
-def test_delete_key(tk_owner_client: TestClient) -> None:
+async def test_delete_key(tk_owner_client: TestClient, web_context: Context) -> None:
     created = _create_toolkit(tk_owner_client, name="key-delete-test")
     toolkit_id = created["toolkit"]["toolkit_id"]
-
-    resp = tk_owner_client.post(
-        f"/toolkits/{toolkit_id}/keys",
-        json={"label": "ephemeral"},
-    )
-    key_id = resp.json()["key"]["key_id"]
+    key_id = await _seed_key(web_context, toolkit_id, label="ephemeral")
 
     resp = tk_owner_client.delete(f"/toolkits/{toolkit_id}/keys/{key_id}")
     assert resp.status_code == 204

@@ -74,6 +74,18 @@ is simply superseded by the next one — every release rebuilds all artifacts fr
 scratch, so nothing is lost by skipping it.
 
 
+## Deprecations
+
+Active deprecation windows are registered here (the named channel) and
+repeated in the GitHub Release notes of the release that opens each window.
+An entry names what is deprecated, the release that opened the window, the
+runtime signal an operator can watch, and the earliest removal point.
+
+| Deprecated | Since | Runtime signal | Removal |
+| ---------- | ----- | -------------- | ------- |
+| `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued (`POST /toolkits/{id}/keys` → `410 toolkit_keys_retired`); run `jentic_one retire-toolkit-keys` so existing plaintexts keep authenticating as their migrated service accounts, then rotate holders to `sak_` keys. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the service account still presenting the retired key form. | The theme-5 toolkit-surface deletion release (Phase 5b), no earlier than **2026-12-01**. |
+
+
 ## One-time setup (repo/org admin)
 
 The automation is inert until these are provisioned:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, Index, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -13,7 +13,16 @@ from jentic_one.shared.db.ids import generate_ksuid
 
 
 class AgentCredentialBinding(AuditableMixin, AdminBase):
-    """Direct binding between an agent and a credential.
+    """Direct binding between a broker-executing actor and a credential.
+
+    ``agent_id`` holds the id of the actor the binding authorizes — an agent
+    (``agnt_…``) or, since theme-5 Phase 4 (key retirement), a service account
+    (``sva_…``) migrated from a ``jntc_live_`` toolkit key. The two actor
+    kinds live in sibling tables, so the column carries no FK; lifecycle
+    cleanup is application-level (``AgentService.delete`` removes an agent's
+    bindings; service accounts archive rather than hard-delete). The column
+    keeps its historical name — every consumer (broker derivation SQL, repos,
+    the Phase-6a flattening queries) keys on it.
 
     ``credential_id`` references a row in the control database, so it is a
     plain string column with no FK (cross-DB reference — same pattern as
@@ -48,7 +57,6 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
     )
     agent_id: Mapped[str] = mapped_column(
         String(30),
-        ForeignKey("agents.id", ondelete="CASCADE"),
         nullable=False,
     )
     credential_id: Mapped[str] = mapped_column(String(30), nullable=False)

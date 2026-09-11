@@ -309,32 +309,24 @@ describe('ToolkitDetailPage', () => {
 		await checkA11y(container);
 	});
 
-	it('reveals the one-time plaintext key after creating a key', async () => {
+	it('shows the key-retirement notice and offers no issue-key affordance', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
 		await user.click(screen.getByRole('tab', { name: /^Keys/ }));
-		await user.click(await screen.findByRole('button', { name: /create key/i }));
-		await user.click(screen.getByRole('button', { name: /^generate$/i }));
 
-		expect(await screen.findByText('New API Key Created')).toBeInTheDocument();
-		expect(screen.getByText(/jntc_live_freshmockplaintext/)).toBeInTheDocument();
-	});
+		// The retirement notice points callers at service accounts…
+		const notice = await screen.findByTestId('toolkit-keys-retired-notice');
+		expect(notice).toHaveTextContent(/new toolkit keys are retired/i);
+		expect(notice).toHaveTextContent(/service account/i);
+		// …and the tab exposes no way to issue a new key.
+		expect(screen.queryByRole('button', { name: /create key/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /generate/i })).not.toBeInTheDocument();
 
-	it('creates a key with an IP allowlist and shows the restriction chip', async () => {
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=keys`, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		await user.click(await screen.findByRole('button', { name: /create key/i }));
-		await user.type(screen.getByLabelText('Key label'), 'Edge worker');
-		await user.type(screen.getByLabelText('Allowed IPs'), '10.0.0.1, 10.0.0.2');
-		await user.click(screen.getByRole('button', { name: /^generate$/i }));
-
-		await screen.findByText('New API Key Created');
-		// The new key row renders the allowed_ips chip.
-		expect(await screen.findByText('10.0.0.1, 10.0.0.2')).toBeInTheDocument();
+		// Existing keys still list (with revoke reachable).
+		expect(await screen.findByText('CI runner')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /revoke/i })).toBeInTheDocument();
 	});
 
 	it('renames a key inline from the Keys tab', async () => {

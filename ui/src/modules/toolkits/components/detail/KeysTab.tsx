@@ -1,33 +1,22 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Ban, Check, Globe, Key, Pencil, Plus, X } from 'lucide-react';
-import { Badge, Button, DetailSection, EmptyRow, ErrorAlert, Input } from '@/shared/ui';
-import { useCreateKey, useRevokeKey, useToolkitKeys, useUpdateKey } from '@/modules/toolkits/api';
+import { Ban, Check, Globe, Key, KeyRound, Pencil, X } from 'lucide-react';
+import { Badge, Button, DetailSection, EmptyRow, ErrorAlert, Input, AppLink } from '@/shared/ui';
+import { useRevokeKey, useToolkitKeys, useUpdateKey } from '@/modules/toolkits/api';
 import { InlineConfirm } from '@/modules/toolkits/components/InlineConfirm';
-import { OneTimeKeyDisplay } from '@/modules/toolkits/components/OneTimeKeyDisplay';
-import { panelMotion, rowMotion } from '@/modules/toolkits/components/detail/shared';
+import { rowMotion } from '@/modules/toolkits/components/detail/shared';
 import { timeAgo } from '@/modules/toolkits/lib/time';
+import { ROUTES } from '@/shared/app/routes';
 import type { ToolkitKey } from '@/modules/toolkits/api/types';
 
 /**
- * Keys tab — static toolkit API keys. Creation is an inline panel (not a
- * dialog) so the one-time plaintext reveal (`OneTimeKeyDisplay`) lands in the
- * same visual flow; the plaintext is wiped the moment the user confirms
- * (sensitive-data rule — it never persists across a dismissal).
- *
- * Keys also carry two PATCH fields:
- * label rename (inline pencil) and `allowed_ips` (set at create, shown as a
- * chip) — set from the create dialog.
+ * Keys tab — static toolkit API keys, now a legacy surface. Issuing NEW keys
+ * is retired server-side (`POST /toolkits/{id}/keys` → 410
+ * `toolkit_keys_retired`), so the tab offers no create affordance; a notice
+ * points callers at service accounts (`sak_` keys) instead. Existing keys keep
+ * working and remain manageable: label rename (inline pencil), the
+ * `allowed_ips` chip, revoke.
  */
-
-/** Parse a comma/space separated IP list into the wire array (null = no restriction). */
-function parseIps(raw: string): string[] | null {
-	const ips = raw
-		.split(/[\s,]+/)
-		.map((s) => s.trim())
-		.filter(Boolean);
-	return ips.length > 0 ? ips : null;
-}
 
 function KeyRow({
 	toolkitKey: key,
@@ -156,28 +145,8 @@ function KeyRow({
 
 export function KeysTab({ toolkitId, suspended }: { toolkitId: string; suspended: boolean }) {
 	const { data: keys = [], isError: keysError } = useToolkitKeys(toolkitId);
-	const createKey = useCreateKey(toolkitId);
 	const revokeKey = useRevokeKey(toolkitId);
 	const updateKey = useUpdateKey(toolkitId);
-
-	const [showKeyCreate, setShowKeyCreate] = useState(false);
-	const [keyName, setKeyName] = useState('');
-	const [keyIps, setKeyIps] = useState('');
-	const [newKey, setNewKey] = useState<string | null>(null);
-
-	const submitKey = () => {
-		createKey.mutate(
-			{ label: keyName || null, allowed_ips: parseIps(keyIps) },
-			{
-				onSuccess: (res) => {
-					setNewKey(res.api_key);
-					setShowKeyCreate(false);
-					setKeyName('');
-					setKeyIps('');
-				},
-			},
-		);
-	};
 
 	return (
 		<DetailSection
@@ -192,81 +161,39 @@ export function KeysTab({ toolkitId, suspended }: { toolkitId: string; suspended
 					</span>
 				) : undefined
 			}
-			action={
-				suspended
-					? undefined
-					: {
-							label: (
-								<>
-									<Plus className="h-4 w-4" /> Create key
-								</>
-							),
-							onClick: () => setShowKeyCreate(true),
-							variant: 'primary',
-						}
-			}
 		>
-			<AnimatePresence initial={false}>
-				{newKey && (
-					<motion.div key="one-time-key" {...panelMotion} className="overflow-hidden">
-						<OneTimeKeyDisplay keyValue={newKey} onConfirm={() => setNewKey(null)} />
-					</motion.div>
-				)}
-				{showKeyCreate && (
-					<motion.div key="create-key-form" {...panelMotion} className="overflow-hidden">
-						<div className="bg-muted/30 border-border/60 space-y-3 rounded-lg border p-4">
-							<p className="text-foreground text-sm font-semibold">Create API key</p>
-							<Input
-								type="text"
-								value={keyName}
-								onChange={(e) => setKeyName(e.target.value)}
-								placeholder="Key label (optional)"
-								aria-label="Key label"
-								autoFocus
-								onKeyDown={(e) => {
-									if (e.key === 'Enter' && !createKey.isPending) submitKey();
-								}}
-							/>
-							<div>
-								<Input
-									type="text"
-									value={keyIps}
-									onChange={(e) => setKeyIps(e.target.value)}
-									placeholder="Allowed IPs, comma-separated (optional)"
-									aria-label="Allowed IPs"
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' && !createKey.isPending) submitKey();
-									}}
-								/>
-								<p className="text-muted-foreground mt-1 text-xs">
-									Restrict where this key may be used from. Leave empty to allow
-									any address.
-								</p>
-							</div>
-							<div className="flex gap-2">
-								<Button size="sm" onClick={submitKey} loading={createKey.isPending}>
-									{createKey.isPending ? 'Generating…' : 'Generate'}
-								</Button>
-								<Button
-									variant="secondary"
-									size="sm"
-									onClick={() => {
-										setShowKeyCreate(false);
-										setKeyName('');
-										setKeyIps('');
-									}}
-								>
-									Cancel
-								</Button>
-							</div>
-						</div>
-					</motion.div>
-				)}
-			</AnimatePresence>
+			{/* Retirement notice — same inline info-banner grammar as the detail
+			    page's status banners (icon chip + heading + body, role="status"). */}
+			<div
+				className="border-border/60 bg-muted/30 flex items-start gap-3 rounded-lg border p-3"
+				role="status"
+				data-testid="toolkit-keys-retired-notice"
+			>
+				<div className="bg-accent-yellow/10 text-accent-yellow flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+					<KeyRound className="h-4 w-4" />
+				</div>
+				<div className="min-w-0 flex-1">
+					<p className="text-foreground text-sm font-medium">
+						New toolkit keys are retired
+					</p>
+					<p className="text-muted-foreground mt-0.5 text-xs">
+						This toolkit can no longer issue keys. Register a{' '}
+						<AppLink
+							href={ROUTES.agents}
+							className="text-primary font-medium hover:underline"
+						>
+							service account
+						</AppLink>{' '}
+						and use its <code className="font-mono">sak_</code> API key instead.
+						Existing keys below keep working and can still be renamed or revoked.
+					</p>
+				</div>
+			</div>
 			{keysError && <ErrorAlert message="Failed to load API keys." />}
-			{keys.length === 0 && !showKeyCreate && !newKey && !keysError && (
+			{keys.length === 0 && !keysError && (
 				<EmptyRow icon={<Key />}>
-					No keys yet. Create one to let agents call this toolkit with a static key.
+					No keys. Agents call this toolkit via their own identity or a service
+					account&rsquo;s <code className="font-mono">sak_</code> key.
 				</EmptyRow>
 			)}
 			<AnimatePresence initial={false}>

@@ -101,7 +101,7 @@ TYPICAL_ANY = "any"
 
 #: Actors that ride the programmatic (agent) token flow rather than a human login.
 _PROGRAMMATIC_ACTORS: frozenset[str] = frozenset(
-    {ActorType.AGENT.value, ActorType.SERVICE_ACCOUNT.value, ActorType.TOOLKIT.value}
+    {ActorType.AGENT.value, ActorType.SERVICE_ACCOUNT.value}
 )
 
 #: Scopes an agent is granted by default — endpoints needing only these are

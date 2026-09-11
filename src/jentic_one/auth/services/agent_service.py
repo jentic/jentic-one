@@ -263,7 +263,7 @@ class AgentService:
         because ``owner_id`` is already set).
 
         Only ``USER`` actors may claim: ``Agent.owner_id`` is a FK to ``users.id``,
-        so a non-user actor (agent/service-account/toolkit) is rejected up front
+        so a non-user actor (agent/service-account) is rejected up front
         with ``ClaimActorNotAllowedError`` rather than being allowed to write a
         non-user id into the users-FK column.
 

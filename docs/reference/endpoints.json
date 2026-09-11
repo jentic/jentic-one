@@ -80,8 +80,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -100,8 +99,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -120,8 +118,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -140,8 +137,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -160,8 +156,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -186,8 +181,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -206,8 +200,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -230,8 +223,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -254,8 +246,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -278,8 +269,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -319,8 +309,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -343,8 +332,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -369,8 +357,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -395,8 +382,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -419,8 +405,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -445,8 +430,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -471,8 +455,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -497,8 +480,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -523,8 +505,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -547,8 +528,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -571,8 +551,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -597,8 +576,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -623,8 +601,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -643,8 +620,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -669,8 +645,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -693,8 +668,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -717,8 +691,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -737,8 +710,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -763,8 +735,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -789,8 +760,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -815,8 +785,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -841,8 +810,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -861,8 +829,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -885,8 +852,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -911,8 +877,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -931,8 +896,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -957,8 +921,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -983,8 +946,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1026,8 +988,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1052,8 +1013,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1078,8 +1038,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1104,8 +1063,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1130,8 +1088,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1156,12 +1113,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1180,8 +1136,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1207,8 +1162,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1234,12 +1188,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1258,8 +1211,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1285,12 +1237,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1309,12 +1260,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1333,12 +1283,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1357,8 +1306,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1384,8 +1332,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1411,12 +1358,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1435,8 +1381,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1462,8 +1407,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1488,8 +1432,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1514,12 +1457,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1538,8 +1480,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1565,12 +1506,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1589,12 +1529,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1613,12 +1552,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1637,8 +1575,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1664,8 +1601,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1691,12 +1627,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1715,8 +1650,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1739,8 +1673,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1840,12 +1773,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1864,12 +1796,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1888,12 +1819,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1912,12 +1842,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "catalog:import": [
           "apis:read"
@@ -1938,8 +1867,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1964,8 +1892,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1990,8 +1917,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2056,8 +1982,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2082,8 +2007,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2123,8 +2047,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2149,8 +2072,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2175,8 +2097,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2201,8 +2122,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2227,8 +2147,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2253,8 +2172,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2279,8 +2197,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2305,8 +2222,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2331,8 +2247,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2357,8 +2272,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2383,8 +2297,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2409,8 +2322,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2450,12 +2362,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2474,12 +2385,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2498,12 +2408,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2522,8 +2431,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2548,12 +2456,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "executions:read": []
       },
@@ -2572,12 +2479,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "executions:read": []
       },
@@ -2611,12 +2517,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -2650,12 +2555,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2674,12 +2578,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2698,12 +2601,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2722,8 +2624,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2778,8 +2679,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2798,8 +2698,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2818,8 +2717,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2869,8 +2767,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2920,8 +2817,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2940,8 +2836,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2960,8 +2855,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2980,8 +2874,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3000,8 +2893,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3035,8 +2927,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3055,8 +2946,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3141,8 +3031,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3163,7 +3052,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {},
       "method": "POST",
       "operation_id": "mintEndpoint",
@@ -3178,8 +3067,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": "Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.",
       "authenticated": true,
@@ -3230,8 +3118,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3256,8 +3143,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3282,8 +3168,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3308,8 +3193,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3334,8 +3218,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3360,8 +3243,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3386,8 +3268,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3436,8 +3317,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3456,8 +3336,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": "Authenticated with the Registration-Access-Token issued at registration (RFC 7592), not a platform bearer token.",
       "authenticated": true,
@@ -3476,8 +3355,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3511,12 +3389,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -3535,8 +3412,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3559,8 +3435,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3585,8 +3460,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3611,8 +3485,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3631,8 +3504,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3655,8 +3527,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3681,8 +3552,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3707,8 +3577,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3733,8 +3602,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3759,8 +3627,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3785,8 +3652,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3811,8 +3677,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3831,8 +3696,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3857,8 +3721,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3883,8 +3746,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3909,8 +3771,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3935,8 +3796,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3961,8 +3821,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3987,8 +3846,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4013,8 +3871,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4039,8 +3896,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4065,8 +3921,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4091,8 +3946,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4117,8 +3971,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4143,8 +3996,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4169,8 +4021,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4195,8 +4046,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4213,7 +4063,7 @@
       "required_scopes": [
         "toolkits:write"
       ],
-      "summary": "Issue toolkit key",
+      "summary": "Issue toolkit key (retired)",
       "surface": "toolkits",
       "typical_caller": "any"
     },
@@ -4221,8 +4071,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4247,8 +4096,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4273,8 +4121,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4297,8 +4144,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4323,8 +4169,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4343,8 +4188,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4363,8 +4207,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4389,8 +4232,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4413,8 +4255,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4439,8 +4280,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4465,8 +4305,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4491,8 +4330,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4517,8 +4355,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4572,12 +4409,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4599,12 +4435,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4626,12 +4461,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4653,12 +4487,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4680,12 +4513,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4706,7 +4538,7 @@
     }
   ],
   "groups": [
-    "Agent-facing (typically agent / service-account / toolkit)",
+    "Agent-facing (typically agent / service-account)",
     "Operator-facing (typically a human operator / admin)",
     "Any authenticated actor",
     "Public (unauthenticated)"

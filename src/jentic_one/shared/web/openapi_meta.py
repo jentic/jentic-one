@@ -192,7 +192,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | Prefix | Resource | Notes |
   |---|---|---|
   | `tk_` | Toolkit ID | Public; appears in URLs and logs. **Not** the toolkit secret. |
-  | `ck_` | Toolkit-key record | One toolkit can hold many keys; each `ck_…` is a key record (label, IP allowlist, revoked flag). The plaintext key value is `jntc_live_…`. |
+  | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued (`POST …/keys` → 410). Existing records remain listable/revocable; each surviving plaintext authenticates as the service account it was migrated to. |
   | `cred_` | Credential ID | |
   | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
   | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -204,7 +204,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `areq_` | Access request | Per-toolkit human-approval ticket; lives on the `Access Requests` sub-tag of `Toolkits`. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-  | `jntc_live_` | Plaintext toolkit API key value | The secret. Returned **once** at toolkit creation / key issue. |
+  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
 
   Surfaces still being designed (agent identity, OAuth brokers)
   will add their own prefixes when they land.

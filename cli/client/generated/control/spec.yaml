@@ -380,12 +380,19 @@ components:
       title: ActorSummaryResponse
       type: object
     ActorType:
-      description: Type of authenticated actor.
+      description: |-
+        Type of authenticated actor.
+
+        ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
+        service accounts the key-retirement job created, so no code path mints a
+        toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
+        historical rows (events, audit entries, execution records) until the
+        Phase-6b scope-data sweep; read paths must tolerate the string without
+        round-tripping it through this enum.
       enum:
       - user
       - agent
       - service_account
-      - toolkit
       title: ActorType
       type: string
     AgentCreateRequest:
@@ -6139,12 +6146,8 @@ components:
       title: ToolkitCreateRequest
       type: object
     ToolkitCreateResponse:
-      description: 'Create response: toolkit + api_key shown once.'
+      description: Create response — toolkit + bind-time warnings (no key is issued).
       properties:
-        api_key:
-          title: Api Key
-          type: string
-          x-sensitive: true
         toolkit:
           $ref: '#/components/schemas/ToolkitResponse'
         warnings:
@@ -6155,7 +6158,6 @@ components:
           type: array
       required:
       - toolkit
-      - api_key
       title: ToolkitCreateResponse
       type: object
     ToolkitCredentialBindRequest:
@@ -7100,7 +7102,7 @@ info:
       | Prefix | Resource | Notes |
       |---|---|---|
       | `tk_` | Toolkit ID | Public; appears in URLs and logs. **Not** the toolkit secret. |
-      | `ck_` | Toolkit-key record | One toolkit can hold many keys; each `ck_…` is a key record (label, IP allowlist, revoked flag). The plaintext key value is `jntc_live_…`. |
+      | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued (`POST …/keys` → 410). Existing records remain listable/revocable; each surviving plaintext authenticates as the service account it was migrated to. |
       | `cred_` | Credential ID | |
       | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
       | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -7112,7 +7114,7 @@ info:
       | `areq_` | Access request | Per-toolkit human-approval ticket; lives on the `Access Requests` sub-tag of `Toolkits`. |
       | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
       | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-      | `jntc_live_` | Plaintext toolkit API key value | The secret. Returned **once** at toolkit creation / key issue. |
+      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
 
       Surfaces still being designed (agent identity, OAuth brokers)
       will add their own prefixes when they land.
@@ -10300,7 +10302,7 @@ paths:
 
         Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
         only a human can own an agent. The ``require_actor_type`` gate rejects a
-        non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+        non-user actor (agent/service-account) at the boundary with a 403;
         ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 
         ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -19457,12 +19459,13 @@ paths:
       - Toolkits
     post:
       description: |-
-        Create a toolkit and issue its first API key.
+        Create a toolkit.
 
-        The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-        never retrievable again. Optional `credential_ids` bind existing credentials
-        at creation time; each inline bind emits a ``no_permission_rules`` warning
-        because the broker denies by default until rules are added.
+        No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+        #1152); headless callers register a service account and use its `sak_`
+        key. Optional `credential_ids` bind existing credentials at creation
+        time; each inline bind emits a ``no_permission_rules`` warning because
+        the broker denies by default until rules are added.
       operationId: createToolkit
       requestBody:
         content:
@@ -20504,11 +20507,12 @@ paths:
       tags:
       - Toolkit Keys
     post:
+      deprecated: true
       description: |-
-        Issue a new API key for a toolkit.
-
-        The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-        a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+        Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+        Phase 4). Register a service account and use its `sak_` key instead.
+        Existing keys keep working (as their migrated service accounts) and can
+        still be listed, revoked, and deleted here.
       operationId: createKey
       parameters:
       - in: path
@@ -20581,7 +20585,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Issue toolkit key
+      summary: Issue toolkit key (retired)
       tags:
       - Toolkit Keys
   /toolkits/{toolkit_id}/keys/{key_id}:

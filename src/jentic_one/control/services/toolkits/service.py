@@ -17,6 +17,7 @@ from jentic_one.control.repos import (
     ToolkitPermissionRepository,
     ToolkitRepository,
 )
+from jentic_one.control.repos.key_retirement_repo import KeyRetirementRepository
 from jentic_one.control.repos.prerequisite_repo import BoundAgentRow, PrerequisiteRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.toolkits.errors import (
@@ -25,9 +26,9 @@ from jentic_one.control.services.toolkits.errors import (
     DuplicateBindingError,
     ToolkitAccessDeniedError,
     ToolkitKeyNotFoundError,
+    ToolkitKeysRetiredError,
     ToolkitNotFoundError,
 )
-from jentic_one.control.services.toolkits.key_gen import generate_toolkit_key
 from jentic_one.control.services.toolkits.schemas import (
     BINDING_WARNING_NO_RULES,
     BindingPage,
@@ -117,28 +118,19 @@ class ToolkitService:
         active: bool = True,
         credential_ids: list[str] | None = None,
     ) -> ToolkitCreateResult:
-        """Create a toolkit with an initial API key.
+        """Create a toolkit (no API key — toolkit keys are retired).
 
-        Returns a :class:`ToolkitCreateResult` with the toolkit, its
-        plaintext key (shown once), and any bind-time warnings for
-        inline-bound credentials.
+        Returns a :class:`ToolkitCreateResult` with the toolkit and any
+        bind-time warnings for inline-bound credentials. No ``jntc_live_``
+        key is minted (theme-5 Phase 4 / #1152): headless callers register a
+        service account and use its ``sak_`` key.
         """
-        plaintext, hashed, preview, lookup = generate_toolkit_key()
-
         async with self._ctx.control_db.transaction() as session:
             toolkit = await ToolkitRepository.create(
                 session,
                 name=name,
                 description=description,
                 active=active,
-                created_by=identity.sub,
-            )
-            await ToolkitKeyRepository.create(
-                session,
-                toolkit_id=toolkit.id,
-                hashed_key=hashed,
-                key_preview=preview,
-                lookup_hash=lookup,
                 created_by=identity.sub,
             )
             if credential_ids:
@@ -185,7 +177,7 @@ class ToolkitService:
             summary=f"Toolkit {toolkit.id} created",
             identity=identity,
         )
-        return ToolkitCreateResult(toolkit=toolkit, plaintext_key=plaintext, warnings=warnings)
+        return ToolkitCreateResult(toolkit=toolkit, warnings=warnings)
 
     async def get(self, toolkit_id: str, *, identity: Identity) -> Toolkit:
         bound_ids = await self._bound_toolkit_ids(identity)
@@ -376,42 +368,14 @@ class ToolkitService:
         label: str | None = None,
         allowed_ips: list[str] | None = None,
     ) -> tuple[ToolkitKey, str]:
-        """Create an additional API key. Returns (key, plaintext)."""
-        plaintext, hashed, preview, lookup = generate_toolkit_key()
-        access_filters = build_access_filters(
-            identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
-        )
+        """Refuse: toolkit keys are retired (theme-5 Phase 4).
 
-        async with self._ctx.control_db.transaction() as session:
-            toolkit = await ToolkitRepository.get_by_id(session, toolkit_id, filters=access_filters)
-            if toolkit is None:
-                await self._raise_toolkit_unavailable(toolkit_id)
-            key = await ToolkitKeyRepository.create(
-                session,
-                toolkit_id=toolkit_id,
-                hashed_key=hashed,
-                key_preview=preview,
-                lookup_hash=lookup,
-                label=label,
-                allowed_ips=allowed_ips,
-                created_by=identity.sub,
-            )
-        await record_audit_best_effort(
-            self._ctx,
-            action=AuditAction.CREATE,
-            target_type=AuditTargetType.TOOLKIT_KEY,
-            target_id=key.id,
-            actor_type=identity.actor_type,
-            actor_id=identity.sub,
-            target_parent_id=toolkit_id,
-            origin=identity.origin.value,
-        )
-        await self._emit_telemetry(
-            type=EventType.TOOLKIT_KEY_CREATED,
-            summary=f"Toolkit key {key.id} created",
-            identity=identity,
-        )
-        return key, plaintext
+        The route survives through the deprecation window so a scripted
+        caller gets an actionable 410 naming the successor surface, not a
+        bare 404. Existing keys keep authenticating (as their migrated
+        service accounts) and can still be listed/revoked/deleted.
+        """
+        raise ToolkitKeysRetiredError()
 
     async def list_keys(
         self, toolkit_id: str, *, cursor: str | None = None, limit: int = 50, identity: Identity
@@ -472,6 +436,18 @@ class ToolkitService:
             )
             assert updated is not None
 
+        # A migrated key (theme-5 Phase 4) authenticates as its service
+        # account, so revocation must reach that actor or the "revoked" key
+        # keeps executing. Enable is the symmetric un-cut. Propagation is
+        # bounded by the broker's resolve-cache TTL, same as the key row was.
+        if revoked is not None and key.migrated_actor_id is not None:
+            async with self._ctx.admin_db.transaction() as admin_session:
+                await KeyRetirementRepository.set_service_account_status(
+                    admin_session,
+                    service_account_id=key.migrated_actor_id,
+                    status="disabled" if revoked else "active",
+                )
+
         action = AuditAction.UPDATE
         if revoked is not None and key.revoked != revoked:
             action = AuditAction.REVOKE if revoked else AuditAction.ENABLE
@@ -499,6 +475,17 @@ class ToolkitService:
             if key is None or key.toolkit_id != toolkit_id:
                 raise ToolkitKeyNotFoundError(key_id)
             await ToolkitKeyRepository.delete(session, key_id)
+
+        # Deleting a migrated key severs its successor too — otherwise the
+        # plaintext would keep resolving through the service-account digest
+        # after the operator destroyed the key record (theme-5 Phase 4).
+        if key.migrated_actor_id is not None:
+            async with self._ctx.admin_db.transaction() as admin_session:
+                await KeyRetirementRepository.set_service_account_status(
+                    admin_session,
+                    service_account_id=key.migrated_actor_id,
+                    status="disabled",
+                )
 
         await record_audit_best_effort(
             self._ctx,

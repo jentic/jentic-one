@@ -7,10 +7,11 @@ correct execution_id, status, http_status, and duration_ms > 0.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.broker.core.schemas import ExecuteRequestContext
@@ -19,6 +20,27 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ExecutionStatus
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+async def clean_records(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
+    """Remove this module's fixed-id records, before and after.
+
+    The tests insert deterministic ids, so a leftover row from a previous
+    session against the persistent Docker fixture would fail the insert with
+    a duplicate key.
+    """
+
+    async def _cleanup() -> None:
+        async with admin_db.session() as session:
+            await session.execute(
+                delete(ExecutionRecord).where(ExecutionRecord.id.like("integ-stream-exec-%"))
+            )
+            await session.commit()
+
+    await _cleanup()
+    yield
+    await _cleanup()
 
 
 @pytest.fixture()

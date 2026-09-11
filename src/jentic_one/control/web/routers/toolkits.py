@@ -153,12 +153,13 @@ async def create_toolkit(
     identity: Identity = get_current_identity(required_permissions=["toolkits:write"]),
     svc: ToolkitService = Depends(get_toolkit_service),
 ) -> ToolkitCreateResponse:
-    """Create a toolkit and issue its first API key.
+    """Create a toolkit.
 
-    The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-    never retrievable again. Optional `credential_ids` bind existing credentials
-    at creation time; each inline bind emits a ``no_permission_rules`` warning
-    because the broker denies by default until rules are added.
+    No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+    #1152); headless callers register a service account and use its `sak_`
+    key. Optional `credential_ids` bind existing credentials at creation
+    time; each inline bind emits a ``no_permission_rules`` warning because
+    the broker denies by default until rules are added.
     """
     result = await svc.create(
         name=body.name,
@@ -170,7 +171,6 @@ async def create_toolkit(
     served = await svc.served_apis([result.toolkit.id], identity=identity)
     return ToolkitCreateResponse(
         toolkit=_to_toolkit_response(result.toolkit, served),
-        api_key=result.plaintext_key,
         warnings=[_to_binding_warning(w) for w in result.warnings],
     )
 
@@ -285,8 +285,9 @@ async def list_toolkit_agents(
 @router.post(
     "/toolkits/{toolkit_id}/keys",
     status_code=201,
-    summary="Issue toolkit key",
+    summary="Issue toolkit key (retired)",
     responses=not_found(),
+    deprecated=True,
 )
 async def create_key(
     toolkit_id: str,
@@ -294,10 +295,10 @@ async def create_key(
     identity: Identity = get_current_identity(required_permissions=["toolkits:write"]),
     svc: ToolkitService = Depends(get_toolkit_service),
 ) -> ToolkitKeyCreateResponse:
-    """Issue a new API key for a toolkit.
-
-    The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-    a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+    """Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+    Phase 4). Register a service account and use its `sak_` key instead.
+    Existing keys keep working (as their migrated service accounts) and can
+    still be listed, revoked, and deleted here.
     """
     key, plaintext = await svc.create_key(
         toolkit_id, identity=identity, label=body.label, allowed_ips=body.allowed_ips

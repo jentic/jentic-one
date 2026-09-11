@@ -20,7 +20,6 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
-from jentic.problem_details import Forbidden
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
@@ -115,7 +114,7 @@ from jentic_one.shared.events import (
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
-from jentic_one.shared.models import ActorType, ExecutionStatus
+from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.schemas import APIReference
@@ -435,28 +434,14 @@ async def select_toolkit(
     header is validated against the derived candidates; never silently honoured or
     silently picked.
 
-    Non-agent actors (service accounts, users) currently follow the **same**
-    derivation rule — there is no implicit bypass. Broadening this for service
-    accounts is an explicit future decision, not an accident.
-
-    A **toolkit key** (``ActorType.TOOLKIT``) is the exception: it authenticates
-    *as the toolkit itself*, so the agent→binding derivation does not apply — the
-    key already names its toolkit (``identity.sub``). A supplied ``Jentic-Toolkit-Id``
-    must match it; otherwise the request is rejected.
+    Non-agent actors (service accounts, users) follow the **same** derivation
+    rule — there is no implicit bypass. Broadening this for service accounts
+    is an explicit future decision, not an accident. Toolkit keys — the one
+    actor kind that authenticated *as* a toolkit and skipped derivation — are
+    retired (theme-5 Phase 4): a presented ``jntc_live_`` plaintext resolves
+    as the service account the retirement job bound to the same toolkit, so
+    it derives here like any other caller.
     """
-    if identity.actor_type is ActorType.TOOLKIT:
-        if header_toolkit and header_toolkit != identity.sub:
-            # Non-recoverable: a toolkit key authenticates *as* one specific
-            # toolkit, so there is no other binding to switch to and no human
-            # grant that would help. A bare Forbidden (no agent_directive) is
-            # correct here — the caller must fix its own request.
-            raise Forbidden(
-                detail="Jentic-Toolkit-Id does not match the authenticated toolkit key",
-                instance=instance,
-                type="toolkit_binding_required",
-            )
-        return identity.sub
-
     # Invariant: the API identity here is the *discovered* spec identity, which is
     # always concrete (vendor/name/version all set) — the registry never yields a
     # wildcard. Derivation and the nearest-miss diagnostic (#748) rely on this
@@ -810,13 +795,11 @@ async def _handle(
     # region-mismatch hint on an upstream 401/403 (#638).
     ctx_req.has_server_variable = has_host_server_variable(upstream_url)
     # Authorization path split (theme-5 Phase 2, config-flagged): direct
-    # agent→credential bindings for agent/user/service-account callers when
-    # enabled; the legacy toolkit path otherwise. Toolkit keys always keep the
-    # toolkit path — a toolkit key authenticates *as* the toolkit itself and is
-    # retired separately (Phase 4).
-    direct_bindings = (
-        ctx.config.broker.direct_bindings_enabled and identity.actor_type is not ActorType.TOOLKIT
-    )
+    # agent→credential bindings when enabled; the legacy toolkit path
+    # otherwise. Every caller kind rides the same split — toolkit keys, the
+    # one identity that bypassed it, are retired (Phase 4) and resolve as
+    # service accounts holding both binding forms.
+    direct_bindings = ctx.config.broker.direct_bindings_enabled
     selected_credential: ResolvedCredential | None = None
     allowed_credential_ids: list[str] | None = None
 

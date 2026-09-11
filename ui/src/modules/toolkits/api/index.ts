@@ -17,7 +17,6 @@ import { toast } from '@/shared/ui';
 import type {
 	ToolkitCreateRequest,
 	ToolkitUpdateRequest,
-	ToolkitKeyCreateRequest,
 	ToolkitKeyUpdateRequest,
 	ToolkitCredentialBindRequest,
 	PermissionRuleSchema,
@@ -173,6 +172,9 @@ export function useDeleteToolkit() {
 }
 
 // --- Keys -----------------------------------------------------------------
+//
+// Existing keys only — issuing new toolkit keys is retired (service accounts
+// replace them), so there is no create hook; list/rename/revoke/delete remain.
 
 export function useToolkitKeys(toolkitId: string | null, opts: { poll?: boolean } = {}) {
 	return useQuery({
@@ -181,18 +183,6 @@ export function useToolkitKeys(toolkitId: string | null, opts: { poll?: boolean 
 		enabled: toolkitId != null,
 		select: (res) => res.data,
 		refetchInterval: opts.poll === false ? false : STALE_POLL_MS,
-	});
-}
-
-export function useCreateKey(toolkitId: string) {
-	const queryClient = useQueryClient();
-	return useMutation({
-		mutationFn: (body: ToolkitKeyCreateRequest) => client.createKey(toolkitId, body),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: toolkitKeys.keys(toolkitId) });
-			queryClient.invalidateQueries({ queryKey: toolkitKeys.detail(toolkitId) });
-			queryClient.invalidateQueries({ queryKey: toolkitKeys.all });
-		},
 	});
 }
 

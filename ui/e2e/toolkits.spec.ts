@@ -2,9 +2,11 @@ import { test, expect, type Page } from '@playwright/test';
 
 /**
  * Toolkits primary-flow e2e (mocked, MSW). Exercises the list → create →
- * detail → create-key happy path against the module's MSW handlers, so the
- * wired surface (routing + nav + hooks + repository) is covered end-to-end with
- * no backend. Real-backend coverage is deferred to Mode B / docker config.
+ * detail happy path against the module's MSW handlers, so the wired surface
+ * (routing + nav + hooks + repository) is covered end-to-end with no backend.
+ * Toolkit key issuance is retired (theme 5 phase 4): creating a toolkit mints
+ * no key and the Keys tab is a legacy list with a retirement notice.
+ * Real-backend coverage is deferred to Mode B / docker config.
  */
 async function login(page: Page) {
 	await page.goto('/app/');
@@ -15,7 +17,7 @@ async function login(page: Page) {
 	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
 }
 
-test('list → create toolkit → detail → create key', async ({ page }) => {
+test('list → create toolkit → detail → keys retirement', async ({ page }) => {
 	await login(page);
 
 	// Navigate to Toolkits via the primary nav.
@@ -31,15 +33,16 @@ test('list → create toolkit → detail → create key', async ({ page }) => {
 	await expect(page.getByTestId('toolkit-card-usage')).toBeVisible();
 	await expect(page.getByRole('link', { name: 'Import an API' })).toBeVisible();
 
-	// Create a new toolkit — the dialog now reveals the one-time key before
-	// handing off to the detail page.
+	// Create a new toolkit — no key is minted (issuance retired); the dialog
+	// shows a plain confirmation before handing off to the detail page.
 	await page
 		.getByRole('button', { name: /new toolkit/i })
 		.first()
 		.click();
 	await page.getByLabel('Name').fill('Slack Tools');
 	await page.getByRole('button', { name: /^create$/i }).click();
-	await expect(page.getByText('jntc_live_mockplaintextkey_show_once')).toBeVisible();
+	await expect(page.getByText(/is ready/i)).toBeVisible();
+	await expect(page.getByText(/jntc_live_/)).toHaveCount(0);
 	await page.getByRole('button', { name: /open toolkit/i }).click();
 	await expect(page.getByRole('heading', { name: 'Slack Tools' })).toBeVisible();
 
@@ -51,23 +54,21 @@ test('list → create toolkit → detail → create key', async ({ page }) => {
 	await page.getByRole('link', { name: /GitHub Tools/ }).click();
 	await expect(page.getByRole('heading', { name: 'GitHub Tools' })).toBeVisible();
 
-	// Create an API key on the Keys tab and confirm the one-time plaintext key
-	// is revealed.
+	// The Keys tab lists existing keys but offers no create affordance — the
+	// retirement notice points at service accounts instead.
 	await page.getByRole('tab', { name: 'Keys' }).click();
 	await expect(page.getByText('CI runner')).toBeVisible();
-	await page.getByRole('button', { name: /create key/i }).click();
-	await page.getByRole('button', { name: /^generate$/i }).click();
-	await expect(page.getByText('New API Key Created')).toBeVisible();
-	await expect(page.getByText('jntc_live_freshmockplaintext_show_once')).toBeVisible();
+	await expect(page.getByTestId('toolkit-keys-retired-notice')).toBeVisible();
+	await expect(page.getByRole('button', { name: /create key/i })).toHaveCount(0);
 });
 
-test('suspended toolkit blocks key creation', async ({ page }) => {
+test('suspended toolkit still shows the keys-blocked chip', async ({ page }) => {
 	await login(page);
 	await page.goto('/app/toolkits/tk_demo_billing');
 
 	await expect(page.getByRole('heading', { name: /Billing/ })).toBeVisible();
-	// Suspended banner is shown above the tabs and the Keys tab hides the
-	// Create Key affordance (keys are blocked while suspended).
+	// Suspended banner is shown above the tabs; the Keys tab keeps its
+	// "Keys blocked" chip (and, retirement aside, has no create affordance).
 	await expect(page.getByText(/suspended — all access blocked/i)).toBeVisible();
 	await page.getByRole('tab', { name: 'Keys' }).click();
 	await expect(page.getByText(/keys blocked/i)).toBeVisible();

@@ -12,7 +12,6 @@ from jentic_one.broker.repos import (
     InProcessTokenResolver,
     RuleEvaluator,
     ToolkitBindingResolver,
-    ToolkitKeyResolver,
 )
 from jentic_one.broker.repos.caching_credential_deriver import CachingCredentialDeriver
 from jentic_one.broker.repos.caching_toolkit_deriver import CachingToolkitDeriver
@@ -56,17 +55,11 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
         resolver=api_key_resolver,
         cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
     )
-    toolkit_key_resolver = ToolkitKeyResolver(ctx.control_db)
-    toolkit_key_cached = CachedTokenValidator(
-        resolver=toolkit_key_resolver,
-        cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
-    )
     verifier = build_jwt_verifier(ctx.config.broker)
     jwt_validator = JwtTokenValidator(verifier=verifier) if verifier is not None else None
     triple = CompositeTokenValidator(
         opaque=opaque,
         api_key=api_key_cached,
-        toolkit_key=toolkit_key_cached,
         jwt=jwt_validator,
     )
     app.state.broker_token_validator = triple

@@ -103,8 +103,16 @@ async def test_multiple_credentials_per_agent(
         assert {r.credential_id for r in rows} == {"cred_acct_a", "cred_acct_b"}
 
 
-async def test_cascade_on_agent_delete(admin_db: DatabaseSession, clean_bindings: None) -> None:
-    """Deleting the agent cascades to its bindings."""
+async def test_agent_delete_leaves_bindings_for_service_layer(
+    admin_db: DatabaseSession, clean_bindings: None
+) -> None:
+    """Deleting the agent row no longer cascades to its bindings.
+
+    Theme-5 Phase 4 widened ``agent_id`` to hold any broker-executing actor
+    (``agnt_`` or ``sva_``), dropping the FK to ``agents.id`` — so cleanup is
+    the service layer's job (``AgentService.archive`` deletes bindings
+    explicitly), not the database's.
+    """
     agent_id = await _create_agent(admin_db)
     async with admin_db.session() as session:
         session.add(AgentCredentialBinding(agent_id=agent_id, credential_id="cred_cascade"))
@@ -116,4 +124,4 @@ async def test_cascade_on_agent_delete(admin_db: DatabaseSession, clean_bindings
 
     async with admin_db.session() as session:
         remaining = (await session.execute(select(AgentCredentialBinding))).scalars().all()
-        assert remaining == []
+        assert [r.agent_id for r in remaining] == [agent_id]

@@ -30,8 +30,6 @@ import {
 	type ToolkitUpdateRequest,
 	type ToolkitKeyResponse,
 	type ToolkitKeyListResponse,
-	type ToolkitKeyCreateRequest,
-	type ToolkitKeyCreateResponse,
 	type ToolkitKeyUpdateRequest,
 	type ToolkitCredentialBindingResponse,
 	type ToolkitCredentialListResponse,
@@ -109,7 +107,7 @@ export async function getToolkit(toolkitId: string): Promise<ToolkitResponse> {
 export async function createToolkit(body: ToolkitCreateRequest): Promise<CreatedToolkit> {
 	try {
 		const res = await ToolkitsService.createToolkit({ requestBody: body });
-		return { toolkit: res.toolkit, apiKey: res.api_key };
+		return { toolkit: res.toolkit, warnings: res.warnings ?? [] };
 	} catch (error) {
 		throw toToolkitsError(error, 'Failed to create toolkit.');
 	}
@@ -156,26 +154,17 @@ export async function deleteToolkit(toolkitId: string): Promise<void> {
 }
 
 // --- Keys -----------------------------------------------------------------
+//
+// Existing keys only: issuing NEW toolkit keys is retired server-side
+// (`POST /toolkits/{id}/keys` → 410 `toolkit_keys_retired`); callers register
+// a service account and use its `sak_` API key instead. List/patch/delete of
+// existing keys remain live.
 
 export async function listKeys(toolkitId: string): Promise<ToolkitKeyListResponse> {
 	try {
 		return await ToolkitKeysService.listKeys({ toolkitId });
 	} catch (error) {
 		throw toToolkitsError(error, 'Failed to load API keys.');
-	}
-}
-
-export async function createKey(
-	toolkitId: string,
-	body: ToolkitKeyCreateRequest,
-): Promise<ToolkitKeyCreateResponse> {
-	try {
-		return await ToolkitKeysService.createKey({
-			toolkitId,
-			requestBody: body,
-		});
-	} catch (error) {
-		throw toToolkitsError(error, 'Failed to create API key.');
 	}
 }
 

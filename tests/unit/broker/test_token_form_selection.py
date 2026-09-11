@@ -153,24 +153,28 @@ async def test_missing_actor_type_fails_closed() -> None:
         await validator.validate(token)
 
 
+@pytest.mark.parametrize("actor_type", ["gibberish", "toolkit"])
 @pytest.mark.asyncio
-async def test_unknown_actor_type_is_typed_rejection() -> None:
-    """An unrecognised ``actor_type`` raises the typed error, never a bare enum ValueError."""
+async def test_unknown_actor_type_is_typed_rejection(actor_type: str) -> None:
+    """An unrecognised ``actor_type`` raises the typed error, never a bare enum ValueError.
+
+    ``toolkit`` is retired from the enum (theme-5 Phase 4), so a signed
+    ``toolkit`` claim is refused as unknown like any other stray string.
+    """
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "agnt_jwt", "exp": exp, "actor_type": "gibberish"})
+    token = _sign({"sub": "agnt_jwt", "exp": exp, "actor_type": actor_type})
 
     with pytest.raises(TokenValidationError, match="jwt_actor_type_unknown"):
         await validator.validate(token)
 
 
-@pytest.mark.parametrize("actor_type", ["toolkit", "user"])
 @pytest.mark.asyncio
-async def test_disallowed_actor_type_rejected(actor_type: str) -> None:
-    """toolkit/user identities can't be minted by a bare signed claim (#868)."""
+async def test_disallowed_actor_type_rejected() -> None:
+    """A user identity can't be minted by a bare signed claim (#868)."""
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "x", "exp": exp, "actor_type": actor_type})
+    token = _sign({"sub": "x", "exp": exp, "actor_type": "user"})
 
     with pytest.raises(TokenValidationError, match="jwt_actor_type_not_allowed"):
         await validator.validate(token)

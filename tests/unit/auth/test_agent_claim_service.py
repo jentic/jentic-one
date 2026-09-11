@@ -161,7 +161,7 @@ async def test_claim_archived_agent_raises(mock_repo: MagicMock) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "actor_type",
-    [ActorType.AGENT, ActorType.SERVICE_ACCOUNT, ActorType.TOOLKIT],
+    [ActorType.AGENT, ActorType.SERVICE_ACCOUNT],
 )
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 async def test_claim_non_user_actor_rejected(mock_repo: MagicMock, actor_type: ActorType) -> None:

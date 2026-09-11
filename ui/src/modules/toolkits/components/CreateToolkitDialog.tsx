@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Button, Checkbox, Dialog, ErrorAlert, Input, Label, Textarea } from '@/shared/ui';
 import { useBindableCredentials, useCreateToolkit } from '@/modules/toolkits/api';
-import { OneTimeKeyDisplay } from '@/modules/toolkits/components/OneTimeKeyDisplay';
 import { CREDENTIAL_TYPE_LABELS } from '@/modules/toolkits/api/types';
 import type { CreatedToolkit } from '@/modules/toolkits/api/types';
 
@@ -14,11 +13,10 @@ import type { CreatedToolkit } from '@/modules/toolkits/api/types';
  * and the form offers it here. Inline binds land with zero
  * rules, so the form says the broker will default-deny until rules are added.
  *
- * Step 2 (key): the response's one-time plaintext key, rendered through the
- * same `OneTimeKeyDisplay` contract the Keys tab uses — it must never be
- * silently thrown away on create. The plaintext is wiped from state the
- * moment the dialog closes (sensitive-data rule) and the CTA hands off to the
- * new toolkit's detail page.
+ * Step 2 (confirmation): the created toolkit, plus the zero-rules default-deny
+ * note when credentials were bound inline. Creating a toolkit issues NO key —
+ * toolkit keys are retired; callers authenticate via service accounts — so the
+ * CTA hands off straight to the new toolkit's detail page.
  */
 export interface CreateToolkitDialogProps {
 	open: boolean;
@@ -37,8 +35,8 @@ export function CreateToolkitDialog({ open, onClose, onGoToToolkit }: CreateTool
 	const [created, setCreated] = useState<CreatedToolkit | null>(null);
 
 	// Dialog-state lifecycle: the FORM draft survives casual dismissals and is
-	// reset only on the success path; the one-time plaintext key is the
-	// sensitive-data exception and is wiped on every close.
+	// reset only on the success path; the transient success step (`created`) is
+	// not user input, so it clears on every close.
 	const resetForm = () => {
 		setName('');
 		setDescription('');
@@ -46,7 +44,7 @@ export function CreateToolkitDialog({ open, onClose, onGoToToolkit }: CreateTool
 	};
 
 	const close = () => {
-		setCreated(null); // wipe the one-time plaintext
+		setCreated(null);
 		createToolkit.reset();
 		onClose();
 	};
@@ -114,13 +112,8 @@ export function CreateToolkitDialog({ open, onClose, onGoToToolkit }: CreateTool
 				<div className="space-y-3">
 					<p className="text-muted-foreground text-sm">
 						<span className="text-foreground font-medium">{created.toolkit.name}</span>{' '}
-						is ready. Agents authenticate with this key:
+						is ready. Link agents or bind credentials from its detail page.
 					</p>
-					<OneTimeKeyDisplay
-						keyValue={created.apiKey}
-						title="Toolkit API key"
-						onConfirm={goToToolkit}
-					/>
 					{created.toolkit.credential_count > 0 && (
 						<p className="text-muted-foreground text-xs">
 							{created.toolkit.credential_count} credential

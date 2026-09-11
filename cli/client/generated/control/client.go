@@ -61,7 +61,6 @@ func (e AccessRequestItemRequestResourceType) Valid() bool {
 const (
 	ActorTypeAgent          ActorType = "agent"
 	ActorTypeServiceAccount ActorType = "service_account"
-	ActorTypeToolkit        ActorType = "toolkit"
 	ActorTypeUser           ActorType = "user"
 )
 
@@ -71,8 +70,6 @@ func (e ActorType) Valid() bool {
 	case ActorTypeAgent:
 		return true
 	case ActorTypeServiceAccount:
-		return true
-	case ActorTypeToolkit:
 		return true
 	case ActorTypeUser:
 		return true
@@ -1050,6 +1047,13 @@ type ActorSummaryResponse struct {
 	Active bool `json:"active"`
 
 	// ActorType Type of authenticated actor.
+	//
+	// ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
+	// service accounts the key-retirement job created, so no code path mints a
+	// toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
+	// historical rows (events, audit entries, execution records) until the
+	// Phase-6b scope-data sweep; read paths must tolerate the string without
+	// round-tripping it through this enum.
 	ActorType ActorType `json:"actor_type"`
 	CreatedAt time.Time `json:"created_at"`
 	Id        string    `json:"id"`
@@ -1057,6 +1061,13 @@ type ActorSummaryResponse struct {
 }
 
 // ActorType Type of authenticated actor.
+//
+// “toolkit“ is retired (theme-5 Phase 4): toolkit keys resolve as the
+// service accounts the key-retirement job created, so no code path mints a
+// toolkit identity. Persisted “actor_type='toolkit'“ strings survive in
+// historical rows (events, audit entries, execution records) until the
+// Phase-6b scope-data sweep; read paths must tolerate the string without
+// round-tripping it through this enum.
 type ActorType string
 
 // AgentCreateRequest Request body for creating an agent manually.
@@ -3258,10 +3269,8 @@ type ToolkitCreateRequest struct {
 	Name          string    `json:"name"`
 }
 
-// ToolkitCreateResponse Create response: toolkit + api_key shown once.
+// ToolkitCreateResponse Create response — toolkit + bind-time warnings (no key is issued).
 type ToolkitCreateResponse struct {
-	ApiKey string `json:"api_key"`
-
 	// Toolkit Toolkit response.
 	Toolkit ToolkitResponse `json:"toolkit"`
 
@@ -4132,6 +4141,8 @@ type ReplacePermissionsJSONRequestBody = ReplacePermissionsJSONBody
 type TestToolkitPermissionsJSONRequestBody = PermissionTestRequest
 
 // CreateKeyJSONRequestBody defines body for CreateKey for application/json ContentType.
+//
+// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type CreateKeyJSONRequestBody = ToolkitKeyCreateRequest
 
 // UpdateKeyJSONRequestBody defines body for UpdateKey for application/json ContentType.
@@ -5466,7 +5477,7 @@ type ClientInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -5491,7 +5502,7 @@ type ClientInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -7178,12 +7189,13 @@ type ClientInterface interface {
 
 	// CreateToolkitWithBody Create toolkit
 	//
-	// Create a toolkit and issue its first API key.
+	// Create a toolkit.
 	//
-	// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-	// never retrievable again. Optional `credential_ids` bind existing credentials
-	// at creation time; each inline bind emits a ``no_permission_rules`` warning
-	// because the broker denies by default until rules are added.
+	// No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+	// #1152); headless callers register a service account and use its `sak_`
+	// key. Optional `credential_ids` bind existing credentials at creation
+	// time; each inline bind emits a ``no_permission_rules`` warning because
+	// the broker denies by default until rules are added.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7192,12 +7204,13 @@ type ClientInterface interface {
 
 	// CreateToolkit Create toolkit
 	//
-	// Create a toolkit and issue its first API key.
+	// Create a toolkit.
 	//
-	// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-	// never retrievable again. Optional `credential_ids` bind existing credentials
-	// at creation time; each inline bind emits a ``no_permission_rules`` warning
-	// because the broker denies by default until rules are added.
+	// No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+	// #1152); headless callers register a service account and use its `sak_`
+	// key. Optional `credential_ids` bind existing credentials at creation
+	// time; each inline bind emits a ``no_permission_rules`` warning because
+	// the broker denies by default until rules are added.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7353,28 +7366,32 @@ type ClientInterface interface {
 	// Corresponds with GET /toolkits/{toolkit_id}/keys (the `ListKeys` operationId).
 	ListKeys(ctx context.Context, toolkitId string, params *ListKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateKeyWithBody Issue toolkit key
+	// CreateKeyWithBody Issue toolkit key (retired)
 	//
-	// Issue a new API key for a toolkit.
-	//
-	// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-	// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+	// Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+	// Phase 4). Register a service account and use its `sak_` key instead.
+	// Existing keys keep working (as their migrated service accounts) and can
+	// still be listed, revoked, and deleted here.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	CreateKeyWithBody(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateKey Issue toolkit key
+	// CreateKey Issue toolkit key (retired)
 	//
-	// Issue a new API key for a toolkit.
-	//
-	// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-	// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+	// Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+	// Phase 4). Register a service account and use its `sak_` key instead.
+	// Existing keys keep working (as their migrated service accounts) and can
+	// still be listed, revoked, and deleted here.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	CreateKey(ctx context.Context, toolkitId string, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteKey Revoke toolkit key
@@ -8691,7 +8708,7 @@ func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ..
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -8726,7 +8743,7 @@ func (c *Client) ClaimAgentWithBody(ctx context.Context, agentId string, content
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -12003,12 +12020,13 @@ func (c *Client) ListToolkits(ctx context.Context, params *ListToolkitsParams, r
 
 // CreateToolkitWithBody Create toolkit
 //
-// Create a toolkit and issue its first API key.
+// Create a toolkit.
 //
-// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-// never retrievable again. Optional `credential_ids` bind existing credentials
-// at creation time; each inline bind emits a “no_permission_rules“ warning
-// because the broker denies by default until rules are added.
+// No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+// #1152); headless callers register a service account and use its `sak_`
+// key. Optional `credential_ids` bind existing credentials at creation
+// time; each inline bind emits a “no_permission_rules“ warning because
+// the broker denies by default until rules are added.
 //
 // Takes any type of body and a specified content type.
 //
@@ -12027,12 +12045,13 @@ func (c *Client) CreateToolkitWithBody(ctx context.Context, contentType string, 
 
 // CreateToolkit Create toolkit
 //
-// Create a toolkit and issue its first API key.
+// Create a toolkit.
 //
-// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-// never retrievable again. Optional `credential_ids` bind existing credentials
-// at creation time; each inline bind emits a “no_permission_rules“ warning
-// because the broker denies by default until rules are added.
+// No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+// #1152); headless callers register a service account and use its `sak_`
+// key. Optional `credential_ids` bind existing credentials at creation
+// time; each inline bind emits a “no_permission_rules“ warning because
+// the broker denies by default until rules are added.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12368,16 +12387,17 @@ func (c *Client) ListKeys(ctx context.Context, toolkitId string, params *ListKey
 	return c.Client.Do(req)
 }
 
-// CreateKeyWithBody Issue toolkit key
+// CreateKeyWithBody Issue toolkit key (retired)
 //
-// Issue a new API key for a toolkit.
-//
-// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+// Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+// Phase 4). Register a service account and use its `sak_` key instead.
+// Existing keys keep working (as their migrated service accounts) and can
+// still be listed, revoked, and deleted here.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) CreateKeyWithBody(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateKeyRequestWithBody(c.Server, toolkitId, contentType, body)
 	if err != nil {
@@ -12390,16 +12410,17 @@ func (c *Client) CreateKeyWithBody(ctx context.Context, toolkitId string, conten
 	return c.Client.Do(req)
 }
 
-// CreateKey Issue toolkit key
+// CreateKey Issue toolkit key (retired)
 //
-// Issue a new API key for a toolkit.
-//
-// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+// Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+// Phase 4). Register a service account and use its `sak_` key instead.
+// Existing keys keep working (as their migrated service accounts) and can
+// still be listed, revoked, and deleted here.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) CreateKey(ctx context.Context, toolkitId string, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateKeyRequest(c.Server, toolkitId, body)
 	if err != nil {
@@ -23290,7 +23311,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -23315,7 +23336,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -25170,12 +25191,13 @@ type ClientWithResponsesInterface interface {
 
 	// CreateToolkitWithBodyWithResponse Create toolkit
 	//
-	// Create a toolkit and issue its first API key.
+	// Create a toolkit.
 	//
-	// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-	// never retrievable again. Optional `credential_ids` bind existing credentials
-	// at creation time; each inline bind emits a ``no_permission_rules`` warning
-	// because the broker denies by default until rules are added.
+	// No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+	// #1152); headless callers register a service account and use its `sak_`
+	// key. Optional `credential_ids` bind existing credentials at creation
+	// time; each inline bind emits a ``no_permission_rules`` warning because
+	// the broker denies by default until rules are added.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -25184,12 +25206,13 @@ type ClientWithResponsesInterface interface {
 
 	// CreateToolkitWithResponse Create toolkit
 	//
-	// Create a toolkit and issue its first API key.
+	// Create a toolkit.
 	//
-	// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-	// never retrievable again. Optional `credential_ids` bind existing credentials
-	// at creation time; each inline bind emits a ``no_permission_rules`` warning
-	// because the broker denies by default until rules are added.
+	// No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+	// #1152); headless callers register a service account and use its `sak_`
+	// key. Optional `credential_ids` bind existing credentials at creation
+	// time; each inline bind emits a ``no_permission_rules`` warning because
+	// the broker denies by default until rules are added.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -25359,28 +25382,32 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /toolkits/{toolkit_id}/keys (the `ListKeys` operationId).
 	ListKeysWithResponse(ctx context.Context, toolkitId string, params *ListKeysParams, reqEditors ...RequestEditorFn) (*ListKeysHTTPResp, error)
 
-	// CreateKeyWithBodyWithResponse Issue toolkit key
+	// CreateKeyWithBodyWithResponse Issue toolkit key (retired)
 	//
-	// Issue a new API key for a toolkit.
-	//
-	// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-	// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+	// Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+	// Phase 4). Register a service account and use its `sak_` key instead.
+	// Existing keys keep working (as their migrated service accounts) and can
+	// still be listed, revoked, and deleted here.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	CreateKeyWithBodyWithResponse(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateKeyHTTPResp, error)
 
-	// CreateKeyWithResponse Issue toolkit key
+	// CreateKeyWithResponse Issue toolkit key (retired)
 	//
-	// Issue a new API key for a toolkit.
-	//
-	// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-	// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+	// Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+	// Phase 4). Register a service account and use its `sak_` key instead.
+	// Existing keys keep working (as their migrated service accounts) and can
+	// still be listed, revoked, and deleted here.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	CreateKeyWithResponse(ctx context.Context, toolkitId string, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateKeyHTTPResp, error)
 
 	// DeleteKeyWithResponse Revoke toolkit key
@@ -42208,7 +42235,7 @@ func (c *ClientWithResponses) ApproveAgentWithResponse(ctx context.Context, agen
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -42239,7 +42266,7 @@ func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -45048,12 +45075,13 @@ func (c *ClientWithResponses) ListToolkitsWithResponse(ctx context.Context, para
 
 // CreateToolkitWithBodyWithResponse Create toolkit
 //
-// Create a toolkit and issue its first API key.
+// Create a toolkit.
 //
-// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-// never retrievable again. Optional `credential_ids` bind existing credentials
-// at creation time; each inline bind emits a “no_permission_rules“ warning
-// because the broker denies by default until rules are added.
+// No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+// #1152); headless callers register a service account and use its `sak_`
+// key. Optional `credential_ids` bind existing credentials at creation
+// time; each inline bind emits a “no_permission_rules“ warning because
+// the broker denies by default until rules are added.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45068,12 +45096,13 @@ func (c *ClientWithResponses) CreateToolkitWithBodyWithResponse(ctx context.Cont
 
 // CreateToolkitWithResponse Create toolkit
 //
-// Create a toolkit and issue its first API key.
+// Create a toolkit.
 //
-// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-// never retrievable again. Optional `credential_ids` bind existing credentials
-// at creation time; each inline bind emits a “no_permission_rules“ warning
-// because the broker denies by default until rules are added.
+// No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+// #1152); headless callers register a service account and use its `sak_`
+// key. Optional `credential_ids` bind existing credentials at creation
+// time; each inline bind emits a “no_permission_rules“ warning because
+// the broker denies by default until rules are added.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45351,16 +45380,18 @@ func (c *ClientWithResponses) ListKeysWithResponse(ctx context.Context, toolkitI
 	return ParseListKeysHTTPResp(rsp)
 }
 
-// CreateKeyWithBodyWithResponse Issue toolkit key
+// CreateKeyWithBodyWithResponse Issue toolkit key (retired)
 //
-// Issue a new API key for a toolkit.
-//
-// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+// Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+// Phase 4). Register a service account and use its `sak_` key instead.
+// Existing keys keep working (as their migrated service accounts) and can
+// still be listed, revoked, and deleted here.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) CreateKeyWithBodyWithResponse(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateKeyHTTPResp, error) {
 	rsp, err := c.CreateKeyWithBody(ctx, toolkitId, contentType, body, reqEditors...)
 	if err != nil {
@@ -45369,16 +45400,17 @@ func (c *ClientWithResponses) CreateKeyWithBodyWithResponse(ctx context.Context,
 	return ParseCreateKeyHTTPResp(rsp)
 }
 
-// CreateKeyWithResponse Issue toolkit key
+// CreateKeyWithResponse Issue toolkit key (retired)
 //
-// Issue a new API key for a toolkit.
-//
-// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+// Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+// Phase 4). Register a service account and use its `sak_` key instead.
+// Existing keys keep working (as their migrated service accounts) and can
+// still be listed, revoked, and deleted here.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) CreateKeyWithResponse(ctx context.Context, toolkitId string, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateKeyHTTPResp, error) {
 	rsp, err := c.CreateKey(ctx, toolkitId, body, reqEditors...)
 	if err != nil {
