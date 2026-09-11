@@ -271,7 +271,7 @@ sequence is:
 4. Discover: `POST {base}/search` to search operations across APIs;
    `GET {base}/apis` to list registered APIs;
    `GET {base}/reference/endpoints.json` for the full endpoint + scope map.
-5. Request access: `POST {base}/access-requests` for the toolkit/API you need,
+5. Request access: `POST {base}/access-requests` for the API you need,
    then wait for a human to approve.
 6. Execute by sending the request through the broker's forward proxy with the
    full upstream URL (the broker runs on its own host/port — see the skill's

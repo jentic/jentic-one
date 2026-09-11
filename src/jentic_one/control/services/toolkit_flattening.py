@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
@@ -56,13 +56,11 @@ from jentic_one.control.repos.toolkit_flattening_repo import (
     SYSTEM_ACTOR,
     FlatteningAdminRepository,
     FlatteningControlRepository,
+    ToolkitPermissionRuleRow,
 )
 from jentic_one.shared.audit import record_audit
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
-
-if TYPE_CHECKING:
-    from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 
 logger = structlog.get_logger(__name__)
 
@@ -79,7 +77,7 @@ def _iso(value: dt.datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _rule_row(rule: ToolkitPermissionRule | Any) -> dict[str, Any]:
+def _rule_row(rule: ToolkitPermissionRuleRow | Any) -> dict[str, Any]:
     """One legacy rule row, verbatim — report lines must survive the drop."""
     return {
         "id": rule.id,
@@ -128,6 +126,7 @@ class FlatteningRunResult:
     pairs_total: int = 0
     created: int = 0
     already_present: int = 0
+    backfilled_execution_names: int = 0
     findings: list[Finding] = field(default_factory=list)
 
 
@@ -139,6 +138,7 @@ class VerificationResult:
     legacy_pair_count: int
     direct_binding_count: int
     missing_pair_count: int
+    unbackfilled_execution_name_count: int = 0
     findings: list[Finding] = field(default_factory=list)
     acknowledged: bool = False
 
@@ -379,7 +379,10 @@ class ToolkitFlatteningService:
                             "key_preview": key.key_preview,
                             "last_used_at": _iso(key.last_used_at),
                             "created_at": _iso(key.created_at),
-                            "remediation": "run `jentic_one retire-toolkit-keys` (or revoke)",
+                            "remediation": (
+                                "revoke the key, or mint the holder a service-account "
+                                "key (`retire-toolkit-keys` was removed in Phase 6b)"
+                            ),
                         },
                     )
                 )
@@ -532,15 +535,47 @@ class ToolkitFlatteningService:
             result.findings.append(Finding(creation_category, detail))
             logger.info("toolkit_flattening_binding", diff_only=diff_only, **detail)
 
+        # Historical-name backfill (Phase 6b prerequisite): denormalize
+        # control toolkit names onto admin ``execution_records.toolkit_name``
+        # so the read path survives the toolkits drop. Skipped in
+        # ``--diff-only`` (it would have to add the column — a write);
+        # ``verify`` reports any resolvable rows still missing it.
+        if not diff_only:
+            result.backfilled_execution_names = await self._backfill_execution_names(snapshot)
+
         logger.info(
             "toolkit_flattening_run",
             diff_only=diff_only,
             pairs_total=result.pairs_total,
             created=result.created,
             already_present=result.already_present,
+            backfilled_execution_names=result.backfilled_execution_names,
             findings=len(result.findings),
         )
         return result
+
+    async def _backfill_execution_names(self, snapshot: _Snapshot) -> int:
+        """Copy toolkit names onto unnamed historical execution rows.
+
+        App-level cross-DB (control names were loaded in the snapshot; the
+        writes go to admin), batched per distinct toolkit id. Rows whose
+        toolkit no longer exists keep NULL — exactly what the old read-time
+        resolver reported for them.
+        """
+        total = 0
+        async with self._ctx.admin_db.transaction() as admin_session:
+            await FlatteningAdminRepository.ensure_execution_toolkit_name_column(admin_session)
+            toolkit_ids = await FlatteningAdminRepository.list_unbackfilled_toolkit_ids(
+                admin_session
+            )
+            for toolkit_id in toolkit_ids:
+                toolkit = snapshot.toolkits.get(toolkit_id)
+                if toolkit is None:
+                    continue
+                total += await FlatteningAdminRepository.backfill_execution_toolkit_name(
+                    admin_session, toolkit_id=toolkit_id, name=toolkit.name
+                )
+        return total
 
     @staticmethod
     async def _ensure_rule_set(
@@ -616,6 +651,32 @@ class ToolkitFlatteningService:
                 )
             )
 
+        # Historical-name coverage: execution rows whose toolkit still exists
+        # in control but whose denormalized name is missing would lose their
+        # name forever at the 6b drop — fail verification (remediation: run
+        # the flatten job on this release; its backfill step fills them).
+        # Rows whose toolkit is already gone are unresolvable either way and
+        # do not block.
+        async with self._ctx.admin_db.session() as admin_session:
+            unbackfilled_ids = await FlatteningAdminRepository.list_unbackfilled_toolkit_ids(
+                admin_session
+            )
+        unbackfilled = sorted(t for t in unbackfilled_ids if t in snapshot.toolkits)
+        if unbackfilled:
+            findings.append(
+                Finding(
+                    "verify_unbackfilled_execution_names",
+                    {
+                        "toolkit_ids": unbackfilled,
+                        "remediation": (
+                            "run `jentic_one flatten-toolkits` on this release; its "
+                            "backfill step denormalizes toolkit names onto "
+                            "execution_records before the drop"
+                        ),
+                    },
+                )
+            )
+
         async with self._ctx.control_db.session() as control_session:
             for key in sorted(pairs):
                 if key in snapshot.existing_pairs:
@@ -627,10 +688,11 @@ class ToolkitFlatteningService:
                     )
 
         result = VerificationResult(
-            passed=not missing,
+            passed=not missing and not unbackfilled,
             legacy_pair_count=len(pairs),
             direct_binding_count=len(snapshot.existing_pairs),
             missing_pair_count=len(missing),
+            unbackfilled_execution_name_count=len(unbackfilled),
             findings=findings,
         )
         findings.append(
@@ -641,6 +703,7 @@ class ToolkitFlatteningService:
                     "legacy_pair_count": result.legacy_pair_count,
                     "direct_binding_count": result.direct_binding_count,
                     "missing_pair_count": result.missing_pair_count,
+                    "unbackfilled_execution_name_count": (result.unbackfilled_execution_name_count),
                     "tool_version": __version__,
                 },
             )
@@ -651,6 +714,7 @@ class ToolkitFlatteningService:
             legacy_pair_count=result.legacy_pair_count,
             direct_binding_count=result.direct_binding_count,
             missing_pair_count=result.missing_pair_count,
+            unbackfilled_execution_name_count=result.unbackfilled_execution_name_count,
         )
 
         if acknowledge and result.passed:

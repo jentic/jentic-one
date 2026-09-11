@@ -223,7 +223,7 @@ def _annotate_broker(broker: list[Endpoint]) -> None:
     """Stamp the broker execute-proxy route's enforced scope (its spec lacks the auth map).
 
     The broker proxy (:data:`_BROKER_PROXY_PATH`) enforces BROKER_EXECUTE_SCOPE via
-    RequireToolkitAccess (broker/web/deps.require_execute_scope); its hand-curated
+    RequireExecuteAccess (broker/web/deps.require_execute_scope); its hand-curated
     spec does not carry scope metadata, so annotate that specific data-plane route
     to keep the reference code-true. The liveness/readiness probes are the broker's
     only public routes.

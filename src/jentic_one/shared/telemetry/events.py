@@ -31,17 +31,10 @@ class TelemetryEventName(StrEnum):
     SPEC_IMPORTED = "spec_imported"
     CREDENTIAL_STORED = "credential_stored"
     CREDENTIAL_CONNECTED = "credential_connected"
-    TOOLKIT_CREATED = "toolkit_created"
-    TOOLKIT_KEY_CREATED = "toolkit_key_created"
-    TOOLKIT_PERMISSION_RULE_SET = "toolkit_permission_rule_set"
-    CREDENTIAL_BOUND_TO_TOOLKIT = "credential_bound_to_toolkit"
-    CREDENTIAL_UNBOUND_FROM_TOOLKIT = "credential_unbound_from_toolkit"
     AGENT_CREATED = "agent_created"
     AGENT_SELF_REGISTERED = "agent_self_registered"
     AGENT_REGISTRATION_APPROVED = "agent_registration_approved"
     AGENT_REGISTRATION_DENIED = "agent_registration_denied"
-    TOOLKIT_BOUND_TO_AGENT = "toolkit_bound_to_agent"
-    TOOLKIT_UNBOUND_FROM_AGENT = "toolkit_unbound_from_agent"
     # Access-request flow
     ACCESS_REQUEST_FILED = "access_request_filed"
     ACCESS_REQUEST_APPROVED = "access_request_approved"
@@ -75,13 +68,6 @@ TELEMETRY_EVENTS: dict[str, TelemetryEventName] = {
     EventType.CREDENTIAL_REFRESH_FAILED: TelemetryEventName.CREDENTIAL_REFRESH_FAILED,
     EventType.CREDENTIAL_NOT_PROVISIONED: TelemetryEventName.CREDENTIAL_NOT_PROVISIONED,
     EventType.CREDENTIAL_UNDECRYPTABLE: TelemetryEventName.CREDENTIAL_UNDECRYPTABLE,
-    EventType.CREDENTIAL_BOUND_TO_TOOLKIT: TelemetryEventName.CREDENTIAL_BOUND_TO_TOOLKIT,
-    EventType.CREDENTIAL_UNBOUND_FROM_TOOLKIT: TelemetryEventName.CREDENTIAL_UNBOUND_FROM_TOOLKIT,
-    EventType.TOOLKIT_CREATED: TelemetryEventName.TOOLKIT_CREATED,
-    EventType.TOOLKIT_KEY_CREATED: TelemetryEventName.TOOLKIT_KEY_CREATED,
-    EventType.TOOLKIT_PERMISSION_RULE_SET: TelemetryEventName.TOOLKIT_PERMISSION_RULE_SET,
-    EventType.TOOLKIT_BOUND_TO_AGENT: TelemetryEventName.TOOLKIT_BOUND_TO_AGENT,
-    EventType.TOOLKIT_UNBOUND_FROM_AGENT: TelemetryEventName.TOOLKIT_UNBOUND_FROM_AGENT,
     EventType.AGENT_CREATED: TelemetryEventName.AGENT_CREATED,
     EventType.AGENT_SELF_REGISTERED: TelemetryEventName.AGENT_SELF_REGISTERED,
     EventType.AGENT_REGISTRATION_APPROVED: TelemetryEventName.AGENT_REGISTRATION_APPROVED,

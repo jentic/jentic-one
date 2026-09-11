@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, text
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
-from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
@@ -21,7 +20,6 @@ from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
     AgentCredentialBindingRepository,
     AgentRepository,
-    AgentToolkitBindingRepository,
     ServiceAccountRepository,
     UserPermissionGrantRepository,
     UserRepository,
@@ -39,13 +37,6 @@ pytestmark = pytest.mark.integration
 
 ADMIN_EMAIL = "me-test-admin@test.local"
 OWNER_EMAIL = "me-test-owner@test.local"
-
-# A real toolkit (control DB) the agent is bound to — /me must resolve its name
-# (issue #686). ``tk_me_orphan`` is a binding with no toolkit row, exercising the
-# graceful name=None path.
-NAMED_TOOLKIT_ID = "tk_me_named"
-NAMED_TOOLKIT_NAME = "Design news radar"
-ORPHAN_TOOLKIT_ID = "tk_me_orphan"
 
 # A real credential (control DB) the agent is directly bound to (theme 5
 # phase 1) — /me must resolve its name and served API. ``cred_me_orphan`` is a
@@ -180,14 +171,8 @@ async def approved_agent_id(
             created_by="usr_test",
         )
         await AgentRepository.set_approval(session, agent.id, approved_by=admin_user_id)
-        await AgentToolkitBindingRepository.bind(
-            session, agent_id=agent.id, toolkit_id=NAMED_TOOLKIT_ID, created_by="usr_test"
-        )
-        await AgentToolkitBindingRepository.bind(
-            session, agent_id=agent.id, toolkit_id=ORPHAN_TOOLKIT_ID, created_by="usr_test"
-        )
         # Direct credential bindings (theme 5 phase 1): one resolvable, one
-        # orphaned — mirrors the named/orphan toolkit pair above.
+        # orphaned — exercising both the named and graceful name=None paths.
         await AgentCredentialBindingRepository.bind(
             session, agent_id=agent.id, credential_id=NAMED_CREDENTIAL_ID, created_by="usr_test"
         )
@@ -204,19 +189,10 @@ async def approved_agent_id(
             granted_by=admin_user_id,
             created_by="usr_test",
         )
-    # The toolkit name lives in the control DB; seed a real row so /me can resolve
-    # NAMED_TOOLKIT_ID → its name (issue #686). ORPHAN_TOOLKIT_ID has no row.
+    # The credential name lives in the control DB; seed a real row so /me can
+    # resolve NAMED_CREDENTIAL_ID → its name. Raw SQL keeps this file free of
+    # control-ORM imports. ORPHAN_CREDENTIAL_ID has no row.
     async with ctx.control_db.session() as session:
-        await session.execute(
-            text(
-                "INSERT INTO toolkits (id, name, created_by) "
-                "VALUES (:id, :name, :created_by) ON CONFLICT DO NOTHING"
-            ),
-            {"id": NAMED_TOOLKIT_ID, "name": NAMED_TOOLKIT_NAME, "created_by": owner_user_id},
-        )
-        # Same for the credential row backing the direct binding; raw SQL keeps
-        # this file free of control-ORM imports (same convention as toolkits).
-        # ORPHAN_CREDENTIAL_ID has no row.
         await session.execute(
             text(
                 "INSERT INTO credentials "
@@ -235,16 +211,12 @@ async def approved_agent_id(
 
     async with ctx.admin_db.session() as session:
         await session.execute(
-            delete(AgentToolkitBinding).where(AgentToolkitBinding.agent_id == agent.id)
-        )
-        await session.execute(
             delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent.id)
         )
         await ActorScopeGrantRepository.revoke_all(session, agent.id)
         await session.execute(delete(Agent).where(Agent.id == agent.id))
         await session.commit()
     async with ctx.control_db.session() as session:
-        await session.execute(text("DELETE FROM toolkits WHERE id = :id"), {"id": NAMED_TOOLKIT_ID})
         await session.execute(
             text("DELETE FROM credentials WHERE id = :id"), {"id": NAMED_CREDENTIAL_ID}
         )
@@ -326,7 +298,7 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
         web_context,
         approved_agent_id,
         "agent@internal",
-        ["toolkits:execute"],
+        ["capabilities:execute"],
         actor_type="agent",
     )
     app = _build_app(web_context)
@@ -342,19 +314,11 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     # not the token's baked-in scopes — this is the #673 fix. token_scopes
     # carries the presented token's view so a stale-grant gap is detectable.
     assert body["scopes"] == ["capabilities:read"]
-    assert body["token_scopes"] == ["toolkits:execute"]
+    assert body["token_scopes"] == ["capabilities:execute"]
     assert body["parent_agent_id"] is None
     assert body["approved_by"] is not None
-    bindings = {b["toolkit_id"]: b for b in body["toolkit_bindings"]}
-    assert len(bindings) == 2
-    # The bound toolkit's human-readable name is resolved from the control DB so
-    # the agent can map the opaque id to a name (issue #686)…
-    assert bindings[NAMED_TOOLKIT_ID]["name"] == NAMED_TOOLKIT_NAME
-    # …while a binding whose toolkit row is absent degrades gracefully to null
-    # rather than failing the whole response.
-    assert bindings[ORPHAN_TOOLKIT_ID]["name"] is None
-    # Direct credential bindings (theme 5 phase 1) mirror the same contract:
-    # resolvable name + served API for the real credential…
+    # Direct credential bindings (theme 5 phase 1): resolvable name + served
+    # API for the real credential…
     cred_bindings = {b["credential_id"]: b for b in body["credential_bindings"]}
     assert len(cred_bindings) == 2
     named = cred_bindings[NAMED_CREDENTIAL_ID]

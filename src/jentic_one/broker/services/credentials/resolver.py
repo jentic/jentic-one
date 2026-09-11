@@ -98,7 +98,8 @@ class CredentialResolver:
             allowed_credential_ids: When not ``None``, the **injection boundary**
                 (theme-5 Q-02): only these credential ids may resolve, filtered
                 *before* coverage matching. ``None`` means "no binding filter"
-                (the legacy toolkit path, whose binding check happens upstream).
+                — only queued async payloads from before the boundary existed
+                omit the key; every live path passes the bound ids.
                 An **empty** collection is a real, deny-all filter — the caller
                 is bound to nothing — never a wildcard.
 

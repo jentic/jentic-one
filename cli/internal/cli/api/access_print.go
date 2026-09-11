@@ -53,20 +53,9 @@ func (a *app) printMe(ctx context.Context, me *control.MeAgent) {
 		}
 	}
 
-	// Legacy toolkit bindings: a pre-retirement server may still report them
-	// (the toolkit tables retire in theme-5 phase 6b). Render only when
-	// non-empty, clearly labelled — credential bindings above are the
-	// authoritative "what can I execute" view.
-	if len(me.ToolkitBindings) > 0 {
-		fmt.Fprintln(a.Out, st.Heading.Render("Toolkit bindings (legacy)"))
-		for _, b := range me.ToolkitBindings {
-			if name := deref(b.Name); name != "" {
-				fmt.Fprintln(a.Out, "  "+st.Command.Render(name)+"  "+st.Dim.Render(b.ToolkitId))
-			} else {
-				fmt.Fprintln(a.Out, "  "+st.Command.Render(b.ToolkitId))
-			}
-		}
-	}
+	// Toolkit bindings are gone from /me (theme-5 Phase 6b dropped the toolkit
+	// tables); credential bindings above are the authoritative "what can I
+	// execute" view.
 
 	// whoami is the control-plane view of "what can I do?" (scopes + credential
 	// bindings above). There is no per-directory access surface for a plain

@@ -1,9 +1,8 @@
 """Unit tests for control-surface dynamic query scoping.
 
-Theme-5 Phase 5b collapsed the filter builder to the credential/direct axis:
-``Toolkit``/``ToolkitKey`` are no longer scoped models (their management
-surface is gone; the tables survive only for the Phase-4 retirement job and
-the flag-off broker fallback until Phase 6b). Visibility widening for agents
+Theme-5 Phase 5b collapsed the filter builder to the credential/direct axis
+(the toolkit models themselves were deleted with the tables in Phase 6b).
+Visibility widening for agents
 now comes exclusively from ``bound_credential_ids`` — the caller-resolved
 direct ``agent_credential_bindings`` ids.
 """
@@ -15,7 +14,6 @@ from sqlalchemy import ColumnElement, exists, select
 
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.scoping import filters as scoping_filters
 from jentic_one.control.scoping.filters import (
     _ACCESS_FILTER_PROVIDERS,
@@ -93,17 +91,6 @@ def test_unknown_model_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="Unknown model"):
         build_access_filters(identity, FakeModel)
-
-
-def test_toolkit_is_no_longer_a_scoped_model() -> None:
-    """Phase 5b: the toolkit visibility axis is gone from the filter builder.
-
-    The management surface that queried scoped toolkits was deleted; any code
-    still asking for a Toolkit filter is a bug, not a fallback.
-    """
-    identity = _identity(sub="user_1", permissions=[])
-    with pytest.raises(ValueError, match="Unknown model"):
-        build_access_filters(identity, Toolkit)
 
 
 def test_agent_without_delegation_scope_returns_single_filter() -> None:

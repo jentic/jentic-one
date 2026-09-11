@@ -572,31 +572,18 @@ components:
         W3C Trace Context vendor extensions. Jentic packs a fixed
         five-field value under the `jentic` vendor key:
         `jentic=<exec_id>:<toolkit_id>:<vendor>:<name>:<version>`, e.g.
-        `jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16`. The
+        `jentic=exec_xyz789:_:stripe:payments:2023-10-16`. The
         first two segments answer *who is calling*; the trailing
         segments answer *what is being called*. Missing segments are
         emitted as `_` so the shape stays positionally parseable — the
-        second (legacy toolkit-id) segment is populated only on the
-        legacy flag-off toolkit path and is `_` on the default
-        direct-binding path. Composable with other vendors
+        second segment is a legacy slot (toolkit attribution on the
+        pre-theme-5 path, whose tables were dropped in Phase 6b) and is
+        always `_` on current executions. Composable with other vendors
         (`jentic=...,datadog=...`).
       schema:
         type: string
         examples:
-          - jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16
-    JenticToolkitId:
-      deprecated: true
-      description: |
-        **Legacy.** Toolkit ID the execution was attributed to. Emitted
-        only on the legacy flag-off toolkit path
-        (`broker.direct_bindings_enabled: false`); absent on the default
-        direct-binding path, where credential attribution rides
-        `Jentic-Credential-Id` / `Jentic-Credential-Name` instead.
-        Removed with the toolkit tables in theme-5 Phase 6b.
-      schema:
-        type: string
-        examples:
-          - tk_abc123
+          - jentic=exec_xyz789:_:stripe:payments:2023-10-16
     JenticExecutionId:
       description: Execution ID — unique identifier for this brokered request.
       schema:
@@ -880,8 +867,6 @@ components:
           $ref: "#/components/headers/Traceparent"
         tracestate:
           $ref: "#/components/headers/Tracestate"
-        Jentic-Toolkit-Id:
-          $ref: "#/components/headers/JenticToolkitId"
         Jentic-Execution-Id:
           $ref: "#/components/headers/JenticExecutionId"
         Jentic-Operation:
@@ -949,8 +934,6 @@ components:
           $ref: "#/components/headers/Traceparent"
         tracestate:
           $ref: "#/components/headers/Tracestate"
-        Jentic-Toolkit-Id:
-          $ref: "#/components/headers/JenticToolkitId"
         Jentic-Execution-Id:
           $ref: "#/components/headers/JenticExecutionId"
         Jentic-Operation:
@@ -1164,10 +1147,10 @@ components:
           minted for the control plane authenticates here too.
         - **API keys** — agent (`jak_…`) or service-account (`sak_…`) keys.
           May alternatively be sent in the `x-jentic-api-key` header. The
-          `jntc_live_…` toolkit-key form is **retired** (theme-5): no new
-          keys are issued, and a presented plaintext authenticates as the
-          service account its retirement migration bound — rotate holders
-          to `sak_…` keys.
+          `jntc_live_…` toolkit-key form is **retired** (theme-5) and no
+          longer authenticates (acceptance ended in Phase 6b) — holders use
+          the `sak_…` key of the service account their key's retirement
+          migration created.
         - **Self-contained JWTs** — verified by signature (a dev HS256 shared
           secret or a configured trusted issuer with JWKS rotation). The Broker
           is identity-provider-agnostic: the IdP, federation strategy, and

@@ -247,10 +247,6 @@ type BrokerConfig struct {
 	// "account_linking_base_url".
 	AccountLinkingBaseUrl interface{} `json:"account_linking_base_url,omitempty,omitzero" yaml:"account_linking_base_url,omitempty" mapstructure:"account_linking_base_url,omitempty"`
 
-	// DirectBindingsEnabled corresponds to the JSON schema field
-	// "direct_bindings_enabled".
-	DirectBindingsEnabled bool `json:"direct_bindings_enabled,omitempty,omitzero" yaml:"direct_bindings_enabled,omitempty" mapstructure:"direct_bindings_enabled,omitempty"`
-
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
@@ -303,9 +299,6 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
-	}
-	if v, ok := raw["direct_bindings_enabled"]; !ok || v == nil {
-		plain.DirectBindingsEnabled = true
 	}
 	if v, ok := raw["resolve_cache_ttl_seconds"]; !ok || v == nil {
 		plain.ResolveCacheTtlSeconds = 3.0

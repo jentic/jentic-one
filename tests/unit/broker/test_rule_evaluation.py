@@ -1,21 +1,20 @@
-"""Unit tests for the toolkit permission-rule evaluator."""
+"""Unit tests for the rule-evaluation helpers in ``agent_rule_evaluator``.
+
+These cover the pure functions (rule matching, ordered evaluation,
+JSON-column coercion, fail-closed pattern compilation) that back the
+direct-binding evaluator.
+"""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
-
-from jentic_one.broker.repos.rule_evaluator import (
+from jentic_one.broker.repos.agent_rule_evaluator import (
     PermissionRule,
-    RuleEvaluator,
     _coerce_json_list,
-    _compile_path_for_rule,
+    _compile_path,
     _normalize_methods,
     _rule_matches,
     evaluate_rules,
 )
-from jentic_one.shared.broker.protocols import RuleEvaluatorProtocol
 from jentic_one.shared.permissions.matching import compile_matcher
 
 # ---------------------------------------------------------------------------
@@ -124,18 +123,18 @@ def test_all_criteria_must_match() -> None:
 
 
 def test_compile_none_returns_none() -> None:
-    assert _compile_path_for_rule(None, "regex", toolkit_id="tk_1") is None
+    assert _compile_path(None, "regex", binding="agnt_1:cred_1") is None
 
 
 def test_compile_valid_returns_matcher() -> None:
-    m = _compile_path_for_rule(r"/v1/.*", "regex", toolkit_id="tk_1")
+    m = _compile_path(r"/v1/.*", "regex", binding="agnt_1:cred_1")
     assert m is not None
     assert m.never is False
     assert m.matches("/v1/foo") is True
 
 
 def test_compile_invalid_regex_is_fail_closed() -> None:
-    m = _compile_path_for_rule("[invalid", "regex", toolkit_id="tk_1")
+    m = _compile_path("[invalid", "regex", binding="agnt_1:cred_1")
     assert m is not None
     assert m.never is True
     # Fail-closed replaces the pre-#751 silent wildcard: an unparseable
@@ -145,7 +144,7 @@ def test_compile_invalid_regex_is_fail_closed() -> None:
 
 
 def test_compile_oversized_is_fail_closed() -> None:
-    m = _compile_path_for_rule("a" * 1001, "regex", toolkit_id="tk_1")
+    m = _compile_path("a" * 1001, "regex", binding="agnt_1:cred_1")
     assert m is not None
     assert m.never is True
 
@@ -292,168 +291,3 @@ def test_deny_specific_then_constrained_allow_all_methods() -> None:
     ]
     assert evaluate_rules(rules, method="DELETE", path="/u", operation_id="deleteUser") is False
     assert evaluate_rules(rules, method="GET", path="/u", operation_id="getUser") is True
-
-
-# ---------------------------------------------------------------------------
-# Protocol conformance
-# ---------------------------------------------------------------------------
-
-
-def test_satisfies_protocol() -> None:
-    assert issubclass(RuleEvaluator, RuleEvaluatorProtocol)
-
-
-# ---------------------------------------------------------------------------
-# Caching
-# ---------------------------------------------------------------------------
-
-
-class _AsyncCtx:
-    """Helper to simulate an async context manager for session."""
-
-    def __init__(self, session: object) -> None:
-        self._session = session
-
-    async def __aenter__(self) -> object:
-        return self._session
-
-    async def __aexit__(self, *args: object) -> None:
-        pass
-
-
-@pytest.mark.asyncio
-async def test_evaluator_empty_rules_denies() -> None:
-    """A toolkit with no rules defaults to deny."""
-    mock_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.all.return_value = []
-    mock_session.execute = AsyncMock(return_value=mock_result)
-    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
-
-    evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    result = await evaluator.evaluate(
-        toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="acme"
-    )
-    assert result.allowed is False
-    # #578: rules_loaded is 0 when nothing was loaded for the pool — the
-    # router keys its two-variant deny detail on this.
-    assert result.rules_loaded == 0
-
-
-@pytest.mark.asyncio
-async def test_evaluator_coerces_sqlite_json_string_methods() -> None:
-    """Regression: SQLite returns ``methods``/``operations`` as raw JSON strings.
-
-    The evaluator reads rules via raw ``text()`` SQL, bypassing the ORM's JSON
-    deserialization. On SQLite ``methods`` arrives as ``'["GET", ...]'`` and
-    ``operations`` as ``'null'``; without coercion these get iterated
-    character-by-character, so a legitimate ``allow`` rule silently fails to
-    match. Feed the SQLite wire form and assert the method still matches.
-    """
-    mock_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.all.return_value = [
-        ("allow", '["GET", "POST", "PUT", "PATCH", "DELETE"]', ".*", "null", "regex")
-    ]
-    mock_session.execute = AsyncMock(return_value=mock_result)
-    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
-
-    evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    allowed = await evaluator.evaluate(
-        toolkit_id="tk_1", method="POST", path="/v1/things", operation_id=None, api_vendor="acme"
-    )
-    assert allowed.allowed is True
-    assert allowed.rules_loaded == 1
-
-    # A method outside the (correctly parsed) set must NOT match.
-    denied = await evaluator.evaluate(
-        toolkit_id="tk_1", method="OPTIONS", path="/v1/things", operation_id=None, api_vendor="acme"
-    )
-    assert denied.allowed is False
-    # Non-zero rules_loaded distinguishes "loaded but no match" from "no rules".
-    assert denied.rules_loaded == 1
-
-
-@pytest.mark.asyncio
-async def test_evaluator_cached_second_call() -> None:
-    """Second evaluate call for same toolkit+vendor uses cache."""
-    mock_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.all.return_value = [("allow", None, ".*", None, "regex")]
-    mock_session.execute = AsyncMock(return_value=mock_result)
-    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
-
-    evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    r1 = await evaluator.evaluate(
-        toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="acme"
-    )
-    r2 = await evaluator.evaluate(
-        toolkit_id="tk_1", method="POST", path="/y", operation_id="op", api_vendor="acme"
-    )
-    assert r1.allowed is True
-    assert r2.allowed is True
-    mock_session.execute.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_evaluator_distinct_toolkits_separate_cache() -> None:
-    """Different toolkit IDs are cached independently."""
-    mock_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.all.return_value = [("allow", None, ".*", None, "regex")]
-    mock_session.execute = AsyncMock(return_value=mock_result)
-    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
-
-    evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    await evaluator.evaluate(
-        toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="acme"
-    )
-    await evaluator.evaluate(
-        toolkit_id="tk_2", method="GET", path="/x", operation_id=None, api_vendor="acme"
-    )
-    assert mock_session.execute.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_evaluator_distinct_vendors_separate_cache() -> None:
-    """Different api_vendor values are cached independently."""
-    mock_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.all.return_value = [("allow", None, ".*", None, "regex")]
-    mock_session.execute = AsyncMock(return_value=mock_result)
-    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
-
-    evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    await evaluator.evaluate(
-        toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="acme"
-    )
-    await evaluator.evaluate(
-        toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="other"
-    )
-    assert mock_session.execute.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_evaluator_clear_drops_cache() -> None:
-    """clear() forces a re-fetch on the next call."""
-    mock_db = MagicMock()
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.all.return_value = [("allow", None, ".*", None, "regex")]
-    mock_session.execute = AsyncMock(return_value=mock_result)
-    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
-
-    evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    await evaluator.evaluate(
-        toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="acme"
-    )
-    evaluator.clear()
-    await evaluator.evaluate(
-        toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="acme"
-    )
-    assert mock_session.execute.call_count == 2

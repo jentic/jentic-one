@@ -99,8 +99,9 @@ def credential_coverage_where(
 ) -> str:
     """Build the shared SQL coverage fragment (binds ``:vendor``/``:name``/``:version``).
 
-    The one WHERE fragment used by the two raw-SQL matchers (runtime toolkit
-    derivation and bind-time toolkit selection). ``NULL`` on a credential axis is
+    The one WHERE fragment used by the two raw-SQL matchers (runtime
+    credential-binding derivation and bind-time credential selection). ``NULL``
+    on a credential axis is
     the wildcard; there is no ``= ''`` branch (empty strings are coerced away on
     write and backfilled, so ``NULL`` is the only wildcard).
 

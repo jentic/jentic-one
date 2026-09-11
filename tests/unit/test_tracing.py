@@ -92,13 +92,14 @@ def test_pack_jentic_tracestate_matches_openapi_example():
     """
     spec = yaml.safe_load(_OPENAPI_SPEC.read_text())
     example = spec["components"]["headers"]["Tracestate"]["schema"]["examples"][0]
-    # example == "jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16"
+    # example == "jentic=exec_xyz789:_:stripe:payments:2023-10-16" — the second
+    # (toolkit) segment is a legacy slot, always `_` since theme-5 Phase 6b.
     key, _, member = example.partition("=")
     assert key == JENTIC_TRACESTATE_KEY
 
     packed = pack_jentic_tracestate(
         execution_id="exec_xyz789",
-        toolkit_id="tk_abc123",
+        toolkit_id=None,
         vendor="stripe",
         name="payments",
         version="2023-10-16",

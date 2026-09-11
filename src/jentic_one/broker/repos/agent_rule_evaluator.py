@@ -1,20 +1,23 @@
 """Direct-binding permission-rule evaluator (theme-5 Phase 2).
 
-The direct-binding twin of ``rule_evaluator``: queries ``agent_permission_rules``
+Queries ``agent_permission_rules``
 keyed on ``(agent_id, credential_id)`` — or, when the binding carries a
 ``rule_set_id``, the shared ``permission_rule_set_rules`` list **instead** —
 from the control DB (raw SQL; the broker cannot import control ORM) and
 evaluates the ordered rule list against the inbound request. First-match-wins;
 an exhausted rule list defaults to DENY (secure-by-default).
 
-Unlike the toolkit evaluator there is **no vendor pooling**: rules are evaluated
+Unlike the deleted toolkit evaluator (pre-6b ``rule_evaluator``) there is **no
+vendor pooling**: rules are evaluated
 strictly against the specific ``(agent, credential)`` binding (or its attached
 rule set). The credential's identity was already matched during derivation, so
 no vendor join is needed here.
 
-Rule compilation and evaluation semantics are shared with the toolkit
-evaluator (``PermissionRule``, ``evaluate_rules``, the JSON-column coercion and
-the fail-closed path compilation), so the two enforcers cannot drift apart.
+Path matching (``regex``/``prefix``/``exact``) delegates to the shared
+``shared.permissions.matching`` seam so authoring surfaces and this enforcer
+cannot disagree; the rule value object, JSON-column coercion and evaluation
+loop live in this module (their pre-6b home, the toolkit ``rule_evaluator``,
+was deleted with the toolkit path).
 
 Performance: the rule list per binding (or per rule set — shared across N
 bindings) is short-TTL cached (LRU + single-flight), amortising the hot-path DB
@@ -23,6 +26,7 @@ hit across requests.
 
 from __future__ import annotations
 
+import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -31,19 +35,98 @@ import structlog
 from sqlalchemy import text
 
 from jentic_one.broker.core.singleflight import SingleFlight
-from jentic_one.broker.repos.rule_evaluator import (
-    DEFAULT_MAX_CACHE_ENTRIES,
-    DEFAULT_RULE_CACHE_TTL_SECONDS,
-    PermissionRule,
-    _coerce_json_list,
-    _normalize_methods,
-    evaluate_rules,
-)
 from jentic_one.shared.broker.protocols import RuleEvaluation
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.permissions.matching import PathMatcher, compile_matcher
 
 _logger = structlog.get_logger(__name__)
+
+DEFAULT_RULE_CACHE_TTL_SECONDS = 30.0
+DEFAULT_MAX_CACHE_ENTRIES = 5_000
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionRule:
+    """A single permission rule — immutable value object for cache safety."""
+
+    effect: str
+    methods: frozenset[str] | None
+    path: PathMatcher | None
+    operations: tuple[str, ...] | None
+
+
+def _coerce_json_list(value: object) -> list[str] | None:
+    """Coerce a JSON column value into a list of strings (or None).
+
+    The evaluator reads rules via raw ``text()`` SQL, which bypasses the ORM's
+    ``json_variant()`` deserialization. On PostgreSQL the JSONB driver still
+    decodes the column into native lists, but on SQLite (JSON stored as TEXT)
+    the raw string comes straight through — e.g. ``'["GET", "POST"]'`` or the
+    literal ``'null'``. Parse the string form here so both backends yield the
+    same list; a non-string list (already decoded) passes through unchanged.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return None
+
+
+def _normalize_methods(raw: list[str] | None) -> frozenset[str] | None:
+    if raw is None:
+        return None
+    return frozenset(m.upper() for m in raw)
+
+
+def _is_condition_less(rule: PermissionRule) -> bool:
+    """True if a rule constrains nothing — matches every request when evaluated."""
+    return rule.methods is None and rule.path is None and rule.operations is None
+
+
+def _rule_matches(
+    rule: PermissionRule, *, method: str, path: str, operation_id: str | None
+) -> bool:
+    """Return True if ALL defined criteria in the rule match the request."""
+    if rule.methods is not None and method.upper() not in rule.methods:
+        return False
+    if rule.path is not None and not rule.path.matches(path):
+        return False
+    if rule.operations is not None:
+        return operation_id is not None and operation_id in rule.operations
+    return True
+
+
+def evaluate_rules(
+    rules: list[PermissionRule],
+    *,
+    method: str,
+    path: str,
+    operation_id: str | None,
+) -> bool:
+    """Evaluate an ordered list of permission rules. Returns True if allowed."""
+    for rule in rules:
+        # Defense-in-depth: a condition-less `allow` is an unrestricted grant
+        # (matches everything) and should have been rejected at the API schema.
+        # If one reaches the broker it is a misconfiguration — skip it rather
+        # than honour blanket access. A condition-less `deny` keeps its
+        # legitimate match-all catch-all behaviour.
+        if _is_condition_less(rule) and rule.effect.lower() == "allow":
+            _logger.warning(
+                "Ignoring misconfigured condition-less 'allow' permission rule "
+                "(matches all requests); skipping to next rule",
+            )
+            continue
+        if _rule_matches(rule, method=method, path=path, operation_id=operation_id):
+            return rule.effect.lower() == "allow"
+    return False
+
 
 # Inline per-binding rules. No credential/vendor join — the binding is the key.
 _BINDING_RULES_QUERY = text(
@@ -66,7 +149,7 @@ _RULE_SET_RULES_QUERY = text(
 def _compile_path(raw: str | None, mode: str, *, binding: str) -> PathMatcher | None:
     """Compile a stored path pattern; log-once on a fail-closed row.
 
-    Mirrors the toolkit evaluator's compilation: an unparseable stored pattern
+    Delegates to the shared seam: an unparseable stored pattern
     (a legacy row predating save-time validation) yields a matcher that never
     matches — fail-closed, never a silent wildcard (#751) — and the warning
     identifies the misconfigured binding/rule set so an operator can fix it.
