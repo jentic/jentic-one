@@ -53,6 +53,14 @@ import {
 	revokeAgentApiKey,
 	bindToolkitToAgent,
 	unbindToolkitFromAgent,
+	listAgentCredentialBindings,
+	bindCredentialToAgent,
+	unbindCredentialFromAgent,
+	resumeAgentCredentialBinding,
+	listBindableCredentialsForAgent,
+	listAgentBindingPermissions,
+	replaceAgentBindingPermissions,
+	testAgentBindingPermissions,
 	fetchActorAccessRequests,
 	fetchActorsUsage,
 	fetchActorUsageDetail,
@@ -72,21 +80,27 @@ import {
 	type ListResult,
 } from '@/modules/agents/api/client';
 import type {
+	AgentBindableCredential,
 	AgentEntity,
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
+	BindingPermissionRule,
+	BindingPermissionTestResult,
+	CredentialBindingEntity,
 	InstanceIdentityEntity,
 	LinkableToolkit,
 	McpLastSeen,
 	McpSessionEntity,
 	OAuthGrantEntity,
 	PermissionCatalogEntry,
+	PermissionRuleInput,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
 } from '@/modules/agents/api/types';
 import type { AccessRequest } from '@/shared/lib';
 import { sharedQueryKeys } from '@/shared/api';
+import { credentialKeys } from '@/shared/credentials/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely.
  * `all` derives from the shared cross-module registry so the persistent nav
@@ -101,6 +115,11 @@ const agentsKeys = {
 	apiKeyInfo: (id: string) => [...agentsKeys.all, 'api-key-info', id] as const,
 	apiKeyHistory: (id: string) => [...agentsKeys.all, 'api-key-history', id] as const,
 	scopes: (id: string) => [...agentsKeys.all, 'scopes', id] as const,
+	/** Direct credential bindings for one agent (`GET /agents/{id}/credentials`). */
+	credentialBindings: (id: string) => [...agentsKeys.all, 'credential-bindings', id] as const,
+	/** The ordered rules on one direct (agent, credential) binding. */
+	bindingPermissions: (agentId: string, credentialId: string) =>
+		[...agentsKeys.all, 'binding-permissions', agentId, credentialId] as const,
 };
 
 /** Test-only handle on the agents key factory so the cross-module-key guard
@@ -331,6 +350,186 @@ export function useUnbindToolkitFromAgent(agentId: string | null) {
 			toast({ title: 'Toolkit unbound', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, 'Failed to unbind the toolkit.'),
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Direct agent↔credential bindings (theme 5 phase 5a).
+//
+// The toolkit-less binding path: the agent detail Access tab's "Bound
+// credentials" card lists/binds/suspends/resumes here, and each binding's
+// rules live on the credential-side `/credentials/{cid}/agents/{aid}/
+// permissions` surface (list / replace / dry-run).
+// ---------------------------------------------------------------------------
+
+/**
+ * Candidate credentials for the agent-side "Bind credential" picker. Kept
+ * under its OWN root (like ``linkableToolkitsKey``) so a broad
+ * ``sharedQueryKeys.agentsRoot`` invalidation — used by approve/deny/create —
+ * doesn't pointlessly refetch ``GET /credentials``.
+ */
+const bindableCredentialsKey = ['agents-bindable-credentials'] as const;
+
+/** The agent's direct credential bindings, suspended rows included. */
+export function useAgentCredentialBindings(id: string | null) {
+	return useQuery<CredentialBindingEntity[]>({
+		queryKey: agentsKeys.credentialBindings(id ?? ''),
+		queryFn: () => listAgentCredentialBindings(id as string),
+		enabled: id != null,
+	});
+}
+
+/**
+ * Candidate credentials for the bind picker — fetched only while the dialog
+ * is open (``enabled``) so it costs nothing on the rest of the detail page.
+ */
+export function useBindableCredentialsForAgent({ enabled = true }: { enabled?: boolean } = {}) {
+	return useQuery<AgentBindableCredential[]>({
+		queryKey: bindableCredentialsKey,
+		queryFn: () => listBindableCredentialsForAgent(),
+		enabled,
+		staleTime: 15_000,
+	});
+}
+
+/**
+ * A direct binding change ripples across three surfaces: the agent's own
+ * bound-credentials card, the bind picker's candidate list (a just-bound
+ * credential becomes ineligible), and the credential-side "Bound agents"
+ * view (the binding is bidirectional — refreshed through the shared
+ * `credentialKeys.agents` slice, the sanctioned cross-surface channel).
+ * Mirrors {@link useInvalidateAgentBindingSurfaces} for toolkit bindings.
+ */
+function useInvalidateCredentialBindingSurfaces(agentId: string | null) {
+	const qc = useQueryClient();
+	return useCallback(
+		(credentialId: string) => {
+			if (agentId) {
+				qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+				qc.invalidateQueries({
+					queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+				});
+			}
+			qc.invalidateQueries({ queryKey: bindableCredentialsKey });
+			qc.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) });
+		},
+		[agentId, qc],
+	);
+}
+
+/**
+ * Bind a credential directly to this agent with the wizard's chosen initial
+ * grant. `rules: null` is the deliberate "start blocked" mode; otherwise the
+ * repository composes bind + rules-PUT (the phase-1 bind body carries only
+ * `credential_id` — see `bindCredentialToAgent` for the fail-closed seam).
+ * Null-guards the agent id like {@link useBindToolkitToAgent}.
+ */
+export function useBindAgentCredential(agentId: string | null) {
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	return useMutation<
+		CredentialBindingEntity,
+		Error,
+		{ credentialId: string; rules: PermissionRuleInput[] | null }
+	>({
+		mutationFn: ({ credentialId, rules }) => {
+			if (!agentId) {
+				return Promise.reject(
+					new Error('Cannot bind a credential before the agent loads.'),
+				);
+			}
+			return bindCredentialToAgent(agentId, credentialId, rules);
+		},
+		onSuccess: (_binding, { credentialId }) => {
+			invalidate(credentialId);
+			toast({ title: 'Credential bound', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to bind the credential.'),
+	});
+}
+
+/**
+ * Unbind a credential from this agent. Default (`purge: false`) SUSPENDS the
+ * binding — reversible, rules survive, `:resume` restores. `purge: true`
+ * deletes the binding outright (the stronger, rule-destroying action).
+ */
+export function useUnbindAgentCredential(agentId: string | null) {
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	return useMutation<void, Error, { credentialId: string; purge?: boolean }>({
+		mutationFn: ({ credentialId, purge = false }) => {
+			if (!agentId) {
+				return Promise.reject(
+					new Error('Cannot unbind a credential before the agent loads.'),
+				);
+			}
+			return unbindCredentialFromAgent(agentId, credentialId, purge);
+		},
+		onSuccess: (_void, { credentialId, purge }) => {
+			invalidate(credentialId);
+			toast({
+				title: purge ? 'Credential unbound' : 'Binding suspended',
+				description: purge
+					? undefined
+					: 'The binding and its rules survive — resume to restore access.',
+				variant: 'success',
+			});
+		},
+		onError: (e) => notifyError(e, 'Failed to update the binding.'),
+	});
+}
+
+/** Lift a suspended binding (`POST …/credentials/{id}:resume`). */
+export function useResumeAgentCredentialBinding(agentId: string | null) {
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	return useMutation<CredentialBindingEntity, Error, string>({
+		mutationFn: (credentialId: string) => {
+			if (!agentId) {
+				return Promise.reject(new Error('Cannot resume a binding before the agent loads.'));
+			}
+			return resumeAgentCredentialBinding(agentId, credentialId);
+		},
+		onSuccess: (_binding, credentialId) => {
+			invalidate(credentialId);
+			toast({ title: 'Binding resumed', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to resume the binding.'),
+	});
+}
+
+/** The ordered rules on one direct binding — read per bound row (the binding
+ * list response carries no rules inline, unlike the toolkit bindings). */
+export function useAgentBindingPermissions(agentId: string | null, credentialId: string | null) {
+	return useQuery<BindingPermissionRule[]>({
+		queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId ?? ''),
+		queryFn: () => listAgentBindingPermissions(agentId as string, credentialId as string),
+		enabled: agentId != null && credentialId != null,
+	});
+}
+
+/** Replace the full rule set on one direct binding (idempotent PUT). */
+export function useReplaceAgentBindingPermissions(agentId: string, credentialId: string) {
+	const qc = useQueryClient();
+	return useMutation<BindingPermissionRule[], Error, PermissionRuleInput[]>({
+		mutationFn: (rules) => replaceAgentBindingPermissions(agentId, credentialId, rules),
+		onSuccess: () => {
+			qc.invalidateQueries({
+				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+			});
+			qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+			toast({ title: 'Permission rules saved', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to save permission rules.'),
+	});
+}
+
+/** Broker dry-run against this binding's SAVED rules (`…/permissions:test`).
+ * No vendor pooling — the verdict is exactly this binding's policy. */
+export function useTestAgentBindingPermissions(agentId: string, credentialId: string) {
+	return useMutation<
+		BindingPermissionTestResult,
+		Error,
+		{ method: string; path: string; operation_id?: string }
+	>({
+		mutationFn: (body) => testAgentBindingPermissions(agentId, credentialId, body),
 	});
 }
 

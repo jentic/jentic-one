@@ -10,6 +10,7 @@ import type { ProviderDiscoveryResponse } from '@/shared/api';
 import type {
 	ConnectChallengeResponse,
 	ConnectRequestBody,
+	CredentialAgentListResponse,
 	CredentialCreateRequest,
 	CredentialCreateResponse,
 	CredentialListResponse,
@@ -74,4 +75,20 @@ export function connectCredential(
 /** GET /credentials/providers — discovery metadata for configured providers. */
 export function getProviders(): Promise<ProviderDiscoveryResponse> {
 	return CredentialsService.listProviders();
+}
+
+/**
+ * GET /credentials/{id}/agents — agents directly bound to a credential
+ * (theme 5 phase 1's reverse lookup; suspended bindings included with their
+ * flag set). Cursor-paginated like `listCredentials`.
+ */
+export function listCredentialAgents(
+	credentialId: string,
+	params: { cursor?: string | null; limit?: number } = {},
+): Promise<CredentialAgentListResponse> {
+	return CredentialsService.listCredentialAgents({
+		credentialId,
+		cursor: params.cursor ?? undefined,
+		limit: params.limit,
+	});
 }
