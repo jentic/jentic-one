@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/x/term"
 	sdkclient "github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/internal/agentops"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -253,7 +252,23 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 		}
 		body = mpBody
 		multipartContentType = ct
-	case opts.data == "-" || (opts.data == "" && opts.dataFile == "" && !term.IsTerminal(os.Stdin.Fd())):
+	case opts.data == "-":
+		// Explicit stdin body (`-d -`): the caller opted in, so block until EOF.
+		data, readErr := io.ReadAll(os.Stdin)
+		if readErr != nil {
+			return fmt.Errorf("read stdin: %w", readErr)
+		}
+		if len(data) > 0 {
+			body = bytes.NewReader(data)
+		}
+	case opts.data == "" && opts.dataFile == "" && stdinHasPipedBody(os.Stdin):
+		// #1354: implicit stdin fallback (no body flag). Only taken when stdin is a
+		// pipe or regular file that actually carries data — a real `echo … |
+		// execute`. A non-TTY stdin that is merely INHERITED and idle (a
+		// backgrounded process, or an interactive agent/harness whose stdin is a
+		// socket/pty with no EOF) must NOT be read: io.ReadAll would block forever
+		// there, hanging every body-less execute. That was the bug — the old
+		// heuristic keyed on !IsTerminal alone, which is true for those idle fds.
 		data, readErr := io.ReadAll(os.Stdin)
 		if readErr != nil {
 			return fmt.Errorf("read stdin: %w", readErr)
@@ -342,6 +357,37 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	}
 
 	return a.executeOutput(cmd, opts, result)
+}
+
+// stdinHasPipedBody reports whether stdin carries a real request body the
+// implicit fallback should read (#1354). It is true only for the two shapes a
+// deliberate `echo … | execute` / `execute < file` produces:
+//
+//   - a named pipe (ModeNamedPipe) — the shell pipe case; and
+//   - a regular file with non-zero size — the redirection case.
+//
+// Everything else is left alone so io.ReadAll can never block: a TTY
+// (interactive, no piped body), a character device, or — the bug this fixes —
+// an inherited non-TTY fd (a backgrounded process, or an interactive
+// agent/harness whose stdin is a socket/pty that never sends EOF). Stat errors
+// fail closed to false: if we cannot prove a body is present, we do not block
+// on the read. An explicit `-d -` bypasses this and blocks by design.
+func stdinHasPipedBody(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	mode := info.Mode()
+	if mode&os.ModeNamedPipe != 0 {
+		return true
+	}
+	if mode.IsRegular() && info.Size() > 0 {
+		return true
+	}
+	return false
 }
 
 // badFlagKV builds the coded error for a malformed key=value flag (ARCH-4). A

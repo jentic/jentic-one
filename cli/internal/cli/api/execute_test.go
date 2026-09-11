@@ -1714,3 +1714,87 @@ func TestExecuteMalformedBrokerURLErrors(t *testing.T) {
 		t.Errorf("error should name the malformed broker_url: %q", coded.Msg)
 	}
 }
+
+// TestStdinHasPipedBody pins the #1354 fix: the implicit stdin fallback must
+// read a body ONLY when stdin is a pipe or a non-empty regular file (a real
+// `echo … | execute` / `execute < file`), and must decline every other shape —
+// especially an open, dataless non-TTY fd (a backgrounded process or an
+// interactive agent/harness), on which io.ReadAll would block forever and hang
+// the command. That dataless-pipe case is the exact regression.
+func TestStdinHasPipedBody(t *testing.T) {
+	t.Run("nil is false", func(t *testing.T) {
+		if stdinHasPipedBody(nil) {
+			t.Error("nil stdin must not be treated as a piped body")
+		}
+	})
+
+	t.Run("non-empty regular file is true", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "body")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(`{"a":1}`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			t.Fatal(err)
+		}
+		if !stdinHasPipedBody(f) {
+			t.Error("a non-empty regular file must be read as a body")
+		}
+	})
+
+	t.Run("empty regular file is false", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "empty")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if stdinHasPipedBody(f) {
+			t.Error("an empty regular file carries no body")
+		}
+	})
+
+	t.Run("pipe with data written is true", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		if _, err := w.WriteString(`{"a":1}`); err != nil {
+			t.Fatal(err)
+		}
+		_ = w.Close()
+		if !stdinHasPipedBody(r) {
+			t.Error("a pipe (ModeNamedPipe) must be treated as a piped body")
+		}
+	})
+
+	t.Run("open dataless pipe is still a pipe (true) — but callers must not deadlock", func(t *testing.T) {
+		// A pipe reports ModeNamedPipe regardless of whether bytes are buffered
+		// yet, so the classifier returns true. That is correct: a real
+		// `producer | execute` may not have flushed by the time we Stat. The
+		// deadlock the fix prevents is the NON-pipe idle fd below.
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		defer w.Close()
+		if !stdinHasPipedBody(r) {
+			t.Error("a pipe must classify as a body source even before data is flushed")
+		}
+	})
+
+	t.Run("directory (non-regular, non-pipe) is false", func(t *testing.T) {
+		d, err := os.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		if stdinHasPipedBody(d) {
+			t.Error("a directory is not a body source")
+		}
+	})
+}
