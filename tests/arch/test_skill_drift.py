@@ -146,3 +146,53 @@ def test_source_references_rejects_bad_filenames(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(skills_sync, "SKILLS_DIR", tmp_path)
     with pytest.raises(SkillError, match="filename grammar"):
         skills_sync.source_references("bad-skill")
+
+
+@pytest.mark.arch
+def test_source_references_rejects_directories(tmp_path, monkeypatch) -> None:
+    """A directory under references/ is an error (fail closed), never a skip.
+
+    The mirrors and serving surfaces are flat (one level of references/*.md);
+    silently skipping a stray subdirectory would quietly drop whatever was
+    authored inside it from every surface.
+    """
+    ref_dir = tmp_path / "bad-skill" / "references"
+    (ref_dir / "nested").mkdir(parents=True)
+    monkeypatch.setattr(skills_sync, "SKILLS_DIR", tmp_path)
+    with pytest.raises(SkillError, match="non-file entry"):
+        skills_sync.source_references("bad-skill")
+
+
+@pytest.mark.arch
+def test_prune_orphan_references_removes_stale_mirrors(tmp_path, monkeypatch) -> None:
+    """A mirrored reference whose source is gone is flagged (check) or deleted (write).
+
+    A stale mirror would keep serving/embedding a document the source no
+    longer owns, so the prune must fire in both trees.
+    """
+    cli = tmp_path / "cli" / "content"
+    web = tmp_path / "web" / "content"
+    for tree in (cli, web):
+        ref_dir = tree / "some-skill" / "references"
+        ref_dir.mkdir(parents=True)
+        (ref_dir / "kept.md").write_text("# keep\n", encoding="utf-8")
+        (ref_dir / "orphan.md").write_text("# stale\n", encoding="utf-8")
+    monkeypatch.setattr(skills_sync, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(skills_sync, "CLI_CONTENT", cli)
+    monkeypatch.setattr(skills_sync, "WEB_CONTENT", web)
+
+    # Check mode flags the orphans (one per tree) without deleting anything.
+    problems: list[str] = []
+    skills_sync._prune_orphan_references("some-skill", ("kept.md",), check=True, problems=problems)
+    assert len(problems) == 2
+    assert all("orphaned mirror" in p for p in problems)
+    for tree in (cli, web):
+        assert (tree / "some-skill" / "references" / "orphan.md").is_file()
+
+    # Write mode deletes the orphans and keeps the wanted file in both trees.
+    problems = []
+    skills_sync._prune_orphan_references("some-skill", ("kept.md",), check=False, problems=problems)
+    assert problems == []
+    for tree in (cli, web):
+        assert not (tree / "some-skill" / "references" / "orphan.md").exists()
+        assert (tree / "some-skill" / "references" / "kept.md").is_file()

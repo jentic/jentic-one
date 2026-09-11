@@ -162,7 +162,13 @@ def source_references(name: str) -> tuple[str, ...]:
     names: list[str] = []
     for entry in sorted(ref_dir.iterdir()):
         if not entry.is_file():
-            continue
+            # Fail closed: the mirrors and serving surfaces are flat (one level
+            # of references/*.md); silently skipping a stray subdirectory would
+            # quietly drop whatever was authored inside it from every surface.
+            raise SkillError(
+                f"{name}: references/ must contain only .md files, found "
+                f"a non-file entry {entry.name!r}"
+            )
         if not REFERENCE_RE.fullmatch(entry.name):
             raise SkillError(
                 f"{name}: reference {entry.name!r} violates the filename grammar "

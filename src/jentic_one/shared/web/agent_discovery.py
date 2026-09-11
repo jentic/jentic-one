@@ -81,7 +81,11 @@ REFERENCE_STEM_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 #: Lane ownership of a skill's references is a filename convention (one
 #: reserved-name rule per language; the Go mirror is
-#: ``skillgen.CLIOnlyReference``): a reference named ``cli.md`` is CLI-lane and
+#: ``skillgen.CLIOnlyReference`` — a comment there points back here, and both
+#: sides pin the literal ``"cli.md"`` in tests
+#: (``test_cli_only_reference_still_served_over_http`` here,
+#: ``TestBundledReferences`` in Go), so divergence trips a test in either
+#: tree): a reference named ``cli.md`` is CLI-lane and
 #: is therefore excluded from MCP resource listings — an MCP session has no
 #: ``jentic`` CLI, so serving it the CLI lane would only mislead. This is a
 #: serving decision, not a secret: the HTTP routes below are the raw neutral
