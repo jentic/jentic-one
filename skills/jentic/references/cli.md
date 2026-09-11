@@ -219,6 +219,10 @@ jentic context view        # shows the active context's environment + base_url
 jentic api GET /instance   # reads the connected backend's identity (auth attached)
 ```
 
+The unauthenticated `/instance` response also carries `broker_url` — the
+broker / data-plane base URL for `execute`, when the backend can advertise
+one (null otherwise).
+
 ## Step 4 — inspect
 
 ```
@@ -271,8 +275,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   refuses up front (it never dials the local default for a remote control
   plane). This means the environment was onboarded without a broker: set it
   with `jentic register --url <URL> --broker-url <broker URL>` (or
-  `JENTIC_BROKER_URL` in file-less mode) — ask the operator for the broker
-  URL; do **not** assume a local broker.
+  `JENTIC_BROKER_URL` in file-less mode). Read the broker URL from the
+  unauthenticated `GET /instance` on the control plane (`broker_url`); if
+  that reports null, ask the operator — do **not** assume a local broker.
 
 - **Stopped instance (connection refused on a local target).** If the
   target is already local (`127.0.0.1` / `localhost`) and the connection is
