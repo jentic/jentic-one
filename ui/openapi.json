@@ -12841,7 +12841,7 @@
     },
     "/admin/oauth-clients/{id}": {
       "delete": {
-        "description": "Soft-delete an OAuth client by setting active=False.\n\nDeactivated clients can no longer initiate authorization flows.",
+        "description": "Disable an OAuth client — the reversible kill switch (sets active=false).\n\nDisabled clients can no longer initiate authorization flows and their\noutstanding tokens stop resolving. Re-enable by patching ``active: true``.\nThe row is kept; this is not a delete.",
         "operationId": "deactivateOauthClient",
         "parameters": [
           {
@@ -12989,7 +12989,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Deactivate OAuth client",
+        "summary": "Disable OAuth client",
         "tags": [
           "OAuth Clients"
         ]
@@ -14556,7 +14556,7 @@
     },
     "/agents/{agent_id}": {
       "delete": {
-        "description": "Soft-archive an agent — revokes scope grants and toolkit bindings.",
+        "description": "Archive an agent — terminal-but-kept.\n\nThe row is retained for history, but the action is not reversible and\nthe agent's authority is swept: scope grants, toolkit bindings, and\nOAuth consent grants are revoked. For the reversible kill switch use\n``:disable`` / ``:enable`` instead.",
         "operationId": "archiveAgent",
         "parameters": [
           {
@@ -32136,7 +32136,7 @@
     },
     "/service-accounts/{service_account_id}": {
       "delete": {
-        "description": "Soft-archive a service account — revokes scope grants.",
+        "description": "Archive a service account — terminal-but-kept.\n\nThe row is retained for history, but the action is not reversible and\nthe account's scope grants are revoked. For the reversible kill switch\nuse ``:disable`` / ``:enable`` instead.",
         "operationId": "archiveServiceAccount",
         "parameters": [
           {
@@ -37033,7 +37033,7 @@
     },
     "/users/{user_id}": {
       "delete": {
-        "description": "Soft-delete a user.",
+        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead.",
         "operationId": "deleteUser",
         "parameters": [
           {
@@ -38417,7 +38417,7 @@
       "name": "Configuration"
     },
     {
-      "description": "Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). Registered clients integrate with Jentic One via the standard Authorization Code + PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. Deactivating a client immediately invalidates all tokens issued through it.",
+      "description": "Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). Registered clients integrate with Jentic One via the standard Authorization Code + PKCE flow. Admins can create, list, update, rotate secrets, and disable clients. Disabling a client immediately invalidates all tokens issued through it.",
       "name": "OAuth Clients"
     },
     {

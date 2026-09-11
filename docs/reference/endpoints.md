@@ -250,7 +250,7 @@ _Total endpoints: **186**._
 | PUT | `/admin/config/providers/{name}` | `config:write` | any | Set a credential provider config |
 | GET | `/admin/oauth-clients` | `oauth-clients:read` | any | List OAuth clients |
 | POST | `/admin/oauth-clients` | `oauth-clients:write` | any | Register OAuth client |
-| DELETE | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Deactivate OAuth client |
+| DELETE | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Disable OAuth client |
 | GET | `/admin/oauth-clients/{id}` | `oauth-clients:read` | any | Get OAuth client |
 | PATCH | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Update OAuth client |
 | POST | `/admin/oauth-clients/{id}/rotate-secret` | `oauth-clients:write` | any | Rotate client secret |

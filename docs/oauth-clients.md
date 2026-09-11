@@ -60,7 +60,7 @@ POST /admin/oauth-clients/{id}/rotate-secret
 Immediately invalidates the previous secret. The new secret is returned once.
 Deploy it to the client before rotating, or clients will fail authentication.
 
-## Updating and deactivating
+## Updating and disabling
 
 ```
 PATCH /admin/oauth-clients/{id}
@@ -72,7 +72,7 @@ Pass only the fields you want to change. `allowed_scopes` has three modes:
 - `[]` → deny-all (client cannot request any non-OIDC scopes)
 - `["*"]` → reset to unrestricted (clear the restriction)
 
-To soft-delete a client:
+To disable a client (the reversible kill switch):
 
 ```
 DELETE /admin/oauth-clients/{id}
@@ -80,7 +80,7 @@ DELETE /admin/oauth-clients/{id}
 
 Sets `active=false`. The client can no longer start authorization flows, and
 outstanding access/refresh tokens issued by it stop resolving on both the auth
-surface and the broker data plane on the next request. Reactivate by patching
+surface and the broker data plane on the next request. Re-enable by patching
 `active: true`.
 
 ## Consent

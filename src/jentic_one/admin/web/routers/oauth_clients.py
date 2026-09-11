@@ -188,7 +188,7 @@ async def rotate_oauth_client_secret(
 @router.delete(
     "/admin/oauth-clients/{id}",
     status_code=204,
-    summary="Deactivate OAuth client",
+    summary="Disable OAuth client",
     responses=not_found(),
 )
 async def deactivate_oauth_client(
@@ -196,9 +196,11 @@ async def deactivate_oauth_client(
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> Response:
-    """Soft-delete an OAuth client by setting active=False.
+    """Disable an OAuth client — the reversible kill switch (sets active=false).
 
-    Deactivated clients can no longer initiate authorization flows.
+    Disabled clients can no longer initiate authorization flows and their
+    outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+    The row is kept; this is not a delete.
     """
     await svc.deactivate(id, identity=identity)
     return Response(status_code=204)

@@ -387,7 +387,7 @@
       "required_scopes": [
         "oauth-clients:write"
       ],
-      "summary": "Deactivate OAuth client",
+      "summary": "Disable OAuth client",
       "surface": "admin",
       "typical_caller": "any"
     },
@@ -4857,7 +4857,7 @@
           },
           {
             "action": "write",
-            "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+            "description": "Create, update, disable, and rotate secrets of OAuth clients",
             "family": "oauth-clients",
             "implies": [
               "oauth-clients:read"
@@ -5075,7 +5075,7 @@
       },
       {
         "action": "write",
-        "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+        "description": "Create, update, disable, and rotate secrets of OAuth clients",
         "family": "oauth-clients",
         "implies": [
           "oauth-clients:read"

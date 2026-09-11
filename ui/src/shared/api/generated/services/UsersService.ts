@@ -182,7 +182,12 @@ export class UsersService {
     }
     /**
      * Delete User
-     * Soft-delete a user.
+     * Delete a user account (terminal-but-kept).
+     *
+     * The row is retained — the account is anonymized (tombstone email) and
+     * deactivated so history and audit references stay resolvable — but the
+     * action is terminal: there is no re-enable arm. For the reversible kill
+     * switch use ``:disable`` / ``:enable`` instead.
      * @returns void
      * @throws ApiError
      */

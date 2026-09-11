@@ -83,7 +83,12 @@ export class AgentsService {
     }
     /**
      * Archive Agent
-     * Soft-archive an agent — revokes scope grants and toolkit bindings.
+     * Archive an agent — terminal-but-kept.
+     *
+     * The row is retained for history, but the action is not reversible and
+     * the agent's authority is swept: scope grants, toolkit bindings, and
+     * OAuth consent grants are revoked. For the reversible kill switch use
+     * ``:disable`` / ``:enable`` instead.
      * @returns void
      * @throws ApiError
      */

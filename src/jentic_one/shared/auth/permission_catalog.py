@@ -216,7 +216,7 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     ),
     OAUTH_CLIENTS_WRITE: Permission(
         name=OAUTH_CLIENTS_WRITE,
-        description="Create, update, deactivate, and rotate secrets of OAuth clients",
+        description="Create, update, disable, and rotate secrets of OAuth clients",
         implies=frozenset({OAUTH_CLIENTS_READ}),
     ),
     OAUTH_CLIENTS_READ: Permission(

@@ -78,10 +78,12 @@ export class OAuthClientsService {
         });
     }
     /**
-     * Deactivate OAuth client
-     * Soft-delete an OAuth client by setting active=False.
+     * Disable OAuth client
+     * Disable an OAuth client — the reversible kill switch (sets active=false).
      *
-     * Deactivated clients can no longer initiate authorization flows.
+     * Disabled clients can no longer initiate authorization flows and their
+     * outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+     * The row is kept; this is not a delete.
      * @returns void
      * @throws ApiError
      */
