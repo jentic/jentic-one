@@ -10,7 +10,7 @@ import { Textarea } from '@/shared/ui/Textarea';
 
 /**
  * IdentitySettingsCard — the Settings tab's "General" card shared by the
- * detail consoles (toolkit, agent, service account): the immutable, copyable
+ * detail consoles (agent, service account): the immutable, copyable
  * entity id plus the editable name/description form.
  *
  * One grammar everywhere:
@@ -30,7 +30,7 @@ import { Textarea } from '@/shared/ui/Textarea';
  */
 
 export interface IdentitySettingsCardProps {
-	/** Label for the immutable id row ("Agent ID", "Toolkit ID", "Account ID"). */
+	/** Label for the immutable id row ("Agent ID", "Account ID"). */
 	idLabel: string;
 	idValue: string;
 	/** The entity's current (saved) name. */

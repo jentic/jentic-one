@@ -7,11 +7,6 @@
 export {
 	useAgents,
 	useAgent,
-	useAgentToolkits,
-	useLinkableToolkits,
-	useToolkitName,
-	useBindToolkitToAgent,
-	useUnbindToolkitFromAgent,
 	useAgentCredentialBindings,
 	useBindableCredentialsForAgent,
 	useBindAgentCredential,
@@ -96,7 +91,6 @@ export type {
 	BindingPermissionTestResult,
 	CredentialBindingEntity,
 	InstanceIdentityEntity,
-	LinkableToolkit,
 	McpLastSeen,
 	McpSessionEntity,
 	OAuthGrantEntity,
@@ -104,7 +98,6 @@ export type {
 	PermissionRuleInput,
 	ServedApiEntity,
 	ServiceAccountEntity,
-	ToolkitBindingEntity,
 	Attribution,
 } from '@/modules/agents/api/types';
 

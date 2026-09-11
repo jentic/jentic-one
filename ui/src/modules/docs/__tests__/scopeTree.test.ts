@@ -183,7 +183,7 @@ describe('authModelCounts', () => {
 	it('splits endpoints into scope-gated, ownership-gated, and public', () => {
 		const eps = [
 			ep({ method: 'POST', path: '/agents', required_scopes: ['agents:write'] }),
-			ep({ method: 'GET', path: '/toolkits', required_scopes: [] }), // ownership
+			ep({ method: 'GET', path: '/gadgets', required_scopes: [] }), // ownership
 			ep({ method: 'GET', path: '/me', required_scopes: [] }), // ownership
 			ep({ method: 'GET', path: '/health', authenticated: false, public: true }),
 		];
@@ -198,15 +198,12 @@ describe('ownershipEndpoints', () => {
 			...payload,
 			endpoints: [
 				ep({ method: 'POST', path: '/agents', required_scopes: ['agents:write'] }),
-				ep({ method: 'GET', path: '/toolkits', required_scopes: [] }),
-				ep({ method: 'POST', path: '/toolkits', required_scopes: [] }),
+				ep({ method: 'GET', path: '/gadgets', required_scopes: [] }),
+				ep({ method: 'POST', path: '/gadgets', required_scopes: [] }),
 				ep({ method: 'GET', path: '/health', authenticated: false, public: true }),
 			],
 		};
 		const eps = ownershipEndpoints(p);
-		expect(eps.map((e) => `${e.method} ${e.path}`)).toEqual([
-			'GET /toolkits',
-			'POST /toolkits',
-		]);
+		expect(eps.map((e) => `${e.method} ${e.path}`)).toEqual(['GET /gadgets', 'POST /gadgets']);
 	});
 });

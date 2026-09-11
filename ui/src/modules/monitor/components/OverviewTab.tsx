@@ -4,7 +4,7 @@
  * Powered by `GET /monitoring/usage` (`useUsageStats`): HealthStrip (health +
  * latency pills, active-APIs cluster), the Execution Volume chart (sub-day
  * buckets on the 24h window), the bubble chart, and the Breakdown table with
- * per-row sparkline trends — each of the latter two with an APIs / Toolkits /
+ * per-row sparkline trends — each of the latter two with an APIs / Credentials /
  * Agents grouping toggle. The tab fires one usage query per grouping
  * dimension so toggling lenses is
  * instant; buckets/overall stats are read off the API-grouped response since
@@ -125,10 +125,10 @@ export function OverviewTab() {
 	}, [nowSec, days]);
 
 	const apiUsage = useUsageStats({ since, until, groupBy: GroupBy.API, topLimit: TOP_LIMIT });
-	const toolkitUsage = useUsageStats({
+	const credentialUsage = useUsageStats({
 		since,
 		until,
-		groupBy: GroupBy.TOOLKIT,
+		groupBy: GroupBy.CREDENTIAL,
 		topLimit: TOP_LIMIT,
 	});
 	const agentUsage = useUsageStats({
@@ -138,8 +138,8 @@ export function OverviewTab() {
 		topLimit: TOP_LIMIT,
 	});
 
-	const isLoading = apiUsage.isLoading || toolkitUsage.isLoading || agentUsage.isLoading;
-	const firstError = [apiUsage, toolkitUsage, agentUsage].find((q) => q.isError);
+	const isLoading = apiUsage.isLoading || credentialUsage.isLoading || agentUsage.isLoading;
+	const firstError = [apiUsage, credentialUsage, agentUsage].find((q) => q.isError);
 
 	const data = apiUsage.data;
 	// Memoized on the query data: fresh array identities every render would
@@ -147,13 +147,16 @@ export function OverviewTab() {
 	// toggle or unrelated parent re-render.
 	const overview = useMemo(() => (data ? usageToOverview(data) : null), [data]);
 	const apis = useMemo(() => usageToEntityRows(apiUsage.data), [apiUsage.data]);
-	const toolkits = useMemo(() => usageToEntityRows(toolkitUsage.data), [toolkitUsage.data]);
+	const credentials = useMemo(
+		() => usageToEntityRows(credentialUsage.data),
+		[credentialUsage.data],
+	);
 	const agents = useMemo(() => usageToEntityRows(agentUsage.data), [agentUsage.data]);
 	const isEmpty = !!overview && overview.totalExecutions === 0;
 
 	const retryAll = () => {
 		void apiUsage.refetch();
-		void toolkitUsage.refetch();
+		void credentialUsage.refetch();
 		void agentUsage.refetch();
 	};
 
@@ -180,7 +183,7 @@ export function OverviewTab() {
 					}
 					onRetry={retryAll}
 					retrying={
-						apiUsage.isFetching || toolkitUsage.isFetching || agentUsage.isFetching
+						apiUsage.isFetching || credentialUsage.isFetching || agentUsage.isFetching
 					}
 				/>
 			) : isEmpty || !data || !overview ? (
@@ -201,13 +204,18 @@ export function OverviewTab() {
 						<HealthStrip overview={overview} apis={apis} />
 					</motion.div>
 					<motion.div variants={chartVariant}>
-						<UsageCharts usage={data} apis={apis} toolkits={toolkits} agents={agents} />
+						<UsageCharts
+							usage={data}
+							apis={apis}
+							credentials={credentials}
+							agents={agents}
+						/>
 					</motion.div>
 					<motion.div variants={chartVariant}>
-						<UsageBubbleChart apis={apis} toolkits={toolkits} agents={agents} />
+						<UsageBubbleChart apis={apis} credentials={credentials} agents={agents} />
 					</motion.div>
 					<motion.div variants={chartVariant}>
-						<UsageBreakdown apis={apis} toolkits={toolkits} agents={agents} />
+						<UsageBreakdown apis={apis} credentials={credentials} agents={agents} />
 					</motion.div>
 				</motion.div>
 			)}

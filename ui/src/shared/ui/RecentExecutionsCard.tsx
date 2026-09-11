@@ -1,7 +1,6 @@
 /**
  * RecentExecutionsCard — the console-standard "Recent executions" feed used
- * by toolkit, agent, and service-account detail pages. One visual grammar
- * (grown on the toolkit console): a status-dot row with the mono operation
+ * by the agent and service-account detail pages. One visual grammar: a status-dot row with the mono operation
  * label, inline HTTP status, optional error line, optional attribution slot,
  * duration, and relative time — ending in a pre-filtered "Open Monitor"
  * deep-link. Monitor owns the full history (paging, filters, trace sheets);
@@ -31,7 +30,7 @@ export interface RecentExecutionItem {
 	label: string;
 	/** Error detail rendered under the label for failures/denials. */
 	error?: string | null;
-	/** Optional attribution slot (e.g. an `ActorLabel` on the toolkit page). */
+	/** Optional attribution slot (e.g. an `ActorLabel`). */
 	meta?: ReactNode;
 	durationMs: number | null;
 	/** ISO string, epoch seconds, or epoch ms (shared `timeAgo` rules). */

@@ -49,10 +49,6 @@ const ACTORS = [
 		name: 'service_account',
 		body: 'A non-human programmatic identity for backend integrations; mints task tokens.',
 	},
-	{
-		name: 'toolkit',
-		body: 'A grouping that binds credentials and rides the agent token flow at execution time.',
-	},
 ];
 
 export function ArchitectureSection() {

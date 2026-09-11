@@ -32,7 +32,7 @@ test('a newly created agent receives default scopes including capabilities:execu
 	const scopes = (await res.json()).scopes;
 	expect(scopes).toContain('capabilities:execute');
 	expect(scopes).toContain('capabilities:read');
-	expect(scopes).toContain('owner:toolkits:read');
+	expect(scopes).toContain('owner:credentials:read');
 });
 
 test('a granted agent carries capabilities:execute in its scope grants', async ({ request }) => {

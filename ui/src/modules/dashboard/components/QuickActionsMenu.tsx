@@ -1,7 +1,7 @@
 /**
  * QuickActionsMenu — the old bottom "Quick actions" band folded into a single
  * dropdown in the page header. The four jump-offs (discover, credential,
- * toolkit, workspace) are setup/navigation shortcuts, not dashboard data —
+ * agent, workspace) are setup/navigation shortcuts, not dashboard data —
  * parking them behind one header button returns the page's vertical space to
  * the information layers while keeping every shortcut one click away.
  *
@@ -11,7 +11,7 @@
  * `@/shared/app` barrel's import-cycle TDZ (same reason the old band did).
  */
 import { useState, type ComponentType } from 'react';
-import { Boxes, ChevronDown, Compass, FolderOpen, KeyRound, Zap } from 'lucide-react';
+import { Bot, ChevronDown, Compass, FolderOpen, KeyRound, Zap } from 'lucide-react';
 import { AppLink, Button, MenuPanel, menuItemClass, useDismissable } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
 
@@ -28,7 +28,7 @@ export function QuickActionsMenu() {
 	const actions: QuickAction[] = [
 		{ href: ROUTES.discover, label: 'Discover APIs', icon: Compass },
 		{ href: ROUTES.credentials, label: 'Add credential', icon: KeyRound },
-		{ href: ROUTES.toolkits, label: 'Create toolkit', icon: Boxes },
+		{ href: ROUTES.agents, label: 'Register agent', icon: Bot },
 		{ href: ROUTES.workspace, label: 'Open workspace', icon: FolderOpen },
 	];
 

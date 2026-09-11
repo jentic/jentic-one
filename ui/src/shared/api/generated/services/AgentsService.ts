@@ -18,9 +18,6 @@ import type { CredentialBindRequest } from '../models/CredentialBindRequest';
 import type { jentic_one__auth__web__schemas__agents__DenyRequest } from '../models/jentic_one__auth__web__schemas__agents__DenyRequest';
 import type { JwksUpdateRequest } from '../models/JwksUpdateRequest';
 import type { OAuthGrantListResponse } from '../models/OAuthGrantListResponse';
-import type { ToolkitBindingListResponse } from '../models/ToolkitBindingListResponse';
-import type { ToolkitBindingResponse } from '../models/ToolkitBindingResponse';
-import type { ToolkitBindRequest } from '../models/ToolkitBindRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -86,7 +83,7 @@ export class AgentsService {
     }
     /**
      * Archive Agent
-     * Soft-archive an agent — revokes scope grants and toolkit bindings.
+     * Soft-archive an agent — revokes scope grants and bindings.
      * @returns void
      * @throws ApiError
      */
@@ -483,94 +480,6 @@ export class AgentsService {
             },
             body: requestBody,
             mediaType: 'application/json',
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * List Toolkits
-     * List toolkit bindings for an agent — requires agents:read or self.
-     * @returns ToolkitBindingListResponse Successful Response
-     * @throws ApiError
-     */
-    public static listAgentToolkits({
-        agentId,
-    }: {
-        agentId: string,
-    }): CancelablePromise<ToolkitBindingListResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/agents/{agent_id}/toolkits',
-            path: {
-                'agent_id': agentId,
-            },
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * Bind Toolkit
-     * Bind a toolkit to an agent.
-     * @returns ToolkitBindingResponse Successful Response
-     * @throws ApiError
-     */
-    public static bindToolkit({
-        agentId,
-        requestBody,
-    }: {
-        agentId: string,
-        requestBody: ToolkitBindRequest,
-    }): CancelablePromise<ToolkitBindingResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/agents/{agent_id}/toolkits',
-            path: {
-                'agent_id': agentId,
-            },
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * Unbind Toolkit
-     * Unbind a toolkit from an agent.
-     * @returns void
-     * @throws ApiError
-     */
-    public static unbindToolkit({
-        agentId,
-        toolkitId,
-    }: {
-        agentId: string,
-        toolkitId: string,
-    }): CancelablePromise<void> {
-        return __request(OpenAPI, {
-            method: 'DELETE',
-            url: '/agents/{agent_id}/toolkits/{toolkit_id}',
-            path: {
-                'agent_id': agentId,
-                'toolkit_id': toolkitId,
-            },
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

@@ -75,7 +75,6 @@ function toMonitorError(error: unknown, fallback: string): MonitorApiError {
 
 export interface ListExecutionsParams {
 	traceId?: string | null;
-	toolkitId?: string | null;
 	actorId?: string | null;
 	/** Origin surface filter (backend `Origin` wire value, e.g. `mcp`). */
 	origin?: string | null;
@@ -92,7 +91,6 @@ export async function listExecutions(
 	try {
 		return await ExecutionsService.listExecutions({
 			traceId: params.traceId ?? null,
-			toolkitId: params.toolkitId ?? null,
 			actorId: params.actorId ?? null,
 			origin: params.origin ?? null,
 			status: params.status ?? null,
@@ -127,7 +125,6 @@ export interface UsageStatsParams {
 	groupBy?: GroupBy | null;
 	/** How many top rows to return (1–50); the endpoint defaults to 10. */
 	topLimit?: number;
-	toolkitId?: string | null;
 	apiId?: string | null;
 	agentId?: string | null;
 	status?: string | null;
@@ -136,7 +133,7 @@ export interface UsageStatsParams {
 /**
  * Full-parity usage aggregation (`GET /monitoring/usage`): overall stats
  * (incl. latency percentiles), time buckets for the volume chart, and top
- * api/toolkit/agent rows with sparkline trends (one point per aggregate
+ * api/credential/agent rows with sparkline trends (one point per aggregate
  * bucket in the window).
  */
 export async function getUsageStats(params: UsageStatsParams = {}): Promise<UsageResponse> {
@@ -146,7 +143,6 @@ export async function getUsageStats(params: UsageStatsParams = {}): Promise<Usag
 			until: params.until ?? null,
 			groupBy: params.groupBy ?? null,
 			topLimit: params.topLimit ?? 10,
-			toolkitId: params.toolkitId ?? null,
 			apiId: params.apiId ?? null,
 			agentId: params.agentId ?? null,
 			status: params.status ?? null,

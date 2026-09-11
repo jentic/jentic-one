@@ -147,20 +147,12 @@ export function serviceAccountToEntity(r: ServiceAccountResponse): ServiceAccoun
 	};
 }
 
-/** A bound toolkit (read-only list in the detail sheet). */
-export interface ToolkitBindingEntity {
-	id: string;
-	toolkitId: string;
-	boundAt: string;
-}
-
 // ---------------------------------------------------------------------------
-// Direct agent↔credential bindings (theme 5 phase 5a — the toolkit-less path).
+// Direct agent↔credential bindings (theme 5 phase 5a — the direct path).
 //
 // These shapes mirror the phase-1 web contract (`CredentialBindingResponse`,
 // `CredentialBindRequest`, the `/credentials/{cid}/agents/{aid}/permissions`
-// rule surface) adapted into the module's camelCase entity envelopes, exactly
-// like `ToolkitBindingEntity` above.
+// rule surface) adapted into the module's camelCase entity envelopes.
 // ---------------------------------------------------------------------------
 
 /** One API a bound credential serves (`ServedApiRef`): name/version may be
@@ -189,11 +181,11 @@ export interface CredentialBindingEntity {
 }
 
 /**
- * A candidate credential for the agent-side "Bind credential" picker — the
- * direct-binding mirror of the toolkit bind picker's projection. Sourced from
- * the org-wide `GET /credentials` surface via the repository tier (the agents
- * module cannot import the credentials page module; the shared credential
- * tier's generated service is reached through `api/client.ts` only).
+ * A candidate credential for the agent-side "Bind credential" picker. Sourced
+ * from the org-wide `GET /credentials` surface via the repository tier (the
+ * agents module cannot import the credentials page module; the shared
+ * credential tier's generated service is reached through `api/client.ts`
+ * only).
  */
 export interface AgentBindableCredential {
 	credential_id: string;
@@ -218,18 +210,6 @@ export type BindingPermissionTestResult = PermissionTestResponse;
 /** Write shape for a permission rule (allow/deny + methods/path/operations) —
  * the same shared editor input type every rule-authoring surface uses. */
 export type { PermissionRuleInput } from '@/shared/ui';
-
-/**
- * A candidate toolkit for the agent-side "Bind toolkit" picker (#607). A small
- * projection of the shared `ToolkitResponse` — the agents module keeps its own
- * picker (module-boundary rule forbids importing the toolkits module), so it
- * only needs id/name/active to render and filter the list.
- */
-export interface LinkableToolkit {
-	toolkitId: string;
-	name: string;
-	active: boolean;
-}
 
 /** Result of generating an API key — the plaintext shown once. */
 export interface ApiKeyResult {

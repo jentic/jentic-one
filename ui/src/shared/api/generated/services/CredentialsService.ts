@@ -14,7 +14,7 @@ import type { CredentialAgentListResponse } from '../models/CredentialAgentListR
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
-import type { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema } from '../models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
+import type { jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema } from '../models/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema';
 import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
 import type { OAuth2UpdateRequest } from '../models/OAuth2UpdateRequest';
@@ -366,7 +366,7 @@ export class CredentialsService {
     }: {
         credentialId: string,
         agentId: string,
-        requestBody: Array<jentic_one__control__web__schemas__toolkits__PermissionRuleSchema>,
+        requestBody: Array<jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema>,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {
             method: 'PUT',

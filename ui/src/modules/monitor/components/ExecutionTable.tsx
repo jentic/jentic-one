@@ -2,7 +2,7 @@
  * ExecutionTable — the columned execution log.
  *
  * Renders `GET /executions` rows as:
- * Status | API (vendor chip) | Operation | Toolkit | Agent | Duration | When,
+ * Status | API (vendor chip) | Operation | Credential | Agent | Duration | When,
  * with a trailing open-affordance glyph. Built on the shared `<DataTable>`
  * (keyboard-activatable rows, scroll-region a11y) and on jentic-one's
  * `<VendorIcon>` (deterministic gradient+initials — there is no brand-logo
@@ -79,13 +79,19 @@ export function ExecutionTable({ executions, isLoading, onRowClick }: ExecutionT
 			),
 		},
 		{
-			key: 'toolkit_id',
-			header: 'Toolkit',
+			key: 'credential_id',
+			header: 'Credential',
 			className: 'w-[160px]',
 			render: (row) => (
 				<div className="flex flex-col leading-tight">
 					<span className="text-foreground text-xs">
-						{row.toolkit_name ?? row.toolkit_id}
+						{/* Historical rows predate direct bindings and carry only
+						    the legacy toolkit attribution — render it read-only. */}
+						{row.credential_name ??
+							row.credential_id ??
+							row.toolkit_name ??
+							row.toolkit_id ??
+							'—'}
 					</span>
 					{row.origin && (
 						<span className="text-muted-foreground text-[10px] capitalize">
@@ -182,7 +188,13 @@ export function ExecutionTable({ executions, isLoading, onRowClick }: ExecutionT
 							)}
 						</div>
 						<div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
-							<span className="truncate">{row.toolkit_name ?? row.toolkit_id}</span>
+							<span className="truncate">
+								{row.credential_name ??
+									row.credential_id ??
+									row.toolkit_name ??
+									row.toolkit_id ??
+									'—'}
+							</span>
 							<span className="font-mono">{formatDuration(row.duration_ms)}</span>
 						</div>
 					</div>

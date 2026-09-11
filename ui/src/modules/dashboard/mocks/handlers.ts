@@ -80,7 +80,8 @@ export const dashboardExecutions = [
 		operation_id: 'charges/create',
 		started_at: minutesAgo(2),
 		status: 'completed',
-		toolkit_id: 'payments',
+		credential_id: 'cred_payments',
+		credential_name: 'Stripe key',
 		trace_id: 'trace_1',
 	},
 	{
@@ -92,7 +93,8 @@ export const dashboardExecutions = [
 		operation_id: 'repos/get',
 		started_at: minutesAgo(8),
 		status: 'failed',
-		toolkit_id: 'github',
+		credential_id: 'cred_dev',
+		credential_name: 'GitHub PAT',
 		trace_id: 'trace_2',
 	},
 	{
@@ -104,7 +106,8 @@ export const dashboardExecutions = [
 		operation_id: 'messages/send',
 		started_at: minutesAgo(15),
 		status: 'completed',
-		toolkit_id: 'slack',
+		credential_id: 'cred_comms',
+		credential_name: 'Slack bot token',
 		trace_id: 'trace_3',
 	},
 ];
@@ -417,10 +420,10 @@ export function buildDashboardUsageFixture(overrides?: {
 					trend: [3, 4, 6, 5, 4, 3, 5, 6, 4, 5, 4, 3],
 				},
 			],
-			toolkit: [
+			credential: [
 				{
-					key: 'tk_payments',
-					label: 'tk_payments',
+					key: 'cred_payments',
+					label: 'cred_payments',
 					total: 120,
 					success: 116,
 					failed: 4,
@@ -428,8 +431,8 @@ export function buildDashboardUsageFixture(overrides?: {
 					trend: [6, 9, 8, 12, 7, 10, 9, 11, 8, 9, 6, 5],
 				},
 				{
-					key: 'tk_dev',
-					label: 'tk_dev',
+					key: 'cred_dev',
+					label: 'cred_dev',
 					total: 80,
 					success: 72,
 					failed: 6,

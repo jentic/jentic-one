@@ -180,7 +180,7 @@
           "title": "Account Linking Base Url"
         },
         "direct_bindings_enabled": {
-          "default": false,
+          "default": true,
           "title": "Direct Bindings Enabled",
           "type": "boolean"
         },

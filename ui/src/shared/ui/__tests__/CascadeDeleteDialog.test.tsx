@@ -46,7 +46,7 @@ describe('CascadeDeleteDialog', () => {
 		renderWithProviders(<Harness entityType="credential" entityName="Stripe (prod)" />);
 		expect(screen.getByRole('heading', { name: 'Delete credential' })).toBeInTheDocument();
 		expect(
-			screen.getByText(/Agents and toolkits that authenticate with this credential/i),
+			screen.getByText(/Agents that authenticate with this credential/i),
 		).toBeInTheDocument();
 	});
 
@@ -125,8 +125,8 @@ describe('CascadeDeleteDialog', () => {
 	it('renders the grouped blast-radius list with counts and names when dependents are provided', () => {
 		renderWithProviders(
 			<Harness
-				entityType="toolkit"
-				entityName="GitHub toolkit"
+				entityType="credential"
+				entityName="GitHub key"
 				dependents={[
 					{ label: 'agent grant', count: 2, names: ['Build Bot', 'Deploy Bot'] },
 					{ label: 'API key', count: 1, names: ['ci-key'] },
@@ -143,10 +143,12 @@ describe('CascadeDeleteDialog', () => {
 
 	it('falls back to the generic warning when dependents is an empty array', () => {
 		renderWithProviders(
-			<Harness entityType="toolkit" entityName="Empty toolkit" dependents={[]} />,
+			<Harness entityType="credential" entityName="Empty credential" dependents={[]} />,
 		);
 		expect(screen.queryByText(/will also remove/i)).not.toBeInTheDocument();
-		expect(screen.getByText(/Agents granted this toolkit will fail/i)).toBeInTheDocument();
+		expect(
+			screen.getByText(/Agents that authenticate with this credential/i),
+		).toBeInTheDocument();
 	});
 
 	it('disables the confirm field and buttons while loading', () => {
@@ -185,7 +187,7 @@ describe('CascadeDeleteDialog', () => {
 			<Harness
 				entityType="api"
 				entityName="httpbin"
-				dependents={[{ label: 'toolkit binding', count: 3, names: ['a', 'b', 'c'] }]}
+				dependents={[{ label: 'credential binding', count: 3, names: ['a', 'b', 'c'] }]}
 			/>,
 		);
 		await checkA11y(container);

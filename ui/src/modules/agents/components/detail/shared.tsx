@@ -57,7 +57,7 @@ export function toDisplayRules(rules: BindingPermissionRule[] | null | undefined
 		});
 }
 
-/** Row enter/exit motion for binding rows (matches the toolkit console feel). */
+/** Row enter/exit motion for binding rows. */
 export const rowMotion = {
 	initial: { opacity: 0, y: -4, height: 0 },
 	animate: { opacity: 1, y: 0, height: 'auto' as const },

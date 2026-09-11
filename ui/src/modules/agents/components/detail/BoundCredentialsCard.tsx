@@ -10,10 +10,9 @@
  * `purge=true` deletes the binding and its rules outright. The two actions
  * render with proportionate confirms (inline vs. the stronger copy).
  *
- * Binding is gated to ACTIVE agents in the UI, matching the Overview tab's
- * BoundToolkitsCard: the approval queue is the moment a human vouches for an
- * agent, so a pending/rejected/disabled agent must not accumulate
- * capabilities beforehand. Suspend/resume/unbind stay available in every
+ * Binding is gated to ACTIVE agents in the UI: the approval queue is the
+ * moment a human vouches for an agent, so a pending/rejected/disabled agent
+ * must not accumulate capabilities beforehand. Suspend/resume/unbind stay available in every
  * status: removing capability is always safe.
  */
 import { useMemo, useState } from 'react';
@@ -48,11 +47,11 @@ import { InlineConfirm } from '@/modules/agents/components/InlineConfirm';
 import { panelMotion, rowMotion, toDisplayRules } from '@/modules/agents/components/detail/shared';
 
 /**
- * One binding row. The binding list response carries no rules inline (unlike
- * the toolkit bindings), so each row reads its own rule list here
+ * One binding row. The binding list response carries no rules inline, so each
+ * row reads its own rule list here
  * (`useAgentBindingPermissions`) — the hook is called at the top of THIS
  * component (not in the parent's map callback) to keep the hooks-per-row
- * contract valid, matching the Overview card's per-row `useToolkitName`.
+ * contract valid.
  */
 function BindingRow({
 	agentId,
@@ -81,7 +80,7 @@ function BindingRow({
 	// Heading = the credential's human name (control-DB enrichment) with the
 	// id as the never-blank fallback; subtitle = the served API's machine
 	// identity, else the id — unless the heading already IS the id, in which
-	// case repeating it is pure noise (same grammar as the toolkit Access tab).
+	// case repeating it is pure noise.
 	const heading = binding.name || binding.credentialId;
 	const serves = binding.serves[0];
 	const subtitle =
@@ -195,8 +194,7 @@ function BindingRow({
 				</div>
 				{/* The grant, in the platform's one operations grammar (effect
 				    chips + bounded preview + full-view dialog). Zero agent rules
-				    ⇒ the broker default-denies; say so in the same warning voice
-				    the toolkit Access tab used. */}
+				    ⇒ the broker default-denies; say so in a warning voice. */}
 				<div className="w-full">
 					{permissions.isPending ? (
 						<p className="text-muted-foreground text-xs">Loading rules…</p>
@@ -247,8 +245,7 @@ export function BoundCredentialsCard({
 	const [bindOpen, setBindOpen] = useState(false);
 	const [editingCredId, setEditingCredId] = useState<string | null>(null);
 
-	// Approval gate: only a vouched-for (active) agent may gain capabilities
-	// (matches the Overview tab's BoundToolkitsCard).
+	// Approval gate: only a vouched-for (active) agent may gain capabilities.
 	const canBind = agentStatus === 'active';
 
 	const rows = useMemo(() => bindings.data ?? [], [bindings.data]);

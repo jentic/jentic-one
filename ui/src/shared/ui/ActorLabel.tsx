@@ -9,7 +9,7 @@
  * unknown. The raw id is always available on hover via `title`.
  *
  * Dependency-light by design — one shared hook, no module coupling — so any
- * surface (monitor, dashboard, agents, toolkits, access-requests) can use it.
+ * surface (monitor, dashboard, agents, access-requests) can use it.
  *
  * Directory scope is `user` / `agent` / `service_account` — those are the only
  * actor types `GET /actors` returns (the backend UNION excludes toolkits;

@@ -18,7 +18,7 @@ import { SectionHeading } from '@/modules/dashboard/components/CardRow';
 /**
  * Columns tuned for scanning, not for schema completeness: the status pill
  * leads (a red 500 should jump out while skimming down the left edge), the
- * operation and its toolkit share one two-line cell (they answer the same
+ * operation and its credential share one two-line cell (they answer the same
  * "what ran?" question), and duration + recency sit right-aligned at the far
  * edge like every log viewer.
  */
@@ -43,7 +43,7 @@ const columns: Column<ExecutionResponse>[] = [
 					{row.operation_id ?? '—'}
 				</span>
 				<span className="text-muted-foreground mt-0.5 block truncate text-[11px]">
-					{row.toolkit_id || '—'}
+					{row.credential_name || row.credential_id || '—'}
 				</span>
 			</span>
 		),

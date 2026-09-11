@@ -881,75 +881,6 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "GET",
-      "operation_id": "listAgentToolkits",
-      "path": "/agents/{agent_id}/toolkits",
-      "public": false,
-      "required_scopes": [],
-      "summary": "List Toolkits",
-      "surface": "agents",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "agents:write": [
-          "agents:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "bindToolkit",
-      "path": "/agents/{agent_id}/toolkits",
-      "public": false,
-      "required_scopes": [
-        "agents:write"
-      ],
-      "summary": "Bind Toolkit",
-      "surface": "agents",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "agents:write": [
-          "agents:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "unbindToolkit",
-      "path": "/agents/{agent_id}/toolkits/{toolkit_id}",
-      "public": false,
-      "required_scopes": [
-        "agents:write"
-      ],
-      "summary": "Unbind Toolkit",
-      "surface": "agents",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
         "agents:write": [
@@ -1946,8 +1877,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ]
@@ -2746,8 +2675,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ]
@@ -2796,8 +2723,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ]
@@ -3700,431 +3625,6 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listToolkits",
-      "path": "/toolkits",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List toolkits",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "createToolkit",
-      "path": "/toolkits",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Create toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "deleteToolkit",
-      "path": "/toolkits/{toolkit_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Delete toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "getToolkit",
-      "path": "/toolkits/{toolkit_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "Get toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "PATCH",
-      "operation_id": "updateToolkit",
-      "path": "/toolkits/{toolkit_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Update toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listToolkitAgents",
-      "path": "/toolkits/{toolkit_id}/agents",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List agents bound to toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listBindings",
-      "path": "/toolkits/{toolkit_id}/credentials",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List toolkit credential bindings",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "bindCredential",
-      "path": "/toolkits/{toolkit_id}/credentials",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Bind credential to toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "unbindCredential",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Unbind credential from toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listToolkitPermissions",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List binding permission rules",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "PATCH",
-      "operation_id": "patchPermissions",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Patch binding permission rules",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "PUT",
-      "operation_id": "replacePermissions",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Replace binding permission rules",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "POST",
-      "operation_id": "testToolkitPermissions",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "Dry-run permission evaluation",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listKeys",
-      "path": "/toolkits/{toolkit_id}/keys",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List toolkit keys",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "createKey",
-      "path": "/toolkits/{toolkit_id}/keys",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Issue toolkit key (retired)",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "deleteKey",
-      "path": "/toolkits/{toolkit_id}/keys/{key_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Revoke toolkit key",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "PATCH",
-      "operation_id": "updateKey",
-      "path": "/toolkits/{toolkit_id}/keys/{key_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Update toolkit key",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
         "users:read": []
@@ -4578,8 +4078,6 @@
               "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
-              "toolkits:read",
-              "toolkits:write",
               "users:read",
               "users:write"
             ],
@@ -4606,8 +4104,6 @@
               "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
-              "toolkits:read",
-              "toolkits:write",
               "users:read",
               "users:write"
             ],
@@ -4640,41 +4136,12 @@
           },
           {
             "action": "read",
-            "description": "Read capability and toolkit metadata",
+            "description": "Read capability metadata",
             "family": "capabilities",
             "implies": [],
             "implies_transitive": [],
             "is_superuser": false,
             "name": "capabilities:read"
-          }
-        ]
-      },
-      {
-        "blurb": "Toolkit configuration and lifecycle.",
-        "label": "Toolkits",
-        "name": "toolkits",
-        "scopes": [
-          {
-            "action": "read",
-            "description": "Read toolkit configuration and status",
-            "family": "toolkits",
-            "implies": [],
-            "implies_transitive": [],
-            "is_superuser": false,
-            "name": "toolkits:read"
-          },
-          {
-            "action": "write",
-            "description": "Create, update, and delete toolkits",
-            "family": "toolkits",
-            "implies": [
-              "toolkits:read"
-            ],
-            "implies_transitive": [
-              "toolkits:read"
-            ],
-            "is_superuser": false,
-            "name": "toolkits:write"
           }
         ]
       },
@@ -4993,13 +4460,11 @@
             "family": "owner",
             "implies": [
               "owner:agents:read",
-              "owner:credentials:read",
-              "owner:toolkits:read"
+              "owner:credentials:read"
             ],
             "implies_transitive": [
               "owner:agents:read",
-              "owner:credentials:read",
-              "owner:toolkits:read"
+              "owner:credentials:read"
             ],
             "is_superuser": false,
             "name": "owner:resources:read"
@@ -5012,15 +4477,6 @@
             "implies_transitive": [],
             "is_superuser": false,
             "name": "owner:service-accounts:read"
-          },
-          {
-            "action": "read",
-            "description": "Read toolkits owned by the agent's creator",
-            "family": "owner",
-            "implies": [],
-            "implies_transitive": [],
-            "is_superuser": false,
-            "name": "owner:toolkits:read"
           }
         ]
       },
@@ -5159,7 +4615,7 @@
       },
       {
         "action": "read",
-        "description": "Read capability and toolkit metadata",
+        "description": "Read capability metadata",
         "family": "capabilities",
         "implies": [],
         "implies_transitive": [],
@@ -5325,8 +4781,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ],
@@ -5353,8 +4807,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ],
@@ -5407,13 +4859,11 @@
         "family": "owner",
         "implies": [
           "owner:agents:read",
-          "owner:credentials:read",
-          "owner:toolkits:read"
+          "owner:credentials:read"
         ],
         "implies_transitive": [
           "owner:agents:read",
-          "owner:credentials:read",
-          "owner:toolkits:read"
+          "owner:credentials:read"
         ],
         "is_superuser": false,
         "name": "owner:resources:read"
@@ -5426,15 +4876,6 @@
         "implies_transitive": [],
         "is_superuser": false,
         "name": "owner:service-accounts:read"
-      },
-      {
-        "action": "read",
-        "description": "Read toolkits owned by the agent's creator",
-        "family": "owner",
-        "implies": [],
-        "implies_transitive": [],
-        "is_superuser": false,
-        "name": "owner:toolkits:read"
       },
       {
         "action": "read",
@@ -5460,28 +4901,6 @@
       },
       {
         "action": "read",
-        "description": "Read toolkit configuration and status",
-        "family": "toolkits",
-        "implies": [],
-        "implies_transitive": [],
-        "is_superuser": false,
-        "name": "toolkits:read"
-      },
-      {
-        "action": "write",
-        "description": "Create, update, and delete toolkits",
-        "family": "toolkits",
-        "implies": [
-          "toolkits:read"
-        ],
-        "implies_transitive": [
-          "toolkits:read"
-        ],
-        "is_superuser": false,
-        "name": "toolkits:write"
-      },
-      {
-        "action": "read",
         "description": "Read user profiles and permissions",
         "family": "users",
         "implies": [],
@@ -5503,7 +4922,7 @@
         "name": "users:write"
       }
     ],
-    "total": 33
+    "total": 30
   },
-  "total": 200
+  "total": 180
 }

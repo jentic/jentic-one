@@ -30,8 +30,8 @@ function renderAccessTab(route = ROUTE) {
 /**
  * Override the org-wide `GET /credentials` surface for bind-picker tests.
  * The agents module reads it through the shared API; the credentials mock
- * store starts empty, so we stub a small fixture here (same pattern as
- * ToolkitDetailPage.test.tsx — no sibling-module import).
+ * store starts empty, so we stub a small fixture here (no sibling-module
+ * import).
  */
 function seedCredentials(
 	creds: Array<{ credential_id: string; name: string; type: string; vendor: string }>,

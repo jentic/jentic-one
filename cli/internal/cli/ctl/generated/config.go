@@ -305,7 +305,7 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["direct_bindings_enabled"]; !ok || v == nil {
-		plain.DirectBindingsEnabled = false
+		plain.DirectBindingsEnabled = true
 	}
 	if v, ok := raw["resolve_cache_ttl_seconds"]; !ok || v == nil {
 		plain.ResolveCacheTtlSeconds = 3.0

@@ -32,6 +32,5 @@ var SensitiveFields = map[string][]string{
 	"Sigv4CreateRequest":              []string{"secret_access_key", "session_token"},
 	"Sigv4UpdateRequest":              []string{"secret_access_key", "session_token"},
 	"TokenResponse":                   []string{"access_token", "id_token", "refresh_token"},
-	"ToolkitKeyCreateResponse":        []string{"api_key"},
 	"UserCreatedResponse":             []string{"invite_token"},
 }

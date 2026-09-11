@@ -1,10 +1,10 @@
 /**
  * ActorAuditPanel — the "Recent changes" card on the agent / service-account
  * detail Overview tab: a thin, actor-scoped wrapper over the shared
- * {@link AuditTrailCard} (the same card the toolkit console renders, so
+ * {@link AuditTrailCard} (the shared audit card, so
  * "Recent changes" reads identically across consoles). Surfaces the lifecycle
  * trail recorded against this actor as the TARGET (register, approve/deny,
- * disable/enable, key rotation, toolkit grant/revoke).
+ * disable/enable, key rotation, binding grant/revoke).
  *
  * Requires `org:admin` — the repository maps 401/403 to an empty list, so
  * non-admins see the graceful "no entries" state rather than an error.

@@ -24,7 +24,6 @@ import {
 	PermissionsService,
 	ServiceAccountsService,
 	SystemService,
-	ToolkitsService,
 	type AgentResponse,
 	type AuditResponse,
 	type CredentialBindingResponse,
@@ -46,13 +45,11 @@ import {
 	type ApiKeyResult,
 	type CredentialBindingEntity,
 	type InstanceIdentityEntity,
-	type LinkableToolkit,
 	type McpLastSeen,
 	type McpSessionEntity,
 	type OAuthGrantEntity,
 	type PermissionCatalogEntry,
 	type ServiceAccountEntity,
-	type ToolkitBindingEntity,
 } from '@/modules/agents/api/types';
 import { listAccessRequests, type AccessRequest } from '@/shared/lib';
 
@@ -177,114 +174,10 @@ export async function archiveAgent(agentId: string): Promise<void> {
 	}
 }
 
-export async function listAgentToolkits(agentId: string): Promise<ToolkitBindingEntity[]> {
-	try {
-		const res = await AgentsService.listAgentToolkits({ agentId });
-		return res.data.map((b) => ({
-			id: b.id,
-			toolkitId: b.toolkit_id,
-			boundAt: b.bound_at,
-		}));
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load bound toolkits.');
-	}
-}
-
-/**
- * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Reads the
- * org-wide ``GET /toolkits`` surface through the shared API — the agents module
- * must not import the toolkits module (module-boundary rule), so it maps the
- * shared ``ToolkitResponse`` into a small picker shape here.
- *
- * Paginates via ``cursor``/``has_more`` so a workspace with more than one page
- * of toolkits (default page size 50) still lists everything — a hardcoded
- * ``limit`` would silently drop the tail. A hard page cap
- * keeps a runaway/misconfigured backend from looping forever. Kill-switched
- * toolkits are *included* here (``active`` is carried through); the picker
- * itself refuses to select them so a broken binding can't be created — but
- * keeping them in the list lets callers show them as a
- * disabled row with a "suspended" affordance, which is easier to reason about
- * than a silently-missing toolkit.
- *
- * Defensive against a misbehaving backend: we break if a cursor repeats (a
- * pagination loop) and dedupe the accumulated rows by ``toolkitId`` so a page
- * that re-emits an earlier row can't produce duplicate picker entries.
- */
-export async function listLinkableToolkits(): Promise<LinkableToolkit[]> {
-	try {
-		const out: LinkableToolkit[] = [];
-		const seenToolkitIds = new Set<string>();
-		const seenCursors = new Set<string>();
-		let cursor: string | null = null;
-		const MAX_PAGES = 20;
-		for (let page = 0; page < MAX_PAGES; page += 1) {
-			const res = await ToolkitsService.listToolkits({ cursor, limit: 100 });
-			for (const t of res.data) {
-				if (seenToolkitIds.has(t.toolkit_id)) continue;
-				seenToolkitIds.add(t.toolkit_id);
-				out.push({ toolkitId: t.toolkit_id, name: t.name, active: t.active });
-			}
-			if (!res.has_more || !res.next_cursor) break;
-			// A repeated cursor means the backend is looping — stop rather than
-			// re-fetch the same page until MAX_PAGES.
-			if (seenCursors.has(res.next_cursor)) break;
-			seenCursors.add(res.next_cursor);
-			cursor = res.next_cursor;
-		}
-		return out;
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load toolkits.');
-	}
-}
-
-/**
- * Resolve a single toolkit's human name (`GET /toolkits/{id}`). Powers the
- * per-row name lookup on the agent detail page's "Bound toolkits" card: the
- * binding response (`GET /agents/{id}/toolkits`) carries only the toolkit id,
- * so each bound row reads its own name here instead of the whole workspace
- * catalogue paying a paginated sweep on every page load.
- *
- * The name is BEST-EFFORT and purely cosmetic — the row always falls back to
- * the id, and no caller surfaces an error. So any real failure (a since-deleted
- * 404, a transient 5xx, or a network blip) simply returns ``null`` rather than
- * pushing the query into an error state over a display nicety. The ONE
- * exception is an ``AbortError``: React Query throws it to cancel an in-flight
- * request on unmount or key change, so it's re-thrown (not swallowed into a
- * spurious ``null`` result) to let cancellation propagate as intended.
- */
-export async function getToolkitName(toolkitId: string): Promise<string | null> {
-	try {
-		const res = await ToolkitsService.getToolkit({ toolkitId });
-		return res?.name ?? null;
-	} catch (e) {
-		if (e instanceof Error && e.name === 'AbortError') throw e;
-		return null;
-	}
-}
-
-/** Bind a toolkit to an agent (`POST /agents/{id}/toolkits`) — the agent-side
- * mirror of the toolkit page's "Link agent" (#607). */
-export async function bindToolkitToAgent(agentId: string, toolkitId: string): Promise<void> {
-	try {
-		await AgentsService.bindToolkit({ agentId, requestBody: { toolkit_id: toolkitId } });
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to bind the toolkit.');
-	}
-}
-
-/** Unbind a toolkit from an agent (`DELETE /agents/{id}/toolkits/{toolkit_id}`). */
-export async function unbindToolkitFromAgent(agentId: string, toolkitId: string): Promise<void> {
-	try {
-		await AgentsService.unbindToolkit({ agentId, toolkitId });
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to unbind the toolkit.');
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Direct agent↔credential bindings (theme 5 phase 5a).
 //
-// The toolkit-less binding path: `GET/POST /agents/{id}/credentials` +
+// The direct binding path: `GET/POST /agents/{id}/credentials` +
 // suspend/purge/resume, with per-binding permission rules living on the
 // credential-side `/credentials/{cid}/agents/{aid}/permissions` surface.
 // ---------------------------------------------------------------------------
@@ -322,8 +215,8 @@ export async function listAgentCredentialBindings(
  * Bind a credential directly to an agent, with the operator's chosen initial
  * grant.
  *
- * The phase-1 bind body carries ONLY `credential_id` — unlike the toolkit
- * bind, there is no inline `allow_all`/`permissions` field — so the "decide
+ * The phase-1 bind body carries ONLY `credential_id` — there is no inline
+ * `allow_all`/`permissions` field — so the "decide
  * the grant at bind time" wizard composes two calls: the bind, then a rules
  * PUT on the fresh binding. The seam between them is fail-CLOSED: a binding
  * with zero rules default-denies everything, so if the PUT fails the agent
@@ -399,11 +292,10 @@ export async function resumeAgentCredentialBinding(
 }
 
 /**
- * Candidate credentials for the agent-side "Bind credential" picker — the
- * direct-binding mirror of `listLinkableToolkits`. Reads the org-wide
- * `GET /credentials` surface through the shared API (the agents module must
- * not import the credentials page module) and projects to the minimal picker
- * shape, matching the toolkit bind picker's projection field-for-field.
+ * Candidate credentials for the agent-side "Bind credential" picker. Reads the
+ * org-wide `GET /credentials` surface through the shared API (the agents
+ * module must not import the credentials page module) and projects to the
+ * minimal picker shape.
  */
 export async function listBindableCredentialsForAgent(): Promise<AgentBindableCredential[]> {
 	try {
@@ -459,7 +351,7 @@ export async function replaceAgentBindingPermissions(
 
 /**
  * Broker dry-run against one direct binding's SAVED rules
- * (`POST …/permissions:test`). Unlike the toolkit `:test` there is no vendor
+ * (`POST …/permissions:test`). There is no vendor
  * pooling — the verdict is exactly this binding's first-match-wins policy.
  */
 export async function testAgentBindingPermissions(
@@ -906,7 +798,12 @@ export async function fetchActorUsageDetail(
 export interface ActorExecutionEntity {
 	id: string;
 	status: string;
-	/** Nullable-legacy: direct-binding executions carry no toolkit. */
+	/** The credential the broker injected (direct-binding path); null for
+	 * rows that predate direct bindings. */
+	credentialId: string | null;
+	credentialName: string | null;
+	/** Legacy toolkit attribution — read-only historical data (rows recorded
+	 * before toolkits were retired); direct-binding executions carry null. */
 	toolkitId: string | null;
 	toolkitName: string | null;
 	operationId: string | null;
@@ -932,6 +829,8 @@ export async function fetchActorExecutions(
 			items: res.data.map((r) => ({
 				id: r.execution_id,
 				status: r.status,
+				credentialId: r.credential_id ?? null,
+				credentialName: r.credential_name ?? null,
 				toolkitId: r.toolkit_id ?? null,
 				toolkitName: r.toolkit_name ?? null,
 				operationId: r.operation_id ?? null,
@@ -983,8 +882,7 @@ export type ActorAuditEntry = AuditResponse;
 /**
  * Actor-scoped audit entries — the lifecycle trail recorded against this
  * agent / service account as the TARGET (register, approve/deny, disable/
- * enable, key rotation, toolkit grant/revoke). Mirrors the toolkit console's
- * `listToolkitAudit`. Requires `org:admin`; 401/403 map to an empty list so
+ * enable, key rotation, binding grant/revoke). Requires `org:admin`; 401/403 map to an empty list so
  * the "Recent changes" panel degrades gracefully for non-admins.
  */
 export async function listActorAudit(

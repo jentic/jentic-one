@@ -10,7 +10,7 @@
  * running backend on :8000. The repository tier (`client.ts`) is the single
  * place that casts the generated `any` into these shapes.
  *
- * Scope: APIs only. Workflows, credentials, and toolkits belong to other
+ * Scope: APIs only. Credentials and agents belong to other
  * modules and are intentionally absent here.
  */
 

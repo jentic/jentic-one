@@ -84,6 +84,8 @@ function passesFilters(ev: StreamEvent, f: RailFeedFilters): boolean {
 			ev.title,
 			ev.meta ?? '',
 			ev.type,
+			ev.tokens.credential_id ?? '',
+			// Historical events may still carry toolkit attribution.
 			ev.tokens.toolkit_id ?? '',
 			ev.tokens.operation_id ?? '',
 			ev.tokens.trace_id ?? '',

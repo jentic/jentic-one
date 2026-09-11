@@ -117,7 +117,7 @@ export function AccessRequestDialog({
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	// Items the operator APPROVED but the server could not fulfill (it denies them
-	// with a reason — e.g. "No toolkit serves API … provision and bind a
+	// with a reason — e.g. "No credential serves API … provision and bind a
 	// credential first"). The server's `:decide` response is authoritative, so we
 	// surface these instead of falsely reporting "Access granted".
 	const [blocked, setBlocked] = useState<{ label: string; reason: string }[]>([]);
@@ -284,7 +284,7 @@ export function AccessRequestDialog({
 
 			// The server is authoritative and can override an "approved" verdict to
 			// "denied" when the target can't be fulfilled as filed (e.g. a
-			// toolkit.bind whose toolkit/credential doesn't exist yet). Read the
+			// credential:bind whose credential doesn't exist yet). Read the
 			// returned items rather than trusting our own draft, so the terminal
 			// screen reflects what actually happened — and carries the reason back.
 			const actedIds = new Set(decisions.map((d) => d.item_id));

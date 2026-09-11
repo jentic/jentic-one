@@ -7,11 +7,11 @@
  */
 export type PermissionTestResponse = {
     /**
-     * Whether the broker would allow this request under the pooled rules.
+     * Whether the broker would allow this request under the binding's rules.
      */
     allowed: boolean;
     /**
-     * Which binding contributed the matching rule — vendor pooling means this may not equal the credential in the request URL.
+     * The binding whose rule list contributed the matching rule.
      */
     credential_id?: (string | null);
     /**
@@ -27,7 +27,7 @@ export type PermissionTestResponse = {
      */
     matched: boolean;
     /**
-     * Zero-based index in the vendor-pooled rule list; null when no match.
+     * Zero-based index in the binding's ordered rule list; null when no match.
      */
     rule_index?: (number | null);
 };

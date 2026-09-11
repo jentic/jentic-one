@@ -2,12 +2,12 @@
  * Agent detail page — the identity console for a single agent at
  * `/agents/:agentId` (router `basename` adds the `/app` prefix).
  *
- * Layout mirrors the toolkit console exactly: a shared `PageHeader` band (the
+ * Layout: a shared `PageHeader` band (the
  * agent's badge as icon, its name as title, its own description as subtitle,
  * with the kill switch for the reversible active/disabled flip plus the
  * constructive Approve / Deny actions in the header action slot), a back row,
  * a denial banner when rejected, the KPI strip, then six tab panels:
- *   - Overview  → attribution meta + bound toolkits + audit slice
+ *   - Overview  → attribution meta + audit slice
  *   - Activity  → this agent's execution volume + recent executions
  *                 (GET /monitoring/usage?agent_id=…, GET /executions?actor_id=…)
  *                 with a pre-filtered "Open Monitor" deep-link
@@ -51,7 +51,7 @@ import {
 import { cn, formatTimestamp } from '@/shared/lib/utils';
 import {
 	useAgent,
-	useAgentToolkits,
+	useAgentCredentialBindings,
 	useActorUsageDetail,
 	useActorExecutions,
 	useApproveAgent,
@@ -80,7 +80,6 @@ import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel'
 import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPanel';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
-import { BoundToolkitsCard } from '@/modules/agents/components/detail/BoundToolkitsCard';
 import { BoundCredentialsCard } from '@/modules/agents/components/detail/BoundCredentialsCard';
 import { McpPanel } from '@/modules/agents/components/detail/McpPanel';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
@@ -88,7 +87,7 @@ import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'mcp', 'settings'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
-/** Tab options for the console shell — same icon grammar as the toolkit console. */
+/** Tab options for the console shell. */
 const TAB_OPTIONS: TabNavOption<DetailTab>[] = [
 	{ value: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
 	{ value: 'activity', label: 'Activity', icon: <ActivityIcon className="h-4 w-4" /> },
@@ -115,7 +114,9 @@ export default function AgentDetailPage() {
 	const activeTab: DetailTab = isDetailTab(tabParam) ? tabParam : 'overview';
 
 	const agentQuery = useAgent(id);
-	const toolkits = useAgentToolkits(id);
+	// Bound-credential count for the KPI strip (the full card lives on the
+	// Access tab); suspended rows included — a suspended binding still exists.
+	const credentialBindings = useAgentCredentialBindings(id);
 	// KPI-strip enrichment (admin-gated; resolves null on 403 — see hooks).
 	const usage = useActorUsageDetail(id);
 	const executions = useActorExecutions(id);
@@ -129,9 +130,8 @@ export default function AgentDetailPage() {
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
 
 	function setTab(tab: string) {
-		// Pushed (not replaced) so the browser back button walks tabs — same
-		// contract as the toolkit console; the back link below is static for
-		// exactly that reason.
+		// Pushed (not replaced) so the browser back button walks tabs; the
+		// back link below is static for exactly that reason.
 		setSearchParams(
 			(prev) => {
 				const next = new URLSearchParams(prev);
@@ -184,7 +184,7 @@ export default function AgentDetailPage() {
 
 	const agent = agentQuery.data;
 	// The identity header offers the kill switch for the reversible
-	// active/disabled flip (same control as the toolkit console) plus the
+	// active/disabled flip plus the
 	// constructive actions (Approve / Deny); the terminal Archive lives in
 	// the Settings tab's danger zone. `enable`/`disable` never render as
 	// header buttons — the kill switch owns that verb pair.
@@ -226,10 +226,10 @@ export default function AgentDetailPage() {
 
 	return (
 		<PageShell>
-			{/* Same header grammar as the toolkit console: badge as the icon,
-			    the agent's own description as subtitle, status pinned beside the
-			    constructive lifecycle actions. No second identity card below —
-			    the header IS the identity surface. */}
+			{/* Badge as the icon, the agent's own description as subtitle,
+			    status pinned beside the constructive lifecycle actions. No
+			    second identity card below — the header IS the identity
+			    surface. */}
 			<PageHeader
 				title={agent.name}
 				subtitle={agent.description ?? undefined}
@@ -248,8 +248,8 @@ export default function AgentDetailPage() {
 				actions={
 					<>
 						{killSwitchStatus ? (
-							// Same reversible suspend/restore control as the toolkit
-							// header — disable/enable is the agent's kill switch.
+							// Reversible suspend/restore control —
+							// disable/enable is the agent's kill switch.
 							<KillSwitch
 								active={agent.status === 'active'}
 								pending={disable.isPending || enable.isPending}
@@ -297,8 +297,7 @@ export default function AgentDetailPage() {
 				</AppLink>
 			</div>
 
-			{/* Denial banner — the same full-width alert grammar as the toolkit
-			    console's suspended banner. */}
+			{/* Denial banner — full-width alert grammar. */}
 			{agent.status === 'rejected' && (
 				<div
 					className="border-danger/40 bg-danger/5 flex items-start gap-3 rounded-xl border p-4"
@@ -323,11 +322,11 @@ export default function AgentDetailPage() {
 				</div>
 			)}
 
-			{/* 7-day vitals — StatCard grid like the toolkit console (hidden on 403). */}
+			{/* 7-day vitals — StatCard grid (hidden on 403). */}
 			<KpiStrip
 				usage={usage.data}
 				lastActivityAt={lastActivityAt}
-				toolkitCount={toolkits.data?.length}
+				credentialCount={credentialBindings.data?.length}
 			/>
 
 			<TabNav<DetailTab>
@@ -393,9 +392,8 @@ export default function AgentDetailPage() {
 								) : null}
 							</dl>
 						</DetailSection>
-						<BoundToolkitsCard agentId={agent.id} agentStatus={agent.status} />
-						{/* Actor-scoped audit slice — same "Recent changes" grammar as
-						    the toolkit console (admin only; empty for non-admins). */}
+						{/* Actor-scoped audit slice — the "Recent changes" panel
+						    (admin only; empty for non-admins). */}
 						<ActorAuditPanel actorKind="agent" actorId={agent.id} />
 					</>
 				)}
