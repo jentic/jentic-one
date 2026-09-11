@@ -90,20 +90,22 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 			<div className="pointer-events-none relative flex items-center gap-3">
 				<AgentBadge id={vendor} name={vendor} kind="API" size="lg" className="rounded-xl" />
 				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<h3 className="font-heading text-foreground min-w-0 flex-1 truncate text-sm font-semibold">
-							{title}
-						</h3>
-						{connected && (
-							<Badge variant="success" className="shrink-0">
-								Connected
-							</Badge>
-						)}
-						<CredentialTypeBadge credential={cred} />
-					</div>
+					{/* Title gets the full row — badges used to sit inline
+					    (``truncate`` on the h3, ``shrink-0`` on the pills)
+					    and a long OAuth 2.0 · Authorization Code label
+					    dominated the space, ellipsising the name a user is
+					    trying to read. Chips move onto their own row below
+					    so the name is the visual anchor. */}
+					<h3 className="font-heading text-foreground truncate text-base font-semibold">
+						{title}
+					</h3>
 					<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
 						{formatApiReference(cred.api)}
 					</p>
+					<div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+						{connected && <Badge variant="success">Connected</Badge>}
+						<CredentialTypeBadge credential={cred} />
+					</div>
 				</div>
 			</div>
 

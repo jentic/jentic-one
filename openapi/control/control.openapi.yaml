@@ -13399,6 +13399,83 @@ paths:
       summary: Poll a connect session's status
       tags:
       - integrations
+  /connect-sessions/{session_id}:cancel:
+    post:
+      description: |-
+        Terminate a still-active session at the user's request.
+
+        Gated by the same ``poll_token`` capability as ``/status`` — the
+        SPA already holds it, so we don't force the caller to bring a
+        heavier scope than the poller endpoint they're already using.
+        Idempotent: an already-terminal (or already-cleaned-up) session is
+        a 204 no-op so a "Cancel" click during a race with the poll scanner
+        doesn't error.
+      operationId: cancelConnectSession
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+      - description: Opaque poll capability
+        in: query
+        name: poll_token
+        required: true
+        schema:
+          description: Opaque poll capability
+          title: Poll Token
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Cancel an in-flight connect session
+      tags:
+      - integrations
   /connect-sessions/{session_id}:confirm:
     post:
       description: Called by the review page after the human confirms selections.

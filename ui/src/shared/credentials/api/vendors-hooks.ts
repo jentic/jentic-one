@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import {
+	cancelConnectSession,
 	confirmConnectSession,
 	getConnectSession,
 	getVendorAuthCapabilities,
@@ -122,6 +123,24 @@ export function useStartAndConfirmVendorConnect() {
 			// A pending credential row exists on the backend from the moment
 			// `:connect` returns — surface it in the credentials list right
 			// away so the user can see the pending state.
+			void client.invalidateQueries({ queryKey: ['credentials'] });
+		},
+	});
+}
+
+/**
+ * Cancel an in-flight connect session (Cancel button, dialog dismiss,
+ * unmount cleanup while phase != terminal). Idempotent by construction
+ * — the ``:cancel`` route no-ops on already-terminal sessions — so
+ * callers can fire this without state-guarding it themselves.
+ */
+export function useCancelConnectSession() {
+	const client = useQueryClient();
+	return useMutation<void, Error, { sessionId: string; pollToken: string }>({
+		mutationFn: ({ sessionId, pollToken }) => cancelConnectSession(sessionId, pollToken),
+		onSuccess: () => {
+			// The credential + session are cascade-deleted on the backend;
+			// invalidate so the credentials list drops the stale row.
 			void client.invalidateQueries({ queryKey: ['credentials'] });
 		},
 	});
