@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import Field
 
@@ -34,8 +34,13 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.state import StateError, decode_state
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
 from jentic_one.control.web.deps import (
     get_connect_service,
+    get_connect_session_service,
     get_credential_service,
 )
 from jentic_one.control.web.schemas.credentials import (
@@ -241,10 +246,12 @@ def _oauth_callback_error() -> RedirectResponse:
 
 @router.get("/credentials/oauth/callback", summary="OAuth connect callback")
 async def oauth_callback(
+    request: Request,
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
     svc: ConnectService = Depends(get_connect_service),
+    session_svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> Response:
     """Handle the OAuth callback from the IdP.
 
@@ -278,6 +285,35 @@ async def oauth_callback(
             error=error,
         )
         return _oauth_callback_error()
+
+    # Peek the state to see if this callback belongs to a connect-session
+    # (agent-driven integration flow). The `sid` claim is set by
+    # AuthCodeFlowHandler.begin — its presence routes completion to
+    # ConnectSessionService.complete_from_callback instead of the
+    # standalone-credential path.
+    ctx = request.app.state.ctx
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    session_id: str | None = None
+    try:
+        session_id = decode_state(state_secret, state).session_id
+    except StateError:
+        # Fall through to the standard path — it'll re-verify + surface the
+        # canonical error.
+        session_id = None
+
+    if session_id is not None:
+        if error or not code:
+            await session_svc.mark_terminal_from_callback(session_id, error or "no_code_returned")
+            return _oauth_callback_error()
+        try:
+            await session_svc.complete_from_callback(session_id=session_id, code=code)
+        except Exception as exc:
+            _logger.warning(
+                "oauth_callback.connect_session_error", session_id=session_id, error=str(exc)
+            )
+            return _oauth_callback_error()
+        _logger.info("oauth_callback.connect_session.connected", session_id=session_id)
+        return _oauth_callback_success()
 
     callback = ConnectCallback(code=code, error=error)
 

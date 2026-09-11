@@ -8,6 +8,7 @@ Flow-specific transient state lives on auxiliary tables keyed by
 from __future__ import annotations
 
 from sqlalchemy import ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -52,6 +53,11 @@ class ConnectSession(AuditableMixin, ControlBase):
     # Actually used for the connect. Selects which aux table holds flow state.
     resolved_flow: Mapped[str] = mapped_column(String(50), nullable=False)
     reason: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # As-requested scope list from the initiator. Session-scoped state (not
+    # flow-specific), so it lives on the session row rather than an aux
+    # table — that keeps ``get_review_data`` flow-agnostic. Nullable to
+    # allow older rows created before this column landed.
+    requested_scopes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, default=list)
     # Identity echo result (e.g. "@octocat"); set on `connected`.
     connected_as: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Terminal failure code (see `error-taxonomy` — machine-readable slug).

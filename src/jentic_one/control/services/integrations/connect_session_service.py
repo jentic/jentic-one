@@ -1,10 +1,12 @@
 """ConnectSessionService — orchestrates the agent-driven integration flow.
 
-Owns the state machine on `connect_sessions`; delegates flow-specific vendor
-calls to `device_flow.py` and identity resolution to `identity_echo.py`.
-
-Phase 1 wires up device flow only. Authorization-code flow uses the existing
-`DirectOAuth2Provider` path elsewhere.
+Owns the flow-agnostic state machine on ``connect_sessions`` and the
+finalise / identity-echo / catalog-auto-import sequence. Delegates every
+flow-specific bit (storage setup, vendor conversation, status probing,
+transient cleanup) to ``AuthFlowHandler`` implementations under
+``flow_handlers/``. The callback-only ``complete_from_callback`` path is
+called on the concrete ``AuthCodeFlowHandler`` from
+``complete_from_callback`` below — no Protocol lie.
 """
 
 from __future__ import annotations
@@ -16,17 +18,12 @@ from datetime import UTC, datetime, timedelta
 import structlog
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
-from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.device_flow_credentials import DeviceFlowCredential
 from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
 from jentic_one.control.repos.agent_credential_permission_repo import (
     AgentCredentialPermissionRepository,
 )
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
-from jentic_one.control.repos.device_flow_credential_repo import (
-    DeviceFlowCredentialRepository,
-)
-from jentic_one.control.services.integrations import device_flow, identity_echo
+from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
     InvalidPollTokenError,
@@ -35,15 +32,19 @@ from jentic_one.control.services.integrations.errors import (
     ScopeValidationError,
     SessionNotFoundError,
 )
+from jentic_one.control.services.integrations.flow_handlers import (
+    AuthCodeFlowHandler,
+    AuthFlowHandler,
+    handler_for,
+)
+from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
 from jentic_one.control.services.vendors.service import (
     ResolvedScope,
     VendorRegistryService,
 )
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
-from jentic_one.shared.config import VendorDeviceFlowConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.api_identity import canonical_credential_scope
-from jentic_one.shared.models.credentials import StoredCredentialType
 
 _logger = structlog.get_logger(__name__)
 
@@ -84,10 +85,22 @@ class ReviewData:
 
 @dataclass(slots=True, frozen=True)
 class ConfirmResult:
-    user_code: str | None
-    verification_uri: str | None
-    verification_uri_complete: str | None
-    poll_interval_seconds: int | None
+    """Discriminated on ``kind`` — clients branch on that, not field presence.
+
+    Only the fields relevant to the discriminated variant are populated;
+    the others stay ``None``. The wire layer serialises this into
+    ``ConfirmSessionResponse``, which carries the same discriminator so a
+    generated client type stays as a proper tagged union.
+    """
+
+    kind: str  # "device_flow" | "authorization_code"
+    # Device-flow branch (RFC 8628).
+    user_code: str | None = None
+    verification_uri: str | None = None
+    verification_uri_complete: str | None = None
+    poll_interval_seconds: int | None = None
+    # Auth-code branch — browser redirect target.
+    authorize_url: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -146,28 +159,22 @@ def _verify_poll_token(row: ConnectSession, token: str) -> None:
         raise InvalidPollTokenError("poll_token mismatch")
 
 
-def _should_poll_now(dfc: DeviceFlowCredential | None) -> bool:
-    """Rate-limit the vendor poll to at most once per `poll_interval_seconds`."""
-    if dfc is None or dfc.poll_interval_seconds is None:
-        return True
-    if dfc.last_polled_at is None:
-        return True
-    elapsed = (datetime.now(UTC) - dfc.last_polled_at).total_seconds()
-    return elapsed >= dfc.poll_interval_seconds
-
-
 def _terminal_status(
     row: ConnectSession,
-    credential: Credential | None,
-    dfc: DeviceFlowCredential | None,
+    bound_scopes: list[str] | None,
 ) -> StatusResult:
-    """Serialise a terminal session back to a StatusResult."""
+    """Serialise a terminal session back to a StatusResult.
+
+    ``bound_scopes`` comes from the flow-agnostic ``oauth_token.scope``
+    column (populated by ``_finalise_connected`` from
+    ``SuccessTokens.granted_scopes``) — same source, both flows.
+    """
     if row.state == "connected":
         return StatusResult(
             status="connected",
             connected_as=row.connected_as,
             credential_id=row.credential_id,
-            bound_scopes=(dfc.granted_scopes if dfc else None),
+            bound_scopes=bound_scopes,
         )
     return StatusResult(
         status=row.state,
@@ -214,10 +221,11 @@ class ConnectSessionService:
         entry = self._vendors.get(vendor_key)
         flow = self._vendors.resolve_flow(vendor_key, preferred_flow)
 
-        if not isinstance(flow, VendorDeviceFlowConfig):
-            # Phase 1 only wires device flow. Other flow kinds can still be
-            # inspected via /vendors/{vendor}/auth-capabilities.
-            raise NoOpForFlowError(flow.kind)
+        try:
+            handler_cls = handler_for(flow.kind)
+        except KeyError as exc:
+            raise NoOpForFlowError(flow.kind) from exc
+        handler = handler_cls(self._ctx)
 
         poll_token = secrets.token_urlsafe(32)
 
@@ -240,21 +248,19 @@ class ConnectSessionService:
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
                 session,
-                type=StoredCredentialType.OAUTH2_DEVICE_CODE.value,
+                type=handler.stored_type.value,
                 name=f"{entry.display_name} ({agent_id})",
                 api_vendor=api_scope.vendor,
                 api_name=api_scope.name,
                 catalog_api_id=entry.vendor,
                 created_by=initiator_actor_id,
-                provider="device_flow",
+                provider=handler.provider_id,
                 state="pending",
             )
-            await DeviceFlowCredentialRepository.create(
+            await handler.prepare(
                 session,
                 credential_id=credential.id,
-                client_id=flow.client_id,
-                token_url=flow.token_endpoint,
-                authorization_endpoint=flow.authorization_endpoint,
+                flow=flow,
                 requested_scopes=requested_scopes or [],
                 created_by=initiator_actor_id,
             )
@@ -267,6 +273,7 @@ class ConnectSessionService:
                 state="created",
                 resolved_flow=flow.kind,
                 poll_token=poll_token,
+                requested_scopes=requested_scopes or [],
                 preferred_flow=preferred_flow,
                 reason=reason,
                 created_by=initiator_actor_id,
@@ -304,19 +311,19 @@ class ConnectSessionService:
     async def get_review_data(self, session_id: str) -> ReviewData:
         """Return everything the review page needs to render.
 
-        The scope list is the union of the vendor's catalog with the initiator's
-        as-requested list — flagged so the UI can highlight write scopes the
-        agent asked for.
+        The scope list is the union of the vendor's catalog with the
+        initiator's as-requested list — flagged so the UI can highlight
+        write scopes the agent asked for. ``requested_scopes`` lives on the
+        session row itself (flow-agnostic), so this method never needs to
+        reach into a flow-specific aux table.
         """
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
             if row is None:
                 raise SessionNotFoundError(session_id)
-            dfc = await DeviceFlowCredentialRepository.get_by_credential(session, row.credential_id)
 
         entry = self._vendors.get(row.vendor)
-        requested = dfc.requested_scopes if dfc else []
-        resolved = self._vendors.merge_scopes(row.vendor, requested)
+        resolved = self._vendors.merge_scopes(row.vendor, row.requested_scopes or [])
         return ReviewData(
             session_id=row.id,
             state=row.state,
@@ -349,35 +356,23 @@ class ConnectSessionService:
         _require_state(row, expected="created", action="confirm")
 
         flow = self._vendors.resolve_flow(row.vendor, row.resolved_flow)
-        if not isinstance(flow, VendorDeviceFlowConfig):
-            raise NoOpForFlowError(flow.kind)
+        try:
+            handler_cls = handler_for(flow.kind)
+        except KeyError as exc:
+            raise NoOpForFlowError(flow.kind) from exc
+        handler = handler_cls(self._ctx)
 
         unknown = self._vendors.validate_scopes(row.vendor, confirmed_scopes)
         if unknown:
             raise ScopeValidationError(unknown)
 
-        # Talk to the vendor OUTSIDE the DB transaction — network latency has
-        # no business holding a control-DB row lock.
-        begin = await device_flow.begin_device_flow(
-            authorization_endpoint=flow.authorization_endpoint,
-            client_id=flow.client_id,
-            scopes=confirmed_scopes,
-        )
-        encrypted_device_code = self._ctx.encryption.encrypt(begin.device_code)
-        expires_at = datetime.now(UTC) + timedelta(seconds=begin.expires_in)
+        # The handler owns the vendor conversation + any flow-specific
+        # transient-state write (device_code + expires_at for RFC 8628; the
+        # signed state token for auth-code). We only own the flow-agnostic
+        # state machine + permission-rule capture below.
+        challenge = await handler.begin(row, flow=flow, confirmed_scopes=confirmed_scopes)
 
         async with self._ctx.control_db.transaction() as session:
-            await DeviceFlowCredentialRepository.set_transient_state(
-                session,
-                row.credential_id,
-                encrypted_device_code=encrypted_device_code,
-                user_code=begin.user_code,
-                verification_uri=begin.verification_uri,
-                verification_uri_complete=begin.verification_uri_complete,
-                poll_interval_seconds=begin.interval,
-                device_code_expires_at=expires_at,
-                granted_scopes=confirmed_scopes,
-            )
             # Persist proposed permission rules against the (agent, credential)
             # pair. Broker won't read this yet (theme-5 pending), but the row
             # is the durable capture of what the human approved.
@@ -394,124 +389,118 @@ class ConnectSessionService:
             "connect_session.confirmed",
             session_id=row.id,
             vendor=row.vendor,
+            resolved_flow=row.resolved_flow,
             confirmed_scopes=confirmed_scopes,
             rules_count=len(permission_rules),
         )
+        if challenge.kind == "device_flow":
+            return ConfirmResult(
+                kind="device_flow",
+                user_code=challenge.user_code,
+                verification_uri=challenge.verification_uri,
+                verification_uri_complete=challenge.verification_uri_complete,
+                poll_interval_seconds=challenge.poll_interval_seconds,
+            )
         return ConfirmResult(
-            user_code=begin.user_code,
-            verification_uri=begin.verification_uri,
-            verification_uri_complete=begin.verification_uri_complete,
-            poll_interval_seconds=begin.interval,
+            kind="authorization_code",
+            authorize_url=challenge.authorize_url,
         )
 
-    # ---- status / poll ----------------------------------------------------
+    # ---- status --------------------------------------------------------
 
-    async def poll_status(
+    async def get_status(
         self,
         session_id: str,
         *,
         poll_token: str,
     ) -> StatusResult:
-        """Return current status, lazy-polling the vendor at most once per interval."""
+        """Return the session's current status.
+
+        Delegates the "how do we know?" question to the handler — device
+        flow polls the vendor upstream, auth-code returns pending and waits
+        for the callback route to drive completion. Terminal states are
+        served from stored state without touching the handler at all.
+        """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
             if row is None:
                 raise SessionNotFoundError(session_id)
             _verify_poll_token(row, poll_token)
-            dfc = await DeviceFlowCredentialRepository.get_by_credential(
-                read_session, row.credential_id
-            )
-            credential = await CredentialRepository.get_by_id(read_session, row.credential_id)
 
-        # Terminal states are immutable — return them without touching the vendor.
+        try:
+            handler_cls = handler_for(row.resolved_flow)
+        except KeyError as exc:
+            raise NoOpForFlowError(row.resolved_flow) from exc
+        handler = handler_cls(self._ctx)
+
+        # Terminal states are immutable — return them without touching the
+        # handler. bound_scopes comes off ``oauth_token.scope`` — a single
+        # flow-agnostic column that ``_finalise_connected`` populates from
+        # ``SuccessTokens.granted_scopes`` for both flows.
         if row.state in ("connected", "expired", "failed"):
-            return _terminal_status(row, credential, dfc)
+            return _terminal_status(row, await self._bound_scopes(row))
 
         if row.state != "polling":
             # `created` = confirm not called yet; report as pending so the
             # agent knows to wait on the human.
             return StatusResult(status="pending")
 
-        # Session TTL guard.
+        # Session TTL guard (flow-agnostic).
         session_age = (datetime.now(UTC) - row.created_at).total_seconds()
         if session_age > _SESSION_TTL_SECONDS:
             await self._mark_terminal(row.id, "expired", "session TTL exceeded")
             return StatusResult(status="expired", error_code="session_expired")
 
-        # Device-code TTL guard (vendor-supplied).
-        if (
-            dfc is not None
-            and dfc.device_code_expires_at is not None
-            and datetime.now(UTC) >= dfc.device_code_expires_at
-        ):
-            await self._mark_terminal(row.id, "expired", "device_code expired")
-            return StatusResult(status="expired", error_code="device_code_expired")
-
-        # Lazy poll: skip the vendor call if we've polled within the interval.
-        if not _should_poll_now(dfc):
+        report = await handler.status(row)
+        if report.kind == "pending":
             return StatusResult(status="pending")
-
-        return await self._poll_vendor_and_advance(row, dfc)
-
-    async def _poll_vendor_and_advance(
-        self,
-        row: ConnectSession,
-        dfc: DeviceFlowCredential | None,
-    ) -> StatusResult:
-        """Do one vendor poll and advance the state machine accordingly."""
-        assert dfc is not None
-        assert dfc.encrypted_device_code is not None
-
-        device_code = self._ctx.encryption.decrypt(dfc.encrypted_device_code)
-        result = await device_flow.poll_device_flow(
-            token_endpoint=dfc.token_url,
-            client_id=dfc.client_id,
-            device_code=device_code,
+        if report.kind == "success":
+            assert report.tokens is not None
+            return await self._finalise_connected(row, handler, report.tokens)
+        # Terminal (failed / expired) — persist + report.
+        await self._mark_terminal(
+            row.id,
+            report.kind,
+            report.terminal_detail or report.error_code or report.kind,
+            error_code=report.error_code,
         )
+        return StatusResult(status=report.kind, error_code=report.error_code)
 
-        now = datetime.now(UTC)
-        async with self._ctx.control_db.transaction() as session:
-            await DeviceFlowCredentialRepository.mark_polled(session, row.credential_id, now)
+    async def _bound_scopes(self, row: ConnectSession) -> list[str] | None:
+        """Read ``oauth_token.scope`` for a terminal session (flow-agnostic).
 
-        if result.status == "pending":
-            return StatusResult(status="pending")
-        if result.status == "slow_down":
-            # RFC 8628 §3.5 — widen the interval by 5s for future polls.
-            async with self._ctx.control_db.transaction() as session:
-                await DeviceFlowCredentialRepository.update_fields(
-                    session,
-                    row.credential_id,
-                    poll_interval_seconds=(dfc.poll_interval_seconds or 5) + 5,
-                )
-            return StatusResult(status="pending")
-        if result.status == "denied":
-            await self._mark_terminal(row.id, "failed", "access_denied", error_code="access_denied")
-            return StatusResult(status="failed", error_code="access_denied")
-        if result.status == "expired":
-            await self._mark_terminal(
-                row.id, "expired", "expired_token", error_code="expired_token"
-            )
-            return StatusResult(status="expired", error_code="expired_token")
-
-        # success
-        assert result.access_token is not None
-        return await self._finalise_connected(row, dfc, result)
+        Populated by ``_finalise_connected`` from ``SuccessTokens.granted_scopes``.
+        Absent for non-``connected`` terminal states (failed / expired) — the
+        service was never reached to write it — which is the right answer.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            token = await OAuthTokenRepository.get_by_credential(read_session, row.credential_id)
+        if token is None or not token.scope:
+            return None
+        return token.scope.split()
 
     async def _finalise_connected(
         self,
         row: ConnectSession,
-        dfc: DeviceFlowCredential,
-        result: device_flow.PollResult,
+        handler: AuthFlowHandler,
+        tokens: SuccessTokens,
     ) -> StatusResult:
-        """Vault token, echo identity, mark credential connected, close the session."""
-        assert result.access_token is not None
+        """Vault token, echo identity, mark credential connected, close the session.
+
+        Flow-agnostic — the handler's ``on_finalise`` runs inside the same txn
+        so any transient aux-table state gets cleared atomically with the
+        credential flip to ``connected``. ``bound_scopes`` gets written to
+        ``oauth_token.scope`` from the handler-supplied
+        ``SuccessTokens.granted_scopes`` — terminal readback is uniform
+        across flows.
+        """
         entry = self._vendors.get(row.vendor)
 
         # Identity echo — outside the DB transaction (external HTTP).
         try:
             echo = await identity_echo.echo_identity(
                 probe=entry.identity_probe,
-                access_token=result.access_token,
+                access_token=tokens.access_token,
             )
             connected_as = echo.display
         except identity_echo.IdentityEchoError as exc:
@@ -524,11 +513,20 @@ class ConnectSessionService:
             return StatusResult(status="failed", error_code="identity_echo_failed")
 
         expires_at = (
-            datetime.now(UTC) + timedelta(seconds=result.expires_in) if result.expires_in else None
+            datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
         )
-        encrypted_access = self._ctx.encryption.encrypt(result.access_token)
+        encrypted_access = self._ctx.encryption.encrypt(tokens.access_token)
         encrypted_refresh = (
-            self._ctx.encryption.encrypt(result.refresh_token) if result.refresh_token else None
+            self._ctx.encryption.encrypt(tokens.refresh_token) if tokens.refresh_token else None
+        )
+
+        # ``granted_scopes`` is the flow-agnostic "what did the human end
+        # up with" list — device flow supplies the confirmed set (vendor's
+        # ``scope`` field is unreliable there), auth-code supplies what the
+        # server actually granted. Persist it verbatim onto
+        # ``oauth_token.scope`` so terminal readback is one column, both flows.
+        scope_to_persist = (
+            " ".join(tokens.granted_scopes) if tokens.granted_scopes else tokens.scope
         )
 
         async with self._ctx.control_db.transaction() as session:
@@ -538,10 +536,10 @@ class ConnectSessionService:
                 encrypted_access_token=encrypted_access,
                 encrypted_refresh_token=encrypted_refresh,
                 expires_at=expires_at,
-                scope=result.scope,
+                scope=scope_to_persist,
                 created_by=row.initiator_actor_id,
             )
-            await DeviceFlowCredentialRepository.clear_transient(session, row.credential_id)
+            await handler.on_finalise(session, credential_id=row.credential_id)
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
             if credential is not None:
                 credential.state = "connected"
@@ -575,11 +573,14 @@ class ConnectSessionService:
                 initiator_actor_id=row.initiator_actor_id,
             )
 
+        # ``granted_scopes`` is flow-specific — see SuccessTokens: device
+        # flow reports the user's confirmed list, auth-code reports what the
+        # server actually granted.
         return StatusResult(
             status="connected",
             connected_as=connected_as,
             credential_id=row.credential_id,
-            bound_scopes=dfc.granted_scopes or [],
+            bound_scopes=tokens.granted_scopes,
         )
 
     async def _mark_terminal(
@@ -605,3 +606,55 @@ class ConnectSessionService:
             if credential is not None and credential.state == "pending":
                 credential.state = "failed"
                 await session.flush()
+
+    # ---- redirect-based (auth-code / MCP) completion ----------------------
+
+    async def mark_terminal_from_callback(self, session_id: str, error: str) -> None:
+        """Mark a session ``failed`` from a callback landing that carried no
+        usable code (vendor returned ``error`` or dropped ``code`` entirely).
+
+        Public-surface wrapper around ``_mark_terminal`` so the callback
+        router doesn't need to reach into a private method.
+        """
+        await self._mark_terminal(session_id, "failed", error, error_code="callback_error")
+
+    async def complete_from_callback(
+        self,
+        *,
+        session_id: str,
+        code: str,
+    ) -> StatusResult:
+        """Complete a connect session from an OAuth callback landing.
+
+        The callback route decodes + verifies the state JWT and consumes its
+        nonce; it then hands us the session id + authorization code. We
+        resolve the handler, exchange the code, and run the shared finalise.
+
+        Raises ``NoOpForFlowError`` if the session's resolved flow doesn't
+        support a callback path (device flow) — a defensive guard the router
+        should never trip, since only auth-code state JWTs carry a ``sid``.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+            if row is None:
+                raise SessionNotFoundError(session_id)
+
+        # Callback-only handler concretely by construction — the state JWT
+        # that carries ``sid`` is signed by the auth-code path, so any
+        # callback landing must belong to that flow. Everything else is a
+        # bug (device flow doesn't route here).
+        if row.resolved_flow != AuthCodeFlowHandler.kind:
+            raise NoOpForFlowError(row.resolved_flow)
+        handler = AuthCodeFlowHandler(self._ctx)
+
+        try:
+            tokens = await handler.complete_from_callback(row, code=code)
+        except Exception as exc:
+            # Any exchange failure ⇒ terminal-failed; the human's popup will
+            # observe the transition on the next status poll.
+            await self._mark_terminal(
+                row.id, "failed", str(exc), error_code="token_exchange_failed"
+            )
+            return StatusResult(status="failed", error_code="token_exchange_failed")
+
+        return await self._finalise_connected(row, handler, tokens)
