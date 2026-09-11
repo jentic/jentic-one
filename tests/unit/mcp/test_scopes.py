@@ -69,7 +69,12 @@ def test_require_scopes_failure_is_the_coded_wire_403() -> None:
         require_scopes(identity, ["apis:read"])
     assert err.value.code == "NOT_AUTHENTICATED"
     assert "apis:read" in err.value.message
-    assert "get_started" in err.value.actionable
+    # Lane-true prose (#1327): the stdio taxonomy points at get_started,
+    # which this mount does not serve — the served prose routes through
+    # whoami (which resolves here: the credential authenticated, it merely
+    # lacks scopes) and the operator.
+    assert "whoami" in err.value.actionable
+    assert "get_started" not in err.value.actionable
 
 
 @pytest.mark.parametrize(
@@ -92,10 +97,12 @@ async def test_scope_failure_renders_not_authenticated(
     assert payload["error_code"] == "NOT_AUTHENTICATED"
     # The code-keyed stdio default pointer is get_started, which this mount
     # does not serve — the lane-aware filter (#1254) drops it rather than
-    # pointing the model at a tool absent from tools/list. The get_started
-    # spelling still rides the actionable prose (shared contract).
+    # pointing the model at a tool absent from tools/list, and since #1327's
+    # deferred pass the actionable PROSE is lane-true too (no unserved tool
+    # is ever named; the invariant lives in test_tool_surface.py).
     assert "next_tool" not in payload
-    assert "get_started" in payload["actionable_step"]
+    assert "get_started" not in payload["actionable_step"]
+    assert "whoami" in payload["actionable_step"]
 
 
 async def test_search_catalog_scope_failure_is_the_agent_fixable_special_case() -> None:

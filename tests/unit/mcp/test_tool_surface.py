@@ -18,11 +18,13 @@ copies it into the package data, and shows up in review as a doc diff.
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 from importlib import resources
 from pathlib import Path
 
-from jentic_one.mcp.spec import SERVED_TOOLS, load_spec, served_tools
+from jentic_one.mcp.spec import LANE, SERVED_TOOLS, load_spec, served_tools
 from jentic_one.mcp.tools import HANDLERS
 
 _REPO_SPEC = Path(__file__).resolve().parents[3] / "docs" / "reference" / "mcp-tools.json"
@@ -54,12 +56,21 @@ def test_served_tools_follow_spec_order() -> None:
 
 
 def test_tools_list_payload_matches_the_pinned_declarations() -> None:
-    """Name/title/description/schema/annotations project verbatim from the pin."""
+    """Name/title/description/schema/annotations project verbatim from the pin.
+
+    The description is the pinned LANE rendering: the ``lane_overrides``
+    entry for this mount's lane when the spec pins one, else the base
+    (stdio) rendering — BOTH ride the same pinned document, so either
+    rendering drifting fails this side or the Go side against the same file.
+    """
     pinned = {tool["name"]: tool for tool in json.loads(_REPO_SPEC.read_bytes())["tools"]}
     for tool in served_tools():
         want = pinned[tool.name]
+        want_description = (
+            want.get("lane_overrides", {}).get(LANE, {}).get("description") or want["description"]
+        )
         assert tool.title == want["title"]
-        assert tool.description == want["description"]
+        assert tool.description == want_description
         assert tool.input_schema == want["input_schema"]
         annotations = tool.annotations
         assert annotations is not None
@@ -87,3 +98,68 @@ def test_unserved_phase1_tools_stay_stdio_only_for_now() -> None:
     specs = load_spec()
     deferred = set(specs) - set(SERVED_TOOLS)
     assert deferred == {"get_started"}
+
+
+def _tool_name_mentions(text: str, names: set[str]) -> set[str]:
+    """Which of ``names`` appear in ``text`` as whole words."""
+    return {name for name in names if re.search(rf"\b{re.escape(name)}\b", text)}
+
+
+def test_served_descriptions_never_name_unserved_tools() -> None:
+    """THE lane-honesty invariant (#1327): no description served on this lane
+    may name a tool absent from this lane's ``tools/list``. A future tool
+    whose prose routes the model at an unserved tool fails HERE, loudly —
+    the fix is a ``lane_overrides`` entry in the Go ``toolSpecs()`` pin, not
+    a silent fork."""
+    specs = load_spec()
+    unserved = set(specs) - set(SERVED_TOOLS)
+    for tool in served_tools():
+        assert tool.description is not None
+        dangling = _tool_name_mentions(tool.description, unserved)
+        assert not dangling, (
+            f"{tool.name}: served description names unserved tool(s) {sorted(dangling)} — "
+            f"add/extend a lane_overrides[{LANE!r}] rendering in the Go toolSpecs() pin"
+        )
+
+
+def test_actionable_prose_never_names_unserved_tools() -> None:
+    """The same lane-honesty invariant for ``actionable_step`` prose: every
+    ``actionable=…`` string literal in this mount's handler modules must not
+    name a tool absent from ``SERVED_TOOLS``. (The machine-readable
+    ``next_tool`` pointers are lane-filtered at render time in
+    ``soft_error_result`` — #1254; prose cannot be rewritten at render time,
+    so it is guarded at the source instead.)"""
+    specs = load_spec()
+    unserved = set(specs) - set(SERVED_TOOLS)
+    mcp_pkg = Path(__file__).resolve().parents[3] / "src" / "jentic_one" / "mcp"
+
+    def _literal_text(node: ast.expr) -> str:
+        """Collect the string-constant parts of an expression (handles
+        implicit/explicit concatenation and f-string literal segments)."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.BinOp):
+            return _literal_text(node.left) + _literal_text(node.right)
+        if isinstance(node, ast.JoinedStr):
+            return "".join(_literal_text(v) for v in node.values)
+        return ""
+
+    checked = 0
+    for path in sorted(mcp_pkg.glob("*.py")):
+        tree = ast.parse(path.read_text("utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for kw in node.keywords:
+                if kw.arg != "actionable" or kw.value is None:
+                    continue
+                text = _literal_text(kw.value)
+                if not text:
+                    continue
+                checked += 1
+                dangling = _tool_name_mentions(text, unserved)
+                assert not dangling, (
+                    f"{path.name}:{node.lineno}: actionable prose names unserved "
+                    f"tool(s) {sorted(dangling)}: {text!r}"
+                )
+    assert checked >= 10, "the actionable= scan found suspiciously few call sites"
