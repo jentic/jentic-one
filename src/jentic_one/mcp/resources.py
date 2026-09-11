@@ -2,15 +2,27 @@
 
 Serves the shipped skill set as MCP resources — ``skill://<name>`` for every
 skill in :func:`jentic_one.shared.web.agent_discovery.shipped_skill_names`,
-plus ``skill://index`` (the set manifest) — mirroring the Go stdio server's
-surface (``cli/internal/cli/api/mcp_resources.go``) **minus its
-hosted-vs-bundled machinery**: the CLI prefers the connected backend's copy
-and falls back to its embed because it is a *client* of a backend; the daemon
-**is** the backend. There is exactly one source — the wheel-shipped package
-data ``agent_discovery`` already globs — so this module mints no new copy and
+``skill://<name>/references/<file>`` for every shipped reference OUTSIDE the
+CLI lane (decision D11 — see below), plus ``skill://index`` (the set
+manifest) — mirroring the Go stdio server's surface
+(``cli/internal/cli/api/mcp_resources.go``) **minus its hosted-vs-bundled
+machinery**: the CLI prefers the connected backend's copy and falls back to
+its embed because it is a *client* of a backend; the daemon **is** the
+backend. There is exactly one source — the wheel-shipped package data
+``agent_discovery`` already globs — so this module mints no new copy and
 adds no fourth corner to the drift triangle: the mount consumes the same
 allowlist and manifest helper the HTTP routes consume
 (``tests/arch/test_skill_drift.py`` covers it transitively).
+
+The lane filter (decision D11 of the plan): a reference named in
+:data:`~jentic_one.shared.web.agent_discovery.CLI_ONLY_REFERENCES`
+(``cli.md``) is never listed and never readable on this mount — an MCP
+session has no ``jentic`` CLI, so serving it the CLI lane would only
+mislead. The mount refuses to read what it does not list (listed set ==
+readable set, the D11 invariant); the Go stdio server applies the SAME
+filter (``skillgen.CLIOnlyReference``). This is a serving decision, not a
+secret: the HTTP routes are the raw neutral channel and serve every
+reference, ``cli.md`` included.
 
 Kept as a sibling of ``app.py`` (the ``access_compose.py`` precedent:
 handlers-adjacent logic lives next to the handlers, keeping ``app.py``
@@ -37,11 +49,15 @@ import mcp.types as mcp_types
 from mcp.shared.exceptions import MCPError
 
 from jentic_one.shared.web.agent_discovery import (
+    CLI_ONLY_REFERENCES,
     MARKDOWN_MEDIA_TYPE,
+    REFERENCE_STEM_RE,
     SKILL_NAME_RE,
     _parse_frontmatter,
     load_skill_markdown,
+    load_skill_reference,
     shipped_skill_names,
+    shipped_skill_references,
     skills_index_rows,
 )
 
@@ -51,6 +67,13 @@ from jentic_one.shared.web.agent_discovery import (
 #: one skill document; ``skill://index`` serves the set manifest.
 SKILL_URI_SCHEME = "skill://"
 SKILL_INDEX_URI = SKILL_URI_SCHEME + "index"
+
+#: The path infix separating a skill name from one of its reference files in
+#: a resource URI: ``skill://<name>/references/<file>`` — byte-parallel to
+#: the Go server's reference URIs (``registerResources`` builds
+#: ``skillURIScheme + name + "/references/" + ref``) and to the HTTP route
+#: ``GET /skills/<name>/references/<file>``.
+REFERENCES_INFIX = "/references/"
 
 #: ``_meta`` keys carrying the provenance on every read result — byte-equal to
 #: the Go constants (``skillMetaSource``/``skillMetaVersion``), namespaced per
@@ -100,31 +123,52 @@ _INDEX_DESCRIPTION = (
 
 
 def skill_resources() -> list[mcp_types.Resource]:
-    """The ``resources/list`` payload: the shipped skill set plus the index.
+    """The ``resources/list`` payload: skills + lane-filtered references + index.
 
-    Derived from the same glob the HTTP routes serve
-    (:func:`shipped_skill_names` — cached wheel package data), never a second
-    hand-maintained list, so listing and reading cannot drift. Listing fields
-    mirror the Go server's (``registerResources``): ``name``/``title`` per
-    skill, the frontmatter description plus the daemon provenance note, and
-    Go-identical MIME types.
+    Derived from the same globs the HTTP routes serve
+    (:func:`shipped_skill_names` / :func:`shipped_skill_references` — cached
+    wheel package data), never a second hand-maintained list, so listing and
+    reading cannot drift. Listing fields mirror the Go server's
+    (``registerResources``): ``name``/``title`` per skill and per reference
+    (``<name>/references/<file>`` / ``Jentic skill reference: <name>/<file>``
+    — the same vocabulary on both doors), the frontmatter description plus
+    the daemon provenance note, and Go-identical MIME types.
 
-    No pagination: the served set is the shipped skills plus the index
-    (currently four resources) — the SDK's ``PaginatedRequestParams`` is
+    The lane filter (D11): references named in :data:`CLI_ONLY_REFERENCES`
+    are skipped — never listed here, never readable in
+    :func:`read_skill_resource` — matching the Go stdio server's filter
+    (``skillgen.CLIOnlyReference``). Skills without references contribute no
+    reference rows.
+
+    No pagination: the served set is the shipped skills, their MCP-visible
+    references, and the index — the SDK's ``PaginatedRequestParams`` is
     accepted and ignored by the handler and no ``nextCursor`` is ever
     emitted, exactly what the Go server does. Revisit if the served set ever
     grows past dozens.
     """
-    resources = [
-        mcp_types.Resource(
-            uri=SKILL_URI_SCHEME + name,
-            name=name,
-            title="Jentic skill: " + name,
-            description=_skill_frontmatter(name).get("description", "") + SKILL_PROVENANCE_NOTE,
-            mime_type=MARKDOWN_MEDIA_TYPE,
+    resources: list[mcp_types.Resource] = []
+    for name in shipped_skill_names():
+        resources.append(
+            mcp_types.Resource(
+                uri=SKILL_URI_SCHEME + name,
+                name=name,
+                title="Jentic skill: " + name,
+                description=_skill_frontmatter(name).get("description", "") + SKILL_PROVENANCE_NOTE,
+                mime_type=MARKDOWN_MEDIA_TYPE,
+            )
         )
-        for name in shipped_skill_names()
-    ]
+        for file in shipped_skill_references(name):
+            if file in CLI_ONLY_REFERENCES:
+                continue
+            resources.append(
+                mcp_types.Resource(
+                    uri=SKILL_URI_SCHEME + name + REFERENCES_INFIX + file,
+                    name=name + "/references/" + file,
+                    title="Jentic skill reference: " + name + "/" + file,
+                    description=_reference_description(name, file),
+                    mime_type=MARKDOWN_MEDIA_TYPE,
+                )
+            )
     resources.append(
         mcp_types.Resource(
             uri=SKILL_INDEX_URI,
@@ -137,10 +181,31 @@ def skill_resources() -> list[mcp_types.Resource]:
     return resources
 
 
+def _reference_description(name: str, file: str) -> str:
+    """One reference resource's listing description.
+
+    The first sentence is the Go server's reference description verbatim
+    (``registerResources`` — the two doors share the vocabulary); the
+    provenance sentence is the daemon's own (same honest divergence as
+    :data:`SKILL_PROVENANCE_NOTE`: nothing here is "embedded in this
+    binary" — there is exactly one source, the shipped package data).
+    """
+    return (
+        f"A level-3 reference document of the {name} skill (read the skill first; "
+        "it points at this file when the material applies). Served from this "
+        "deployment's shipped package data (the same bytes as "
+        f"GET /skills/{name}/references/{file}); the read result's _meta carries "
+        + META_SOURCE_KEY
+        + " and "
+        + META_VERSION_KEY
+        + "."
+    )
+
+
 def read_skill_resource(uri: str, base: str) -> mcp_types.ReadResourceResult:
     """Resolve one ``resources/read`` URI — the entire pre-auth read seam.
 
-    Exactly two arms, both public by construction, and **no identity read
+    Exactly three arms, all public by construction, and **no identity read
     anywhere** — the resolver never sees a credential, so its behavior is
     *structurally* identical pre-auth and post-auth:
 
@@ -154,12 +219,23 @@ def read_skill_resource(uri: str, base: str) -> mcp_types.ReadResourceResult:
       :func:`shipped_skill_names` allowlist → the RAW package-data bytes
       verbatim (no BaseURL interpolation — render-time is CLI-only), with
       ``_meta`` = source + the frontmatter version (default ``"1"``).
+    - ``skill://<name>/references/<file>`` (D11) where ``<name>`` passes the
+      document arm's grammar+allowlist AND ``<file>`` passes the reference
+      grammar (:data:`REFERENCE_STEM_RE` + ``.md``) + the
+      :func:`shipped_skill_references` allowlist AND is NOT in
+      :data:`CLI_ONLY_REFERENCES` → the reference's raw bytes verbatim,
+      markdown MIME, ``_meta`` = source + the OWNING skill's frontmatter
+      version (a reference has no frontmatter of its own). The lane filter
+      is read-side too: the mount must refuse to read what it does not list
+      (listed set == readable set), so ``cli.md`` is RESOURCE_NOT_FOUND here
+      while the same bytes stay public over HTTP.
 
     **Everything else** — unknown scheme, ``skill://`` with a name that fails
     the grammar or the allowlist (including ``init-design``, which lives in
-    ``skills/`` but is deliberately un-served), empty name, traversal junk —
-    raises :data:`RESOURCE_NOT_FOUND`: the same layered, fail-closed
-    validation as the HTTP route's 404.
+    ``skills/`` but is deliberately un-served), a reference that fails the
+    grammar, the per-skill allowlist, or the lane filter, empty name or file,
+    traversal junk — raises :data:`RESOURCE_NOT_FOUND`: the same layered,
+    fail-closed validation as the HTTP route's 404.
     """
     if uri == SKILL_INDEX_URI:
         # Serialize with the JSONResponse separators so the read is
@@ -169,15 +245,31 @@ def read_skill_resource(uri: str, base: str) -> mcp_types.ReadResourceResult:
         text = json.dumps(skills_index_rows(base), separators=(",", ":"), ensure_ascii=False)
         return _read_result(uri, SKILL_INDEX_MIME, text, {META_SOURCE_KEY: SOURCE_HOSTED})
     if uri.startswith(SKILL_URI_SCHEME):
-        name = uri[len(SKILL_URI_SCHEME) :]
+        # ``partition`` splits on the FIRST infix, so a second ``/references/``
+        # inside ``file`` survives into the filename and fails the grammar.
+        name, infix, file = uri[len(SKILL_URI_SCHEME) :].partition(REFERENCES_INFIX)
         if SKILL_NAME_RE.fullmatch(name) and name in shipped_skill_names():
-            text = load_skill_markdown(name)
-            meta = {
-                META_SOURCE_KEY: SOURCE_HOSTED,
-                META_VERSION_KEY: _parse_frontmatter(text).get("version") or "1",
-            }
-            return _read_result(uri, MARKDOWN_MEDIA_TYPE, text, meta)
+            if not infix:
+                text = load_skill_markdown(name)
+                return _read_result(uri, MARKDOWN_MEDIA_TYPE, text, _document_meta(text))
+            if (
+                file.endswith(".md")
+                and REFERENCE_STEM_RE.fullmatch(file[: -len(".md")])
+                and file in shipped_skill_references(name)
+                and file not in CLI_ONLY_REFERENCES
+            ):
+                meta = _document_meta(load_skill_markdown(name))  # the OWNING skill's version
+                text = load_skill_reference(name, file)
+                return _read_result(uri, MARKDOWN_MEDIA_TYPE, text, meta)
     raise MCPError(RESOURCE_NOT_FOUND, "resource not found")
+
+
+def _document_meta(skill_text: str) -> dict[str, str]:
+    """The provenance ``_meta`` stamped from one skill document's frontmatter."""
+    return {
+        META_SOURCE_KEY: SOURCE_HOSTED,
+        META_VERSION_KEY: _parse_frontmatter(skill_text).get("version") or "1",
+    }
 
 
 def _skill_frontmatter(name: str) -> dict[str, str]:
@@ -200,6 +292,7 @@ def _read_result(
 __all__ = [
     "META_SOURCE_KEY",
     "META_VERSION_KEY",
+    "REFERENCES_INFIX",
     "RESOURCE_NOT_FOUND",
     "SKILL_INDEX_MIME",
     "SKILL_INDEX_URI",

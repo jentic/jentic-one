@@ -103,10 +103,11 @@ MCP_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
 #: defense hold that property (``tests/unit/mcp/test_resources.py``):
 #:
 #: 1. **Resolver characterization (the proof)** — ``read_skill_resource`` is
-#:    unit-characterized as two-armed by construction: every URI outside
-#:    ``skill://<shipped name>`` + ``skill://index`` raises -32002, and no
-#:    branch of it can see a credential (it never reads identity), so its
-#:    behavior is structurally identical pre- and post-auth.
+#:    unit-characterized as three-armed by construction: every URI outside
+#:    ``skill://<shipped name>`` + ``skill://<shipped name>/references/<file>``
+#:    (lane-filtered: never a ``CLI_ONLY_REFERENCES`` file) + ``skill://index``
+#:    raises -32002, and no branch of it can see a credential (it never reads
+#:    identity), so its behavior is structurally identical pre- and post-auth.
 #: 2. **Delegation pin (the structural lock)** — ``on_read_resource`` below
 #:    is pinned to be a bare delegation to ``read_skill_resource``, so this
 #:    module cannot grow a bypass arm without failing a test.
@@ -365,10 +366,10 @@ def build_mcp_server(ctx: Context) -> Server[Any]:
     Tools come from the pinned tool-surface spec (``jentic_one.mcp.spec``);
     ``tools/list`` is connection-independent (stateless — the same list for
     every caller). Resources are the public ``skill://`` surface
-    (``jentic_one.mcp.resources``): the shipped skill set plus the index,
-    listed and read identically for every caller — ``on_read_resource`` is a
-    bare delegation to the two-armed resolver (pinned; see the
-    ``PRE_AUTH_METHODS`` comment for the layered defense).
+    (``jentic_one.mcp.resources``): the shipped skill set, its lane-filtered
+    references, and the index, listed and read identically for every caller —
+    ``on_read_resource`` is a bare delegation to the three-armed resolver
+    (pinned; see the ``PRE_AUTH_METHODS`` comment for the layered defense).
     """
 
     async def on_list_tools(
@@ -396,7 +397,7 @@ def build_mcp_server(ctx: Context) -> Server[Any]:
         sctx: ServerRequestContext[Any, Any],
         params: mcp_types.ReadResourceRequestParams,
     ) -> mcp_types.ReadResourceResult:
-        # A BARE delegation to the two-armed resolver — pinned structurally
+        # A BARE delegation to the three-armed resolver — pinned structurally
         # (test_resources.py) so no bypass arm can appear here unnoticed.
         return read_skill_resource(params.uri, _request_base_url(ctx, sctx))
 
@@ -422,8 +423,9 @@ def build_mcp_server(ctx: Context) -> Server[Any]:
             "from. The flow is whoami → search_apis → inspect_operation → execute; "
             "never execute an operation just to probe whether you have access. "
             "The skill://jentic resource is the canonical guide to the whole flow "
-            "(skill://index lists every skill document); read it when unsure how "
-            "the pieces fit together."
+            "(skill://index lists every skill document, and "
+            "skill://jentic/references/mcp.md carries the MCP-lane detail); "
+            "read it when unsure how the pieces fit together."
         ),
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
