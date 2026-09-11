@@ -11,42 +11,53 @@ import (
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 )
 
-var errAccessTargetRequired = errors.New("specify what to request: --toolkit <vendor/name>, --toolkit-id <tk_…>, --scope <scope>, or --provision <vendor/name> (repeat and combine to compose one request)")
+var errAccessTargetRequired = errors.New("specify what to request: --api <vendor/name>, --scope <scope>, or --provision <vendor/name> (repeat and combine to compose one request)")
 
 type accessRequestOptions struct {
-	toolkits   []string
-	toolkitIDs []string
-	scopes     []string
-	provisions []string
-	auths      []string
-	rulesJSONs []string
-	reason     string
-	wait       bool
-	timeout    time.Duration
-	json       bool
+	apis []string
+	// deprecatedToolkits backs the hidden --toolkit alias (deprecated for one
+	// release); its values fold into apis via allAPIs().
+	deprecatedToolkits []string
+	toolkitIDs         []string
+	scopes             []string
+	provisions         []string
+	auths              []string
+	rulesJSONs         []string
+	reason             string
+	wait               bool
+	timeout            time.Duration
+	json               bool
+}
+
+// allAPIs folds the deprecated --toolkit alias values into the --api list, in
+// flag order (--api values first). Both flags file the same credential:bind
+// item, so the fold happens once here and everything downstream sees one list.
+func (o *accessRequestOptions) allAPIs() []string {
+	return cleanValues(append(append([]string{}, o.apis...), o.deprecatedToolkits...))
 }
 
 // targetCount is the number of distinct targets the request names — each
-// --provision plan counts as one target, as does each --toolkit/--toolkit-id/
-// --scope item. It decides composite behavior (e.g. the 409 handling).
+// --provision plan counts as one target, as does each --api/--scope item (and
+// each value of the hidden legacy flags). It decides composite behavior (e.g.
+// the 409 handling).
 func (o *accessRequestOptions) targetCount() int {
-	return len(cleanValues(o.provisions)) + len(cleanValues(o.toolkits)) +
+	return len(cleanValues(o.provisions)) + len(o.allAPIs()) +
 		len(cleanValues(o.toolkitIDs)) + len(cleanValues(o.scopes))
 }
 
 // compose builds the full item list for the request from every target flag, in
-// fulfilment order: provisioning plans first (one 4-item chain per --provision,
-// in flag order), then toolkit binds by reference, by id, and scope grants.
-// Targets are validated as a set — duplicates and a --toolkit/--provision pair
+// fulfilment order: provisioning plans first (one 2-item chain per --provision,
+// in flag order), then credential binds by API reference, and scope grants.
+// Targets are validated as a set — duplicates and an --api/--provision pair
 // naming the same API are rejected, since they would file conflicting or
 // redundant intents the approving human then has to untangle.
 func (o *accessRequestOptions) compose() ([]control.AccessRequestItemRequest, error) {
 	provisions := cleanValues(o.provisions)
-	toolkits := cleanValues(o.toolkits)
+	apis := o.allAPIs()
 	toolkitIDs := cleanValues(o.toolkitIDs)
 	scopes := cleanValues(o.scopes)
 
-	if len(provisions)+len(toolkits)+len(toolkitIDs)+len(scopes) == 0 {
+	if len(provisions)+len(apis)+len(toolkitIDs)+len(scopes) == 0 {
 		return nil, errAccessTargetRequired
 	}
 	if len(provisions) == 0 && (len(cleanValues(o.auths)) > 0 || len(cleanValues(o.rulesJSONs)) > 0) {
@@ -60,15 +71,15 @@ func (o *accessRequestOptions) compose() ([]control.AccessRequestItemRequest, er
 	if err != nil {
 		return nil, err
 	}
-	toolkitKeys, err := canonicalRefKeys("--toolkit", toolkits)
+	apiKeys, err := canonicalRefKeys("--api", apis)
 	if err != nil {
 		return nil, err
 	}
-	for _, k := range toolkitKeys {
+	for _, k := range apiKeys {
 		for _, p := range provKeys {
 			if k == p {
-				return nil, fmt.Errorf("%s is named by both --toolkit and --provision; "+
-					"a provisioning plan already ends with the toolkit binding, so drop the --toolkit", k)
+				return nil, fmt.Errorf("%s is named by both --api and --provision; "+
+					"a provisioning plan already ends with the credential binding, so drop the --api", k)
 			}
 		}
 	}
@@ -96,13 +107,13 @@ func (o *accessRequestOptions) compose() ([]control.AccessRequestItemRequest, er
 		}
 		items = append(items, chain...)
 	}
-	for _, t := range toolkits {
-		ref, refErr := parseToolkitRef(t)
+	for _, t := range apis {
+		ref, refErr := parseAccessRef(t)
 		if refErr != nil {
 			return nil, refErr
 		}
 		// Theme-5 Phase 3: the surviving bind verb is credential:bind
-		// (agent↔credential); a --toolkit vendor/name files it by API
+		// (agent↔credential); an --api vendor/name files it by API
 		// reference. The approver resolves the reference to a concrete,
 		// visible credential at decide time. The server substitutes a
 		// read-only default policy when no rules are given.
@@ -115,7 +126,7 @@ func (o *accessRequestOptions) compose() ([]control.AccessRequestItemRequest, er
 		// (theme-5 phase 3) and access is granted per credential. Fail with a
 		// re-file directive rather than filing an item the server will 422.
 		return nil, fmt.Errorf("--toolkit-id is no longer supported: toolkits were retired; "+
-			"use --toolkit <vendor/name> to request access to the API by reference "+
+			"use --api <vendor/name> to request access to the API by reference "+
 			"(got --toolkit-id %s)", toolkitIDs[0])
 	}
 	for _, s := range scopes {
@@ -154,7 +165,7 @@ func firstDuplicate(values []string) string {
 func canonicalRefKeys(flag string, values []string) ([]string, error) {
 	keys := make([]string, 0, len(values))
 	for _, v := range values {
-		ref, err := parseToolkitRef(v)
+		ref, err := parseAccessRef(v)
 		if err != nil {
 			return nil, err
 		}
@@ -239,7 +250,7 @@ func splitKeyedValue(flag, raw string, provKeys []string) (key, value string, ke
 		return "", "", false, nil
 	}
 	candidate := strings.TrimSpace(raw[:eq])
-	ref, refErr := parseToolkitRef(candidate)
+	ref, refErr := parseAccessRef(candidate)
 	if refErr != nil {
 		return "", "", false, nil //nolint:nilerr // an unparsable key prefix means "bare value", not a failure.
 	}
@@ -273,7 +284,7 @@ var validAuthTypes = map[string]bool{
 // dashboard, which writes the resulting credential id back onto the bind item
 // before approving. Returns the items in fulfilment order.
 func buildProvisionPlan(provision, auth, rulesJSON string) ([]control.AccessRequestItemRequest, error) {
-	ref, err := parseToolkitRef(provision)
+	ref, err := parseAccessRef(provision)
 	if err != nil {
 		return nil, err
 	}
@@ -349,13 +360,13 @@ func parseProposedRules(raw string) (*[]control.JenticOneControlWebSchemasAccess
 	return &rules, nil
 }
 
-// parseToolkitRef splits "vendor/name[/version]" into a resource_reference. The
+// parseAccessRef splits "vendor/name[/version]" into a resource_reference. The
 // agent names the API it discovered via search; the server resolves it to a
-// concrete toolkit at decide time.
-func parseToolkitRef(s string) (map[string]any, error) {
+// concrete credential at decide time.
+func parseAccessRef(s string) (map[string]any, error) {
 	parts := strings.Split(strings.TrimSpace(s), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return nil, fmt.Errorf("--toolkit must be vendor/name or vendor/name/version, got %q", s)
+		return nil, fmt.Errorf("an API reference must be vendor/name or vendor/name/version, got %q", s)
 	}
 	ref := map[string]any{"vendor": parts[0], "name": parts[1]}
 	if len(parts) >= 3 && parts[2] != "" {

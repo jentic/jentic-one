@@ -3,7 +3,7 @@ exit: 2
 {
   "body": {
     "agent_directive": {
-      "human_readable_instruction": "You are not bound to a toolkit for this API.",
+      "human_readable_instruction": "You are not bound for 'acme/pets'. File an access request yourself with `jentic access request --api acme/pets --wait`, then ask your operator to approve it — only a human can grant the binding. Once approved, retry this call.",
       "parameters": {
         "candidates": [
           "acme/pets",
@@ -11,7 +11,7 @@ exit: 2
         ],
         "provisioning_url": "https://console.example/connect/acme",
         "retry_after_seconds": 30,
-        "suggested_command": "jentic access request --toolkit acme/pets --wait"
+        "suggested_command": "jentic access request --api acme/pets --wait"
       },
       "strategy": "wait"
     },
@@ -21,7 +21,7 @@ exit: 2
     "type": "no_toolkit_binding"
   },
   "headers": {
-    "Content-Length": "520",
+    "Content-Length": "710",
     "Content-Type": "application/problem+json",
     "Jentic-Error-Origin": "broker"
   },
@@ -30,8 +30,8 @@ exit: 2
 }
 --- stderr ---
 Denied — recovery required:
-  You are not bound to a toolkit for this API.
-  run: jentic access request --toolkit acme/pets --wait
+  You are not bound for 'acme/pets'. File an access request yourself with `jentic access request --api acme/pets --wait`, then ask your operator to approve it — only a human can grant the binding. Once approved, retry this call.
+  run: jentic access request --api acme/pets --wait
   open: https://console.example/connect/acme
   candidates: acme/pets, acme/pets-admin
   retry after: 30

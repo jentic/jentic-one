@@ -65,7 +65,7 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\n" +
 			"Path parameters, query parameters, headers, and a request body can be\n" +
 			"supplied via flags.\n\n" +
-			"When the broker denies the call (e.g. you are not bound to a toolkit\n" +
+			"When the broker denies the call (e.g. you have no credential binding\n" +
 			"for the API, or no credential is provisioned), it returns an\n" +
 			"agent_directive describing how to recover. execute surfaces that\n" +
 			"directive on stderr and exits 2 so a script can branch on the denial.\n\n" +

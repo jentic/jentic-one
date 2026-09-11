@@ -13,9 +13,9 @@ import (
 func newAccessCmd(app *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "access",
-		Short: "Inspect your access and request more (toolkits, scopes)",
+		Short: "Inspect your access and request more (credentials, scopes)",
 		Long: "access is how an agent closes the gap between having an identity and having\n" +
-			"the access to use it. An approved agent starts bound to no toolkits, so its\n" +
+			"the access to use it. An approved agent starts bound to no credentials, so its\n" +
 			"first execute fails with a 403 telling it to request access. Use this group\n" +
 			"to see what you can do now (whoami), ask a human to grant more (request),\n" +
 			"and track those requests (list, status, withdraw).\n\n" +
@@ -38,10 +38,11 @@ func newAccessWhoamiCmd(app *app) *cobra.Command {
 	var jsonFlag bool
 	cmd := &cobra.Command{
 		Use:   "whoami",
-		Short: "Show your agent identity, scopes, and toolkit bindings",
+		Short: "Show your agent identity, scopes, and credential bindings",
 		Long: "whoami answers \"what can I do right now?\" — your agent id, status, granted\n" +
-			"scopes, and the toolkits you are bound to. An empty bindings list means you\n" +
-			"cannot execute against any API yet; use `jentic access request` to ask.",
+			"scopes, and the credentials you are bound to (each with the APIs it serves).\n" +
+			"An empty bindings list means you cannot execute against any API yet; use\n" +
+			"`jentic access request` to ask.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.accessWhoamiE(cmd, jsonFlag)
@@ -55,24 +56,24 @@ func newAccessRequestCmd(app *app) *cobra.Command {
 	opts := &accessRequestOptions{}
 	cmd := &cobra.Command{
 		Use:   "request",
-		Short: "File a request for toolkit bindings, scope grants, or provisioning plans",
+		Short: "File a request for credential bindings, scope grants, or provisioning plans",
 		Long: "request files one access request for the access you are missing and prints an\n" +
-			"approve_url for your human operator. Name a toolkit by the API you found in\n" +
-			"search (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n" +
+			"approve_url for your human operator. Name an API you found in search to be\n" +
+			"bound to a credential serving it (--api vendor/name), or ask for a scope\n" +
 			"(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\n" +
-			"When nothing serves an API yet (a fresh import with no toolkit/credential),\n" +
-			"use --provision vendor/name to file the whole path to first execution as one\n" +
-			"plan: create a toolkit, provision a credential, bind it (with your proposed\n" +
-			"--rules-json), and bind yourself. A human fulfils the create/provision steps\n" +
-			"in the dashboard (they enter the secret — it never rides in your request) and\n" +
-			"approves. Use --auth to declare the credential type you detected from the spec\n" +
-			"(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\n" +
+			"When no credential serves an API yet (a fresh import), use --provision\n" +
+			"vendor/name to file the whole path to first execution as one plan: provision\n" +
+			"a credential and bind yourself to it (with your proposed --rules-json). A\n" +
+			"human fulfils the provision step in the dashboard (they enter the secret —\n" +
+			"it never rides in your request) and approves. Use --auth to declare the\n" +
+			"credential type you detected from the spec (bearer, api_key, basic, oauth2,\n" +
+			"or none for a no-auth API).\n\n" +
 			"All target flags repeat and combine, so a job needing several APIs files ONE\n" +
 			"composite request the human decides in one sitting: each --provision appends\n" +
-			"a provisioning plan, each --toolkit/--toolkit-id/--scope appends a single\n" +
-			"item. With more than one --provision, key --auth and --rules-json by the\n" +
-			"same vendor/name[/version] passed to --provision; the bare form applies\n" +
-			"when there is exactly one.\n\n" +
+			"a provisioning plan, each --api/--scope appends a single item. With more\n" +
+			"than one --provision, key --auth and --rules-json by the same\n" +
+			"vendor/name[/version] passed to --provision; the bare form applies when\n" +
+			"there is exactly one.\n\n" +
 			"An existing pending request for the same resource is reused when this request\n" +
 			"names a single target; a composite aborts instead (drop the already-pending\n" +
 			"target or withdraw the older request, then re-file).\n\n" +
@@ -81,22 +82,29 @@ func newAccessRequestCmd(app *app) *cobra.Command {
 			"  2 — request was denied, expired, or withdrawn (only with --wait)\n" +
 			"  3 — still pending when --timeout elapsed (only with --wait)\n" +
 			"  4 — partially approved; not all items granted (only with --wait)",
-		Example: "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n" +
-			"  jentic access request --toolkit-id tk_123 --wait\n" +
-			"  jentic access request --scope owner:toolkits:read --json\n" +
+		Example: "  jentic access request --api httpbin.org/httpbin --reason \"smoke test\"\n" +
+			"  jentic access request --scope owner:credentials:read --json\n" +
 			"  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n" +
 			"    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n" +
 			"  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n" +
 			"    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n" +
-			"    --toolkit github.com/api --scope apis:write \\\n" +
+			"    --api github.com/api --scope apis:write \\\n" +
 			"    --reason \"release-notes automation\" --wait",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.accessRequestE(cmd, opts)
 		},
 	}
-	cmd.Flags().StringArrayVar(&opts.toolkits, "toolkit", nil, "request a binding to the toolkit serving this API (vendor/name[/version]; repeatable)")
-	cmd.Flags().StringArrayVar(&opts.toolkitIDs, "toolkit-id", nil, "request a binding to this toolkit id (tk_…; repeatable)")
+	cmd.Flags().StringArrayVar(&opts.apis, "api", nil, "request a binding to a credential serving this API (vendor/name[/version]; repeatable)")
+	// --toolkit is the deprecated spelling of --api (toolkits were retired,
+	// theme-5): hidden from help, accepted for one release, folded into the
+	// same list. accessRequestE prints the deprecation warning.
+	cmd.Flags().StringArrayVar(&opts.deprecatedToolkits, "toolkit", nil, "deprecated alias for --api")
+	_ = cmd.Flags().MarkHidden("toolkit")
+	// --toolkit-id stays registered (hidden) so old callers get compose()'s
+	// re-file error naming --api instead of an unknown-flag failure.
+	cmd.Flags().StringArrayVar(&opts.toolkitIDs, "toolkit-id", nil, "retired; use --api <vendor/name>")
+	_ = cmd.Flags().MarkHidden("toolkit-id")
 	cmd.Flags().StringArrayVar(&opts.scopes, "scope", nil, "request this scope be granted (repeatable)")
 	cmd.Flags().StringArrayVar(&opts.provisions, "provision", nil, "file a full provisioning plan to make this API executable (vendor/name[/version]; repeatable)")
 	cmd.Flags().StringArrayVar(&opts.auths, "auth", nil, "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name[/version]=<type>)")

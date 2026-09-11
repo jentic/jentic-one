@@ -17,7 +17,7 @@
     {
       "name": "whoami",
       "title": "Show agent identity",
-      "description": "Show the calling agent's identity as the Jentic control plane sees it: id, status, scopes, and toolkit bindings with the APIs each one serves. Call after get_started reports ready, and before requesting access or executing operations — never execute an operation just to probe whether you have access. On an auth error, call get_started for the fix.",
+      "description": "Show the calling agent's identity as the Jentic control plane sees it: id, status, scopes, and credential bindings with the APIs each one serves. Call after get_started reports ready, and before requesting access or executing operations — never execute an operation just to probe whether you have access. On an auth error, call get_started for the fix.",
       "input_schema": {
         "properties": {},
         "type": "object"
@@ -194,7 +194,7 @@
     {
       "name": "import_api",
       "title": "Import a catalog API into the registry",
-      "description": "Import a catalog API into this instance's registry so its operations become searchable and executable. Example: {\"api_id\": \"googleapis.com/sheets\"} with an api_id from a search_catalog hit. The import runs as a job: this call tracks it briefly and, on completion, promotes the imported revisions live, returning {job_id, status, revisions, promoted}. If it returns a non-terminal status, call import_api again with the same api_id — re-importing converges (idempotent) and finishes the promotion. Requires the catalog:import scope (agents hold it by default); on a denial, request it via request_access — do not guess other scopes. Importing makes an API discoverable but does NOT grant access to call it: check whoami for a toolkit binding serving it — never execute just to probe — and use request_access if nothing serves it.",
+      "description": "Import a catalog API into this instance's registry so its operations become searchable and executable. Example: {\"api_id\": \"googleapis.com/sheets\"} with an api_id from a search_catalog hit. The import runs as a job: this call tracks it briefly and, on completion, promotes the imported revisions live, returning {job_id, status, revisions, promoted}. If it returns a non-terminal status, call import_api again with the same api_id — re-importing converges (idempotent) and finishes the promotion. Requires the catalog:import scope (agents hold it by default); on a denial, request it via request_access — do not guess other scopes. Importing makes an API discoverable but does NOT grant access to call it: check whoami for a credential binding serving it — never execute just to probe — and use request_access if nothing serves it.",
       "input_schema": {
         "properties": {
           "api_id": {
@@ -214,9 +214,16 @@
     {
       "name": "request_access",
       "title": "Request access from a human operator",
-      "description": "File one access request for the access you are missing, or poll a filed one by id. Decide from whoami FIRST — never execute an operation just to probe whether you have access. If a whoami binding already serves the API, you have access; if NOTHING serves it, file a provisioning plan: {\"provision\": [\"vendor/name\"], \"auth\": [\"bearer\"], \"rules_json\": [{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}], \"reason\": \"…\"} — it describes the whole path to first execution (create toolkit, provision + bind a credential with your proposed rules, bind you), which a human fulfils in the dashboard (they enter the secret; it never rides in your request). A bare toolkit bind ({\"toolkits\": [\"vendor/name\"]}) is only the last mile when a toolkit already serves the API; for an unserved API it auto-denies — use provision. ALWAYS include reason. File once, richly: combine every target this task needs into ONE composite request instead of filing piecemeal. The result carries approve_url: relay it to your human operator — granting is always a human action and this tool NEVER approves. Poll the decision with {\"request_id\": \"\u003cid\u003e\"}; never re-file while a request is pending. Once approved, bindings are live immediately — retry the execute that was denied.",
+      "description": "File one access request for the access you are missing, or poll a filed one by id. Decide from whoami FIRST — never execute an operation just to probe whether you have access. If a whoami binding already serves the API, you have access; if NOTHING serves it, file a provisioning plan: {\"provision\": [\"vendor/name\"], \"auth\": [\"bearer\"], \"rules_json\": [{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}], \"reason\": \"…\"} — it describes the whole path to first execution (provision a credential, bind you to it with your proposed rules), which a human fulfils in the dashboard (they enter the secret; it never rides in your request). A bare bind request ({\"apis\": [\"vendor/name\"]}) is only the last mile when a credential already serves the API; for an unserved API it auto-denies — use provision. ALWAYS include reason. File once, richly: combine every target this task needs into ONE composite request instead of filing piecemeal. The result carries approve_url: relay it to your human operator — granting is always a human action and this tool NEVER approves. Poll the decision with {\"request_id\": \"\u003cid\u003e\"}; never re-file while a request is pending. Once approved, bindings are live immediately — retry the execute that was denied.",
       "input_schema": {
         "properties": {
+          "apis": {
+            "description": "APIs to be bound to a credential for, as vendor/name[/version] references. The LAST MILE only: use when a credential already serves the API and you just aren't bound to it — for an unserved API this auto-denies; use provision instead.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "auth": {
             "description": "Credential auth type for a provision plan, read from the API's security schemes: bearer, api_key, basic, oauth2, or none (default bearer). With several provisions, key each value by API: \"vendor/name=bearer\".",
             "items": {
@@ -225,7 +232,7 @@
             "type": "array"
           },
           "provision": {
-            "description": "APIs to file full provisioning plans for, as vendor/name[/version] references (e.g. \"stripe.com/api\"). Use when NOTHING you're bound to serves the API yet: the plan describes the whole path to first execution (create toolkit, provision + bind a credential with your proposed rules, bind you), which a human fulfils and approves.",
+            "description": "APIs to file full provisioning plans for, as vendor/name[/version] references (e.g. \"stripe.com/api\"). Use when NO credential you're bound to serves the API yet: the plan describes the whole path to first execution (provision a credential, bind you to it with your proposed rules), which a human fulfils and approves.",
             "items": {
               "type": "string"
             },
@@ -244,20 +251,6 @@
           },
           "scopes": {
             "description": "Token scopes to request, e.g. \"catalog:import\".",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "toolkit_ids": {
-            "description": "Toolkits to be bound to, by id (tk_…).",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "toolkits": {
-            "description": "Toolkits to be bound to, as vendor/name[/version] API references. The LAST MILE only: use when a toolkit already serves the API and you just aren't bound to it — for an unserved API this auto-denies; use provision instead.",
             "items": {
               "type": "string"
             },

@@ -9,9 +9,11 @@ import (
 )
 
 // IsBrokerDenial reports whether a result is one the broker itself emitted to
-// deny a call the agent can recover from: missing toolkit binding → 403,
-// ambiguous toolkit → 409, credential needs reconnect → 401, no credential →
-// 424. Each carries an agent_directive (see broker/web/errors.STATUS_BY_ERROR).
+// deny a call the agent can recover from: missing credential binding → 403
+// (wire type no_credential_binding; the legacy flag-off path still emits
+// no_toolkit_binding), ambiguous credential binding → 409, credential needs
+// reconnect → 401, no credential provisioned → 424. Each carries an
+// agent_directive (see broker/web/errors.STATUS_BY_ERROR).
 //
 // Status alone is NOT sufficient: the broker is a transparent forward proxy, so
 // an *upstream* API can return these same 4xx codes on a call the broker
