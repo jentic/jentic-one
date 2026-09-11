@@ -87,21 +87,24 @@ func RawBundled(name string) ([]byte, error) {
 }
 
 // Lane ownership of a skill's reference files is a filename convention (one
-// reserved-name rule per lane, mirrored by CLI_ONLY_REFERENCES in
-// shared/web/agent_discovery.py): a reference named cli.md is CLI-lane, one
-// named mcp.md is MCP-lane, anything else is shared. A serving surface skips
-// the lane it is not — the `jentic mcp` resource listing skips CLI-lane files
-// (an MCP session cannot run `jentic …` verbs), and a rendered CLI install
-// skips MCP-lane files (the machine's lane is the CLI). This is a serving
-// decision, not a secret: the backend's HTTP routes serve every reference.
-const (
-	// CLIOnlyReference is the reserved CLI-lane reference filename, excluded
-	// from MCP resource listings (mcp_resources.go).
-	CLIOnlyReference = "cli.md"
-	// MCPOnlyReference is the reserved MCP-lane reference filename, excluded
-	// from rendered CLI installs (owned-file adapters, apply.go).
-	MCPOnlyReference = "mcp.md"
-)
+// reserved-name rule, mirrored by CLI_ONLY_REFERENCES in
+// shared/web/agent_discovery.py): a reference named cli.md is CLI-lane,
+// anything else is shared or MCP-lane. The convention's single enforcement
+// point is MCP resource-listing time — the `jentic mcp` resource listing
+// skips CLI-lane files (an MCP session cannot run `jentic …` verbs). Rendered
+// dir installs deliberately carry the FULL shipped set, mcp.md included: a
+// machine with a rendered install legitimately runs stdio MCP sessions too,
+// and the SKILL.md router names mcp.md, so dropping it on disk would leave a
+// dangling pointer. This is a serving decision, not a secret: the backend's
+// HTTP routes serve every reference.
+//
+// CLIOnlyReference is the reserved CLI-lane reference filename, excluded from
+// MCP resource listings (mcp_resources.go). It must stay byte-equal to the
+// sole member of the Python mirror constant CLI_ONLY_REFERENCES in
+// src/jentic_one/shared/web/agent_discovery.py — TestBundledReferences pins
+// the literal on this side, tests/unit/shared/web/test_agent_discovery.py on
+// the Python side, so divergence trips a test in either tree.
+const CLIOnlyReference = "cli.md"
 
 // BundledReferences returns the reference filenames shipped for one bundled
 // skill (the entries of content/<name>/references/, sorted), or nil when the
@@ -124,21 +127,16 @@ func BundledReferences(name string) []string {
 	return refs
 }
 
-// renderedReferences returns the reference files a rendered CLI install
-// delivers for one skill: the shipped set minus the MCP-lane file (mirror
-// image of the MCP servers skipping the CLI-lane file — a rendered install
-// lands, by construction, on a machine whose lane is the CLI, so the MCP
-// lane would only mislead there). Sourced from the embed like the skill body
-// itself (#651 posture: a hosted-fetch source can be wired later).
+// renderedReferences returns the reference files a rendered CLI install (and
+// the AGENTS.md pointer block) delivers for one skill: the FULL shipped set.
+// No lane filter applies here — the lane convention's value is at MCP
+// resource-listing time (an MCP session cannot run CLI verbs), not on disk: a
+// machine with a rendered install legitimately runs stdio MCP sessions, and
+// the SKILL.md router points at mcp.md, so excluding it would strand a
+// dangling pointer. Sourced from the embed like the skill body itself (#651
+// posture: a hosted-fetch source can be wired later).
 func renderedReferences(name string) []string {
-	var out []string
-	for _, ref := range BundledReferences(name) {
-		if ref == MCPOnlyReference {
-			continue
-		}
-		out = append(out, ref)
-	}
-	return out
+	return BundledReferences(name)
 }
 
 // RawBundledReference returns the exact embedded bytes of one skill reference

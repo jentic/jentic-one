@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // Outcome describes what applying one adapter did, for user-facing messaging
@@ -90,10 +91,10 @@ func applySharedFile(a Adapter, c Canonical, target string, norm []byte, out Out
 //
 // A skill that ships reference files (skills/<name>/references/*.md) also gets
 // them written as verbatim sibling files under <skill dir>/references/ — the
-// CLI lane's set only, never mcp.md (renderedReferences) — owned by this same
-// managed lifecycle: written and refreshed here, deleted by removeOwnedFile.
-// The SKILL.md's relative `references/…` pointers resolve against them, so a
-// rendered install reads its lane offline exactly like the raw document does.
+// full shipped set (renderedReferences) — owned by this same managed
+// lifecycle: written and refreshed here, deleted by removeOwnedFile. The
+// SKILL.md's relative `references/…` pointers resolve against them, so a
+// rendered install reads the document offline exactly like the raw one does.
 func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outcome, opts ApplyOptions) (Outcome, error) {
 	if !out.Created && !opts.Force {
 		if ownedFileUserEdited(target, norm, c.Name) {
@@ -108,21 +109,32 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	}
 	out.Changed = changed
 	out.Skipped = !changed
+
+	// The reference set the last apply recorded in the sidecar (nil when the
+	// sidecar is absent or predates the field). Read BEFORE any write below
+	// refreshes the sidecar: pruning works off what was actually written last
+	// time, so a shipped-set rename cannot strand the old file.
+	prior, _ := readSidecar(target)
+	recorded := prior.References
+
 	if opts.DryRun {
+		// A dry run must report the same Changed a real apply would, so
+		// compare the reference bytes read-only and fold drift in.
+		if pendingReferenceChanges(target, c.Name, recorded) {
+			out.Changed = true
+			out.Skipped = false
+		}
 		return out, nil
 	}
 	if changed {
 		if err := writeTarget(target, newBytes); err != nil {
 			return out, err
 		}
-		if err := writeSidecar(target, c, newBytes); err != nil {
-			return out, err
-		}
 	}
 	// References refresh even when the SKILL.md itself is unchanged (their
 	// content can move independently); an up-to-date set is a no-op write-skip
 	// inside applyOwnedReferences, so idempotence holds.
-	refChanged, err := applyOwnedReferences(target, c.Name)
+	refChanged, err := applyOwnedReferences(target, c.Name, recorded)
 	if err != nil {
 		return out, err
 	}
@@ -130,23 +142,38 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 		out.Changed = true
 		out.Skipped = false
 	}
+	// Refresh the sidecar when the rendered file changed, or when it exists
+	// but its recorded reference set is out of date (including sidecars
+	// predating the field). An install with NO sidecar and an unchanged body
+	// deliberately gains none here — that shape is user content force-applied
+	// over; stamping provenance onto it would claim a file we did not write.
+	if changed || (prior.BodyHash != "" && !slices.Equal(prior.References, renderedReferences(c.Name))) {
+		if err := writeSidecar(target, c, newBytes); err != nil {
+			return out, err
+		}
+	}
 	return out, nil
 }
 
 // applyOwnedReferences writes the rendered reference set (verbatim embed
 // bytes) as sibling files under <skill dir>/references/, skipping files that
-// are already current. These files are managed mirrors like the SKILL.md body
-// — regenerated on every apply, not edit-guarded: the skill dir is
+// are already current, and prunes files the sidecar recorded from an earlier
+// apply that the shipped set no longer renders (a rename or removal) — the
+// prune is name-scoped to the recorded set, so anything a user parked under
+// references/ survives. These files are managed mirrors like the SKILL.md
+// body — regenerated on every apply, not edit-guarded: the skill dir is
 // generator-owned territory (see pruneEmptyDirs), and the sidecar guard
 // protects the one file an operator might legitimately tune (the SKILL.md
 // frontmatter/body), not the verbatim lane documents.
-func applyOwnedReferences(target, name string) (changed bool, err error) {
+func applyOwnedReferences(target, name string, recorded []string) (changed bool, err error) {
 	refs := renderedReferences(name)
-	if len(refs) == 0 {
+	if len(refs) == 0 && len(recorded) == 0 {
 		return false, nil
 	}
 	refDir := filepath.Join(filepath.Dir(target), "references")
+	current := make(map[string]bool, len(refs))
 	for _, ref := range refs {
+		current[ref] = true
 		data, err := RawBundledReference(name, ref)
 		if err != nil {
 			return changed, err
@@ -161,7 +188,48 @@ func applyOwnedReferences(target, name string) (changed bool, err error) {
 		}
 		changed = true
 	}
+	for _, ref := range recorded {
+		if current[ref] {
+			continue
+		}
+		if rmErr := os.Remove(filepath.Join(refDir, ref)); rmErr == nil {
+			changed = true
+		}
+	}
+	if len(refs) == 0 {
+		pruneEmptyDirs(refDir)
+	}
 	return changed, nil
+}
+
+// pendingReferenceChanges reports, without writing, whether an apply would
+// touch the sibling reference set: a missing or drifted rendered reference,
+// or a recorded file awaiting pruning. This is the read-only mirror of
+// applyOwnedReferences for DryRun outcomes.
+func pendingReferenceChanges(target, name string, recorded []string) bool {
+	refDir := filepath.Join(filepath.Dir(target), "references")
+	refs := renderedReferences(name)
+	current := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		current[ref] = true
+		data, err := RawBundledReference(name, ref)
+		if err != nil {
+			continue // build-time programming error; the write path reports it.
+		}
+		existing, rerr := os.ReadFile(filepath.Join(refDir, ref)) //nolint:gosec // path derives from adapter rules + embed names.
+		if rerr != nil || normalizeNewlines(string(existing)) != normalizeNewlines(string(data)) {
+			return true
+		}
+	}
+	for _, ref := range recorded {
+		if current[ref] {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(refDir, ref)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // ownedFileUserEdited reports whether an existing owned-file SKILL.md holds
@@ -188,13 +256,16 @@ func ownedFileUserEdited(target string, norm []byte, name string) bool {
 
 // writeSidecar records the provenance of an owned-file skill next to it. The
 // recorded hash fingerprints the full rendered file (frontmatter + body) so
-// edit detection catches hand-edits to either part.
+// edit detection catches hand-edits to either part; the recorded reference
+// set is what applyOwnedReferences delivers, so later applies/removes prune
+// exactly what was written even after the shipped set renames a file.
 func writeSidecar(skillMD string, c Canonical, rendered []byte) error {
 	sc := sidecar{
-		Name:     c.Name,
-		BodyHash: dedicatedFileHash(rendered),
-		Source:   string(c.source()),
-		BaseURL:  c.BaseURL,
+		Name:       c.Name,
+		BodyHash:   dedicatedFileHash(rendered),
+		Source:     string(c.source()),
+		BaseURL:    c.BaseURL,
+		References: renderedReferences(c.Name),
 	}
 	data, err := json.MarshalIndent(sc, "", "  ")
 	if err != nil {
@@ -308,12 +379,15 @@ func removeSharedFile(target string, norm []byte, c Canonical, out RemoveOutcome
 }
 
 // removeOwnedFile deletes an owned-file SKILL.md, its sidecar, and its managed
-// sibling reference files (the rendered CLI-lane set applyOwnedReferences
-// writes). If the user added their own content beyond a clean Jentic write,
-// the file is preserved (rewritten without our provenance) unless forced.
-// Reference removal is name-scoped — only the files this generator would have
-// written are deleted; anything else a user parked under references/ survives,
-// and pruneEmptyDirs then removes only genuinely empty dirs.
+// sibling reference files. The deletion set is the sidecar's recorded set (what
+// the last apply actually wrote — so a shipped-set rename since then still
+// removes the old name) unioned with the current rendered set (covers sidecars
+// predating the References field). Removal stays name-scoped and best-effort —
+// only files this generator would have written are deleted; anything else a
+// user parked under references/ survives, and pruneEmptyDirs then removes only
+// genuinely empty dirs. If the user added their own content beyond a clean
+// Jentic write, the file is preserved (rewritten without our provenance)
+// unless forced.
 func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome, opts RemoveOptions) (RemoveOutcome, error) {
 	if !opts.Force && ownedFileUserEdited(target, norm, name) {
 		out.UserEdits = true
@@ -323,12 +397,19 @@ func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome,
 		out.Removed = true
 		return out, nil
 	}
+	// Read the recorded set BEFORE the sidecar is deleted below.
+	recorded, _ := readSidecar(target)
 	if err := os.Remove(target); err != nil {
 		return out, fmt.Errorf("remove %s: %w", target, err)
 	}
 	_ = os.Remove(sidecarPath(target))
 	refDir := filepath.Join(filepath.Dir(target), "references")
-	for _, ref := range renderedReferences(name) {
+	seen := map[string]bool{}
+	for _, ref := range append(recorded.References, renderedReferences(name)...) {
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
 		_ = os.Remove(filepath.Join(refDir, ref))
 	}
 	pruneEmptyDirs(refDir)

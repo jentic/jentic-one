@@ -90,11 +90,17 @@ const sidecarName = ".jentic-skill.json"
 
 // sidecar records what Jentic wrote for an owned-file skill so a re-run can
 // tell our content from a user edit without polluting the SKILL.md body.
+// References is the sibling reference set the apply actually wrote, so a
+// later apply/remove can prune a file the shipped set has since renamed or
+// dropped (working off the current rendered set alone would strand it).
+// Sidecars predating the field simply omit it; readers fall back to the
+// current rendered set.
 type sidecar struct {
-	Name     string `json:"name"`
-	BodyHash string `json:"body_sha256"`
-	Source   string `json:"source"`
-	BaseURL  string `json:"base_url,omitempty"`
+	Name       string   `json:"name"`
+	BodyHash   string   `json:"body_sha256"`
+	Source     string   `json:"source"`
+	BaseURL    string   `json:"base_url,omitempty"`
+	References []string `json:"references,omitempty"`
 }
 
 // sidecarPath is the sidecar file for a given SKILL.md target.
@@ -326,7 +332,8 @@ func (a agentsAdapter) Detect(env DetectEnv) bool {
 // context bounded.
 //
 // A skill that ships references gets one pointer line per rendered reference
-// (the CLI lane's set — never mcp.md). AGENTS.md cannot carry sibling files,
+// (the full shipped set — the backend's HTTP routes serve every reference).
+// AGENTS.md cannot carry sibling files,
 // so the source document's RELATIVE `references/…` pointers are represented
 // here as hosted URLs, BaseURL-interpolated at render time — the same
 // render-time-only BaseURL doctrine as the skill link (validateBaseURL is the

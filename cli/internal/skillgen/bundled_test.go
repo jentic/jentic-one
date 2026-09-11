@@ -61,18 +61,24 @@ func TestBundledReferences(t *testing.T) {
 	if _, err := RawBundledReference("jentic", "nope.md"); err == nil {
 		t.Error("RawBundledReference must fail for an unshipped reference")
 	}
-	// The lane convention is a reserved-name rule; both reserved names must
-	// actually exist in the jentic set so the filters filter something.
-	if CLIOnlyReference != "cli.md" || MCPOnlyReference != "mcp.md" {
-		t.Errorf("lane constants = %q/%q, want cli.md/mcp.md", CLIOnlyReference, MCPOnlyReference)
+	// The lane convention is a reserved-name rule; the reserved name must
+	// actually exist in the jentic set so the MCP listing filter filters
+	// something — and the literal must stay byte-equal to the Python mirror
+	// constant CLI_ONLY_REFERENCES (shared/web/agent_discovery.py), whose own
+	// test pins the same literal, so divergence trips a test in either tree.
+	if CLIOnlyReference != "cli.md" {
+		t.Errorf("CLIOnlyReference = %q, want cli.md", CLIOnlyReference)
 	}
 }
 
-// TestRenderedReferencesExcludeMCPLane pins the mirror-image lane filter for
-// rendered CLI installs: everything except mcp.md.
-func TestRenderedReferencesExcludeMCPLane(t *testing.T) {
+// TestRenderedReferencesShipFullSet pins that rendered installs (and the
+// AGENTS.md pointer block) deliver the FULL shipped reference set — mcp.md
+// included: the lane filter's enforcement point is MCP resource-listing time,
+// not the on-disk install (a machine with a rendered install legitimately
+// runs stdio MCP sessions, and the SKILL.md router points at mcp.md).
+func TestRenderedReferencesShipFullSet(t *testing.T) {
 	got := renderedReferences("jentic")
-	want := []string{"cli.md", "recovery.md"}
+	want := []string{"cli.md", "mcp.md", "recovery.md"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("renderedReferences(jentic) = %v, want %v", got, want)
 	}
