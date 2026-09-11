@@ -42,6 +42,8 @@ interface OAuthGrantAdminRow {
 	client_name: string | null;
 	client_origin: string | null;
 	agent_id: string;
+	/** Lifecycle state of the bound agent (#1345) — non-active means dormant. */
+	agent_status: string;
 	user_id: string;
 	scopes: string[];
 	status: 'active' | 'revoked';
@@ -186,6 +188,7 @@ export function resetSettingsStore(): void {
 			client_name: 'Internal Dashboard',
 			client_origin: 'https://app.example.com',
 			agent_id: 'invoice-bot',
+			agent_status: 'active',
 			user_id: 'usr_admin_1',
 			scopes: ['apis:read'],
 			status: 'active',
@@ -202,6 +205,7 @@ export function resetSettingsStore(): void {
 			client_name: 'Internal Dashboard',
 			client_origin: 'https://app.example.com',
 			agent_id: 'support-triage',
+			agent_status: 'active',
 			user_id: 'usr_other_1',
 			scopes: ['apis:read', 'executions:read'],
 			status: 'active',
@@ -217,6 +221,7 @@ export function resetSettingsStore(): void {
 			client_name: 'Internal Dashboard',
 			client_origin: 'https://app.example.com',
 			agent_id: 'invoice-bot',
+			agent_status: 'active',
 			user_id: 'usr_admin_1',
 			scopes: ['apis:read'],
 			status: 'revoked',
@@ -224,6 +229,25 @@ export function resetSettingsStore(): void {
 			created_at: now(-200),
 			revoked_at: now(-100),
 			last_used_at: now(-150),
+		},
+		// DORMANT grant (#1345): the row stays active (disable is reversible;
+		// the standing consent survives) but its agent was disabled, so no
+		// token resolves and `active_grant_count` excludes it. The detail
+		// sheet must mark it rather than let it read as a working connection.
+		{
+			id: 'ocg_4',
+			oauth_client_id: 'oc_dashboard',
+			client_name: 'Internal Dashboard',
+			client_origin: 'https://app.example.com',
+			agent_id: 'nightly-reporter',
+			agent_status: 'disabled',
+			user_id: 'usr_admin_1',
+			scopes: ['apis:read'],
+			status: 'active',
+			can_revoke: true,
+			created_at: now(-70),
+			revoked_at: null,
+			last_used_at: now(-2000),
 		},
 	];
 	// Decision history for the seeded rows: the denied client carries its
@@ -259,12 +283,19 @@ function genId(prefix: string): string {
 	return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** `active_grant_count` is computed on the read path, like the backend. */
+/**
+ * `active_grant_count` is computed on the read path, like the backend — and
+ * honestly (#1345): grants whose agent is non-active are dormant, so they
+ * don't count as working connections.
+ */
 function withGrantCount(row: OAuthClientRow): OAuthClientRow {
 	return {
 		...row,
 		active_grant_count: oauthGrants.filter(
-			(g) => g.oauth_client_id === row.client_id && g.status === 'active',
+			(g) =>
+				g.oauth_client_id === row.client_id &&
+				g.status === 'active' &&
+				g.agent_status === 'active',
 		).length,
 	};
 }

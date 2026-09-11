@@ -32,6 +32,7 @@ import {
 	Dialog,
 	EmptyState,
 	ErrorAlert,
+	GrantAgentStatusChip,
 	LoadingState,
 	SegmentedToggle,
 	Tooltip,
@@ -136,6 +137,14 @@ export function ConnectedClientsCard({
 											{grant.status === 'revoked' && (
 												<Badge variant="danger">Revoked</Badge>
 											)}
+											{/* #1345: the agent was disabled after this
+											    consent — the grant stands but is dormant,
+											    so the row must not read as a working
+											    connection. */}
+											<GrantAgentStatusChip
+												grantStatus={grant.status}
+												agentStatus={grant.agentStatus}
+											/>
 										</p>
 										{grant.clientOrigin && (
 											<p className="text-muted-foreground truncate font-mono text-xs">

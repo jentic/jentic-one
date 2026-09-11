@@ -27,6 +27,7 @@ import {
 	Dialog,
 	EmptyRow,
 	ErrorAlert,
+	GrantAgentStatusChip,
 	LoadingState,
 	SegmentedToggle,
 	SheetPrimitive,
@@ -155,6 +156,15 @@ function GrantsSection({ client }: { client: OAuthClient }) {
 											{grant.status === 'revoked' && (
 												<Badge variant="danger">Revoked</Badge>
 											)}
+											{/* #1345: an active grant on a non-active
+											    agent is dormant — mark it so the row
+											    explains why it isn't a working
+											    connection (and why the roster's
+											    active-grant count excludes it). */}
+											<GrantAgentStatusChip
+												grantStatus={grant.status}
+												agentStatus={grant.agent_status}
+											/>
 										</p>
 										<div className="mt-1.5 flex flex-wrap gap-1">
 											{grant.scopes.length > 0 ? (

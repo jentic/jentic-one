@@ -360,6 +360,46 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		await checkA11y(document.body);
 	});
 
+	it('marks a dormant grant (#1345): the disabled-agent row carries the chip, working rows none, and the roster count excludes it', async () => {
+		const user = userEvent.setup();
+		renderSettingsPage();
+		await screen.findByText('Internal Dashboard');
+
+		// The roster's grant count is HONEST: three active grant rows exist,
+		// but the dormant one (agent disabled) is no working connection → 2.
+		expect(
+			screen.getByRole('button', { name: 'View grants for Internal Dashboard' }),
+		).toHaveTextContent('2');
+
+		await user.click(
+			screen.getByRole('button', { name: 'View details for Internal Dashboard' }),
+		);
+		const sheet = await screen.findByTestId('sheet-primitive');
+
+		// The dormant grant row (Nightly Reporter was disabled after consent):
+		// the muted chip, plus the tooltip copy explaining the dormancy and
+		// why the active count excludes it — Disable/Enable vocabulary.
+		const dormantRow = (await within(sheet).findByText('Nightly Reporter')).closest('li');
+		expect(dormantRow).not.toBeNull();
+		expect(within(dormantRow as HTMLElement).getByText('Agent disabled')).toBeInTheDocument();
+		expect(
+			within(dormantRow as HTMLElement).getByText(
+				/no tokens are issued while the agent is disabled, and active-connection counts exclude it/,
+			),
+		).toBeInTheDocument();
+
+		// Working connections (active grant, active agent) carry no chip.
+		const workingRow = (await within(sheet).findByText('Invoice Bot')).closest('li');
+		expect(workingRow).not.toBeNull();
+		expect(
+			within(workingRow as HTMLElement).queryByText(/Agent disabled/),
+		).not.toBeInTheDocument();
+
+		// The opened sheet with the dormancy chip stays axe-clean (body portal).
+		await settleHeader();
+		await checkA11y(document.body);
+	});
+
 	it("offers Enable in a zombie's detail sheet (recovery from its own console)", async () => {
 		const user = userEvent.setup();
 		renderSettingsPage();

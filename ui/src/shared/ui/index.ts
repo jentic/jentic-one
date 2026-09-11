@@ -167,6 +167,9 @@ export {
 } from '@/shared/ui/ActorStatusBadge';
 export type { ActorStatus } from '@/shared/ui/ActorStatusBadge';
 
+export { GrantAgentStatusChip } from '@/shared/ui/GrantAgentStatusChip';
+export type { GrantAgentStatusChipProps } from '@/shared/ui/GrantAgentStatusChip';
+
 export { ScopePicker } from '@/shared/ui/ScopePicker';
 export type { ScopePickerProps } from '@/shared/ui/ScopePicker';
 export { ScopeGroup } from '@/shared/ui/ScopeGroup';
