@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
 
 from jentic_one.control.services.integrations.connect_session_service import (
@@ -249,3 +249,38 @@ async def poll_connect_session_status(
         bound_scopes=result.bound_scopes,
         error_code=result.error_code,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /connect-sessions/{id}:cancel — user aborts before terminal
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/connect-sessions/{session_id}:cancel",
+    status_code=204,
+    summary="Cancel an in-flight connect session",
+    response_model=None,
+)
+async def cancel_connect_session(
+    session_id: str,
+    poll_token: str = Query(..., description="Opaque poll capability"),
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:connect", "credentials:write"]
+    ),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> Response | JSONResponse:
+    """Terminate a still-active session at the user's request.
+
+    Gated by the same ``poll_token`` capability as ``/status`` — the
+    SPA already holds it, so we don't force the caller to bring a
+    heavier scope than the poller endpoint they're already using.
+    Idempotent: an already-terminal (or already-cleaned-up) session is
+    a 204 no-op so a "Cancel" click during a race with the poll scanner
+    doesn't error.
+    """
+    try:
+        await svc.cancel_session(session_id, poll_token=poll_token)
+    except InvalidPollTokenError:
+        return JSONResponse(status_code=403, content={"detail": "invalid poll_token"})
+    return Response(status_code=204)

@@ -91,6 +91,17 @@ export function pollConnectSessionStatus(
 	return request(url);
 }
 
+/**
+ * Cancel an in-flight connect session. Idempotent — the backend
+ * ``:cancel`` route returns 204 even if the session is already gone,
+ * so we can fire this from unmount cleanup without needing to check
+ * whether the flow already finished.
+ */
+export function cancelConnectSession(sessionId: string, pollToken: string): Promise<void> {
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:cancel?poll_token=${encodeURIComponent(pollToken)}`;
+	return request(url, { method: 'POST' });
+}
+
 export function listVendors(): Promise<VendorListResponse> {
 	return request('/vendors');
 }

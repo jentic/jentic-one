@@ -830,6 +830,24 @@ class ConnectSessionService:
         """
         await self._mark_terminal(session_id, "failed", error, error_code="callback_error")
 
+    async def cancel_session(self, session_id: str, *, poll_token: str) -> None:
+        """User-driven cancellation from the SPA (Cancel button or dialog dismiss).
+
+        Gated by the session's ``poll_token`` — same capability the SPA
+        already holds to poll ``/status``, so we don't force the caller
+        to bring a heavier scope. Idempotent: already-terminal sessions
+        are a no-op (the credential + session have already been cleaned
+        up by ``_mark_terminal`` on a prior terminal transition).
+        """
+        async with self._ctx.control_db.session() as read_session:
+            row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+        if row is None:
+            return
+        _verify_poll_token(row, poll_token)
+        if row.state in ("connected", "failed", "expired"):
+            return
+        await self._mark_terminal(session_id, "failed", "user cancelled", error_code="cancelled")
+
     async def complete_from_callback(
         self,
         *,

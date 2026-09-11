@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Bot, CheckCircle2, ExternalLink, Loader2, XCircle } from 'lucide-react';
 import {
@@ -15,12 +15,14 @@ import {
 } from '@/shared/ui';
 import {
 	useAgentsForPicker,
+	useCancelConnectSession,
 	useConfirmConnectSession,
 	useConnectSession,
 	usePollConnectSessionStatus,
 	useStartAndConfirmVendorConnect,
 	useVendorAuthCapabilities,
 } from '@/shared/credentials/api/vendors-hooks';
+import { cancelConnectSession } from '@/shared/credentials/api/vendors-client';
 import type {
 	AuthCodeConfirmResponse,
 	ConfirmResponse,
@@ -107,6 +109,16 @@ function VendorSelfConnectFlow({
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 
 	const startMutation = useStartAndConfirmVendorConnect();
+	const cancelMutation = useCancelConnectSession();
+
+	// Cancellation is fire-and-forget on the unmount cleanup path (the
+	// user closed the dialog or navigated away mid-flow); if we go
+	// through the mutation, TanStack Query cancels the in-flight
+	// request when the component unmounts and the backend never sees
+	// it. Hold the effective (id, token) in a ref so the cleanup can
+	// hit the raw client without depending on the mutation lifecycle.
+	const sessionRef = useRef<{ id: string; pollToken: string } | null>(null);
+	const phaseRef = useRef<Phase>('configure');
 
 	const scopes = useMemo<VendorScopeCatalog[]>(
 		() => capabilities.data?.scopes ?? [],
@@ -135,12 +147,14 @@ function VendorSelfConnectFlow({
 		// terminal-failed and stop polling.
 		const err = polling.error as { status?: number } | undefined;
 		if (err?.status === 404) {
+			phaseRef.current = 'terminal';
 			setPhase('terminal');
 			return;
 		}
 		if (!polling.data) return;
 		const status = polling.data.status;
 		if (status === 'connected' || status === 'failed' || status === 'expired') {
+			phaseRef.current = 'terminal';
 			setPhase('terminal');
 			if (status === 'connected') {
 				toast({
@@ -154,6 +168,33 @@ function VendorSelfConnectFlow({
 			}
 		}
 	}, [phase, polling.data, polling.error, vendor.display_name, queryClient]);
+
+	// Cancel-on-unmount: if the user closes the dialog / navigates away
+	// mid-flow, the backend needs to know so the pending credential +
+	// session get cleaned up. We fire the raw ``cancelConnectSession``
+	// client (not the mutation) because TanStack Query aborts pending
+	// mutations on unmount, and this call MUST reach the server.
+	// Fire-and-forget; the backend is idempotent, so a double-cancel
+	// (e.g. Cancel button click that also triggers unmount) is a 204.
+	useEffect(() => {
+		return () => {
+			if (phaseRef.current !== 'awaiting') return;
+			const s = sessionRef.current;
+			if (!s) return;
+			// Best-effort: swallow errors so a network blip on close
+			// doesn't crash the parent tree.
+			void cancelConnectSession(s.id, s.pollToken).catch(() => {});
+		};
+	}, []);
+
+	const handleCancel = (): void => {
+		const s = sessionRef.current;
+		if (s && phase === 'awaiting') {
+			cancelMutation.mutate({ sessionId: s.id, pollToken: s.pollToken });
+			phaseRef.current = 'terminal';
+		}
+		onBack();
+	};
 
 	const toggleScope = (name: string) => {
 		setScopesTouched(true);
@@ -176,6 +217,8 @@ function VendorSelfConnectFlow({
 				requested_scopes: Array.from(selectedScopes),
 				permission_rules: derivePermissionRules(scopes, selectedScopes),
 			});
+			sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
+			phaseRef.current = 'awaiting';
 			setSession({ id: result.session_id, pollToken: result.poll_token });
 			setChallenge(result.challenge);
 			setPhase('awaiting');
@@ -221,7 +264,7 @@ function VendorSelfConnectFlow({
 				display={display}
 				challenge={challenge}
 				status={polling.data?.status ?? 'pending'}
-				onCancel={onBack}
+				onCancel={handleCancel}
 			/>
 		);
 	}
@@ -292,9 +335,31 @@ function VendorApproveFlow({
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 
 	const confirmMutation = useConfirmConnectSession(sessionId);
+	const cancelMutation = useCancelConnectSession();
+	const phaseRef = useRef<Phase>('configure');
 
 	const session: ReviewSession | undefined = sessionQuery.data;
 	const scopes: ReviewScope[] = useMemo(() => session?.scopes ?? [], [session]);
+
+	// Cancel-on-unmount mirror of the self-flow: if the user closes
+	// the approval dialog mid-confirm, the pending credential +
+	// session must be cleaned up server-side. See
+	// ``VendorSelfConnectFlow`` for why we fire the raw client
+	// instead of the mutation.
+	useEffect(() => {
+		return () => {
+			if (phaseRef.current !== 'awaiting') return;
+			void cancelConnectSession(sessionId, pollToken).catch(() => {});
+		};
+	}, [sessionId, pollToken]);
+
+	const handleCancel = (): void => {
+		if (phase === 'awaiting') {
+			cancelMutation.mutate({ sessionId, pollToken });
+			phaseRef.current = 'terminal';
+		}
+		onBack();
+	};
 
 	// Seed selection from what the agent + defaults pre-selected on the session.
 	// The human can still tweak it; once they've clicked anything the initial
@@ -318,12 +383,14 @@ function VendorApproveFlow({
 		// no dangling ``failed`` credential lingers in the UI).
 		const err = polling.error as { status?: number } | undefined;
 		if (err?.status === 404) {
+			phaseRef.current = 'terminal';
 			setPhase('terminal');
 			return;
 		}
 		if (!polling.data) return;
 		const status = polling.data.status;
 		if (status === 'connected' || status === 'failed' || status === 'expired') {
+			phaseRef.current = 'terminal';
 			setPhase('terminal');
 			if (status === 'connected') {
 				toast({
@@ -356,6 +423,7 @@ function VendorApproveFlow({
 				permission_rules: rules,
 			});
 			setChallenge(result);
+			phaseRef.current = 'awaiting';
 			setPhase('awaiting');
 			if (result.kind === 'authorization_code') {
 				window.open(result.authorize_url, '_blank', 'noopener,noreferrer');
@@ -415,7 +483,7 @@ function VendorApproveFlow({
 				display={display}
 				challenge={challenge}
 				status={polling.data?.status ?? 'pending'}
-				onCancel={onBack}
+				onCancel={handleCancel}
 			/>
 		);
 	}
