@@ -86,7 +86,8 @@ func RawBundled(name string) ([]byte, error) {
 	return data, nil
 }
 
-// Lane ownership of a skill's reference files is a filename convention (one
+// CLIOnlyReference names the reference file reserved for the CLI lane. Lane
+// ownership of a skill's reference files is a filename convention (one
 // reserved-name rule, mirrored by CLI_ONLY_REFERENCES in
 // shared/web/agent_discovery.py): a reference named cli.md is CLI-lane,
 // anything else is shared or MCP-lane. The convention's single enforcement
