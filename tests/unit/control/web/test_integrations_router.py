@@ -23,7 +23,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
     ConnectSessionService,
     CreatedSession,
-    DeviceFlowConfirmResult,
+    DeviceAuthorizationConfirmResult,
     ReviewData,
     ScopeView,
     StatusResult,
@@ -80,7 +80,7 @@ def test_connect_uses_agent_identity_when_caller_is_agent() -> None:
             session_id="sess_1",
             approval_url="https://example.com/app/credentials?approve=sess_1&poll_token=tok",
             poll_token="tok",
-            resolved_flow="device_flow",
+            resolved_flow="device_authorization",
         )
     )
     app = _build_app(svc=svc, identity=_AGENT_IDENTITY)
@@ -158,7 +158,7 @@ def test_get_review_data_returns_scope_catalog() -> None:
             state="created",
             vendor_key="gh",
             vendor_display_name="GitHub",
-            resolved_flow="device_flow",
+            resolved_flow="device_authorization",
             reason=None,
             requested_by_actor_id="agnt_1",
             scopes=[
@@ -201,14 +201,14 @@ def test_get_review_data_maps_not_found_to_404() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_confirm_device_flow_serialises_user_code_response() -> None:
+def test_confirm_device_authorization_serialises_user_code_response() -> None:
     # The discriminated response by ``kind`` is the UI's routing hook:
     # a device_code response drives the AwaitingStep with the user_code
     # panel; an authorization_code response drives the redirect panel.
     # Cross-wiring the two ships broken UX to the human.
     svc = AsyncMock(spec=ConnectSessionService)
     svc.confirm = AsyncMock(
-        return_value=DeviceFlowConfirmResult(
+        return_value=DeviceAuthorizationConfirmResult(
             user_code="ABCD-1234",
             verification_uri="https://idp.example.com/device",
             verification_uri_complete=None,
@@ -223,7 +223,7 @@ def test_confirm_device_flow_serialises_user_code_response() -> None:
         )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["kind"] == "device_flow"
+    assert body["kind"] == "device_authorization"
     assert body["user_code"] == "ABCD-1234"
     assert body["poll_interval_seconds"] == 5
 

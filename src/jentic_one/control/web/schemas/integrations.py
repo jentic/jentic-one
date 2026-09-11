@@ -103,11 +103,16 @@ class ConfirmSessionRequest(BaseModel):
     permission_rules: list[PermissionRuleModel] = Field(default_factory=list)
 
 
-class DeviceFlowConfirmSessionResponse(BaseModel):
+class DeviceAuthorizationConfirmSessionResponse(BaseModel):
     """RFC 8628 device-code result — user types ``user_code`` at
-    ``verification_uri`` and the client polls ``/status`` until connected."""
+    ``verification_uri`` and the client polls ``/status`` until connected.
 
-    kind: Literal["device_flow"] = "device_flow"
+    Discriminator matches ``ConnectChallengeResponse`` (the direct
+    credential-connect endpoint) — one wire value for the same concept
+    across both entry points.
+    """
+
+    kind: Literal["device_authorization"] = "device_authorization"
     user_code: str
     verification_uri: str
     verification_uri_complete: str | None = None
@@ -124,7 +129,7 @@ class AuthCodeConfirmSessionResponse(BaseModel):
 
 
 ConfirmSessionResponse = Annotated[
-    DeviceFlowConfirmSessionResponse | AuthCodeConfirmSessionResponse,
+    DeviceAuthorizationConfirmSessionResponse | AuthCodeConfirmSessionResponse,
     Field(discriminator="kind"),
 ]
 

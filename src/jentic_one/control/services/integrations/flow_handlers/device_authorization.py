@@ -1,6 +1,6 @@
 """Device-flow (RFC 8628) handler for the connect-session state machine.
 
-Owns the ``device_flow_credentials`` aux table, the RFC 8628 device-auth
+Owns the ``device_authorization_credentials`` aux table, the RFC 8628 device-auth
 request at confirm time, and the poll loop against the vendor's token
 endpoint. Bound-scope readback lives on the shared ``oauth_token.scope``
 column, written at finalise time — the service reads it flow-agnostically.
@@ -14,28 +14,30 @@ from typing import ClassVar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
-from jentic_one.control.core.schema.device_flow_credentials import DeviceFlowCredential
-from jentic_one.control.repos.device_flow_credential_repo import (
-    DeviceFlowCredentialRepository,
+from jentic_one.control.core.schema.device_authorization_credentials import (
+    DeviceAuthorizationCredential,
 )
-from jentic_one.control.services.integrations import device_flow
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
+from jentic_one.control.services.integrations import device_authorization
 from jentic_one.control.services.integrations.flow_handlers.base import (
     BeginResult,
-    DeviceFlowChallenge,
+    DeviceAuthorizationBeginResult,
     StatusReport,
     SuccessTokens,
 )
-from jentic_one.shared.config import VendorDeviceFlowConfig, VendorFlowConfig
+from jentic_one.shared.config import VendorDeviceAuthorizationFlowConfig, VendorFlowConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import StoredCredentialType
 
 
-class DeviceFlowHandler:
+class DeviceAuthorizationHandler:
     """RFC 8628 device-flow handler."""
 
-    kind: ClassVar[str] = "device_flow"
+    kind: ClassVar[str] = "device_authorization"
     stored_type: ClassVar[StoredCredentialType] = StoredCredentialType.OAUTH2_DEVICE_CODE
-    provider_id: ClassVar[str] = "device_flow"
+    provider_id: ClassVar[str] = "device_authorization"
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
@@ -52,8 +54,8 @@ class DeviceFlowHandler:
         # ``requested_scopes`` lives on the connect_sessions row now
         # (flow-agnostic); pass an empty list to the aux row so the column
         # sees no stale copy. Left non-NULL to preserve the schema shape.
-        assert isinstance(flow, VendorDeviceFlowConfig)
-        await DeviceFlowCredentialRepository.create(
+        assert isinstance(flow, VendorDeviceAuthorizationFlowConfig)
+        await DeviceAuthorizationCredentialRepository.create(
             db_session,
             credential_id=credential_id,
             client_id=flow.client_id,
@@ -70,11 +72,11 @@ class DeviceFlowHandler:
         flow: VendorFlowConfig,
         confirmed_scopes: list[str],
     ) -> BeginResult:
-        assert isinstance(flow, VendorDeviceFlowConfig)
+        assert isinstance(flow, VendorDeviceAuthorizationFlowConfig)
 
         # Talk to the vendor OUTSIDE the DB transaction — network latency
         # has no business holding a control-DB row lock.
-        result = await device_flow.begin_device_flow(
+        result = await device_authorization.begin_device_authorization(
             authorization_endpoint=flow.authorization_endpoint,
             client_id=flow.client_id,
             scopes=confirmed_scopes,
@@ -83,7 +85,7 @@ class DeviceFlowHandler:
         expires_at = datetime.now(UTC) + timedelta(seconds=result.expires_in)
 
         async with self._ctx.control_db.transaction() as session:
-            await DeviceFlowCredentialRepository.set_transient_state(
+            await DeviceAuthorizationCredentialRepository.set_transient_state(
                 session,
                 row.credential_id,
                 encrypted_device_code=encrypted_device_code,
@@ -95,7 +97,7 @@ class DeviceFlowHandler:
                 granted_scopes=confirmed_scopes,
             )
 
-        return DeviceFlowChallenge(
+        return DeviceAuthorizationBeginResult(
             user_code=result.user_code,
             verification_uri=result.verification_uri,
             verification_uri_complete=result.verification_uri_complete,
@@ -111,18 +113,18 @@ class DeviceFlowHandler:
 
         Takes a bare ``credential_id`` (not a ``ConnectSession``) so the
         method is entrypoint-agnostic: both the session flow and the
-        raw-credential connect flow write ``device_flow_credentials`` and
+        raw-credential connect flow write ``device_authorization_credentials`` and
         share this poll body.
 
         Enforces the vendor-supplied device-code TTL and the RFC 8628 poll
         interval as a rate limit. On any non-RFC-8628 error surfaced by
-        ``poll_device_flow`` (403, malformed body, unexpected 4xx/5xx),
+        ``poll_device_authorization`` (403, malformed body, unexpected 4xx/5xx),
         the outcome is terminal-failed with ``vendor_forbidden`` /
         ``vendor_error`` — no retry, no exponential backoff. Operator-
         visible failures beat silent time-wasters.
         """
         async with self._ctx.control_db.session() as read_session:
-            dfc = await DeviceFlowCredentialRepository.get_by_credential(
+            dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(
                 read_session, credential_id
             )
 
@@ -144,7 +146,7 @@ class DeviceFlowHandler:
 
         try:
             return await self._poll_vendor(credential_id, dfc)
-        except device_flow.DeviceFlowUpstreamError as exc:
+        except device_authorization.DeviceAuthorizationUpstreamError as exc:
             # Non-retryable — any HTTP status the RFC 8628 mapper couldn't
             # recognise (403 revoked app, 401 misconfigured client_id,
             # 5xx surge that didn't clear, malformed body). Fail loudly
@@ -159,13 +161,13 @@ class DeviceFlowHandler:
     async def _poll_vendor(
         self,
         credential_id: str,
-        dfc: DeviceFlowCredential | None,
+        dfc: DeviceAuthorizationCredential | None,
     ) -> StatusReport:
         assert dfc is not None
         assert dfc.encrypted_device_code is not None
 
         device_code = self._ctx.encryption.decrypt(dfc.encrypted_device_code)
-        result = await device_flow.poll_device_flow(
+        result = await device_authorization.poll_device_authorization(
             token_endpoint=dfc.token_url,
             client_id=dfc.client_id,
             device_code=device_code,
@@ -173,14 +175,14 @@ class DeviceFlowHandler:
 
         now = datetime.now(UTC)
         async with self._ctx.control_db.transaction() as session:
-            await DeviceFlowCredentialRepository.mark_polled(session, credential_id, now)
+            await DeviceAuthorizationCredentialRepository.mark_polled(session, credential_id, now)
 
         if result.status == "pending":
             return StatusReport(kind="pending")
         if result.status == "slow_down":
             # RFC 8628 §3.5 — widen the interval by 5s for future polls.
             async with self._ctx.control_db.transaction() as session:
-                await DeviceFlowCredentialRepository.update_fields(
+                await DeviceAuthorizationCredentialRepository.update_fields(
                     session,
                     credential_id,
                     poll_interval_seconds=(dfc.poll_interval_seconds or 5) + 5,
@@ -226,10 +228,10 @@ class DeviceFlowHandler:
         # Clear encrypted_device_code + user_code once the token is vaulted:
         # transient artefacts have no operational value after ``connected``
         # and shouldn't hang around encrypted.
-        await DeviceFlowCredentialRepository.clear_transient(db_session, credential_id)
+        await DeviceAuthorizationCredentialRepository.clear_transient(db_session, credential_id)
 
 
-def _should_poll_now(dfc: DeviceFlowCredential | None) -> bool:
+def _should_poll_now(dfc: DeviceAuthorizationCredential | None) -> bool:
     """Rate-limit the vendor poll to at most once per ``poll_interval_seconds``."""
     if dfc is None or dfc.poll_interval_seconds is None:
         return True

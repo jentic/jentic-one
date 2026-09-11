@@ -20,7 +20,7 @@ import {
 } from '@/shared/credentials/components/CreateCredentialDialog';
 import { DeviceCodeConnectDialog } from '@/shared/credentials/components/DeviceCodeConnectDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
-import type { DeviceCodeChallengeResponse } from '@/shared/credentials/api/types';
+import type { DeviceAuthorizationChallengeResponse } from '@/shared/credentials/api/types';
 
 /**
  * Credentials module home. Lists stored credentials and hosts the create
@@ -40,7 +40,7 @@ export function CredentialsPage() {
 	const [stickyEditId, setStickyEditId] = useState<string | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
 	const [deviceCodeState, setDeviceCodeState] = useState<{
-		challenge: DeviceCodeChallengeResponse;
+		challenge: DeviceAuthorizationChallengeResponse;
 		credentialName: string;
 	} | null>(null);
 
@@ -123,7 +123,7 @@ export function CredentialsPage() {
 		};
 		try {
 			const outcome = await runConnectFlow(credentialId, {
-				onDeviceCodeChallenge: (challenge) => {
+				onDeviceAuthorizationChallenge: (challenge) => {
 					setDeviceCodeState({ challenge, credentialName });
 					return () => setDeviceCodeState(null);
 				},
@@ -173,7 +173,7 @@ export function CredentialsPage() {
 		toast({ title: `Opening sign-in for ${cred.name}…` });
 		try {
 			const outcome = await runConnectFlow(cred.credential_id, {
-				onDeviceCodeChallenge: (challenge) => {
+				onDeviceAuthorizationChallenge: (challenge) => {
 					setDeviceCodeState({ challenge, credentialName: cred.name });
 					return () => setDeviceCodeState(null);
 				},

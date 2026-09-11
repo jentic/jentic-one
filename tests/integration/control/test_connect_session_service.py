@@ -2,7 +2,7 @@
 
 Exercises the state-machine transitions and dispatch logic that only
 show up when the service is talking to real ORM rows through the
-control DB. Vendor HTTP is faked at the seam (``device_flow`` /
+control DB. Vendor HTTP is faked at the seam (``device_authorization`` /
 ``httpx.AsyncClient``); everything below the service — repositories,
 credential rows, aux tables, ``oauth_token`` — is real.
 
@@ -24,17 +24,19 @@ from sqlalchemy import delete
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.device_flow_credentials import DeviceFlowCredential
+from jentic_one.control.core.schema.device_authorization_credentials import (
+    DeviceAuthorizationCredential,
+)
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
-from jentic_one.control.services.integrations import device_flow as df
+from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
     ConnectSessionService,
-    DeviceFlowConfirmResult,
+    DeviceAuthorizationConfirmResult,
 )
 from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
@@ -44,7 +46,7 @@ from jentic_one.control.services.integrations.errors import (
 from jentic_one.shared.config import (
     VendorAuthConfig,
     VendorAuthorizationCodeFlowConfig,
-    VendorDeviceFlowConfig,
+    VendorDeviceAuthorizationFlowConfig,
     VendorIdentityProbeConfig,
     VendorScopeConfig,
 )
@@ -65,7 +67,7 @@ async def clean_session_tables(control_db: DatabaseSession) -> AsyncGenerator[No
         ConnectSession,
         OAuthToken,
         OAuthClientCredential,
-        DeviceFlowCredential,
+        DeviceAuthorizationCredential,
         Credential,
     )
     for _phase in ("before", "after"):
@@ -96,7 +98,7 @@ def seed_test_vendors(integration_context: Context) -> None:
         vendor="testdev.example/api.testdev.example",
         display_name="Test Device Vendor",
         flows=[
-            VendorDeviceFlowConfig(
+            VendorDeviceAuthorizationFlowConfig(
                 client_id="testdev-public-client",
                 authorization_endpoint="https://idp.example.com/device/code",
                 token_endpoint="https://idp.example.com/token",
@@ -149,14 +151,14 @@ def seed_test_vendors(integration_context: Context) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_create_session_device_flow_seeds_credential_and_aux_row(
+async def test_create_session_device_authorization_seeds_credential_and_aux_row(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
 ) -> None:
     # After create, the DB is in the exact shape the scanner + confirm
     # step both rely on: credential in ``pending``, session in
-    # ``created``, device_flow_credentials aux row present but with no
+    # ``created``, device_authorization_credentials aux row present but with no
     # transient state (that lands at confirm time).
     ctx = integration_context
     svc = ConnectSessionService(ctx)
@@ -168,7 +170,7 @@ async def test_create_session_device_flow_seeds_credential_and_aux_row(
         requested_scopes=["repo"],
     )
 
-    assert created.resolved_flow == "device_flow"
+    assert created.resolved_flow == "device_authorization"
     assert created.session_id
     assert created.poll_token
     # Approval URL points at the SPA's credentials page with the session
@@ -200,7 +202,7 @@ async def test_create_session_device_flow_seeds_credential_and_aux_row(
 # ---------------------------------------------------------------------------
 
 
-async def test_confirm_device_flow_transitions_to_polling_and_seeds_aux(
+async def test_confirm_device_authorization_transitions_to_polling_and_seeds_aux(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
@@ -224,7 +226,7 @@ async def test_confirm_device_flow_transitions_to_polling_and_seeds_aux(
         expires_in=900,
         interval=5,
     )
-    with patch.object(df, "begin_device_flow", new=AsyncMock(return_value=begin_result)):
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=begin_result)):
         result = await svc.confirm(
             created.session_id,
             confirmed_scopes=["repo"],
@@ -233,7 +235,7 @@ async def test_confirm_device_flow_transitions_to_polling_and_seeds_aux(
             caller_actor_type="USER",
         )
 
-    assert isinstance(result, DeviceFlowConfirmResult)
+    assert isinstance(result, DeviceAuthorizationConfirmResult)
     assert result.user_code == "ABCD-1234"
     assert result.poll_interval_seconds == 5
 
@@ -410,7 +412,7 @@ async def test_advance_polling_target_dispatches_to_session_when_live_session_ex
         expires_in=900,
         interval=5,
     )
-    with patch.object(df, "begin_device_flow", new=AsyncMock(return_value=begin_result)):
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=begin_result)):
         await svc.confirm(
             created.session_id,
             confirmed_scopes=["read:user"],
@@ -455,7 +457,7 @@ async def test_advance_polling_target_dispatches_to_credential_when_no_live_sess
             api_vendor="foo",
             api_name="bar",
             api_version="v1",
-            provider="device_flow",
+            provider="device_authorization",
             created_by=_USER_ID,
             state="pending",
         )

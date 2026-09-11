@@ -8,10 +8,10 @@ coming in. The ``/status`` HTTP surface is a pure stored-state read; this
 scanner is the sole upstream trigger. Mirrors ``CredentialExpiryScanner``
 / ``CatalogUpdateScanner`` in shape.
 
-Targets ``device_flow_credentials`` — the aux row both entrypoints
+Targets ``device_authorization_credentials`` — the aux row both entrypoints
 (connect-session flow and raw-credential connect) write to. That row's
 ``encrypted_device_code IS NOT NULL`` is the natural "flow in flight"
-signal: cleared by ``DeviceFlowHandler.on_finalise`` on success, and by
+signal: cleared by ``DeviceAuthorizationHandler.on_finalise`` on success, and by
 ``_mark_terminal`` on failure. When a candidate is found, the service
 dispatches on whether a live ``ConnectSession`` wraps the credential —
 session-driven flows advance the session's state machine, standalone
@@ -30,7 +30,9 @@ from typing import TYPE_CHECKING
 import structlog
 from sqlalchemy import select
 
-from jentic_one.control.core.schema.device_flow_credentials import DeviceFlowCredential
+from jentic_one.control.core.schema.device_authorization_credentials import (
+    DeviceAuthorizationCredential,
+)
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
@@ -112,23 +114,23 @@ class ConnectPollScanner:
         Filters to device-flow aux rows with an active ``encrypted_device_code``
         that hasn't hit the vendor-supplied TTL yet. Both flow entrypoints
         (connect-session flow, raw credential connect) write to this table
-        during ``DeviceFlowHandler.begin``, and both clear it via
+        during ``DeviceAuthorizationHandler.begin``, and both clear it via
         ``on_finalise`` on success / ``_mark_terminal`` on failure — so
         "row present with non-NULL device_code" is a clean, flow-agnostic
         "is this in flight?" signal. RFC 8628 interval throttling happens
-        per-credential inside ``DeviceFlowHandler.advance`` (via
+        per-credential inside ``DeviceAuthorizationHandler.advance`` (via
         ``last_polled_at``), so we don't try to be clever with the query.
         """
         now = datetime.now(UTC)
         async with self._ctx.control_db.session() as session:
             stmt = (
-                select(DeviceFlowCredential.id)
+                select(DeviceAuthorizationCredential.id)
                 .where(
-                    DeviceFlowCredential.encrypted_device_code.is_not(None),
-                    DeviceFlowCredential.device_code_expires_at.is_not(None),
-                    DeviceFlowCredential.device_code_expires_at > now,
+                    DeviceAuthorizationCredential.encrypted_device_code.is_not(None),
+                    DeviceAuthorizationCredential.device_code_expires_at.is_not(None),
+                    DeviceAuthorizationCredential.device_code_expires_at > now,
                 )
-                .order_by(DeviceFlowCredential.created_at.asc())
+                .order_by(DeviceAuthorizationCredential.created_at.asc())
                 .limit(_CANDIDATE_LIMIT)
             )
             result = await session.execute(stmt)

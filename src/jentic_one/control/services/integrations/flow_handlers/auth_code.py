@@ -30,7 +30,7 @@ from jentic_one.control.services.credentials.schemas.connect import ConnectState
 from jentic_one.control.services.credentials.state import encode_state, generate_nonce
 from jentic_one.control.services.integrations.errors import ConnectSessionServiceError
 from jentic_one.control.services.integrations.flow_handlers.base import (
-    AuthCodeChallenge,
+    AuthCodeBeginResult,
     BeginResult,
     SuccessTokens,
 )
@@ -121,7 +121,7 @@ class AuthCodeFlowHandler:
             params["scope"] = " ".join(confirmed_scopes)
         authorize_url = f"{flow.authorize_url}?{urlencode(params)}"
 
-        return AuthCodeChallenge(authorize_url=authorize_url)
+        return AuthCodeBeginResult(authorize_url=authorize_url)
 
     async def on_finalise(
         self,

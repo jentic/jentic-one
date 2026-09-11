@@ -2,7 +2,7 @@
 
 Owns the state machine that drives the agent-driven integration flow.
 Flow-specific transient state lives on auxiliary tables keyed by
-`credential_id` (e.g. `device_flow_credentials`), NOT here.
+`credential_id` (e.g. `device_authorization_credentials`), NOT here.
 """
 
 from __future__ import annotations

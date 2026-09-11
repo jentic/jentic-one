@@ -2,9 +2,9 @@
 
 Implements the two upstream calls the platform makes on the agent's behalf:
 
-- :func:`begin_device_flow` — POST to the vendor's device authorization
+- :func:`begin_device_authorization` — POST to the vendor's device authorization
   endpoint to request a `device_code` + `user_code` pair.
-- :func:`poll_device_flow` — POST to the vendor's token endpoint with the
+- :func:`poll_device_authorization` — POST to the vendor's token endpoint with the
   `device_code`; maps the RFC 8628 error codes into a small enum so
   the caller (ConnectSessionService) can decide what to do next.
 
@@ -22,11 +22,11 @@ import structlog
 _logger = structlog.get_logger(__name__)
 
 
-class DeviceFlowError(Exception):
+class DeviceAuthorizationError(Exception):
     """Base class for device-flow upstream errors."""
 
 
-class DeviceFlowUpstreamError(DeviceFlowError):
+class DeviceAuthorizationUpstreamError(DeviceAuthorizationError):
     """Vendor returned a non-2xx status we didn't expect."""
 
     def __init__(self, status: int, body: str) -> None:
@@ -69,7 +69,7 @@ class PollResult:
     token_type: str | None = None
 
 
-async def begin_device_flow(
+async def begin_device_authorization(
     *,
     authorization_endpoint: str,
     client_id: str,
@@ -91,11 +91,11 @@ async def begin_device_flow(
             headers={"Accept": "application/json"},
         )
     if response.status_code != 200:
-        raise DeviceFlowUpstreamError(response.status_code, response.text)
+        raise DeviceAuthorizationUpstreamError(response.status_code, response.text)
     try:
         data: dict[str, str | int] = response.json()
     except ValueError as exc:
-        raise DeviceFlowUpstreamError(response.status_code, response.text) from exc
+        raise DeviceAuthorizationUpstreamError(response.status_code, response.text) from exc
 
     try:
         device_code = str(data["device_code"])
@@ -104,7 +104,7 @@ async def begin_device_flow(
         expires_in = int(data.get("expires_in", 900))
         interval = int(data.get("interval", 5))
     except (KeyError, ValueError) as exc:
-        raise DeviceFlowUpstreamError(
+        raise DeviceAuthorizationUpstreamError(
             response.status_code, f"malformed response: {data!r}"
         ) from exc
 
@@ -121,7 +121,7 @@ async def begin_device_flow(
     )
 
 
-async def poll_device_flow(
+async def poll_device_authorization(
     *,
     token_endpoint: str,
     client_id: str,
@@ -137,7 +137,7 @@ async def poll_device_flow(
     - 400 { error: access_denied }         → denied
     - 400 { error: expired_token }         → expired
 
-    Any other non-2xx maps to `DeviceFlowUpstreamError` so the session can
+    Any other non-2xx maps to `DeviceAuthorizationUpstreamError` so the session can
     fail loudly (misconfigured client_id, revoked app, etc.).
     """
     payload = {
@@ -154,7 +154,7 @@ async def poll_device_flow(
     try:
         data = response.json() if response.text else {}
     except ValueError as exc:
-        raise DeviceFlowUpstreamError(response.status_code, response.text) from exc
+        raise DeviceAuthorizationUpstreamError(response.status_code, response.text) from exc
 
     if response.status_code == 200 and "access_token" in data:
         return PollResult(
@@ -177,8 +177,8 @@ async def poll_device_flow(
         return PollResult(status="expired")
 
     _logger.warning(
-        "device_flow.unexpected_poll_response",
+        "device_authorization.unexpected_poll_response",
         status=response.status_code,
         body_snippet=response.text[:200],
     )
-    raise DeviceFlowUpstreamError(response.status_code, response.text)
+    raise DeviceAuthorizationUpstreamError(response.status_code, response.text)

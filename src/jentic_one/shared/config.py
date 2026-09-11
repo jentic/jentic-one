@@ -474,7 +474,7 @@ class CredentialsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class VendorDeviceFlowConfig(BaseModel):
+class VendorDeviceAuthorizationFlowConfig(BaseModel):
     """RFC 8628 device flow settings for a vendor.
 
     `client_id` is the platform-shipped OAuth application id (device flow is a
@@ -482,7 +482,7 @@ class VendorDeviceFlowConfig(BaseModel):
     authorization + token endpoints.
     """
 
-    kind: Literal["device_flow"] = "device_flow"
+    kind: Literal["device_authorization"] = "device_authorization"
     client_id: str
     authorization_endpoint: str
     token_endpoint: str
@@ -505,7 +505,7 @@ class VendorAuthorizationCodeFlowConfig(BaseModel):
 
 
 VendorFlowConfig = Annotated[
-    VendorDeviceFlowConfig | VendorAuthorizationCodeFlowConfig,
+    VendorDeviceAuthorizationFlowConfig | VendorAuthorizationCodeFlowConfig,
     Field(discriminator="kind"),
 ]
 

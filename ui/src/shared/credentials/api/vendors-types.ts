@@ -42,16 +42,16 @@ export interface ConfirmRequest {
  * Discriminated on ``kind`` — the UI branches on the tag, not on which
  * optional field happens to be populated. Two shapes:
  *
- * * ``device_flow`` — RFC 8628 result: the user types ``user_code`` at
+ * * ``device_authorization`` — RFC 8628 result: the user types ``user_code`` at
  *   ``verification_uri``; the SPA polls ``/status`` until connected.
  * * ``authorization_code`` — browser redirect target: the SPA opens
  *   ``authorize_url`` (popup or same-tab); completion lands server-side at
  *   ``/credentials/oauth/callback`` and the SPA observes it via ``/status``.
  */
-export type ConfirmResponse = DeviceFlowConfirmResponse | AuthCodeConfirmResponse;
+export type ConfirmResponse = DeviceAuthorizationConfirmResponse | AuthCodeConfirmResponse;
 
-export interface DeviceFlowConfirmResponse {
-	kind: 'device_flow';
+export interface DeviceAuthorizationConfirmResponse {
+	kind: 'device_authorization';
 	user_code: string | null;
 	verification_uri: string | null;
 	verification_uri_complete: string | null;

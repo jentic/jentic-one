@@ -62,14 +62,15 @@ export interface AuthCodeChallengeResponse {
 	authorize_url: string;
 	state: string;
 }
-export interface DeviceCodeChallengeResponse {
-	kind: 'device_code';
+export interface DeviceAuthorizationChallengeResponse {
+	kind: 'device_authorization';
 	user_code: string;
 	verification_uri: string;
 	verification_uri_complete: string | null;
 	poll_interval_seconds: number | null;
 }
-export type ConnectChallengeResponse = AuthCodeChallengeResponse | DeviceCodeChallengeResponse;
+export type ConnectChallengeResponse =
+	AuthCodeChallengeResponse | DeviceAuthorizationChallengeResponse;
 
 /** A single credential as returned by list/get/patch (secrets redacted). */
 export type Credential = CredentialRedactedResponse;

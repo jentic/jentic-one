@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
-    DeviceFlowConfirmResult,
+    DeviceAuthorizationConfirmResult,
 )
 from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
@@ -29,7 +29,7 @@ from jentic_one.control.web.schemas.integrations import (
     AuthCodeConfirmSessionResponse,
     ConfirmSessionRequest,
     ConfirmSessionResponse,
-    DeviceFlowConfirmSessionResponse,
+    DeviceAuthorizationConfirmSessionResponse,
     IntegrationsConnectRequest,
     IntegrationsConnectResponse,
     ReviewScopeResponse,
@@ -196,8 +196,8 @@ async def confirm_connect_session(
         _logger.exception("connect_session.confirm_failed", session_id=session_id)
         return JSONResponse(status_code=500, content={"detail": str(exc)})
 
-    if isinstance(result, DeviceFlowConfirmResult):
-        return DeviceFlowConfirmSessionResponse(
+    if isinstance(result, DeviceAuthorizationConfirmResult):
+        return DeviceAuthorizationConfirmSessionResponse(
             user_code=result.user_code,
             verification_uri=result.verification_uri,
             verification_uri_complete=result.verification_uri_complete,

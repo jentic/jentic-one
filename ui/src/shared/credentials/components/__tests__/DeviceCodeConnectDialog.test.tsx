@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders, screen, userEvent } from '@/__tests__/test-utils';
 import { DeviceCodeConnectDialog } from '@/shared/credentials/components/DeviceCodeConnectDialog';
-import type { DeviceCodeChallengeResponse } from '@/shared/credentials/api/types';
+import type { DeviceAuthorizationChallengeResponse } from '@/shared/credentials/api/types';
 
 /**
  * The device-code dialog is display-only: the ConnectPollScanner drives
@@ -12,8 +12,8 @@ import type { DeviceCodeChallengeResponse } from '@/shared/credentials/api/types
  * strands the human without a way to complete or abandon the flow.
  */
 describe('DeviceCodeConnectDialog', () => {
-	const challenge: DeviceCodeChallengeResponse = {
-		kind: 'device_code',
+	const challenge: DeviceAuthorizationChallengeResponse = {
+		kind: 'device_authorization',
 		user_code: 'ABCD-1234',
 		verification_uri: 'https://idp.example.com/device',
 		verification_uri_complete: 'https://idp.example.com/device?user_code=ABCD-1234',

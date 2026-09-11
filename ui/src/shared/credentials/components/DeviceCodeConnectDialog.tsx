@@ -1,6 +1,6 @@
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { Button, CopyButton, Dialog } from '@/shared/ui';
-import type { DeviceCodeChallengeResponse } from '@/shared/credentials/api/types';
+import type { DeviceAuthorizationChallengeResponse } from '@/shared/credentials/api/types';
 
 /**
  * Renders the RFC 8628 device-code human step for a credential's
@@ -14,7 +14,7 @@ export function DeviceCodeConnectDialog({
 	onCancel,
 }: {
 	open: boolean;
-	challenge: DeviceCodeChallengeResponse | null;
+	challenge: DeviceAuthorizationChallengeResponse | null;
 	credentialName: string;
 	onCancel: () => void;
 }) {

@@ -27,7 +27,7 @@ from jentic_one.control.services.integrations.flow_handlers.auth_code import (
     AuthCodeExchangeError,
     AuthCodeFlowHandler,
 )
-from jentic_one.control.services.integrations.flow_handlers.base import AuthCodeChallenge
+from jentic_one.control.services.integrations.flow_handlers.base import AuthCodeBeginResult
 from jentic_one.shared.config import (
     AppConfig,
     ConnectConfig,
@@ -108,7 +108,7 @@ async def test_begin_returns_challenge_with_state_and_scope() -> None:
     row = _row(id="sess_xyz", credential_id="cred_9")
     result = await handler.begin(row, flow=_flow(), confirmed_scopes=["repo", "read:user"])
 
-    assert isinstance(result, AuthCodeChallenge)
+    assert isinstance(result, AuthCodeBeginResult)
     parsed = urlparse(result.authorize_url)
     q = parse_qs(parsed.query)
     assert q["client_id"] == ["app-client"]
@@ -129,7 +129,7 @@ async def test_begin_state_jwt_carries_sid_credential_and_actor() -> None:
     row = _row(id="sess_xyz", credential_id="cred_9", initiator_actor_id="usr_alice")
 
     result = await handler.begin(row, flow=_flow(), confirmed_scopes=["scope1"])
-    assert isinstance(result, AuthCodeChallenge)
+    assert isinstance(result, AuthCodeBeginResult)
     state_jwt = parse_qs(urlparse(result.authorize_url).query)["state"][0]
     decoded = decode_state(_STATE_SECRET, state_jwt)
 
@@ -144,7 +144,7 @@ async def test_begin_omits_scope_when_no_confirmed_scopes() -> None:
     ctx = _make_context()
     handler = AuthCodeFlowHandler(ctx)
     result = await handler.begin(_row(), flow=_flow(), confirmed_scopes=[])
-    assert isinstance(result, AuthCodeChallenge)
+    assert isinstance(result, AuthCodeBeginResult)
     q = parse_qs(urlparse(result.authorize_url).query)
     assert "scope" not in q
 

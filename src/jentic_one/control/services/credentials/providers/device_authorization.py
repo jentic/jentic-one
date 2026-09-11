@@ -1,8 +1,8 @@
-"""DeviceFlowConnectProvider — Connect flow for standalone device-code credentials.
+"""DeviceAuthorizationConnectProvider — Connect flow for standalone device-code credentials.
 
 Fires when a user clicks Connect on a manually-created OAUTH2_DEVICE_CODE
 credential. Kicks off the RFC 8628 device-authorization request against
-the vendor, seeds the transient state on ``device_flow_credentials``, and
+the vendor, seeds the transient state on ``device_authorization_credentials``, and
 returns the ``user_code`` + ``verification_uri`` for the client to show
 the human. The ``ConnectPollScanner`` picks the aux row up on the next
 tick and drives the poll loop server-side — one code path shared with
@@ -11,15 +11,15 @@ the connect-session flow (Option C in the phase-2 plan).
 ``complete_connect`` is unreachable — device flow doesn't use a browser
 redirect + callback. ``refresh`` uses the standard OAuth 2.0 refresh grant
 without a client_secret (public client), matching what the broker's
-``DeviceFlowHandler.on_finalise`` persisted onto ``oauth_token``.
+``DeviceAuthorizationHandler.on_finalise`` persisted onto ``oauth_token``.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from jentic_one.control.repos.device_flow_credential_repo import (
-    DeviceFlowCredentialRepository,
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
 )
 from jentic_one.control.services.credentials.providers.base import (
     NotConnectableError,
@@ -31,7 +31,7 @@ from jentic_one.control.services.credentials.schemas.connect import (
     ConnectCallback,
     ConnectRequest,
     ConnectState,
-    DeviceCodeChallenge,
+    DeviceAuthorizationChallenge,
 )
 from jentic_one.control.services.credentials.schemas.provision import (
     APIReference,
@@ -39,14 +39,14 @@ from jentic_one.control.services.credentials.schemas.provision import (
     ProvisionResult,
     RefreshResult,
 )
-from jentic_one.control.services.integrations import device_flow as df
+from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.shared.context import Context
 
 
-class DeviceFlowConnectProvider(OAuth2Provider):
+class DeviceAuthorizationConnectProvider(OAuth2Provider):
     """Provider for OAUTH2_DEVICE_CODE credentials (public-client OAuth)."""
 
-    name: str = "device_flow"
+    name: str = "device_authorization"
 
     @property
     def managed(self) -> bool:
@@ -58,13 +58,15 @@ class DeviceFlowConnectProvider(OAuth2Provider):
         *,
         api: APIReference,
         request: ConnectRequest,
-    ) -> DeviceCodeChallenge:
+    ) -> DeviceAuthorizationChallenge:
         credential_id = request.extra.get("credential_id", "")
         if not credential_id:
             raise ProviderError("credential_id required in request.extra")
 
         async with ctx.control_db.session() as session:
-            dfc = await DeviceFlowCredentialRepository.get_by_credential(session, credential_id)
+            dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(
+                session, credential_id
+            )
             if dfc is None:
                 raise NotConnectableError(
                     f"credential {credential_id!r} has no device-flow row — "
@@ -76,7 +78,7 @@ class DeviceFlowConnectProvider(OAuth2Provider):
         # (caller may narrow), falling back to whatever the credential
         # was created with.
         scopes = request.scopes or dfc.requested_scopes or []
-        result = await df.begin_device_flow(
+        result = await df.begin_device_authorization(
             authorization_endpoint=dfc.authorization_endpoint,
             client_id=dfc.client_id,
             scopes=scopes,
@@ -85,7 +87,7 @@ class DeviceFlowConnectProvider(OAuth2Provider):
         expires_at = datetime.now(UTC) + timedelta(seconds=result.expires_in)
 
         async with ctx.control_db.transaction() as session:
-            await DeviceFlowCredentialRepository.set_transient_state(
+            await DeviceAuthorizationCredentialRepository.set_transient_state(
                 session,
                 credential_id,
                 encrypted_device_code=encrypted_device_code,
@@ -97,7 +99,7 @@ class DeviceFlowConnectProvider(OAuth2Provider):
                 granted_scopes=list(scopes),
             )
 
-        return DeviceCodeChallenge(
+        return DeviceAuthorizationChallenge(
             user_code=result.user_code,
             verification_uri=result.verification_uri,
             verification_uri_complete=result.verification_uri_complete,
@@ -125,9 +127,9 @@ class DeviceFlowConnectProvider(OAuth2Provider):
         token: OAuthTokenView,
     ) -> RefreshResult:
         # Standard OAuth 2.0 refresh with a public client — no client_secret.
-        # Reads the token endpoint off the credential's device_flow row.
+        # Reads the token endpoint off the credential's device_authorization row.
         async with ctx.control_db.session() as session:
-            dfc = await DeviceFlowCredentialRepository.get_by_credential(
+            dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(
                 session, token.credential_id
             )
         if dfc is None:

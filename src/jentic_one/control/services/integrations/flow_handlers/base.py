@@ -26,11 +26,24 @@ from jentic_one.shared.models.credentials import StoredCredentialType
 # ---------------------------------------------------------------------------
 
 
+# Handler-layer begin() results — value types the connect-session state
+# machine sees back from ``AuthFlowHandler.begin``. Named ``*BeginResult``
+# rather than ``*Challenge`` to disambiguate from the provider-layer
+# ``AuthCodeChallenge`` / ``DeviceAuthorizationChallenge`` pydantic models in
+# ``schemas/connect.py`` — different shapes (state JWT vs. no state), same
+# concept name across layers. The ``device_authorization`` discriminator matches
+# the codebase's mechanism name — ``VendorFlowConfig.kind``,
+# ``DeviceAuthorizationHandler``, ``device_authorization_credentials``, and
+# ``credential.provider = "device_authorization"`` all use it. ``device_code``
+# stays reserved for the RFC 8628 grant_type wire value at the token
+# endpoint (``credential.grant_type``), not the flow discriminator.
+
+
 @dataclass(frozen=True, slots=True)
-class DeviceFlowChallenge:
+class DeviceAuthorizationBeginResult:
     """RFC 8628 challenge — the user types ``user_code`` at ``verification_uri``."""
 
-    kind: Literal["device_flow"] = "device_flow"
+    kind: Literal["device_authorization"] = "device_authorization"
     user_code: str = ""
     verification_uri: str = ""
     verification_uri_complete: str | None = None
@@ -38,14 +51,14 @@ class DeviceFlowChallenge:
 
 
 @dataclass(frozen=True, slots=True)
-class AuthCodeChallenge:
+class AuthCodeBeginResult:
     """OAuth 2.0 authorization-code challenge — browser redirect target."""
 
     kind: Literal["authorization_code"] = "authorization_code"
     authorize_url: str = ""
 
 
-BeginResult = DeviceFlowChallenge | AuthCodeChallenge
+BeginResult = DeviceAuthorizationBeginResult | AuthCodeBeginResult
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +129,7 @@ class AuthFlowHandler(Protocol):
 
     Progress observation lives on the service: ``get_status`` is a pure
     stored-state read for *every* flow. Vendor advancement is
-    scanner-driven for polling flows (``DeviceFlowHandler.advance``, called
+    scanner-driven for polling flows (``DeviceAuthorizationHandler.advance``, called
     only by ``ConnectPollScanner``) and callback-driven for redirect flows
     (``AuthCodeFlowHandler.complete_from_callback``, called only by the
     callback router). Neither is on this Protocol — a Protocol lie is

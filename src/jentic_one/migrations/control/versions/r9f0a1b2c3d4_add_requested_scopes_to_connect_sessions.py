@@ -1,7 +1,7 @@
 """add requested_scopes JSONB to connect_sessions
 
 Moves the initiator's as-requested scope list off the flow-specific
-``device_flow_credentials`` aux table and onto the flow-agnostic
+``device_authorization_credentials`` aux table and onto the flow-agnostic
 ``connect_sessions`` row. Lets ``get_review_data`` stop reaching into a
 device-flow-specific table for information that's session-scoped, not
 flow-scoped — a step toward the auth-code + MCP handlers sharing the

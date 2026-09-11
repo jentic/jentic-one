@@ -116,7 +116,7 @@ class VendorRegistryService:
         Device flow needs a client_id; without it every begin_connect call
         would silently 400 at the vendor.
         """
-        if flow.kind == "device_flow" and not flow.client_id:
+        if flow.kind == "device_authorization" and not flow.client_id:
             raise VendorNotConfiguredError(
                 vendor_key,
                 flow.kind,
