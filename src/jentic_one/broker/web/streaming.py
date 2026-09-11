@@ -126,8 +126,6 @@ def _metadata_headers(
         JenticHeader.EXECUTION_ID.value: execution_id,
         JenticHeader.UPSTREAM_STATUS.value: str(status_code),
     }
-    if ctx_req.toolkit_id:
-        metadata[JenticHeader.TOOLKIT_ID.value] = ctx_req.toolkit_id
     if ctx_req.operation_id:
         metadata[JenticHeader.OPERATION.value] = ctx_req.operation_id
     if ctx_req.api_vendor:

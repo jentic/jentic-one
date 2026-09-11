@@ -199,7 +199,6 @@ export type { SetPermissionsRequest } from './models/SetPermissionsRequest';
 export type { Sigv4CreateRequest } from './models/Sigv4CreateRequest';
 export type { Sigv4UpdateRequest } from './models/Sigv4UpdateRequest';
 export type { TokenResponse } from './models/TokenResponse';
-export type { ToolkitBindingEntry } from './models/ToolkitBindingEntry';
 export type { TopOperation } from './models/TopOperation';
 export type { UsageBucket } from './models/UsageBucket';
 export type { UsageResponse } from './models/UsageResponse';

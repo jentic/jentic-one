@@ -173,7 +173,6 @@ async def test_open_streaming_response_sets_metadata_headers() -> None:
         upstream_url="https://api.example.com/x",
         method="GET",
         trace_id="t",
-        toolkit_id="tk",
         operation_id="op",
         api_vendor="vendor",
     )
@@ -189,7 +188,6 @@ async def test_open_streaming_response_sets_metadata_headers() -> None:
     assert resp.headers[JenticHeader.EXECUTION_ID.value] == "exec-1"
     assert resp.headers[JenticHeader.UPSTREAM_STATUS.value] == "503"
     assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "upstream"
-    assert resp.headers[JenticHeader.TOOLKIT_ID.value] == "tk"
     # x-vendor passed through; content-length not present (chunked transfer).
     assert resp.headers["x-vendor"] == "v"
 

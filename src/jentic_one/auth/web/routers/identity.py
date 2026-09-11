@@ -21,7 +21,6 @@ from jentic_one.auth.web.schemas.identity import (
     MeResponse,
     MeServiceAccount,
     MeUser,
-    ToolkitBindingEntry,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorStatus
@@ -78,7 +77,6 @@ async def _resolve_user(request: Request, identity: Identity, user_svc: UserServ
 async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentService) -> MeAgent:
     try:
         agent = await agent_svc.get_agent(identity.sub, identity=identity)
-        toolkits = await agent_svc.list_toolkits(identity.sub, identity=identity)
         credentials = await agent_svc.list_credentials(identity.sub, identity=identity)
         # Read the live grants rather than echoing the token's scopes, so an
         # approved grant shows up here immediately even when the presented token
@@ -99,17 +97,6 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
         token_scopes=identity.permissions,
         parent_agent_id=agent.parent_agent_id,
         approved_by=agent.approved_by,
-        toolkit_bindings=[
-            ToolkitBindingEntry(
-                toolkit_id=tb.toolkit_id,
-                name=tb.name,
-                bound_at=tb.bound_at,
-                # service + web share ServedApiRef, so the serves list passes
-                # straight through with no per-item remapping.
-                serves=tb.serves,
-            )
-            for tb in toolkits
-        ],
         credential_bindings=[
             CredentialBindingEntry(
                 credential_id=cb.credential_id,

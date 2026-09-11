@@ -17,7 +17,6 @@ from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one import __version__
-from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
@@ -258,59 +257,6 @@ def _start_catalog_update_scanner(
     return scanner, task
 
 
-def _start_key_retirement(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[None] | None:
-    """One-shot toolkit-key auto-migration at boot (theme-5 Phase 4).
-
-    An upgrade must not silently break headless ``jntc_live_`` callers: the
-    resolver that served them is gone, so every resolvable key needs its
-    successor service account before the first request. The job is
-    idempotent (stamped keys short-circuit), so running it on every boot is
-    a cheap no-op after the first. Gate on the control surface owning the
-    toolkit tables plus both DBs being reachable. Best-effort: a failure is
-    loud in the logs but never blocks boot — the ``retire-toolkit-keys``
-    CLI (with ``--owner`` for unresolvable creators) is the recovery path.
-    """
-    if "control" not in enabled_apps:
-        return None
-    if not (ctx.has_db("control") and ctx.has_db("admin")):
-        return None
-
-    async def _run() -> None:
-        try:
-            outcomes = await KeyRetirementService(ctx).run()
-        except Exception:
-            _logger.exception("toolkit_key_retirement_startup_failed")
-            return
-        unresolved = sum(1 for o in outcomes if o.reason == "owner_unresolved")
-        if unresolved:
-            _logger.warning(
-                "toolkit_key_retirement_owner_unresolved",
-                count=unresolved,
-                actionable_step=(
-                    "Run `jentic_one retire-toolkit-keys --owner <admin-email>` "
-                    "to migrate the remaining keys."
-                ),
-            )
-
-    task = asyncio.create_task(_run())
-    _logger.info("toolkit_key_retirement_task_started")
-    return task
-
-
-async def _stop_one_shot(task: asyncio.Task[None] | None) -> None:
-    """Cancel-and-await a one-shot startup task at shutdown.
-
-    Normally the task finished long ago and this is a no-op; on a very fast
-    boot→shutdown (tests, crashed sibling) the cancel keeps teardown from
-    leaking a pending task warning.
-    """
-    if task is None:
-        return
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-
-
 async def _stop_catalog_update_scanner(
     handle: tuple[CatalogUpdateScanner, asyncio.Task[None]] | None,
 ) -> None:
@@ -501,7 +447,6 @@ def create_surface_app(
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
-            key_retirement_task = _start_key_retirement(ctx, enabled_apps)
             try:
                 yield
             finally:
@@ -513,7 +458,6 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
-                await _stop_one_shot(key_retirement_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
@@ -596,11 +540,9 @@ def create_combined_app(
             worker_task = _start_worker(ctx, set(apps))
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
-            key_retirement_task = _start_key_retirement(ctx, set(apps))
             try:
                 yield
             finally:
-                await _stop_one_shot(key_retirement_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)

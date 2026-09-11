@@ -2654,10 +2654,11 @@ components:
       description: |-
         Grouping dimension for usage statistics.
 
-        ``TOOLKIT`` is deprecated (theme-5 Phase 5b) and will be removed one
-        release later, with the toolkit tables (Phase 6b): execution records
-        carry a ``credential_id`` since Phase 2 and the direct-binding path
-        writes no ``toolkit_id``, so ``CREDENTIAL`` is the replacement axis.
+        ``TOOLKIT`` is a legacy axis: it groups over the surviving
+        ``execution_records.toolkit_id`` attribution column, which nothing writes
+        since the toolkit path was deleted (theme-5 Phase 6b). It stays so
+        historical dashboards keep working; ``CREDENTIAL`` is the live
+        consumer axis (execution records carry ``credential_id`` since Phase 2).
       enum:
       - api
       - toolkit
@@ -3021,11 +3022,6 @@ components:
             type: string
           title: Token Scopes
           type: array
-        toolkit_bindings:
-          items:
-            $ref: '#/components/schemas/ToolkitBindingEntry'
-          title: Toolkit Bindings
-          type: array
         type:
           const: agent
           default: agent
@@ -3037,7 +3033,6 @@ components:
       - status
       - scopes
       - token_scopes
-      - toolkit_bindings
       title: MeAgent
       type: object
     MeServiceAccount:
@@ -3170,7 +3165,7 @@ components:
         Create request for no_auth credentials.
 
         A no-auth credential carries no secret — it represents "this API is called
-        without authentication". It still exists as a credential row so a toolkit
+        without authentication". It still exists as a credential row so an agent
         binding (and its permission rules) can hang off it, and the broker resolves
         it as a no-op auth (see broker credential resolver / injection).
       properties:
@@ -5649,7 +5644,7 @@ components:
       type: object
     ServedApiRef:
       description: |-
-        An API served by a toolkit's bound credential, keyed by its stored identity.
+        An API served by an agent's bound credential, keyed by its stored identity.
 
         Distinct from ``APIReference`` on purpose: this carries the *stored* credential
         identity, where ``api_name``/``api_version`` may be NULL (the "covers all
@@ -5985,32 +5980,6 @@ components:
       - access_token
       - expires_in
       title: TokenResponse
-      type: object
-    ToolkitBindingEntry:
-      description: Toolkit binding summary for the /me response.
-      properties:
-        bound_at:
-          format: date-time
-          title: Bound At
-          type: string
-        name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Name
-        serves:
-          default: []
-          items:
-            $ref: '#/components/schemas/ServedApiRef'
-          title: Serves
-          type: array
-        toolkit_id:
-          title: Toolkit Id
-          type: string
-      required:
-      - toolkit_id
-      - bound_at
-      title: ToolkitBindingEntry
       type: object
     TopOperation:
       description: Aggregated execution counts for a single operation.
@@ -6640,8 +6609,8 @@ info:
 
       | Prefix | Resource | Notes |
       |---|---|---|
-      | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
-      | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the service account it was migrated to. |
+      | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |
+      | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b) and `jntc_live_` plaintexts no longer authenticate — holders use the `sak_` key of the service account their key was migrated to. Ids survive only in audit history. |
       | `cred_` | Credential ID | |
       | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
       | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -6653,7 +6622,6 @@ info:
       | `areq_` | Access request | Human-approval ticket for scope grants and credential bindings; see the `Access Requests` tag. |
       | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
       | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
 
       Surfaces still being designed (agent identity, OAuth brokers)
       will add their own prefixes when they land.

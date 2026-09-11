@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An API served by a toolkit's bound credential, keyed by its stored identity.
+ * An API served by an agent's bound credential, keyed by its stored identity.
  *
  * Distinct from ``APIReference`` on purpose: this carries the *stored* credential
  * identity, where ``api_name``/``api_version`` may be NULL (the "covers all

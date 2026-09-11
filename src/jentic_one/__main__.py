@@ -8,7 +8,6 @@ import importlib
 import json
 import os
 import sys
-from dataclasses import asdict
 from getpass import getpass
 
 import structlog
@@ -23,7 +22,6 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
-from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
 from jentic_one.shared.config import AppConfig, load_config
@@ -36,9 +34,9 @@ from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
-    # Auth reaches the control DB read-only to resolve toolkit-binding names for
-    # the /me whoami response (issue #686): the binding row lives in the admin DB
-    # but the toolkit name lives in the control DB.
+    # Auth reaches the control DB read-only to resolve credential names for the
+    # /me whoami response (issue #686): the binding row lives in the admin DB
+    # but the credential name lives in the control DB.
     "auth": {"admin", "control"},
     "broker": {"admin", "control", "registry"},
     # Every standalone surface in SURFACES_NEEDING_AUTH verifies callers locally
@@ -286,48 +284,6 @@ async def _reset_password(
     return 0
 
 
-async def _retire_toolkit_keys(*, owner_email: str | None) -> int:
-    """Run the theme-5 Phase 4 toolkit-key retirement job.
-
-    Converts every resolvable ``jntc_live_`` key into a service account
-    carrying exactly ``capabilities:execute``; the unchanged plaintext keeps
-    authenticating as that account. One JSONL report line per key goes to
-    stdout. Idempotent — safe to re-run after a partial failure.
-    """
-    config = load_config()
-    configure_logging(config)
-
-    async with Context(config, allowed_dbs={"admin", "control"}) as ctx:
-        svc = KeyRetirementService(ctx)
-        try:
-            outcomes = await svc.run(fallback_owner_email=owner_email)
-        except ValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
-
-    for outcome in outcomes:
-        print(json.dumps(asdict(outcome)), flush=True)
-
-    migrated = sum(1 for o in outcomes if o.action == "migrated")
-    skipped = [o for o in outcomes if o.action == "skipped"]
-    print(
-        f"==> {migrated} key(s) migrated, "
-        f"{sum(1 for o in outcomes if o.action == 'already_migrated')} already migrated, "
-        f"{len(skipped)} skipped.",
-        file=sys.stderr,
-        flush=True,
-    )
-    if any(o.reason == "owner_unresolved" for o in skipped):
-        print(
-            "==> Some keys have no resolvable owner; re-run with "
-            "--owner <admin-email> to assign them.",
-            file=sys.stderr,
-            flush=True,
-        )
-        return 3
-    return 0
-
-
 def _write_report(findings: list[Finding], report_path: str | None) -> None:
     """Emit one JSON line per finding, to ``report_path`` or stdout."""
     if report_path is None:
@@ -367,6 +323,7 @@ async def _flatten_toolkits(
                 f"{result.legacy_pair_count} legacy pair(s), "
                 f"{result.direct_binding_count} direct binding(s), "
                 f"{result.missing_pair_count} missing, "
+                f"{result.unbackfilled_execution_name_count} execution name(s) unbackfilled, "
                 f"{len(result.findings)} report line(s).",
                 file=sys.stderr,
                 flush=True,
@@ -387,7 +344,9 @@ async def _flatten_toolkits(
         verb = "would create" if diff_only else "created"
         print(
             f"==> {run.pairs_total} legacy pair(s): {verb} {run.created} binding(s), "
-            f"{run.already_present} already present, {len(run.findings)} report line(s).",
+            f"{run.already_present} already present, "
+            f"{run.backfilled_execution_names} execution name(s) backfilled, "
+            f"{len(run.findings)} report line(s).",
             file=sys.stderr,
             flush=True,
         )
@@ -475,18 +434,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Temporary password (prompted, or read from stdin when non-interactive, if omitted).",
     )
 
-    retire_keys = sub.add_parser(
-        "retire-toolkit-keys",
-        help=("Migrate jntc_live_ toolkit keys to service accounts (theme-5 Phase 4; idempotent)."),
-    )
-    retire_keys.add_argument(
-        "--owner",
-        help=(
-            "Email of the user to own service accounts whose toolkit key has "
-            "no resolvable creator (such keys are skipped and reported otherwise)."
-        ),
-    )
-
     flatten = sub.add_parser(
         "flatten-toolkits",
         help=(
@@ -557,9 +504,6 @@ def main(argv: list[str] | None = None) -> int:
                 password=args.password,
             )
         )
-
-    if args.command == "retire-toolkit-keys":
-        return asyncio.run(_retire_toolkit_keys(owner_email=args.owner))
 
     if args.command == "flatten-toolkits":
         if args.acknowledge and not args.verify:

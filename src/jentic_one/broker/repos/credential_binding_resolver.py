@@ -2,7 +2,7 @@
 
 Given an agent and a resolved API identity, returns the credentials the agent
 is **directly and actively bound to** whose stored identity covers that API.
-This is the direct-binding twin of ``toolkit_binding_resolver`` and is
+The lookup is
 inherently cross-schema (admin ``agent_credential_bindings`` + control
 ``credentials``) — the broker may import neither ``admin`` nor ``control`` ORM,
 so it runs as raw SQL behind ``CredentialDeriverProtocol``.
@@ -40,11 +40,12 @@ _AGENT_CREDENTIALS = text(
 # control DB — active credentials whose stored identity covers the API. The
 # coverage rule (NULL credential axis = "unscoped → covers any"; otherwise
 # equality against the always-concrete operation axis) is the shared seam in
-# shared/models/api_identity.py, so this matcher, the toolkit-path matcher
-# (broker/repos/toolkit_binding_resolver) and the injection-time resolver
+# shared/models/api_identity.py, so this matcher and the injection-time
+# resolver
 # (broker/services/credentials/resolver) cannot drift apart.
 #
-# ``c.active`` is filtered here (unlike the toolkit-path matcher, which defers
+# ``c.active`` is filtered here (unlike the deleted pre-6b toolkit-path
+# matcher, which deferred
 # the active check to injection): a disabled credential must not surface as a
 # selection candidate — it could only turn a clean 403 into a confusing 424
 # later, or force a spurious ambiguity 409 against a live sibling.
@@ -68,7 +69,7 @@ _CREDENTIAL_IDENTITIES = text(
 def _axes_matched(scope: CredentialScope, *, vendor: str, name: str, version: str) -> int:
     """How many of the operation's axes this scope matches (near-miss ranking).
 
-    Same semantics as the toolkit-path twin: an unscoped (NULL) axis does not
+    An unscoped (NULL) axis does not
     *match* a concrete value for ranking purposes — a wildcard would have
     *covered* the operation and never reached the near-miss path. Ranking only;
     never an authorization signal.
@@ -144,8 +145,8 @@ class CredentialBindingResolver:
     ) -> IdentityMismatch | None:
         """Find the closest bound-credential identity that fails to cover the API.
 
-        Same vendor-affinity gate and ranking as the toolkit-path twin
-        (``ToolkitBindingResolver._nearest_miss``): only a same-vendor or
+        Same vendor-affinity gate and ranking as the deleted toolkit-path twin
+        used (theme-5 Phase 6b): only a same-vendor or
         ``would_match_if_normalized`` (#746 legacy slug) row is a genuine
         identity mismatch for *this* API — a credential for an unrelated vendor
         is not a mismatch, and returning it would wrongly tell the operator to

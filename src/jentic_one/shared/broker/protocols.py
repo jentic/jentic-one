@@ -1,4 +1,4 @@
-"""Protocols and data types for broker token resolution and toolkit binding checks."""
+"""Protocols and data types for broker token resolution and binding enforcement."""
 
 from __future__ import annotations
 
@@ -105,33 +105,12 @@ class RuleEvaluation:
     rules_loaded: int
 
 
-@runtime_checkable
-class RuleEvaluatorProtocol(Protocol):
-    """Evaluates toolkit permission rules against an inbound request.
-
-    Returns a :class:`RuleEvaluation` with the allow/deny outcome and the
-    size of the vendor-pooled rule list evaluated. Evaluation follows
-    first-match-wins over an ordered rule list; an exhausted list defaults
-    to deny (secure-by-default).
-    """
-
-    async def evaluate(
-        self,
-        *,
-        toolkit_id: str,
-        method: str,
-        path: str,
-        operation_id: str | None,
-        api_vendor: str = "",
-    ) -> RuleEvaluation: ...
-
-
 @dataclass(frozen=True, slots=True)
 class IdentityMismatch:
     """A nearest-miss credential identity for an unresolved-but-bound API.
 
-    Populated when the agent is bound to toolkit(s) but no credential's stored
-    identity covers the (concrete) operation identity — the #747/#748 case. All
+    Populated when the agent is bound but no credential's stored identity
+    covers the (concrete) operation identity — the #747/#748 case. All
     fields are plain strings so the directive layer can serialize them directly
     without touching a pydantic model.
     """
@@ -143,47 +122,6 @@ class IdentityMismatch:
     found_name: str | None
     found_version: str | None
     would_match_if_normalized: bool
-
-
-@dataclass(frozen=True, slots=True)
-class ToolkitDerivation:
-    """Result of toolkit derivation, carrying *why* the toolkit set may be empty.
-
-    ``toolkits`` is the intersection callers use (``()`` → 403, one → use it,
-    many → 409). The remaining fields let the broker distinguish the empty cases
-    and emit the right recovery directive without a second DB round-trip:
-
-    - ``agent_bound_any`` — the agent has at least one toolkit binding at all.
-    - ``api_served_toolkits`` — every toolkit whose bound credential covers the
-      API (independent of the agent). ``()`` means no toolkit serves the API yet;
-      this subsumes the old ``any_toolkit_serves_api`` probe. **These ids can
-      belong to other owners** (the derivation is agent-independent), so only its
-      *truthiness* may be consumed here — the raw ids must not be serialized into
-      a directive/response without owner-scoping, or they'd leak cross-tenant
-      toolkit ids.
-    - ``identity_mismatch`` — a nearest-miss for the diagnostic when the agent is
-      bound but nothing serves the API because a bound credential's identity does
-      not cover the operation.
-    """
-
-    toolkits: tuple[str, ...]
-    agent_bound_any: bool
-    api_served_toolkits: tuple[str, ...]
-    identity_mismatch: IdentityMismatch | None
-
-
-@runtime_checkable
-class ToolkitDeriverProtocol(Protocol):
-    """Derives which of an agent's toolkits contain a given API identity.
-
-    Empty ``toolkits`` → 403, one → use it, many → 409 (caller disambiguates with
-    the ``Jentic-Toolkit-Id`` header). The full :class:`ToolkitDerivation` also
-    carries why an empty set is empty so the denial can pick the right directive.
-    """
-
-    async def derive_toolkits(
-        self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> ToolkitDerivation: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,19 +139,18 @@ class BoundCredential:
 
 @dataclass(frozen=True, slots=True)
 class CredentialDerivation:
-    """Result of direct-binding credential derivation (theme-5 Phase 2).
+    """Result of direct-binding credential derivation (theme-5).
 
-    The direct-binding twin of :class:`ToolkitDerivation` — ``credentials`` is
-    the intersection of the agent's **active** (non-suspended) direct bindings
-    with the credentials whose stored identity covers the API. The remaining
-    fields explain an empty set so the denial picks the right directive:
+    ``credentials`` is the intersection of the agent's **active**
+    (non-suspended) direct bindings with the credentials whose stored identity
+    covers the API. The remaining fields explain an empty set so the denial
+    picks the right directive:
 
     - ``agent_bound_any`` — the agent has at least one active direct binding.
     - ``api_served`` — at least one active credential (bound to this agent or
       not) covers the API. Deliberately a *bool*, not ids: covering credentials
       can belong to other owners, so carrying their ids here would invite a
-      cross-tenant leak into a directive (mirrors the ``api_served_toolkits``
-      truthiness-only caveat).
+      cross-tenant leak into a directive.
     - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
       but none of its bound credentials cover the operation identity.
     """

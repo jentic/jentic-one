@@ -12,17 +12,16 @@ from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
-from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
+    AgentCredentialBindingRepository,
     AgentRepository,
     EventRepository,
     UserRepository,
 )
-from jentic_one.admin.repos.agent_toolkit_binding_repo import AgentToolkitBindingRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.context import Context
@@ -150,15 +149,15 @@ async def archive_target_agent_id(
             scope="test:scope",
             created_by="usr_test",
         )
-        await AgentToolkitBindingRepository.bind(
-            session, agent_id=agent.id, toolkit_id="tk-123", created_by="usr_test"
+        await AgentCredentialBindingRepository.bind(
+            session, agent_id=agent.id, credential_id="cred-arch-123", created_by="usr_test"
         )
     yield agent.id
 
     async with web_context.admin_db.session() as session:
         await session.execute(delete(ActorScopeGrant).where(ActorScopeGrant.actor_id == agent.id))
         await session.execute(
-            delete(AgentToolkitBinding).where(AgentToolkitBinding.agent_id == agent.id)
+            delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent.id)
         )
         await session.execute(delete(Agent).where(Agent.id == agent.id))
         await session.commit()
@@ -176,7 +175,7 @@ async def test_archive_agent(
         assert agent.status == "archived"
         grants = await ActorScopeGrantRepository.list_for_actor(session, archive_target_agent_id)
         assert grants == []
-        bindings = await AgentToolkitBindingRepository.list_for_agent(
+        bindings = await AgentCredentialBindingRepository.list_for_agent(
             session, archive_target_agent_id
         )
         assert bindings == []

@@ -154,7 +154,7 @@ func (McpConfigRegistrationResponse) RequiredFields() []string {
 	return []string{"recorded", "runtime"}
 }
 func (MeAgent) RequiredFields() []string {
-	return []string{"id", "name", "scopes", "status", "token_scopes", "toolkit_bindings"}
+	return []string{"id", "name", "scopes", "status", "token_scopes"}
 }
 func (MeServiceAccount) RequiredFields() []string {
 	return []string{"id", "name", "registered_by", "scopes", "status", "token_scopes"}
@@ -275,9 +275,8 @@ func (SetPermissionsRequest) RequiredFields() []string        { return []string{
 func (Sigv4CreateRequest) RequiredFields() []string {
 	return []string{"access_key_id", "api", "aws_region", "aws_service", "name", "secret_access_key", "type"}
 }
-func (Sigv4UpdateRequest) RequiredFields() []string  { return []string{"type"} }
-func (TokenResponse) RequiredFields() []string       { return []string{"access_token", "expires_in"} }
-func (ToolkitBindingEntry) RequiredFields() []string { return []string{"bound_at", "toolkit_id"} }
+func (Sigv4UpdateRequest) RequiredFields() []string { return []string{"type"} }
+func (TokenResponse) RequiredFields() []string      { return []string{"access_token", "expires_in"} }
 func (TopOperation) RequiredFields() []string {
 	return []string{"api_name", "api_vendor", "failed", "operation_id", "total"}
 }

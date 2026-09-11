@@ -17,7 +17,6 @@ from jentic_one.control.repos.access_request_repo import AccessRequestRepository
 from jentic_one.control.repos.credential_repo import CredentialRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
-from jentic_one.control.repos.toolkit_repo import ToolkitRepository
 from jentic_one.control.scoping.filters import build_access_filters, credential_owner_scope
 from jentic_one.control.services.access_requests.effects import (
     PLAN_INTENT_COMBINATIONS,
@@ -1121,8 +1120,10 @@ class AccessRequestService:
 
         toolkit_names: dict[str, str] = {}
         credential_names: dict[str, str] = {}
-        if toolkit_ids:
-            toolkit_names = await ToolkitRepository.get_names_by_ids(session, list(toolkit_ids))
+        # Toolkit names are no longer resolvable: the control ``toolkits``
+        # table was dropped in theme-5 Phase 6b. Historical request items that
+        # referenced a toolkit keep their ids and render ``toolkit_name: null``
+        # — the same shape a since-deleted toolkit always produced.
         if credential_ids:
             credential_names = await CredentialRepository.get_names_by_ids(
                 session, list(credential_ids)

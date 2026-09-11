@@ -6,7 +6,6 @@ from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
-from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
@@ -35,7 +34,6 @@ __all__ = [
     "Agent",
     "AgentCredential",
     "AgentCredentialBinding",
-    "AgentToolkitBinding",
     "AuditEntry",
     "AuthorizationCode",
     "Event",
