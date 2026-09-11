@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from jentic_one.shared.config import AppConfig, load_config
-from jentic_one.shared.crypto import EncryptionService
+from jentic_one.shared.crypto import DecryptionError, EncryptionService
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.provider_config_store import load_provider_configs
 from jentic_one.shared.release_check import ReleaseChecker
@@ -125,7 +125,19 @@ class Context:
         async with self.admin_db.session() as session:
             stored = await load_provider_configs(session)
 
-        decrypted = {name: self.decrypt_provider_config(cfg) for name, cfg in stored.items()}
+        # Per-row decryption tolerance: a row encrypted under a lost/rotated
+        # key must not take down the whole registry rebuild (nor block boot);
+        # skip it with a warning — a re-apply with a fresh secret heals it.
+        decrypted: dict[str, dict[str, object]] = {}
+        for name, cfg in stored.items():
+            try:
+                decrypted[name] = self.decrypt_provider_config(cfg)
+            except DecryptionError as exc:
+                logger.warning(
+                    "provider_config_undecryptable_skipped",
+                    provider=name,
+                    error=str(exc),
+                )
         self._providers = ProviderRegistry.from_config_and_dynamic(
             self._config.credentials, decrypted
         )

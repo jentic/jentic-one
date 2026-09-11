@@ -14,6 +14,7 @@ from jentic_one.shared.audit import record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import PipedreamProviderConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 
 # Secret fields per provider that must be encrypted at rest and redacted on read.
@@ -93,7 +94,18 @@ class ProviderConfigService:
 
         base: dict[str, Any] = {}
         if existing is not None:
-            base = self._ctx.decrypt_provider_config(existing.config_json)
+            try:
+                base = self._ctx.decrypt_provider_config(existing.config_json)
+            except DecryptionError:
+                # The stored secret was encrypted under a lost/rotated key —
+                # keep the plaintext (non-secret) fields so the merge still
+                # works, drop the undecryptable secret, and let validation
+                # demand a fresh one. A re-apply heals; a 500 dead-ends.
+                base = {
+                    k: v
+                    for k, v in existing.config_json.items()
+                    if k not in _SECRET_FIELDS
+                }
             base.pop("kind", None)
 
         merged = dict(base)
@@ -102,7 +114,17 @@ class ProviderConfigService:
                 continue
             merged[key] = value
 
-        validated = _validate_by_name(name, merged)
+        try:
+            validated = _validate_by_name(name, merged)
+        except InvalidInputError:
+            # Sharpen the classic case: reconfigure with a blank secret after
+            # the stored one became undecryptable.
+            if existing is not None and not merged.get("client_secret"):
+                raise InvalidInputError(
+                    f"the stored {name} secret can no longer be decrypted "
+                    "(encryption key changed) — re-enter the client secret"
+                ) from None
+            raise
 
         # Encrypt secret fields before persisting; plaintext never lands in the DB.
         stored = dict(validated)
