@@ -118,14 +118,37 @@ interface WizardDraft {
  * The `.v2` suffix retires drafts from the 4-step toolkit era: their step
  * names and chain fields no longer exist, so restoring one would misroute the
  * wizard. Old-key entries simply expire with the session.
+ *
+ * On top of the key suffix, every persisted draft is stamped with
+ * {@link PROVISIONING_DRAFT_VERSION}. A draft whose `version` is missing or
+ * doesn't match is DISCARDED silently on load (never migrated): a stale shape
+ * may carry retired fields (e.g. the toolkit-era `toolkitAdopted`) whose
+ * meaning is gone, and resuming from it would misroute the wizard. Bump the
+ * constant whenever {@link WizardDraft}'s persisted shape changes.
  */
 const DRAFTS_STORAGE_KEY = 'jentic.provisioningWizardDrafts.v2';
 
-function loadDrafts(): Map<string, WizardDraft> {
+/** Persisted-draft schema version — see the discard contract above. */
+export const PROVISIONING_DRAFT_VERSION = 1;
+
+/** What actually sits in sessionStorage: the draft plus its schema stamp. */
+type StoredWizardDraft = WizardDraft & { version?: number };
+
+/**
+ * Exported for tests (the module-scope `drafts` map is seeded from this once
+ * per page load, so the discard-on-load contract is pinned via the pure
+ * function rather than an import-order dance).
+ */
+export function loadDrafts(): Map<string, WizardDraft> {
 	try {
 		const raw = sessionStorage.getItem(DRAFTS_STORAGE_KEY);
 		if (!raw) return new Map();
-		return new Map(Object.entries(JSON.parse(raw) as Record<string, WizardDraft>));
+		const parsed = JSON.parse(raw) as Record<string, StoredWizardDraft>;
+		return new Map(
+			Object.entries(parsed)
+				.filter(([, d]) => d.version === PROVISIONING_DRAFT_VERSION)
+				.map(([id, { version: _version, ...draft }]) => [id, draft]),
+		);
 	} catch {
 		return new Map();
 	}
@@ -137,7 +160,13 @@ function saveDrafts(drafts: Map<string, WizardDraft>): void {
 			sessionStorage.removeItem(DRAFTS_STORAGE_KEY);
 			return;
 		}
-		sessionStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(Object.fromEntries(drafts)));
+		const stamped = Object.fromEntries(
+			[...drafts].map(([id, draft]): [string, StoredWizardDraft] => [
+				id,
+				{ ...draft, version: PROVISIONING_DRAFT_VERSION },
+			]),
+		);
+		sessionStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(stamped));
 	} catch {
 		// Quota/privacy-mode failures degrade to in-memory-only drafts.
 	}

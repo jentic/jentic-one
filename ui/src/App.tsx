@@ -10,6 +10,8 @@ import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
 import { SsoCallbackPage } from '@/shared/auth/SsoCallbackPage';
 import { Layout } from '@/shared/app/Layout';
 import { moduleRoutes, ROUTES } from '@/shared/app/routes';
+// Deprecation-window alias (theme-5 5d): /app/toolkits* → Agents. DELETE IN 6b.
+import { toolkitsDeprecationRoutes } from '@/shared/app/toolkitsDeprecation';
 import { PlaceholderPage } from '@/shared/app/placeholders';
 import { sortedNavItems, registerExtraNavItems, type NavItem } from '@/shared/app/nav';
 // [ui-dashboard] Dashboard owns the /app index — replaces DashboardPlaceholder.
@@ -133,6 +135,10 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 						...moduleRoutes,
 						...extraRoutes,
 						...placeholderRoutes,
+						// Deprecation-window alias for retired /toolkits deep
+						// links (theme-5 5d) — last so any real route wins.
+						// DELETE IN 6b together with toolkitsDeprecation.tsx.
+						...toolkitsDeprecationRoutes,
 					],
 				},
 			],
