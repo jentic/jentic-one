@@ -2,7 +2,7 @@
 
 The ``/mcp`` mount's pre-auth ``resources/read`` door is held closed by a
 layered defense (see the ``PRE_AUTH_METHODS`` comment in
-``jentic_one/mcp/app.py``): the resolver is characterized as two-armed, and
+``jentic_one/mcp/app.py``): the resolver is characterized as three-armed, and
 ``build_mcp_server``'s ``on_read_resource`` is pinned to be a bare delegation
 to it. Both pins inspect **source that exists today** — the SDK's
 ``Server.add_request_handler`` / ``add_notification_handler`` would replace a
