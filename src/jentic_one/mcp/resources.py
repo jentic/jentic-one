@@ -22,7 +22,11 @@ mislead. The mount refuses to read what it does not list (listed set ==
 readable set, the D11 invariant); the Go stdio server applies the SAME
 filter (``skillgen.CLIOnlyReference``). This is a serving decision, not a
 secret: the HTTP routes are the raw neutral channel and serve every
-reference, ``cli.md`` included.
+reference, ``cli.md`` included. Note the filter governs the ``skill://``
+door only — a ``skill://index`` read, being the HTTP manifest verbatim,
+still NAMES the CLI-lane references and their HTTP URLs in its
+``references`` rows; it advertises where the neutral channel serves them,
+it does not make them readable here.
 
 Kept as a sibling of ``app.py`` (the ``access_compose.py`` precedent:
 handlers-adjacent logic lives next to the handlers, keeping ``app.py``
