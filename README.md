@@ -121,8 +121,9 @@ Six steps from a running instance to a response from a real API.
 4. **Register the agent:** `jentic register` (add `--url <URL>` when the agent runs on a
    different machine). Registration waits for an operator to approve the
    agent. On a single-operator install, approve it in the UI and the command completes.
-5. **Grant access** by binding the agent to a toolkit. A rule-less binding blocks everything;
-   the default is deny.
+5. **Grant access** by binding the agent to a stored credential — on the agent's Access tab in
+   the UI, or by approving the agent's own `jentic access request`. A rule-less binding blocks
+   everything; the default is deny.
 6. **Make the call:** `jentic execute GET:https://httpbin.org/get --json` — the operation's
    full URL, as returned by `jentic search`/`jentic inspect`.
 
@@ -194,7 +195,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | Guide | Covers |
 | ----- | ------ |
 | [Local development setup](docs/development/local-setup.md) | Running a stack on your machine |
-| [Credentials and toolkits](docs/credentials-and-toolkits.md) | Storing a credential and binding an agent to it |
+| [Credentials and bindings](docs/credentials-and-toolkits.md) | Storing a credential and binding an agent to it |
 | [Local coding agents](docs/local-agent.md) | Run Claude Code, Codex, Cursor, or Hermes as an isolated Unix user with `jentic run` — flow, examples, grants, and troubleshooting |
 | [CLI reference](cli/README.md) | Every `jenticctl` and `jentic` command |
 

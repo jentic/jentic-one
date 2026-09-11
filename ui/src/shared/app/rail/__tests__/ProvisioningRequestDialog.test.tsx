@@ -4,6 +4,8 @@ import { renderWithProviders, screen, waitFor, within, userEvent } from '@/__tes
 import { worker } from '@/mocks/browser';
 import { clearToken, setToken } from '@/shared/api';
 import {
+	loadDrafts,
+	PROVISIONING_DRAFT_VERSION,
 	ProvisioningRequestDialog,
 	resetProvisioningWizardDrafts,
 } from '@/shared/app/rail/ProvisioningRequestDialog';
@@ -600,12 +602,77 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		const raw = sessionStorage.getItem('jentic.provisioningWizardDrafts.v2');
 		const stored = JSON.parse(raw!) as Record<
 			string,
-			{ chains: { key: string; skipped: boolean }[] }
+			{ version?: number; chains: { key: string; skipped: boolean }[] }
 		>;
 		const draft = stored[request.id];
 		expect(draft).toBeDefined();
 		expect(draft.chains[0].key).toContain('open-meteo-com');
 		expect(draft.chains[0].skipped).toBe(true);
+		// Every persisted draft carries the schema stamp (theme-5 5d), and a
+		// fresh draft round-trips through the versioned loader intact.
+		expect(draft.version).toBe(PROVISIONING_DRAFT_VERSION);
+		const reloaded = loadDrafts().get(request.id);
+		expect(reloaded).toBeDefined();
+		expect(reloaded!.chains[0].skipped).toBe(true);
+	});
+});
+
+describe('ProvisioningRequestDialog — draft schema version (theme-5 5d)', () => {
+	const STORAGE_KEY = 'jentic.provisioningWizardDrafts.v2';
+	/** A shape-valid draft body (sans version) for seeding sessionStorage. */
+	const draftBody = {
+		step: 'review',
+		chainIndex: 0,
+		chains: [
+			{
+				key: 'open-meteo-com/forecast',
+				credentialId: 'cred_1',
+				credentialType: 'api_key',
+				credentialName: null,
+				credentialAdopted: false,
+				credentialUnconnected: false,
+				rules: [],
+				skipped: false,
+			},
+		],
+	};
+
+	beforeEach(() => sessionStorage.removeItem(STORAGE_KEY));
+	afterEach(() => sessionStorage.removeItem(STORAGE_KEY));
+
+	it('silently discards a draft with no version on load (toolkit-era shape)', () => {
+		// Pre-5d drafts were persisted unversioned and may carry retired
+		// toolkit-era fields (`toolkitAdopted`); they must never be restored.
+		sessionStorage.setItem(
+			STORAGE_KEY,
+			JSON.stringify({ arq_old: { ...draftBody, toolkitAdopted: true } }),
+		);
+		expect(loadDrafts().size).toBe(0);
+	});
+
+	it('silently discards a draft with an older version on load', () => {
+		sessionStorage.setItem(
+			STORAGE_KEY,
+			JSON.stringify({
+				arq_stale: { ...draftBody, version: PROVISIONING_DRAFT_VERSION - 1 },
+			}),
+		);
+		expect(loadDrafts().size).toBe(0);
+	});
+
+	it('round-trips a current-version draft', () => {
+		sessionStorage.setItem(
+			STORAGE_KEY,
+			JSON.stringify({
+				arq_current: { ...draftBody, version: PROVISIONING_DRAFT_VERSION },
+			}),
+		);
+		const drafts = loadDrafts();
+		expect(drafts.size).toBe(1);
+		const draft = drafts.get('arq_current');
+		expect(draft).toBeDefined();
+		expect(draft!.step).toBe('review');
+		expect(draft!.chains[0].credentialId).toBe('cred_1');
 	});
 });
 
