@@ -220,6 +220,7 @@ async def oauth_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
+    account_id: str | None = Query(default=None),
     svc: ConnectService = Depends(get_connect_service),
 ) -> Response:
     """Handle the OAuth callback from the IdP.
@@ -242,6 +243,16 @@ async def oauth_callback(
     ``GET /credentials/{id}`` — never from this redirect. The actual cause
     (missing state, connect failure, provider error, etc.) is recorded via
     structured logging for operators.
+
+    ``account_id`` carries a provider account reference for managed
+    providers (Pipedream Connect) whose completion delivers an account id
+    rather than an authorization code — Pipedream never appends the id to
+    a redirect, so a first-party completer (having discovered it via the
+    provider's accounts API) delivers it here under the same signed-state
+    binding. Without this parameter the pipedream connect flow has no way
+    to complete: ``PipedreamProvider.complete_connect`` requires
+    ``callback.account_id``, and this route was the only ``svc.complete``
+    caller yet never populated it.
     """
     if not state:
         # Almost certainly someone hand-typed/probed the URL (the IdP always
@@ -255,7 +266,7 @@ async def oauth_callback(
         )
         return _oauth_callback_error()
 
-    callback = ConnectCallback(code=code, error=error)
+    callback = ConnectCallback(code=code, account_id=account_id, error=error)
 
     try:
         credential_id = await svc.complete(state, callback)
