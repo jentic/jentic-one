@@ -10,8 +10,8 @@ from jentic_one.control.services.credentials.providers.base import (
     CredentialProvider,
     UnknownProviderError,
 )
-from jentic_one.control.services.credentials.providers.device_flow import (
-    DeviceFlowConnectProvider,
+from jentic_one.control.services.credentials.providers.device_authorization import (
+    DeviceAuthorizationConnectProvider,
 )
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
@@ -72,11 +72,11 @@ class ProviderRegistry:
         """
         providers: dict[str, CredentialProvider] = {
             "static": StaticProvider(),
-            # ``device_flow`` is the ``credential.provider`` value written by
+            # ``device_authorization`` is the ``credential.provider`` value written by
             # both the connect-session ``create_session`` path and the raw
             # manual-create + grant_type=device_code path — always registered
             # so ``POST /credentials/{id}/connect`` can find it.
-            "device_flow": DeviceFlowConnectProvider(),
+            "device_authorization": DeviceAuthorizationConnectProvider(),
         }
         for name, pc in cfg.providers.items():
             providers[name] = _build_provider(name, pc)

@@ -11,7 +11,9 @@ from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
-from jentic_one.control.core.schema.device_flow_credentials import DeviceFlowCredential
+from jentic_one.control.core.schema.device_authorization_credentials import (
+    DeviceAuthorizationCredential,
+)
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.core.schema.permission_rule_sets import (
@@ -38,7 +40,7 @@ __all__ = [
     "ControlBase",
     "Credential",
     "CustomerAPIKey",
-    "DeviceFlowCredential",
+    "DeviceAuthorizationCredential",
     "OAuthClientCredential",
     "OAuthToken",
     "PermissionRuleSet",

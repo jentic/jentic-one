@@ -9,7 +9,7 @@ each other) — one per concrete flow variant:
 
     * ``DirectOAuth2Provider`` — authorization_code + client_credentials,
       confidential client (client_secret at the token endpoint).
-    * ``DeviceFlowConnectProvider`` — RFC 8628 device_code, public
+    * ``DeviceAuthorizationConnectProvider`` — RFC 8628 device_code, public
       client (no client_secret).
 
 Managed provider variants (Pipedream) intentionally stay outside this

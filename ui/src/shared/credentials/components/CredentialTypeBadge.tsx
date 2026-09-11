@@ -26,15 +26,10 @@ const OAUTH_GRANT_LABEL: Record<string, string> = {
  * OAuth 2.0 credentials, appends the grant variant (Device Code / Auth Code
  * / Client Credentials) so the picker/list disambiguates them at a glance.
  */
-export function CredentialTypeBadge({
-	type,
-	credential,
-}: {
-	type: CredentialType;
-	credential?: Credential;
-}) {
+export function CredentialTypeBadge({ credential }: { credential: Credential }) {
+	const { type } = credential;
 	let label = CREDENTIAL_TYPE_LABELS[type] ?? type;
-	if (type === CredentialType.OAUTH2 && credential) {
+	if (type === CredentialType.OAUTH2) {
 		const grant = credentialDetails(credential).grant_type;
 		const suffix = grant ? OAUTH_GRANT_LABEL[grant] : undefined;
 		if (suffix) label = `${label} · ${suffix}`;

@@ -24,7 +24,7 @@ import type {
 	CredentialListResponse,
 	CredentialRedactedResponse,
 	CredentialUpdateRequest,
-	DeviceCodeChallengeResponse,
+	DeviceAuthorizationChallengeResponse,
 } from './types';
 import { updateCredential } from './client';
 
@@ -165,7 +165,9 @@ export interface RunConnectOptions {
 	 * down the modal. Omit for callers that only support authorization_code
 	 * flows — a device_code challenge will surface as `unsupported_challenge`.
 	 */
-	onDeviceCodeChallenge?: (challenge: DeviceCodeChallengeResponse) => (() => void) | void;
+	onDeviceAuthorizationChallenge?: (
+		challenge: DeviceAuthorizationChallengeResponse,
+	) => (() => void) | void;
 }
 
 export type ConnectOutcome =
@@ -272,16 +274,16 @@ export async function runConnectFlow(
 				};
 			});
 
-		if (challenge.kind === 'device_code') {
+		if (challenge.kind === 'device_authorization') {
 			// RFC 8628: no browser redirect. The caller renders `user_code` +
 			// `verification_uri`; the ConnectPollScanner drives completion
 			// server-side. Callers that don't opt-in to rendering the human
 			// step get `unsupported_challenge` back — polling in silence would
 			// look like a hang from the user's perspective.
-			if (!options.onDeviceCodeChallenge) {
+			if (!options.onDeviceAuthorizationChallenge) {
 				return { status: 'unsupported_challenge' };
 			}
-			const cleanup = options.onDeviceCodeChallenge(challenge);
+			const cleanup = options.onDeviceAuthorizationChallenge(challenge);
 			try {
 				const deadline = Date.now() + timeoutMs;
 				while (Date.now() < deadline) {

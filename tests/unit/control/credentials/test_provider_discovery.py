@@ -41,10 +41,10 @@ def test_list_providers_static_only() -> None:
     svc = CredentialService(ctx)
     entries = svc.list_providers()
 
-    # ``static`` and ``device_flow`` are always registered; other providers
+    # ``static`` and ``device_authorization`` are always registered; other providers
     # come from config.
     by_id = {e.id: e for e in entries}
-    assert set(by_id.keys()) == {"static", "device_flow"}
+    assert set(by_id.keys()) == {"static", "device_authorization"}
     static = by_id["static"]
     assert static.managed is False
     assert static.configured is True
@@ -66,9 +66,9 @@ def test_list_providers_includes_managed_providers() -> None:
     entries = svc.list_providers()
 
     by_id = {e.id: e for e in entries}
-    # ``static`` and ``device_flow`` are always registered; the configured
+    # ``static`` and ``device_authorization`` are always registered; the configured
     # ``my_pipedream`` provider is added on top.
-    assert set(by_id.keys()) == {"static", "device_flow", "my_pipedream"}
+    assert set(by_id.keys()) == {"static", "device_authorization", "my_pipedream"}
 
     pd = by_id["my_pipedream"]
     assert pd.managed is True
@@ -147,4 +147,4 @@ def test_registry_list_all_returns_all_providers() -> None:
     )
     registry = ProviderRegistry.from_config(cfg)
     all_providers = registry.list_all()
-    assert set(all_providers.keys()) == {"static", "device_flow", "pd"}
+    assert set(all_providers.keys()) == {"static", "device_authorization", "pd"}

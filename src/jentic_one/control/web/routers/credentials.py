@@ -47,6 +47,7 @@ from jentic_one.control.web.deps import (
 from jentic_one.control.web.schemas.credentials import (
     APIReferenceResponse,
     AuthCodeConnectChallengeResponse,
+    ConnectChallengeResponse,
     ConnectRequestBody,
     CredentialAgentListResponse,
     CredentialAgentResponse,
@@ -55,7 +56,7 @@ from jentic_one.control.web.schemas.credentials import (
     CredentialListResponse,
     CredentialRedactedResponse,
     CredentialUpdateRequest,
-    DeviceCodeConnectChallengeResponse,
+    DeviceAuthorizationConnectChallengeResponse,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
     RuleSetAttachRequest,
@@ -807,7 +808,7 @@ async def connect_credential(
     body: ConnectRequestBody,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectService = Depends(get_connect_service),
-) -> AuthCodeConnectChallengeResponse | DeviceCodeConnectChallengeResponse | JSONResponse:
+) -> ConnectChallengeResponse | JSONResponse:
     """Initiate the OAuth connect flow for a credential.
 
     Discriminates on the provider's returned challenge: OAuth2
@@ -833,7 +834,7 @@ async def connect_credential(
         return AuthCodeConnectChallengeResponse(
             authorize_url=challenge.authorize_url, state=challenge.state
         )
-    return DeviceCodeConnectChallengeResponse(
+    return DeviceAuthorizationConnectChallengeResponse(
         user_code=challenge.user_code,
         verification_uri=challenge.verification_uri,
         verification_uri_complete=challenge.verification_uri_complete,

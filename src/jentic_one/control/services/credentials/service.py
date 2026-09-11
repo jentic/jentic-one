@@ -24,8 +24,8 @@ from jentic_one.control.repos import (
     Sigv4CredentialRepository,
     TokenValueCredentialRepository,
 )
-from jentic_one.control.repos.device_flow_credential_repo import (
-    DeviceFlowCredentialRepository,
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
 )
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
@@ -239,10 +239,10 @@ class CredentialService:
                     # ``authorize_url`` field carries the vendor's
                     # ``device_authorization_endpoint`` (OpenAPI 3.2's
                     # ``deviceAuthorizationUrl``). Row lives on
-                    # ``device_flow_credentials`` alongside the credentials
+                    # ``device_authorization_credentials`` alongside the credentials
                     # written by the connect-session flow so refresh /
                     # redaction / broker resolution are all uniform.
-                    await DeviceFlowCredentialRepository.create(
+                    await DeviceAuthorizationCredentialRepository.create(
                         session,
                         credential_id=credential.id,
                         client_id=payload.client_id or "",
@@ -1127,12 +1127,12 @@ class CredentialService:
         elif wire_type == CredentialType.OAUTH2:
             is_auth_code = stored_type == StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
             is_device_code = stored_type == StoredCredentialType.OAUTH2_DEVICE_CODE
-            # Device-flow credentials live on ``device_flow_credentials``;
+            # Device-flow credentials live on ``device_authorization_credentials``;
             # every other OAuth2 variant lives on ``oauth_client_credentials``.
             # Read from the right relation so the redacted view doesn't
             # report an empty client_id / a misleading grant_type
             # (handover follow-up #5).
-            dfc = credential.device_flow_credential if is_device_code else None
+            dfc = credential.device_authorization_credential if is_device_code else None
             occ = None if is_device_code else credential.oauth_client_credential
             connected: bool | None = None
             if is_auth_code or is_device_code:

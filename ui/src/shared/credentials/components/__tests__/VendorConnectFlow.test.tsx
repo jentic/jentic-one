@@ -27,7 +27,7 @@ const vendor = {
 	key: 'github',
 	vendor: 'github.com',
 	display_name: 'GitHub',
-	flow_kinds: ['device_flow'],
+	flow_kinds: ['device_authorization'],
 };
 
 function stubCapabilities(caps: Partial<VendorAuthCapabilities> = {}): void {
@@ -36,7 +36,7 @@ function stubCapabilities(caps: Partial<VendorAuthCapabilities> = {}): void {
 			HttpResponse.json({
 				vendor: 'github.com',
 				display_name: 'GitHub',
-				flows: [{ kind: 'device_flow' }],
+				flows: [{ kind: 'device_authorization' }],
 				scopes: [
 					{
 						name: 'repo',
@@ -116,14 +116,14 @@ describe('VendorConnectFlow — self mode', () => {
 						approval_url:
 							'https://example.com/app/credentials?approve=sess_1&poll_token=tok',
 						poll_token: 'tok',
-						resolved_flow: 'device_flow',
+						resolved_flow: 'device_authorization',
 					},
 					{ status: 201 },
 				),
 			),
 			http.post('/connect-sessions/sess_1\\:confirm', () =>
 				HttpResponse.json({
-					kind: 'device_flow',
+					kind: 'device_authorization',
 					user_code: 'ABCD-1234',
 					verification_uri: 'https://github.com/login/device',
 					verification_uri_complete: null,
@@ -174,7 +174,7 @@ describe('VendorConnectFlow — approve mode', () => {
 			state: 'created',
 			vendor_key: 'github',
 			vendor_display_name: 'GitHub',
-			resolved_flow: 'device_flow',
+			resolved_flow: 'device_authorization',
 			requested_by_actor_id: 'agnt_1',
 			scopes: [
 				{

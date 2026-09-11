@@ -189,7 +189,7 @@ export function EditCredentialSheet({
 										{apiLabel}
 									</p>
 								</div>
-								<CredentialTypeBadge type={cred.type} credential={cred} />
+								<CredentialTypeBadge credential={cred} />
 							</div>
 
 							<div className="space-y-1.5">

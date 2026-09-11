@@ -223,7 +223,10 @@ describe('runConnectFlow — device-code branch', () => {
 	});
 
 	function seedDeviceCodeCredential(): string {
-		const cred = makeMockCredential({ type: CredentialType.OAUTH2, provider: 'device_flow' });
+		const cred = makeMockCredential({
+			type: CredentialType.OAUTH2,
+			provider: 'device_authorization',
+		});
 		return cred.credential_id;
 	}
 
@@ -232,7 +235,7 @@ describe('runConnectFlow — device-code branch', () => {
 			http.post('/credentials/:id/connect', ({ params }) => {
 				if (String(params.id) !== id) return undefined;
 				return HttpResponse.json({
-					kind: 'device_code',
+					kind: 'device_authorization',
 					user_code: 'ABCD-1234',
 					verification_uri: 'https://idp.example.com/device',
 					verification_uri_complete: 'https://idp.example.com/device?user_code=ABCD-1234',
@@ -277,7 +280,7 @@ describe('runConnectFlow — device-code branch', () => {
 		const flow = runConnectFlow(id, {
 			pollMs: 50,
 			timeoutMs: 3000,
-			onDeviceCodeChallenge: (challenge) => {
+			onDeviceAuthorizationChallenge: (challenge) => {
 				rendered.push({ user_code: challenge.user_code });
 				return () => {
 					cleanupCalls += 1;
@@ -320,7 +323,7 @@ describe('runConnectFlow — device-code branch', () => {
 		const outcome = await runConnectFlow(id, {
 			pollMs: 30,
 			timeoutMs: 200,
-			onDeviceCodeChallenge: () => {
+			onDeviceAuthorizationChallenge: () => {
 				return () => {
 					cleanupCalls += 1;
 				};

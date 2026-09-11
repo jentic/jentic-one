@@ -1,7 +1,7 @@
-"""add connect_sessions + device_flow_credentials + credentials.state
+"""add connect_sessions + device_authorization_credentials + credentials.state
 
 Backs the agent-driven integration flow: a new
-`connect_sessions` table drives the state machine, `device_flow_credentials`
+`connect_sessions` table drives the state machine, `device_authorization_credentials`
 holds RFC 8628 registration + polling state per credential, a new
 `agent_credential_permissions` junction records permission rules for the
 theme-5 target model, and `credentials.state` distinguishes pending from
@@ -95,10 +95,10 @@ def upgrade() -> None:
         unique=True,
     )
 
-    # 3. device_flow_credentials — per-credential device-flow registration
+    # 3. device_authorization_credentials — per-credential device-flow registration
     # + transient polling state.
     op.create_table(
-        "device_flow_credentials",
+        "device_authorization_credentials",
         sa.Column(
             "id",
             sa.String(30),
@@ -177,7 +177,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_acp_agent", table_name="agent_credential_permissions")
     op.drop_table("agent_credential_permissions")
-    op.drop_table("device_flow_credentials")
+    op.drop_table("device_authorization_credentials")
     op.drop_index("ix_connect_sessions_poll_token", table_name="connect_sessions")
     op.drop_index("ix_connect_sessions_credential", table_name="connect_sessions")
     op.drop_index("ix_connect_sessions_agent", table_name="connect_sessions")

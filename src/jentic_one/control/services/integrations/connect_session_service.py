@@ -36,7 +36,7 @@ from jentic_one.control.services.integrations.errors import (
 from jentic_one.control.services.integrations.flow_handlers import (
     AuthCodeFlowHandler,
     AuthFlowHandler,
-    DeviceFlowHandler,
+    DeviceAuthorizationHandler,
     handler_for,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
@@ -86,14 +86,20 @@ class ReviewData:
 
 
 @dataclass(slots=True, frozen=True)
-class DeviceFlowConfirmResult:
-    """RFC 8628 confirm outcome — user_code + verification_uri."""
+class DeviceAuthorizationConfirmResult:
+    """RFC 8628 confirm outcome — user_code + verification_uri.
+
+    The ``kind`` matches the wire discriminator on
+    ``ConnectChallengeResponse`` (``"device_authorization"``), not the persisted
+    ``VendorFlowConfig.kind`` (``"device_authorization"``) — those are separate
+    contracts.
+    """
 
     user_code: str
     verification_uri: str
     verification_uri_complete: str | None = None
     poll_interval_seconds: int | None = None
-    kind: str = "device_flow"
+    kind: str = "device_authorization"
 
 
 @dataclass(slots=True, frozen=True)
@@ -104,7 +110,7 @@ class AuthCodeConfirmResult:
     kind: str = "authorization_code"
 
 
-ConfirmResult = DeviceFlowConfirmResult | AuthCodeConfirmResult
+ConfirmResult = DeviceAuthorizationConfirmResult | AuthCodeConfirmResult
 
 
 @dataclass(slots=True, frozen=True)
@@ -397,8 +403,8 @@ class ConnectSessionService:
             confirmed_scopes=confirmed_scopes,
             rules_count=len(permission_rules),
         )
-        if challenge.kind == "device_flow":
-            return DeviceFlowConfirmResult(
+        if challenge.kind == "device_authorization":
+            return DeviceAuthorizationConfirmResult(
                 user_code=challenge.user_code,
                 verification_uri=challenge.verification_uri,
                 verification_uri_complete=challenge.verification_uri_complete,
@@ -458,14 +464,14 @@ class ConnectSessionService:
         """Dispatch entrypoint called by ``ConnectPollScanner`` for each
         in-flight device-flow credential.
 
-        Two entrypoints write ``device_flow_credentials`` (the scanner's
+        Two entrypoints write ``device_authorization_credentials`` (the scanner's
         query target): the connect-session flow (has a wrapping
         ``ConnectSession``) and the raw-credential connect flow (no
         session). This method checks for a live session and dispatches to
         the matching advancement path — session mode updates the session
         state machine, credential mode advances ``credentials.state``
         directly. Both delegate the vendor conversation to
-        ``DeviceFlowHandler.advance``.
+        ``DeviceAuthorizationHandler.advance``.
         """
         async with self._ctx.control_db.session() as read_session:
             live_session = await ConnectSessionRepository.get_live_by_credential(
@@ -481,7 +487,7 @@ class ConnectSessionService:
 
         Owns the outer clock (session TTL) and the state-machine
         transitions; delegates the vendor conversation itself to
-        ``DeviceFlowHandler.advance``. Callback flows never reach here —
+        ``DeviceAuthorizationHandler.advance``. Callback flows never reach here —
         the scanner filters on the aux row, and callback flows don't
         write one.
 
@@ -496,7 +502,7 @@ class ConnectSessionService:
         if row.state != "polling":
             # Terminal or pre-confirm — no advancement to do.
             return
-        if row.resolved_flow != DeviceFlowHandler.kind:
+        if row.resolved_flow != DeviceAuthorizationHandler.kind:
             # Callback flows advance via the OAuth callback route.
             return
 
@@ -506,7 +512,7 @@ class ConnectSessionService:
             await self._mark_terminal(row.id, "expired", "session TTL exceeded")
             return
 
-        handler = DeviceFlowHandler(self._ctx)
+        handler = DeviceAuthorizationHandler(self._ctx)
         report = await handler.advance(row.credential_id)
         if report.kind == "pending":
             return
@@ -529,7 +535,7 @@ class ConnectSessionService:
         ``credentials.state`` — the raw-credential connect path (user
         clicked Connect on a manually-created device-flow credential) has
         no wrapping session, so terminal transitions land on the credential
-        row directly. Shares ``DeviceFlowHandler.advance`` verbatim with
+        row directly. Shares ``DeviceAuthorizationHandler.advance`` verbatim with
         the session path.
         """
         async with self._ctx.control_db.session() as read_session:
@@ -540,7 +546,7 @@ class ConnectSessionService:
             # Terminal (connected/failed) — nothing to advance.
             return
 
-        handler = DeviceFlowHandler(self._ctx)
+        handler = DeviceAuthorizationHandler(self._ctx)
         report = await handler.advance(credential.id)
         if report.kind == "pending":
             return
@@ -574,10 +580,10 @@ class ConnectSessionService:
             if credential.state == "pending":
                 credential.state = "failed"
                 await session.flush()
-            handler = DeviceFlowHandler(self._ctx)
+            handler = DeviceAuthorizationHandler(self._ctx)
             await handler.on_finalise(session, credential_id=credential_id)
         _logger.info(
-            "credential.device_flow.terminal",
+            "credential.device_authorization.terminal",
             credential_id=credential_id,
             detail=detail,
         )
@@ -673,7 +679,7 @@ class ConnectSessionService:
         )
 
         _logger.info(
-            "credential.device_flow.connected",
+            "credential.device_authorization.connected",
             credential_id=credential.id,
         )
         if credential.catalog_api_id:

@@ -24,10 +24,10 @@ if TYPE_CHECKING:
     from jentic_one.control.core.schema.credentials import Credential
 
 
-class DeviceFlowCredential(AuditableMixin, ControlBase):
+class DeviceAuthorizationCredential(AuditableMixin, ControlBase):
     """OAuth 2.0 device-flow registration + pending-flow state for a credential."""
 
-    __tablename__ = "device_flow_credentials"
+    __tablename__ = "device_authorization_credentials"
 
     # Shares the credentials.id PK — 1:1 relationship.
     id: Mapped[str] = mapped_column(
@@ -68,4 +68,4 @@ class DeviceFlowCredential(AuditableMixin, ControlBase):
     # human left checked.
     granted_scopes: Mapped[list[str] | None] = mapped_column(json_variant(), nullable=True)
 
-    credential: Mapped[Credential] = relationship(back_populates="device_flow_credential")
+    credential: Mapped[Credential] = relationship(back_populates="device_authorization_credential")

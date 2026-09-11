@@ -22,31 +22,31 @@ from jentic_one.control.services.integrations.flow_handlers.auth_code import (
     AuthCodeFlowHandler,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import (
-    AuthCodeChallenge,
+    AuthCodeBeginResult,
     AuthFlowHandler,
     BeginResult,
-    DeviceFlowChallenge,
+    DeviceAuthorizationBeginResult,
     StatusReport,
     SuccessTokens,
 )
-from jentic_one.control.services.integrations.flow_handlers.device_code import (
-    DeviceFlowHandler,
+from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
+    DeviceAuthorizationHandler,
 )
 
 __all__ = [
-    "AuthCodeChallenge",
+    "AuthCodeBeginResult",
     "AuthCodeFlowHandler",
     "AuthFlowHandler",
     "BeginResult",
-    "DeviceFlowChallenge",
-    "DeviceFlowHandler",
+    "DeviceAuthorizationBeginResult",
+    "DeviceAuthorizationHandler",
     "StatusReport",
     "SuccessTokens",
     "handler_for",
 ]
 
 _HANDLERS: dict[str, type[AuthFlowHandler]] = {
-    DeviceFlowHandler.kind: DeviceFlowHandler,
+    DeviceAuthorizationHandler.kind: DeviceAuthorizationHandler,
     AuthCodeFlowHandler.kind: AuthCodeFlowHandler,
 }
 

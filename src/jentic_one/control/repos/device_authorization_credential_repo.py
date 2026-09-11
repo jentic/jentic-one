@@ -1,4 +1,4 @@
-"""Repository for DeviceFlowCredential CRUD operations."""
+"""Repository for DeviceAuthorizationCredential CRUD operations."""
 
 from __future__ import annotations
 
@@ -8,11 +8,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.control.core.schema.device_flow_credentials import DeviceFlowCredential
+from jentic_one.control.core.schema.device_authorization_credentials import (
+    DeviceAuthorizationCredential,
+)
 
 
-class DeviceFlowCredentialRepository:
-    """Data access layer for DeviceFlowCredential — flush-only, never commits."""
+class DeviceAuthorizationCredentialRepository:
+    """Data access layer for DeviceAuthorizationCredential — flush-only, never commits."""
 
     @staticmethod
     async def create(
@@ -24,8 +26,8 @@ class DeviceFlowCredentialRepository:
         authorization_endpoint: str,
         requested_scopes: list[str] | None = None,
         created_by: str | None = None,
-    ) -> DeviceFlowCredential:
-        row = DeviceFlowCredential(
+    ) -> DeviceAuthorizationCredential:
+        row = DeviceAuthorizationCredential(
             id=credential_id,
             client_id=client_id,
             token_url=token_url,
@@ -40,8 +42,10 @@ class DeviceFlowCredentialRepository:
     @staticmethod
     async def get_by_credential(
         session: AsyncSession, credential_id: str
-    ) -> DeviceFlowCredential | None:
-        stmt = select(DeviceFlowCredential).where(DeviceFlowCredential.id == credential_id)
+    ) -> DeviceAuthorizationCredential | None:
+        stmt = select(DeviceAuthorizationCredential).where(
+            DeviceAuthorizationCredential.id == credential_id
+        )
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -57,9 +61,11 @@ class DeviceFlowCredentialRepository:
         poll_interval_seconds: int,
         device_code_expires_at: dt.datetime,
         granted_scopes: list[str],
-    ) -> DeviceFlowCredential | None:
+    ) -> DeviceAuthorizationCredential | None:
         """Populate transient polling state after the vendor returns the device code."""
-        row = await DeviceFlowCredentialRepository.get_by_credential(session, credential_id)
+        row = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential_id
+        )
         if row is None:
             return None
         row.encrypted_device_code = encrypted_device_code
@@ -74,7 +80,9 @@ class DeviceFlowCredentialRepository:
 
     @staticmethod
     async def mark_polled(session: AsyncSession, credential_id: str, when: dt.datetime) -> None:
-        row = await DeviceFlowCredentialRepository.get_by_credential(session, credential_id)
+        row = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential_id
+        )
         if row is not None:
             row.last_polled_at = when
             await session.flush()
@@ -83,7 +91,9 @@ class DeviceFlowCredentialRepository:
     async def clear_transient(session: AsyncSession, credential_id: str) -> None:
         """Null out polling state on `connected` — the row survives as the
         permanent per-credential registration."""
-        row = await DeviceFlowCredentialRepository.get_by_credential(session, credential_id)
+        row = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential_id
+        )
         if row is None:
             return
         row.encrypted_device_code = None
@@ -98,8 +108,10 @@ class DeviceFlowCredentialRepository:
     @staticmethod
     async def update_fields(
         session: AsyncSession, credential_id: str, **fields: Any
-    ) -> DeviceFlowCredential | None:
-        row = await DeviceFlowCredentialRepository.get_by_credential(session, credential_id)
+    ) -> DeviceAuthorizationCredential | None:
+        row = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential_id
+        )
         if row is None:
             return None
         for key, value in fields.items():

@@ -27,7 +27,7 @@ class AuthCodeChallenge(BaseModel):
     state: str
 
 
-class DeviceCodeChallenge(BaseModel):
+class DeviceAuthorizationChallenge(BaseModel):
     """RFC 8628 device-code challenge.
 
     The caller shows ``user_code`` and asks the human to enter it at
@@ -35,7 +35,7 @@ class DeviceCodeChallenge(BaseModel):
     the ``ConnectPollScanner`` drives completion server-side.
     """
 
-    kind: Literal["device_code"] = "device_code"
+    kind: Literal["device_authorization"] = "device_authorization"
     user_code: str
     verification_uri: str
     verification_uri_complete: str | None = None
@@ -43,7 +43,7 @@ class DeviceCodeChallenge(BaseModel):
 
 
 ConnectChallenge = Annotated[
-    AuthCodeChallenge | DeviceCodeChallenge,
+    AuthCodeChallenge | DeviceAuthorizationChallenge,
     Field(discriminator="kind"),
 ]
 

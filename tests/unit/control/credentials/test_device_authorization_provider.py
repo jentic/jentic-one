@@ -1,4 +1,4 @@
-"""Tests for DeviceFlowConnectProvider.
+"""Tests for DeviceAuthorizationConnectProvider.
 
 Mirrors the shape of test_direct_oauth2_provider: patches
 ``httpx.AsyncClient`` for token-endpoint round-trips and repositories
@@ -24,8 +24,8 @@ from jentic_one.control.services.credentials.providers.base import (
     NotRefreshableError,
     ProviderError,
 )
-from jentic_one.control.services.credentials.providers.device_flow import (
-    DeviceFlowConnectProvider,
+from jentic_one.control.services.credentials.providers.device_authorization import (
+    DeviceAuthorizationConnectProvider,
 )
 from jentic_one.control.services.credentials.providers.oauth2 import (
     InvalidGrantError,
@@ -35,10 +35,10 @@ from jentic_one.control.services.credentials.schemas.connect import (
     ConnectCallback,
     ConnectRequest,
     ConnectState,
-    DeviceCodeChallenge,
+    DeviceAuthorizationChallenge,
 )
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
-from jentic_one.control.services.integrations.device_flow import BeginResult
+from jentic_one.control.services.integrations.device_authorization import BeginResult
 from jentic_one.shared.config import (
     AppConfig,
     ConnectConfig,
@@ -92,7 +92,7 @@ def _mock_control_db() -> MagicMock:
 
 
 class _FakeDFC:
-    """Stand-in for a ``DeviceFlowCredential`` ORM row."""
+    """Stand-in for a ``DeviceAuthorizationCredential`` ORM row."""
 
     def __init__(
         self,
@@ -109,7 +109,7 @@ class _FakeDFC:
 
 
 def test_supports_oauth2() -> None:
-    provider = DeviceFlowConnectProvider()
+    provider = DeviceAuthorizationConnectProvider()
     assert provider.supports(CredentialType.OAUTH2)
     assert not provider.supports(CredentialType.BEARER_TOKEN)
     assert provider.supported_types == [CredentialType.OAUTH2]
@@ -119,14 +119,14 @@ def test_managed_false() -> None:
     # Device flow is user-connectable, not managed like Pipedream — the
     # discovery UI classifies it under the same "user has to connect"
     # bucket as static, not managed-by-us.
-    assert DeviceFlowConnectProvider().managed is False
+    assert DeviceAuthorizationConnectProvider().managed is False
 
 
-def test_name_is_device_flow() -> None:
+def test_name_is_device_authorization() -> None:
     # The registry looks providers up by ``credential.provider``; the
     # scanner + connect router both dispatch on this name, so it's a
     # wire contract, not a display string.
-    assert DeviceFlowConnectProvider().name == "device_flow"
+    assert DeviceAuthorizationConnectProvider().name == "device_authorization"
 
 
 @pytest.mark.asyncio()
@@ -134,11 +134,11 @@ async def test_complete_connect_raises_not_connectable() -> None:
     # Device flow completes server-side via the poll scanner, never via
     # a callback — the router should never reach here, but pin the
     # explicit refusal so a routing regression can't silently succeed.
-    provider = DeviceFlowConnectProvider()
+    provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     state = ConnectState(
         credential_id="cred_123",
-        provider="device_flow",
+        provider="device_authorization",
         actor_id="user_1",
         issued_at=datetime.now(UTC),
         nonce="nonce",
@@ -149,7 +149,7 @@ async def test_complete_connect_raises_not_connectable() -> None:
 
 @pytest.mark.asyncio()
 async def test_begin_connect_requires_credential_id() -> None:
-    provider = DeviceFlowConnectProvider()
+    provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     with pytest.raises(ProviderError, match="credential_id required"):
         await provider.begin_connect(
@@ -160,14 +160,14 @@ async def test_begin_connect_requires_credential_id() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_begin_connect_raises_when_no_device_flow_row() -> None:
-    provider = DeviceFlowConnectProvider()
+async def test_begin_connect_raises_when_no_device_authorization_row() -> None:
+    provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     ctx._control_db = _mock_control_db()
     with (
         patch(
-            "jentic_one.control.repos.device_flow_credential_repo."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -182,7 +182,7 @@ async def test_begin_connect_raises_when_no_device_flow_row() -> None:
 
 @pytest.mark.asyncio()
 async def test_begin_connect_seeds_transient_state_and_returns_challenge() -> None:
-    provider = DeviceFlowConnectProvider()
+    provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     ctx._control_db = _mock_control_db()
 
@@ -199,18 +199,18 @@ async def test_begin_connect_seeds_transient_state_and_returns_challenge() -> No
     seed_mock = AsyncMock()
     with (
         patch(
-            "jentic_one.control.repos.device_flow_credential_repo."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.repos.device_flow_credential_repo."
-            "DeviceFlowCredentialRepository.set_transient_state",
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.set_transient_state",
             new=seed_mock,
         ),
         patch(
-            "jentic_one.control.services.credentials.providers.device_flow.df.begin_device_flow",
+            "jentic_one.control.services.credentials.providers.device_authorization.df.begin_device_authorization",
             new_callable=AsyncMock,
             return_value=device_result,
         ),
@@ -221,7 +221,7 @@ async def test_begin_connect_seeds_transient_state_and_returns_challenge() -> No
             request=ConnectRequest(extra={"credential_id": "cred_1"}),
         )
 
-    assert isinstance(challenge, DeviceCodeChallenge)
+    assert isinstance(challenge, DeviceAuthorizationChallenge)
     assert challenge.user_code == "ABCD-1234"
     assert challenge.verification_uri == "https://idp.example.com/device"
     assert challenge.poll_interval_seconds == 5
@@ -238,20 +238,20 @@ async def test_begin_connect_seeds_transient_state_and_returns_challenge() -> No
 
 
 @pytest.mark.asyncio()
-async def test_refresh_raises_not_refreshable_without_device_flow_row() -> None:
-    provider = DeviceFlowConnectProvider()
+async def test_refresh_raises_not_refreshable_without_device_authorization_row() -> None:
+    provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     ctx._control_db = _mock_control_db()
     token = OAuthTokenView(
         credential_id="cred_1",
-        provider="device_flow",
+        provider="device_authorization",
         expires_at=datetime.now(UTC),
         decrypt=AsyncMock(return_value="rt"),
     )
     with (
         patch(
-            "jentic_one.control.repos.device_flow_credential_repo."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -266,7 +266,7 @@ async def test_refresh_omits_client_secret() -> None:
     # OAuth client; the refresh payload must never carry a client_secret.
     # If this test breaks, the wire request is leaking a nonexistent
     # secret (best case: 400 from the IdP; worst case: broken auth).
-    provider = DeviceFlowConnectProvider()
+    provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     ctx._control_db = _mock_control_db()
 
@@ -282,15 +282,15 @@ async def test_refresh_omits_client_secret() -> None:
 
     token_view = OAuthTokenView(
         credential_id="cred_1",
-        provider="device_flow",
+        provider="device_authorization",
         expires_at=datetime.now(UTC),
         decrypt=fake_decrypt,
     )
 
     with (
         patch(
-            "jentic_one.control.repos.device_flow_credential_repo."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
@@ -320,7 +320,7 @@ async def test_refresh_maps_invalid_grant_via_shared_base() -> None:
     # typed InvalidGrantError; the device-flow provider inherits it.
     # Callers upstream distinguish this from transient upstream faults,
     # so the mapping must survive the inheritance change.
-    provider = DeviceFlowConnectProvider()
+    provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     ctx._control_db = _mock_control_db()
 
@@ -331,15 +331,15 @@ async def test_refresh_maps_invalid_grant_via_shared_base() -> None:
 
     token_view = OAuthTokenView(
         credential_id="cred_1",
-        provider="device_flow",
+        provider="device_authorization",
         expires_at=datetime.now(UTC),
         decrypt=fake_decrypt,
     )
 
     with (
         patch(
-            "jentic_one.control.repos.device_flow_credential_repo."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
@@ -359,7 +359,7 @@ async def test_refresh_maps_invalid_grant_via_shared_base() -> None:
 
 @pytest.mark.asyncio()
 async def test_refresh_maps_other_failures_to_token_exchange_error() -> None:
-    provider = DeviceFlowConnectProvider()
+    provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     ctx._control_db = _mock_control_db()
 
@@ -370,15 +370,15 @@ async def test_refresh_maps_other_failures_to_token_exchange_error() -> None:
 
     token_view = OAuthTokenView(
         credential_id="cred_1",
-        provider="device_flow",
+        provider="device_authorization",
         expires_at=datetime.now(UTC),
         decrypt=fake_decrypt,
     )
 
     with (
         patch(
-            "jentic_one.control.repos.device_flow_credential_repo."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),

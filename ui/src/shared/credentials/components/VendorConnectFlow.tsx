@@ -25,7 +25,7 @@ import {
 import type {
 	AuthCodeConfirmResponse,
 	ConfirmResponse,
-	DeviceFlowConfirmResponse,
+	DeviceAuthorizationConfirmResponse,
 	PermissionRule,
 	ReviewScope,
 	ReviewSession,
@@ -703,7 +703,7 @@ function AwaitingStep({
 	status: string;
 	onCancel: () => void;
 }) {
-	if (challenge.kind === 'device_flow') {
+	if (challenge.kind === 'device_authorization') {
 		return (
 			<DeviceCodeAwaitingStep
 				display={display}
@@ -730,7 +730,7 @@ function DeviceCodeAwaitingStep({
 	onCancel,
 }: {
 	display: VendorDisplay;
-	challenge: DeviceFlowConfirmResponse;
+	challenge: DeviceAuthorizationConfirmResponse;
 	status: string;
 	onCancel: () => void;
 }) {

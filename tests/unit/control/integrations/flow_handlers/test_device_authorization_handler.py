@@ -1,4 +1,4 @@
-"""Tests for DeviceFlowHandler.advance — the RFC 8628 poll state machine.
+"""Tests for DeviceAuthorizationHandler.advance — the RFC 8628 poll state machine.
 
 ``advance`` is the sole vendor-touching entrypoint for device flow, and
 lives at the heart of server-driven polling: ``ConnectPollScanner`` is
@@ -20,10 +20,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import SecretStr
 
-from jentic_one.control.services.integrations import device_flow as df
+from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
-from jentic_one.control.services.integrations.flow_handlers.device_code import (
-    DeviceFlowHandler,
+from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
+    DeviceAuthorizationHandler,
 )
 from jentic_one.shared.config import (
     AppConfig,
@@ -100,19 +100,19 @@ def _make_dfc(
 def _patch_repo(dfc: MagicMock | None, **extras: AsyncMock):
     patches = [
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.mark_polled",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.mark_polled",
             new_callable=AsyncMock,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.update_fields",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.update_fields",
             new_callable=AsyncMock,
         ),
     ]
@@ -125,7 +125,7 @@ async def test_advance_returns_pending_when_within_poll_interval() -> None:
     # interval. We enforce it on the *scanner* side (no vendor call at
     # all) so a misbehaving scanner tick can't get us rate-limited.
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(
         ctx,
         poll_interval_seconds=5,
@@ -133,12 +133,12 @@ async def test_advance_returns_pending_when_within_poll_interval() -> None:
     )
     with (
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
-        patch.object(df, "poll_device_flow", new_callable=AsyncMock) as poll_mock,
+        patch.object(df, "poll_device_authorization", new_callable=AsyncMock) as poll_mock,
     ):
         report = await handler.advance("cred_1")
     assert report == StatusReport(kind="pending")
@@ -151,14 +151,14 @@ async def test_advance_returns_expired_when_device_code_ttl_passed() -> None:
     # before we make a vendor call, so we don't burn a poll on a code
     # we already know is dead.
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(
         ctx,
         device_code_expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
     with patch(
-        "jentic_one.control.services.integrations.flow_handlers.device_code."
-        "DeviceFlowCredentialRepository.get_by_credential",
+        "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+        "DeviceAuthorizationCredentialRepository.get_by_credential",
         new_callable=AsyncMock,
         return_value=dfc,
     ):
@@ -170,23 +170,23 @@ async def test_advance_returns_expired_when_device_code_ttl_passed() -> None:
 @pytest.mark.asyncio()
 async def test_advance_returns_pending_on_authorization_pending() -> None:
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(ctx, last_polled_at=None)
     with (
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.mark_polled",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.mark_polled",
             new_callable=AsyncMock,
         ),
         patch.object(
             df,
-            "poll_device_flow",
+            "poll_device_authorization",
             new_callable=AsyncMock,
             return_value=df.PollResult(status="pending"),
         ),
@@ -202,28 +202,28 @@ async def test_advance_widens_interval_on_slow_down() -> None:
     # can't silently drop it — hitting the vendor faster than requested
     # gets the whole app throttled.
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(ctx, poll_interval_seconds=5)
     with (
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.mark_polled",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.mark_polled",
             new_callable=AsyncMock,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.update_fields",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.update_fields",
             new_callable=AsyncMock,
         ) as update_fields,
         patch.object(
             df,
-            "poll_device_flow",
+            "poll_device_authorization",
             new_callable=AsyncMock,
             return_value=df.PollResult(status="slow_down"),
         ),
@@ -238,23 +238,23 @@ async def test_advance_widens_interval_on_slow_down() -> None:
 @pytest.mark.asyncio()
 async def test_advance_returns_failed_on_denied() -> None:
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(ctx)
     with (
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.mark_polled",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.mark_polled",
             new_callable=AsyncMock,
         ),
         patch.object(
             df,
-            "poll_device_flow",
+            "poll_device_authorization",
             new_callable=AsyncMock,
             return_value=df.PollResult(status="denied"),
         ),
@@ -267,23 +267,23 @@ async def test_advance_returns_failed_on_denied() -> None:
 @pytest.mark.asyncio()
 async def test_advance_returns_expired_from_vendor() -> None:
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(ctx)
     with (
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.mark_polled",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.mark_polled",
             new_callable=AsyncMock,
         ),
         patch.object(
             df,
-            "poll_device_flow",
+            "poll_device_authorization",
             new_callable=AsyncMock,
             return_value=df.PollResult(status="expired"),
         ),
@@ -300,7 +300,7 @@ async def test_advance_returns_success_with_granted_scopes_from_aux_row() -> Non
     # otherwise permission-rule readback from ``oauth_token.scope``
     # would echo an empty list back to the UI as "no permissions".
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(ctx, granted_scopes=["repo", "read:user"])
     poll_result = df.PollResult(
         status="success",
@@ -311,17 +311,19 @@ async def test_advance_returns_success_with_granted_scopes_from_aux_row() -> Non
     )
     with (
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.mark_polled",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.mark_polled",
             new_callable=AsyncMock,
         ),
-        patch.object(df, "poll_device_flow", new_callable=AsyncMock, return_value=poll_result),
+        patch.object(
+            df, "poll_device_authorization", new_callable=AsyncMock, return_value=poll_result
+        ),
     ):
         report = await handler.advance("cred_1")
     assert report.kind == "success"
@@ -337,25 +339,25 @@ async def test_advance_maps_403_to_vendor_forbidden_terminal() -> None:
     # for the session TTL. 403 gets its own error code so ops can tell
     # "vendor blocked us" apart from generic upstream noise.
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(ctx)
     with (
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.mark_polled",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.mark_polled",
             new_callable=AsyncMock,
         ),
         patch.object(
             df,
-            "poll_device_flow",
+            "poll_device_authorization",
             new_callable=AsyncMock,
-            side_effect=df.DeviceFlowUpstreamError(403, "forbidden"),
+            side_effect=df.DeviceAuthorizationUpstreamError(403, "forbidden"),
         ),
     ):
         report = await handler.advance("cred_1")
@@ -366,25 +368,25 @@ async def test_advance_maps_403_to_vendor_forbidden_terminal() -> None:
 @pytest.mark.asyncio()
 async def test_advance_maps_other_upstream_error_to_vendor_error_terminal() -> None:
     ctx = _make_context()
-    handler = DeviceFlowHandler(ctx)
+    handler = DeviceAuthorizationHandler(ctx)
     dfc = _make_dfc(ctx)
     with (
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.get_by_credential",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
             return_value=dfc,
         ),
         patch(
-            "jentic_one.control.services.integrations.flow_handlers.device_code."
-            "DeviceFlowCredentialRepository.mark_polled",
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.mark_polled",
             new_callable=AsyncMock,
         ),
         patch.object(
             df,
-            "poll_device_flow",
+            "poll_device_authorization",
             new_callable=AsyncMock,
-            side_effect=df.DeviceFlowUpstreamError(500, "boom"),
+            side_effect=df.DeviceAuthorizationUpstreamError(500, "boom"),
         ),
     ):
         report = await handler.advance("cred_1")

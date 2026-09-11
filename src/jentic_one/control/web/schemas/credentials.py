@@ -438,7 +438,7 @@ class AuthCodeConnectChallengeResponse(BaseModel):
     state: str
 
 
-class DeviceCodeConnectChallengeResponse(BaseModel):
+class DeviceAuthorizationConnectChallengeResponse(BaseModel):
     """RFC 8628 device-code challenge.
 
     Client shows ``user_code`` at ``verification_uri`` and polls
@@ -446,7 +446,7 @@ class DeviceCodeConnectChallengeResponse(BaseModel):
     (scanner-driven server-side).
     """
 
-    kind: Literal["device_code"] = "device_code"
+    kind: Literal["device_authorization"] = "device_authorization"
     user_code: str
     verification_uri: str
     verification_uri_complete: str | None = None
@@ -454,7 +454,7 @@ class DeviceCodeConnectChallengeResponse(BaseModel):
 
 
 ConnectChallengeResponse = Annotated[
-    AuthCodeConnectChallengeResponse | DeviceCodeConnectChallengeResponse,
+    AuthCodeConnectChallengeResponse | DeviceAuthorizationConnectChallengeResponse,
     Field(discriminator="kind"),
 ]
 
