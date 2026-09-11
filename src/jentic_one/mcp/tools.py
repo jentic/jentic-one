@@ -234,8 +234,13 @@ def require_scopes(identity: Identity, required: list[str]) -> None:
         "the control plane rejected this agent's credentials "
         f"(http 403: This action requires one of: {', '.join(required)}) — "
         "the identity may have been revoked or disabled",
-        actionable="call get_started to diagnose this machine's setup and relay its "
-        "instruction to your operator",
+        # Lane-aware prose (#1327 deferred work): the stdio taxonomy points
+        # this code at get_started, which this mount does not serve. whoami
+        # DOES resolve here (the credential authenticated; it lacks scopes),
+        # so it is the honest next step on this lane.
+        actionable="call whoami to see this connection's identity and granted scopes, "
+        "and relay the missing scopes to your operator — scopes are granted by a "
+        "human in the Jentic One dashboard",
     )
 
 
@@ -314,8 +319,13 @@ async def handle_whoami(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.Ca
             "the control plane rejected this agent's credentials "
             f"({getattr(exc, 'detail', exc)}) — the identity may have been revoked "
             "or disabled",
-            actionable="call get_started to diagnose this machine's setup and relay "
-            "its instruction to your operator",
+            # Lane-aware prose (#1327 deferred work): the stdio taxonomy
+            # points this code at get_started, unserved here — and whoami
+            # itself just failed, so no served tool can help. Re-root the
+            # recovery at the operator.
+            actionable="relay this to your human operator: this connection's "
+            "credentials and the agent's status are managed in the Jentic One "
+            "dashboard",
         ) from None
     payload = me.model_dump(mode="json")
     payload["schema_version"] = SCHEMA_VERSION

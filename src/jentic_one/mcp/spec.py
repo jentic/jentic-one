@@ -22,6 +22,13 @@ from typing import Any
 
 import mcp.types as mcp_types
 
+#: The lane this mount serves. The pinned spec's base renderings are the
+#: stdio server's; a tool may carry ``lane_overrides[LANE]`` re-rendering
+#: prose that would lie on this lane (e.g. recovery instructions naming
+#: ``get_started``, which only stdio serves). Wire shape — names, input
+#: schemas, annotations — is lane-invariant by design.
+LANE = "http"
+
 #: The tools this mount serves — the subset of the pinned surface whose
 #: dispatch is clean in-process (registry search/inspect/catalog + the catalog
 #: import loop, admin jobs, auth whoami, control access requests) or a
@@ -50,6 +57,20 @@ class ToolSpec:
     description: str
     input_schema: dict[str, Any]
     annotations: dict[str, bool]
+    lane_overrides: dict[str, dict[str, str]]
+
+    @property
+    def served_description(self) -> str:
+        """This lane's rendering: the ``LANE`` override when pinned, else base.
+
+        Both renderings ride the one contract document
+        (``docs/reference/mcp-tools.json``) and both are drift-guarded —
+        the Go side pins the overrides' existence and content
+        (``TestMCPToolSurfaceSpec`` / ``TestMCPToolSpecs_LaneOverridesAreDeliberate``),
+        this side pins that the SERVED rendering never names an unserved tool
+        (``tests/unit/mcp/test_tool_surface.py``).
+        """
+        return self.lane_overrides.get(LANE, {}).get("description") or self.description
 
     def as_mcp_tool(self) -> mcp_types.Tool:
         """Project the pinned declaration onto the SDK's ``Tool`` type."""
@@ -62,7 +83,7 @@ class ToolSpec:
         return mcp_types.Tool(
             name=self.name,
             title=self.title,
-            description=self.description,
+            description=self.served_description,
             input_schema=self.input_schema,
             annotations=annotations,
         )
@@ -81,6 +102,7 @@ def load_spec() -> dict[str, ToolSpec]:
             description=tool["description"],
             input_schema=tool["input_schema"],
             annotations=tool["annotations"],
+            lane_overrides=tool.get("lane_overrides", {}),
         )
     return specs
 
