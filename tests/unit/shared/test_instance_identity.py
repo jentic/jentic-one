@@ -30,11 +30,17 @@ def _ctx(
     canonical_base_url: str = "http://127.0.0.1:8000",
     *,
     backend: str | None = None,
+    broker_url: str | None = None,
 ) -> Context:
     cfg = dict(sample_config_dict)
     cfg["auth"] = {**cfg.get("auth", {}), "canonical_base_url": canonical_base_url}
+    server = dict(cfg.get("server", {}))
     if backend is not None:
-        cfg["server"] = {**cfg.get("server", {}), "backend": backend}
+        server["backend"] = backend
+    if broker_url is not None:
+        server["mcp"] = {**server.get("mcp", {}), "broker_url": broker_url}
+    if server:
+        cfg["server"] = server
     return Context(AppConfig.model_validate(cfg))
 
 
@@ -127,7 +133,14 @@ def test_instance_endpoint_response_has_exactly_the_documented_fields(
 
     data = client.get("/instance").json()
 
-    assert set(data) == {"backend", "canonical_base_url", "host", "instance_id", "mcp_enabled"}
+    assert set(data) == {
+        "backend",
+        "canonical_base_url",
+        "host",
+        "instance_id",
+        "mcp_enabled",
+        "broker_url",
+    }
 
 
 def test_instance_endpoint_schema_visible_and_public(sample_config_dict: dict[str, Any]) -> None:
@@ -171,3 +184,88 @@ def test_resolve_instance_identity_strips_userinfo(sample_config_dict: dict[str,
     assert identity.host == "jentic.acme.example:8443"
     assert "secret" not in identity.canonical_base_url
     assert "user" not in identity.host
+
+
+# ---------------------------------------------------------------------------
+# broker_url (issue #1249): the one backend field both UI consumers (the agent
+# MCP snippet and the Settings "Connect an MCP client" card) and CLI/agent
+# self-onboarding read the broker (data plane) URL from.
+# ---------------------------------------------------------------------------
+
+
+def test_instance_endpoint_reports_configured_broker_url_on_remote(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """A remote install with a real (non-loopback) broker URL advertises it."""
+    ctx = _ctx(
+        sample_config_dict,
+        "https://app.jentic.example",
+        backend="remote",
+        broker_url="https://broker.jentic.example",
+    )
+    client = TestClient(create_combined_app(ctx, ["control"]), raise_server_exceptions=False)
+
+    data = client.get("/instance").json()
+
+    assert data["broker_url"] == "https://broker.jentic.example"
+
+
+def test_instance_endpoint_reports_loopback_broker_url_on_local(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """On a local install the loopback config default IS the client's broker address."""
+    ctx = _ctx(sample_config_dict, "http://127.0.0.1:8000")
+    client = TestClient(create_combined_app(ctx, ["control"]), raise_server_exceptions=False)
+
+    data = client.get("/instance").json()
+
+    # sample config leaves server.mcp.broker_url at its default.
+    assert data["broker_url"] == "http://127.0.0.1:8100"
+
+
+def test_instance_endpoint_withholds_loopback_broker_url_on_remote(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """A remote backend must not advertise a loopback broker (unreachable for clients).
+
+    The config default names the control plane's own machine — publishing it
+    would send every remote client to its own loopback. Null keeps the UI on
+    its ``<broker-url>`` placeholder + "ask your operator" fallback.
+    """
+    ctx = _ctx(sample_config_dict, "https://app.jentic.example", backend="remote")
+    client = TestClient(create_combined_app(ctx, ["control"]), raise_server_exceptions=False)
+
+    data = client.get("/instance").json()
+
+    assert data["broker_url"] is None
+
+
+def test_resolve_instance_identity_withholds_localhost_broker_on_remote(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """``localhost`` (not just literal loopback IPs) is withheld on remote too."""
+    identity = resolve_instance_identity(
+        _ctx(
+            sample_config_dict,
+            "https://app.jentic.example",
+            backend="remote",
+            broker_url="http://localhost:8100",
+        )
+    )
+    assert identity.broker_url is None
+
+
+def test_resolve_instance_identity_strips_broker_url_userinfo(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """Credentials embedded in the configured broker URL are never echoed back."""
+    identity = resolve_instance_identity(
+        _ctx(
+            sample_config_dict,
+            "https://app.jentic.example",
+            backend="remote",
+            broker_url="https://user:secret@broker.jentic.example:8443",
+        )
+    )
+    assert identity.broker_url == "https://broker.jentic.example:8443"
+    assert "secret" not in (identity.broker_url or "")
