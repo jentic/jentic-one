@@ -104,9 +104,53 @@ the Deprecations table.
   (`broker.direct_bindings_enabled: false`) and is removed in Phase 6b —
   adopt the credential headers now.
 - **Toolkit tables are still present.** The stored toolkit rows (bindings,
-  keys) survive this release; they are dropped in Phase 6b. The Phase 6a
-  export/acknowledge runbook — how to export the legacy toolkit data and
-  acknowledge the drop — lands in a release **before** the tables are removed.
+  keys) survive this release; they are dropped in Phase 6b. Before that
+  release you must run the Phase 6a export/flatten/acknowledge runbook below
+  — the Phase-6b drop migrations refuse to run until the acknowledgement is
+  on record.
+
+### Phase 6a runbook: export, flatten, verify, acknowledge
+
+Run these against **production data** (all commands read/write the live
+control + admin databases configured for the process). Order matters.
+
+1. **Export first**: `jentic_one export-toolkits --out toolkit-export.json`.
+   The file captures all five legacy tables (`toolkits`, `toolkit_keys`,
+   `toolkit_credential_bindings`, `toolkit_permission_rules`,
+   `agent_toolkit_bindings`) with row counts and dialect-neutral values. It
+   embeds key hash digests — store it like a secrets backup.
+2. *(Optional)* preview: `jentic_one flatten-toolkits --diff-only --report
+   preview.jsonl` writes the report without touching either database.
+3. **Flatten**: `jentic_one flatten-toolkits --report flatten.jsonl`. Every
+   `(agent, credential)` pair reachable through a toolkit gains a direct
+   binding carrying the pair's rules. Read the report: `rule_conflict` lines
+   are pairs whose toolkit paths disagreed — they were bound **default-deny**
+   (the safer outcome) and need a rules decision from you;
+   `inactive_toolkit_binding` lines are live access you may have believed
+   disabled (an inactive toolkit never gated bound agents) — they were
+   migrated, review them; `pooled_rule_drift` lines are pairs whose effective
+   rules narrowed from vendor-pooled to per-pair; `active_toolkit_key` lines
+   want `retire-toolkit-keys` (or a revoke) before 6b.
+4. **Double-run-and-diff** (the concurrency check — binds racing step 3 are
+   possible since OSS cannot quiesce the bind endpoints): run
+   `jentic_one flatten-toolkits` again and confirm it reports **zero
+   creations**. If it created rows, repeat until a run creates nothing.
+5. **Verify**: `jentic_one flatten-toolkits --verify` — recomputes the legacy
+   pair set and fails unless every pair exists as a direct binding (extra
+   hand-created bindings are fine). Rule-list divergence is reported, not
+   fatal.
+6. **Acknowledge**: `jentic_one flatten-toolkits --verify --acknowledge` —
+   records the sentinel row (`toolkit_flattening_acks`, control DB) that the
+   Phase-6b drop migrations require. It is refused unless the verification
+   passes in that same invocation.
+
+**Rollback after Phase 6b** is two steps, not one: downgrade the drop
+migrations **and then** `jentic_one export-toolkits --import
+toolkit-export.json`. A migration `downgrade()` recreates empty tables — it
+cannot restore rows — and restoring the toolkit path with empty
+`toolkit_permission_rules` is a **total default-deny authorization outage**
+for every agent on the legacy path. Do not flip
+`broker.direct_bindings_enabled` back off without re-importing.
 
 ## Deprecations
 
