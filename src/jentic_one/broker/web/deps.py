@@ -1,9 +1,9 @@
 """Broker-specific FastAPI dependencies for token validation and authorization.
 
-Toolkit *selection* happens in the handler (see ``routers/execute``): it needs
-the discovered API identity, which is only known after discovery. These
-dependencies do auth + scope only; the handler calls ``select_toolkit``
-through the injected ``get_toolkit_deriver`` provider.
+Credential-binding *selection* happens in the handler (see ``routers/execute``):
+it needs the discovered API identity, which is only known after discovery.
+These dependencies do auth + scope only; the handler derives bindings through
+the injected ``get_credential_deriver`` provider.
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
     CredentialDeriverProtocol,
-    RuleEvaluatorProtocol,
-    ToolkitDeriverProtocol,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event
@@ -154,12 +152,6 @@ async def require_execute_scope(request: Request) -> Identity:
     return resolved
 
 
-def get_toolkit_deriver(request: Request) -> ToolkitDeriverProtocol:
-    """Provide the toolkit deriver so handlers don't read ``app.state`` directly."""
-    deriver: ToolkitDeriverProtocol = request.app.state.broker_toolkit_deriver
-    return deriver
-
-
 def get_credential_deriver(request: Request) -> CredentialDeriverProtocol:
     """Provide the direct-binding credential deriver (theme-5 Phase 2)."""
     deriver: CredentialDeriverProtocol = request.app.state.broker_credential_deriver
@@ -225,17 +217,9 @@ def get_idempotency_store(request: Request) -> SharedStateIdempotencyStore | Non
     return getattr(request.app.state, "broker_idempotency_store", None)
 
 
-def get_rule_evaluator(request: Request) -> RuleEvaluatorProtocol:
-    """Provide the rule evaluator so handlers don't read ``app.state`` directly."""
-    evaluator: RuleEvaluatorProtocol = request.app.state.broker_rule_evaluator
-    return evaluator
-
-
 RequireBrokerIdentity = Annotated[Identity, Depends(require_broker_identity)]
-RequireToolkitAccess = Annotated[Identity, Depends(require_execute_within_rate_limit)]
-ToolkitDeriver = Annotated[ToolkitDeriverProtocol, Depends(get_toolkit_deriver)]
+RequireExecuteAccess = Annotated[Identity, Depends(require_execute_within_rate_limit)]
 CredentialDeriver = Annotated[CredentialDeriverProtocol, Depends(get_credential_deriver)]
-RuleEvaluatorDep = Annotated[RuleEvaluatorProtocol, Depends(get_rule_evaluator)]
 AgentRuleEvaluatorDep = Annotated[AgentRuleEvaluatorProtocol, Depends(get_agent_rule_evaluator)]
 HttpRunnerDep = Annotated[UpstreamRunner, Depends(get_http_runner)]
 IdempotencyStoreDep = Annotated[SharedStateIdempotencyStore | None, Depends(get_idempotency_store)]

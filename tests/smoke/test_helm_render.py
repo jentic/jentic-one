@@ -611,11 +611,11 @@ def test_render_migrate_job_extra_args() -> None:
         "-f",
         str(VALUES_DIR / "local-combined.yaml"),
         "--set-json",
-        'migrate.extraArgs=["--skip-upgrade-step","theme5_flatten_toolkits"]',
+        'migrate.extraArgs=["--skip-upgrade-step","example_step"]',
     )
     job = next(doc for doc in docs if doc.get("kind") == "Job")
     container = job["spec"]["template"]["spec"]["containers"][0]
-    assert container["args"] == ["--skip-upgrade-step", "theme5_flatten_toolkits"]
+    assert container["args"] == ["--skip-upgrade-step", "example_step"]
 
 
 @pytest.mark.smoke

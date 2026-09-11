@@ -69,39 +69,27 @@ class EventType:
     CREDENTIAL_REFRESH_FAILED = "credential.refresh_failed"
     CREDENTIAL_NOT_PROVISIONED = "credential.not_provisioned"
     CREDENTIAL_UNDECRYPTABLE = "credential.undecryptable"
-    CREDENTIAL_BOUND_TO_TOOLKIT = "credential.bound_to_toolkit"
-    CREDENTIAL_UNBOUND_FROM_TOOLKIT = "credential.unbound_from_toolkit"
-    # Direct agent↔credential bindings (theme 5 phase 1). Coexists with the
-    # toolkit-binding events until the toolkit path is removed.
+    # Direct agent↔credential bindings (theme 5). The toolkit-binding twins
+    # (``toolkit.*``, ``credential.*_toolkit``) were deleted with the toolkit
+    # surface in Phase 6b — historical event rows keep their stored string
+    # types (the read surface treats ``type`` as an opaque string).
     CREDENTIAL_BOUND_TO_AGENT = "credential.bound_to_agent"
     CREDENTIAL_UNBOUND_FROM_AGENT = "credential.unbound_from_agent"
     CREDENTIAL_PERMISSION_RULE_SET = "credential.permission_rule_set"
-    TOOLKIT_CREATED = "toolkit.created"
-    TOOLKIT_KEY_CREATED = "toolkit.key_created"
-    TOOLKIT_PERMISSION_RULE_SET = "toolkit.permission_rule_set"
-    TOOLKIT_BOUND_TO_AGENT = "toolkit.bound_to_agent"
-    TOOLKIT_UNBOUND_FROM_AGENT = "toolkit.unbound_from_agent"
     AGENT_CREATED = "agent.created"
     AGENT_SELF_REGISTERED = "agent.self_registered"
     AGENT_REGISTRATION_APPROVED = "agent.registration_approved"
     AGENT_REGISTRATION_DENIED = "agent.registration_denied"
     PBAC_DENIED = "broker.pbac_denied"
-    # Emitted when the broker denies an execute with 403 ``no_toolkit_binding``
-    # AND no toolkit yet serves the requested API — the caller's next step is
-    # for an operator to provision a credential (which is what makes a toolkit
-    # serve the API). Distinct from ``CREDENTIAL_NOT_PROVISIONED`` (424, fires
-    # when a bound toolkit's credential is unresolvable at inject time): this
-    # event is the *pre-binding* signal, giving operators visibility into
-    # agent-needed APIs before a doomed access request appears. Despite the
-    # ``broker.`` namespace, the control plane also emits it as a file-time
-    # advisory for the same condition (see
-    # ``AccessRequestService._advise_unserved_bind_references``).
-    TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
-    # Direct-binding twin of ``TOOLKIT_BINDING_UNSERVED`` (theme-5 Phase 2):
-    # emitted when the broker denies an execute with 403
+    # Emitted when the broker denies an execute with 403
     # ``no_credential_binding`` AND no credential yet serves the requested API —
     # the operator must provision a credential before any binding can be
-    # granted. The *pre-binding* signal for the direct-binding path.
+    # granted. The *pre-binding* signal, giving operators visibility into
+    # agent-needed APIs before a doomed access request appears. Distinct from
+    # ``CREDENTIAL_NOT_PROVISIONED`` (424, fires when a bound credential is
+    # unresolvable at inject time). Despite the ``broker.`` namespace, the
+    # control plane also emits it as a file-time advisory for the same
+    # condition (see ``AccessRequestService._advise_unserved_bind_references``).
     CREDENTIAL_BINDING_UNSERVED = "broker.credential_binding_unserved"
 
     # --- Local-MCP transport events (issue #1177) -------------------------
@@ -167,22 +155,14 @@ class EventType:
             CREDENTIAL_REFRESH_FAILED,
             CREDENTIAL_NOT_PROVISIONED,
             CREDENTIAL_UNDECRYPTABLE,
-            CREDENTIAL_BOUND_TO_TOOLKIT,
-            CREDENTIAL_UNBOUND_FROM_TOOLKIT,
             CREDENTIAL_BOUND_TO_AGENT,
             CREDENTIAL_UNBOUND_FROM_AGENT,
             CREDENTIAL_PERMISSION_RULE_SET,
-            TOOLKIT_CREATED,
-            TOOLKIT_KEY_CREATED,
-            TOOLKIT_PERMISSION_RULE_SET,
-            TOOLKIT_BOUND_TO_AGENT,
-            TOOLKIT_UNBOUND_FROM_AGENT,
             AGENT_CREATED,
             AGENT_SELF_REGISTERED,
             AGENT_REGISTRATION_APPROVED,
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
-            TOOLKIT_BINDING_UNSERVED,
             CREDENTIAL_BINDING_UNSERVED,
             MCP_SESSION_STARTED,
             MCP_CONFIG_REGISTERED,
@@ -395,14 +375,6 @@ EVENT_TAGS: dict[str, tuple[type[StrEnum], ...]] = {
 #: ``tests/unit/shared/test_event_type_severities.py`` enforces 1:1 coverage with
 #: ``EventType.ALL``, and ``test_critical_is_reserved_to_repeated_failure`` guards
 #: the CRITICAL boundary specifically, so a future emitter can't silently widen it.
-#:
-#: Seven types below are declared but not currently emitted anywhere — dead since
-#: the toolkit-removal cut (theme 5, #1370): ``CREDENTIAL_BOUND_TO_TOOLKIT``,
-#: ``CREDENTIAL_UNBOUND_FROM_TOOLKIT``, ``TOOLKIT_CREATED``, ``TOOLKIT_KEY_CREATED``,
-#: ``TOOLKIT_PERMISSION_RULE_SET``, ``TOOLKIT_BOUND_TO_AGENT``,
-#: ``TOOLKIT_UNBOUND_FROM_AGENT``. They keep their originally-declared INFO
-#: severity here rather than being removed — that cleanup is tracked separately
-#: and is out of scope for this map.
 EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     # --- INFO: routine / expected lifecycle notifications -----------------
     EventType.IMPORT_COMPLETED: frozenset({EventSeverity.INFO}),
@@ -422,16 +394,9 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     # A product-telemetry funnel event, not an operator alert — INFO tracks a
     # funnel step here, not incident severity (see connect_service.py).
     EventType.CREDENTIAL_CONNECTION_FAILED: frozenset({EventSeverity.INFO}),
-    EventType.CREDENTIAL_BOUND_TO_TOOLKIT: frozenset({EventSeverity.INFO}),  # dead, see module note
-    EventType.CREDENTIAL_UNBOUND_FROM_TOOLKIT: frozenset({EventSeverity.INFO}),  # dead
     EventType.CREDENTIAL_BOUND_TO_AGENT: frozenset({EventSeverity.INFO}),
     EventType.CREDENTIAL_UNBOUND_FROM_AGENT: frozenset({EventSeverity.INFO}),
     EventType.CREDENTIAL_PERMISSION_RULE_SET: frozenset({EventSeverity.INFO}),
-    EventType.TOOLKIT_CREATED: frozenset({EventSeverity.INFO}),  # dead
-    EventType.TOOLKIT_KEY_CREATED: frozenset({EventSeverity.INFO}),  # dead
-    EventType.TOOLKIT_PERMISSION_RULE_SET: frozenset({EventSeverity.INFO}),  # dead
-    EventType.TOOLKIT_BOUND_TO_AGENT: frozenset({EventSeverity.INFO}),  # dead
-    EventType.TOOLKIT_UNBOUND_FROM_AGENT: frozenset({EventSeverity.INFO}),  # dead
     EventType.AGENT_CREATED: frozenset({EventSeverity.INFO}),
     EventType.AGENT_SELF_REGISTERED: frozenset({EventSeverity.INFO}),
     EventType.AGENT_REGISTRATION_APPROVED: frozenset({EventSeverity.INFO}),
@@ -445,7 +410,6 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     # --- WARNING: needs attention soon; nothing has failed yet ------------
     EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),
     EventType.UNAUTHORIZED_ACCESS_ATTEMPT: frozenset({EventSeverity.WARNING}),
-    EventType.TOOLKIT_BINDING_UNSERVED: frozenset({EventSeverity.WARNING}),
     EventType.CREDENTIAL_BINDING_UNSERVED: frozenset({EventSeverity.WARNING}),
     EventType.PBAC_DENIED: frozenset({EventSeverity.WARNING}),
     EventType.CREDENTIAL_UNDECRYPTABLE: frozenset({EventSeverity.WARNING}),

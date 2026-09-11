@@ -14,17 +14,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-class BoundAgentRow(NamedTuple):
-    """Result row for agents bound to a toolkit."""
-
-    binding_id: str
-    agent_id: str
-    agent_name: str
-    agent_status: str
-    agent_created_at: datetime
-    bound_at: datetime
-
-
 class CredentialBoundAgentRow(NamedTuple):
     """Result row for agents directly bound to a credential (theme 5 phase 1)."""
 
@@ -96,47 +85,6 @@ class PrerequisiteRepository:
         return {row[0]: UserDisplayRow(*row) for row in result.fetchall()}
 
     @staticmethod
-    async def agent_toolkit_binding_exists(
-        session: AsyncSession, *, agent_id: str, toolkit_id: str
-    ) -> bool:
-        """Return True if a binding exists between the given agent and toolkit."""
-        result = await session.execute(
-            text(
-                "SELECT 1 FROM agent_toolkit_bindings "
-                "WHERE agent_id = :agent_id AND toolkit_id = :toolkit_id LIMIT 1"
-            ),
-            {"agent_id": agent_id, "toolkit_id": toolkit_id},
-        )
-        return result.scalar_one_or_none() is not None
-
-    @staticmethod
-    async def agent_bound_to_any_toolkit(
-        session: AsyncSession, *, agent_id: str, toolkit_ids: list[str]
-    ) -> bool:
-        """Return True if the agent is bound to at least one of the given toolkits.
-
-        Batched variant of :meth:`agent_toolkit_binding_exists` for
-        satisfaction checks (issue #826). The current annotator only probes a
-        single resolved toolkit per item (ambiguous references are left
-        un-annotated), but the batched shape stays so future callers can check
-        several candidates in one query. Empty ``toolkit_ids`` short-circuits
-        to False.
-        """
-        if not toolkit_ids:
-            return False
-        placeholders = ", ".join(f":tk_{i}" for i in range(len(toolkit_ids)))
-        params: dict[str, object] = {f"tk_{i}": tid for i, tid in enumerate(toolkit_ids)}
-        params["agent_id"] = agent_id
-        result = await session.execute(
-            text(
-                "SELECT 1 FROM agent_toolkit_bindings "
-                f"WHERE agent_id = :agent_id AND toolkit_id IN ({placeholders}) LIMIT 1"
-            ),
-            params,
-        )
-        return result.scalar_one_or_none() is not None
-
-    @staticmethod
     async def actor_scope_grant_exists(session: AsyncSession, *, actor_id: str, scope: str) -> bool:
         """Return True if the actor already holds this scope grant (admin DB).
 
@@ -152,22 +100,6 @@ class PrerequisiteRepository:
             {"actor_id": actor_id, "scope": scope},
         )
         return result.scalar_one_or_none() is not None
-
-    @staticmethod
-    async def list_toolkit_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
-        """Return the ids of every toolkit the agent is actively bound to.
-
-        Caller-less since theme-5 Phase 5b collapsed credential read scoping
-        onto the direct-binding axis (``list_credential_ids_for_agent``
-        below); kept with the surviving toolkit tables until Phase 6b. Runs
-        against an admin session and returns plain ids (the control scoping
-        module must not import admin ORM models or query across databases).
-        """
-        result = await session.execute(
-            text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :agent_id"),
-            {"agent_id": agent_id},
-        )
-        return [row[0] for row in result.fetchall()]
 
     @staticmethod
     async def list_credential_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
@@ -193,60 +125,6 @@ class PrerequisiteRepository:
         return [row[0] for row in result.fetchall()]
 
     @staticmethod
-    async def delete_agent_toolkit_bindings_for_toolkit(
-        session: AsyncSession, *, toolkit_id: str
-    ) -> int:
-        """Delete all agent-toolkit bindings for a toolkit (cross-DB cleanup)."""
-        result = await session.execute(
-            text("DELETE FROM agent_toolkit_bindings WHERE toolkit_id = :toolkit_id"),
-            {"toolkit_id": toolkit_id},
-        )
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def list_agents_for_toolkit(
-        session: AsyncSession,
-        *,
-        toolkit_id: str,
-        cursor: tuple[datetime, str] | None = None,
-        limit: int = 50,
-    ) -> list[BoundAgentRow]:
-        """Return agents bound to a toolkit, paginated by (bound_at DESC, id DESC)."""
-        if cursor is not None:
-            cursor_ts, cursor_id = cursor
-            result = await session.execute(
-                text(
-                    "SELECT b.id, a.id, a.name, a.status, a.created_at, b.bound_at "
-                    "FROM agent_toolkit_bindings b "
-                    "JOIN agents a ON a.id = b.agent_id "
-                    "WHERE b.toolkit_id = :toolkit_id "
-                    "AND (b.bound_at < :cursor_ts "
-                    "     OR (b.bound_at = :cursor_ts AND b.id < :cursor_id)) "
-                    "ORDER BY b.bound_at DESC, b.id DESC "
-                    "LIMIT :limit"
-                ),
-                {
-                    "toolkit_id": toolkit_id,
-                    "cursor_ts": cursor_ts,
-                    "cursor_id": cursor_id,
-                    "limit": limit,
-                },
-            )
-        else:
-            result = await session.execute(
-                text(
-                    "SELECT b.id, a.id, a.name, a.status, a.created_at, b.bound_at "
-                    "FROM agent_toolkit_bindings b "
-                    "JOIN agents a ON a.id = b.agent_id "
-                    "WHERE b.toolkit_id = :toolkit_id "
-                    "ORDER BY b.bound_at DESC, b.id DESC "
-                    "LIMIT :limit"
-                ),
-                {"toolkit_id": toolkit_id, "limit": limit},
-            )
-        return [BoundAgentRow(*row) for row in result.fetchall()]
-
-    @staticmethod
     async def list_agents_for_credential(
         session: AsyncSession,
         *,
@@ -257,9 +135,8 @@ class PrerequisiteRepository:
         """Return agents directly bound to a credential, paginated by (bound_at DESC, id DESC).
 
         The reverse lookup behind ``GET /credentials/{id}/agents`` (theme 5
-        phase 1) — the direct-binding analogue of ``list_agents_for_toolkit``
-        above, reading ``agent_credential_bindings`` instead of the toolkit
-        join table. Suspended bindings are included (with their flag) so the
+        phase 1), reading ``agent_credential_bindings``. Suspended bindings
+        are included (with their flag) so the
         credential-detail view can show a reversible cut-off, not hide it.
         """
         if cursor is not None:
@@ -335,7 +212,7 @@ class PrerequisiteRepository:
         """Point a direct binding at a shared rule set (or back to inline rules).
 
         Cross-DB write (control surface → admin table), same raw-SQL seam as
-        ``delete_agent_toolkit_bindings_for_toolkit`` above. ``None`` detaches:
+        the reads above. ``None`` detaches:
         the binding's inline ``agent_permission_rules`` rows apply again.
         Returns ``False`` when no such binding exists.
         """

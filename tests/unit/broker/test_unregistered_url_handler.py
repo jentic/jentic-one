@@ -438,8 +438,6 @@ async def _run_handle(request: Request) -> Response:
         "GET",
         MagicMock(),  # ctx — never reached: both paths stop at the miss
         _identity(),
-        MagicMock(),  # deriver
-        MagicMock(),  # rule_evaluator
         MagicMock(),  # credential_deriver
         MagicMock(),  # agent_rule_evaluator
         MagicMock(),  # runner

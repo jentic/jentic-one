@@ -4,30 +4,38 @@ Round-trips the five doomed tables: seed → export → simulate the Phase-6b
 drop (delete every row) → import → deep equality of a fresh export against
 the original document. Also covers import idempotency (partial-failure
 re-run) and the self-describing-format validation.
+
+The legacy tables were dropped at migration head (theme-5 Phase 6b), so the
+module downgrades the two drop migrations first — the post-rollback state the
+import tool actually targets. All legacy-table access is raw SQL: the ORM
+models are gone, which is the point of the migration-independent repository.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, text
+from alembic import command
+from sqlalchemy import text
 
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
-from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
-from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.services.toolkit_export import (
     ToolkitExportError,
     ToolkitExportService,
 )
+from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from tests.integration.conftest import _alembic_config_for
 
 pytestmark = pytest.mark.integration
+
+#: Revisions just below the theme-5 Phase 6b drop migrations.
+_CONTROL_PRE_DROP = "u2c3d4e5f6a7"  # pragma: allowlist secret
+_ADMIN_PRE_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
 
 _TABLES = (
     "toolkits",
@@ -40,22 +48,44 @@ _TABLES = (
 _BOUND_AT = dt.datetime(2026, 3, 1, 8, 30, tzinfo=dt.UTC)
 
 
+@pytest.fixture(scope="module")
+def legacy_tables(integration_config: AppConfig) -> Iterator[None]:
+    """Downgrade the 6b drop migrations so the legacy tables exist, then re-drop.
+
+    Teardown re-upgrades to head; the drop gates pass because the suite leaves
+    the tables empty (the fresh-install path of the guard).
+    """
+    control_cfg = _alembic_config_for("control", integration_config.databases.control)
+    admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
+    command.downgrade(control_cfg, _CONTROL_PRE_DROP)
+    command.downgrade(admin_cfg, _ADMIN_PRE_DROP)
+    yield
+    command.upgrade(control_cfg, "head")
+    command.upgrade(admin_cfg, "head")
+
+
+async def _wipe_legacy_rows(control_db: DatabaseSession, admin_db: DatabaseSession) -> None:
+    async with control_db.session() as session:
+        await session.execute(text("DELETE FROM toolkit_permission_rules"))
+        await session.execute(text("DELETE FROM toolkit_keys"))
+        await session.execute(text("DELETE FROM toolkit_credential_bindings"))
+        await session.execute(text("DELETE FROM toolkits"))
+        await session.commit()
+    async with admin_db.session() as session:
+        await session.execute(text("DELETE FROM agent_toolkit_bindings"))
+        await session.commit()
+
+
 @pytest.fixture()
 async def clean_tables(
-    control_db: DatabaseSession, admin_db: DatabaseSession
+    control_db: DatabaseSession, admin_db: DatabaseSession, legacy_tables: None
 ) -> AsyncGenerator[None, None]:
     """Wipe the five exported tables (the job exports them whole)."""
 
     async def _cleanup() -> None:
+        await _wipe_legacy_rows(control_db, admin_db)
         async with control_db.session() as session:
-            await session.execute(delete(ToolkitPermissionRule))
-            await session.execute(delete(ToolkitKey))
-            await session.execute(delete(ToolkitCredentialBinding))
-            await session.execute(delete(Toolkit))
             await session.execute(text("DELETE FROM credentials WHERE id LIKE 'cred_extest%'"))
-            await session.commit()
-        async with admin_db.session() as session:
-            await session.execute(text("DELETE FROM agent_toolkit_bindings"))
             await session.commit()
 
     await _cleanup()
@@ -66,8 +96,21 @@ async def clean_tables(
 async def _seed(control_db: DatabaseSession, admin_db: DatabaseSession) -> None:
     """A row in every exported table, exercising the awkward value shapes:
     JSON lists, NULLs, booleans, and explicit timestamps."""
+    sqlite = control_db.backend.dialect_name == "sqlite"
+    # JSON columns are JSONB on Postgres — a bare string bind must be cast.
+    json_bind = "(:{name})" if sqlite else "CAST(:{name} AS JSONB)"
+
+    def _ts(value: dt.datetime) -> object:
+        return value.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S.%f") if sqlite else value
+
     async with control_db.session() as session:
-        session.add(Toolkit(id="tk_extest_1", name="ex-toolkit", description=None, active=False))
+        await session.execute(
+            text(
+                "INSERT INTO toolkits (id, name, description, active)"
+                " VALUES ('tk_extest_1', 'ex-toolkit', NULL, :active)"
+            ),
+            {"active": False},
+        )
         session.add(
             Credential(
                 id="cred_extest_1",
@@ -77,41 +120,39 @@ async def _seed(control_db: DatabaseSession, admin_db: DatabaseSession) -> None:
             )
         )
         await session.flush()
-        session.add(
-            ToolkitKey(
-                id="ck_extest_1",
-                toolkit_id="tk_extest_1",
-                hashed_key="argon2-extest",
-                key_preview="jntc_live_ex...",
-                lookup_hash="extest-lookup",
-                allowed_ips=["10.0.0.1", "10.0.0.2"],
-                revoked=True,
-                migrated_actor_id="sva_extest_1",
-                last_used_at=_BOUND_AT,
-                created_by="usr_extest",
-            )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_keys"
+                " (id, toolkit_id, hashed_key, key_preview, lookup_hash, allowed_ips,"
+                "  revoked, migrated_actor_id, last_used_at, created_by)"
+                " VALUES ('ck_extest_1', 'tk_extest_1', 'argon2-extest', 'jntc_live_ex...',"
+                f"  'extest-lookup', {json_bind.format(name='allowed_ips')}, :revoked,"
+                "  'sva_extest_1', :last_used_at, 'usr_extest')"
+            ),
+            {
+                "allowed_ips": '["10.0.0.1", "10.0.0.2"]',
+                "revoked": True,
+                "last_used_at": _ts(_BOUND_AT),
+            },
         )
-        session.add(
-            ToolkitCredentialBinding(
-                id="tcb_extest_1",
-                toolkit_id="tk_extest_1",
-                credential_id="cred_extest_1",
-                bound_at=_BOUND_AT,
-            )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings"
+                " (id, toolkit_id, credential_id, bound_at)"
+                " VALUES ('tcb_extest_1', 'tk_extest_1', 'cred_extest_1', :bound_at)"
+            ),
+            {"bound_at": _ts(_BOUND_AT)},
         )
-        session.add(
-            ToolkitPermissionRule(
-                id="tpr_extest_1",
-                toolkit_id="tk_extest_1",
-                credential_id="cred_extest_1",
-                effect="allow",
-                methods=["GET", "POST"],
-                path="/v1/.*",
-                match_mode="regex",
-                operations=None,
-                sequence=0,
-                comment="ex-rule",
-            )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_permission_rules"
+                " (id, toolkit_id, credential_id, effect, methods, path, match_mode,"
+                "  operations, is_system, sequence, comment)"
+                " VALUES ('tpr_extest_1', 'tk_extest_1', 'cred_extest_1', 'allow',"
+                f"  {json_bind.format(name='methods')}, '/v1/.*', 'regex', NULL,"
+                "  :is_system, 0, 'ex-rule')"
+            ),
+            {"methods": '["GET", "POST"]', "is_system": False},
         )
         await session.commit()
     async with admin_db.session() as session:
@@ -134,15 +175,7 @@ async def _seed(control_db: DatabaseSession, admin_db: DatabaseSession) -> None:
 async def _simulate_drop(control_db: DatabaseSession, admin_db: DatabaseSession) -> None:
     """Delete every row from the five tables — the closest a test can get to
     the Phase-6b drop without running migrations mid-session."""
-    async with control_db.session() as session:
-        await session.execute(delete(ToolkitPermissionRule))
-        await session.execute(delete(ToolkitKey))
-        await session.execute(delete(ToolkitCredentialBinding))
-        await session.execute(delete(Toolkit))
-        await session.commit()
-    async with admin_db.session() as session:
-        await session.execute(text("DELETE FROM agent_toolkit_bindings"))
-        await session.commit()
+    await _wipe_legacy_rows(control_db, admin_db)
 
 
 def _comparable(document: dict[str, Any]) -> dict[str, Any]:

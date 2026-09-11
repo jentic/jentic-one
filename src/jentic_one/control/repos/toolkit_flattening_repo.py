@@ -1,40 +1,44 @@
 """Repositories for the theme-5 Phase 6a toolkit-flattening job.
 
-Two halves, mirroring the Phase-4 key-retirement seam
-(``control/repos/key_retirement_repo.py``):
+Two halves, mirroring the (since-deleted) Phase-4 key-retirement seam:
 
-- :class:`FlatteningControlRepository` — ORM reads over the control-DB
-  legacy tables (``toolkits``, ``toolkit_credential_bindings``,
-  ``toolkit_permission_rules``, ``toolkit_keys``), the direct-model rule
-  tables the verification compares against, and the acknowledgement
-  sentinel insert.
+- :class:`FlatteningControlRepository` — control-DB reads over the legacy
+  toolkit tables, the direct-model rule tables the verification compares
+  against, and the acknowledgement sentinel insert.
 - :class:`FlatteningAdminRepository` — raw-SQL statements against the
   **admin** DB (``agent_toolkit_bindings`` reads, actor existence checks,
-  ``agent_credential_bindings`` reads/inserts, scope-grant reads). The
-  control module must not import admin ORM models, so — like
-  ``KeyRetirementRepository`` — every admin-side statement is raw SQL.
+  ``agent_credential_bindings`` reads/inserts, scope-grant reads, and the
+  ``execution_records.toolkit_name`` backfill). The control module must not
+  import admin ORM models, so every
+  admin-side statement is raw SQL.
+
+The legacy-table reads (``toolkits``, ``toolkit_credential_bindings``,
+``toolkit_permission_rules``, ``toolkit_keys``) are **migration-independent
+raw SQL** into typed row dataclasses: the Phase-6b drop migrations delete
+those tables' ORM models, but this job still runs on post-6b code against a
+pre-drop (or downgraded-and-reimported) database, so it must not depend on
+models the head schema no longer declares.
 
 Timestamps crossing the raw-SQL seam are normalized by ``_as_utc``: asyncpg
 returns aware datetimes, aiosqlite returns naive strings; both sides of the
-job need aware-UTC values. Writes bind naive-UTC strings on SQLite (matching
-SQLAlchemy's own storage format so ORM reads keep parsing) and aware
-datetimes on Postgres.
+job need aware-UTC values. JSON columns are normalized by ``_as_json_list``
+(Postgres decodes JSONB to lists; SQLite returns the stored TEXT). Writes
+bind naive-UTC strings on SQLite (matching SQLAlchemy's own storage format
+so ORM reads keep parsing) and aware datetimes on Postgres.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import json
+from dataclasses import dataclass
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
 from jentic_one.control.core.schema.toolkit_flattening_acks import ToolkitFlatteningAck
-from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
-from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.shared.db.ids import generate_ksuid
 
 #: Provenance stamp for every row the flattening job derives — mirrors the
@@ -69,43 +73,164 @@ def _bind_ts(session: AsyncSession, value: dt.datetime) -> dt.datetime | str:
     return value
 
 
+def _as_json_list(value: object) -> list[object] | None:
+    """Normalize a raw-SQL JSON-array column to a list (both dialects).
+
+    Postgres (asyncpg + SQLAlchemy codecs) decodes JSONB to a list; SQLite
+    returns the stored TEXT.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, list):
+        raise TypeError(f"expected JSON array, got {type(value).__name__}")
+    return value
+
+
+@dataclass(frozen=True)
+class ToolkitRow:
+    """Raw-SQL projection of a legacy ``toolkits`` row (post-ORM-deletion)."""
+
+    id: str
+    name: str
+    active: bool
+
+
+@dataclass(frozen=True)
+class ToolkitCredentialBindingRow:
+    """Raw-SQL projection of a legacy ``toolkit_credential_bindings`` row."""
+
+    id: str
+    toolkit_id: str
+    credential_id: str
+    bound_at: dt.datetime | None
+
+
+@dataclass(frozen=True)
+class ToolkitPermissionRuleRow:
+    """Raw-SQL projection of a legacy ``toolkit_permission_rules`` row."""
+
+    id: str
+    toolkit_id: str
+    credential_id: str
+    effect: str
+    methods: list[object] | None
+    path: str | None
+    match_mode: str
+    operations: list[object] | None
+    is_system: bool
+    comment: str | None
+    sequence: int
+    created_at: dt.datetime | None
+    created_by: str | None
+
+
+@dataclass(frozen=True)
+class ToolkitKeyRow:
+    """Raw-SQL projection of a legacy ``toolkit_keys`` row."""
+
+    id: str
+    toolkit_id: str
+    revoked: bool
+    migrated_actor_id: str | None
+    label: str | None
+    key_preview: str
+    last_used_at: dt.datetime | None
+    created_at: dt.datetime | None
+
+
+_LIST_TOOLKITS = text("SELECT id, name, active FROM toolkits ORDER BY id")
+
+_LIST_TOOLKIT_CREDENTIAL_BINDINGS = text(
+    "SELECT id, toolkit_id, credential_id, bound_at FROM toolkit_credential_bindings ORDER BY id"
+)
+
+#: Per-pair evaluation order — the same order the legacy
+#: ``ToolkitPermissionRepository.list_rules`` served a single pair in, so
+#: grouping by pair preserves evaluation order.
+_LIST_TOOLKIT_PERMISSION_RULES = text(
+    "SELECT id, toolkit_id, credential_id, effect, methods, path, match_mode,"
+    " operations, is_system, comment, sequence, created_at, created_by"
+    " FROM toolkit_permission_rules"
+    " ORDER BY toolkit_id, credential_id, is_system ASC, sequence ASC"
+)
+
+_LIST_TOOLKIT_KEYS = text(
+    "SELECT id, toolkit_id, revoked, migrated_actor_id, label, key_preview,"
+    " last_used_at, created_at"
+    " FROM toolkit_keys ORDER BY id"
+)
+
+
 class FlatteningControlRepository:
-    """Control-DB reads for the flattening job — flush-only, never commits."""
+    """Control-DB reads for the flattening job — flush-only, never commits.
+
+    The legacy-table reads are raw SQL (see module docstring): they must
+    work on post-6b code, whose head schema no longer declares these tables.
+    """
 
     @staticmethod
-    async def list_toolkits(session: AsyncSession) -> list[Toolkit]:
-        result = await session.execute(select(Toolkit).order_by(Toolkit.id))
-        return list(result.scalars().all())
+    async def list_toolkits(session: AsyncSession) -> list[ToolkitRow]:
+        result = await session.execute(_LIST_TOOLKITS)
+        return [
+            ToolkitRow(id=row.id, name=row.name, active=bool(row.active)) for row in result.all()
+        ]
 
     @staticmethod
-    async def list_credential_bindings(session: AsyncSession) -> list[ToolkitCredentialBinding]:
-        result = await session.execute(
-            select(ToolkitCredentialBinding).order_by(ToolkitCredentialBinding.id)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def list_permission_rules(session: AsyncSession) -> list[ToolkitPermissionRule]:
-        """Every legacy rule row, in per-pair evaluation order.
-
-        Ordered ``(toolkit_id, credential_id, is_system, sequence)`` — the
-        same order ``ToolkitPermissionRepository.list_rules`` serves a single
-        pair in, so grouping by pair preserves evaluation order.
-        """
-        result = await session.execute(
-            select(ToolkitPermissionRule).order_by(
-                ToolkitPermissionRule.toolkit_id,
-                ToolkitPermissionRule.credential_id,
-                ToolkitPermissionRule.is_system.asc(),
-                ToolkitPermissionRule.sequence.asc(),
+    async def list_credential_bindings(
+        session: AsyncSession,
+    ) -> list[ToolkitCredentialBindingRow]:
+        result = await session.execute(_LIST_TOOLKIT_CREDENTIAL_BINDINGS)
+        return [
+            ToolkitCredentialBindingRow(
+                id=row.id,
+                toolkit_id=row.toolkit_id,
+                credential_id=row.credential_id,
+                bound_at=_as_utc(row.bound_at),
             )
-        )
-        return list(result.scalars().all())
+            for row in result.all()
+        ]
 
     @staticmethod
-    async def list_toolkit_keys(session: AsyncSession) -> list[ToolkitKey]:
-        result = await session.execute(select(ToolkitKey).order_by(ToolkitKey.id))
-        return list(result.scalars().all())
+    async def list_permission_rules(session: AsyncSession) -> list[ToolkitPermissionRuleRow]:
+        """Every legacy rule row, in per-pair evaluation order."""
+        result = await session.execute(_LIST_TOOLKIT_PERMISSION_RULES)
+        return [
+            ToolkitPermissionRuleRow(
+                id=row.id,
+                toolkit_id=row.toolkit_id,
+                credential_id=row.credential_id,
+                effect=row.effect,
+                methods=_as_json_list(row.methods),
+                path=row.path,
+                match_mode=row.match_mode,
+                operations=_as_json_list(row.operations),
+                is_system=bool(row.is_system),
+                comment=row.comment,
+                sequence=row.sequence,
+                created_at=_as_utc(row.created_at),
+                created_by=row.created_by,
+            )
+            for row in result.all()
+        ]
+
+    @staticmethod
+    async def list_toolkit_keys(session: AsyncSession) -> list[ToolkitKeyRow]:
+        result = await session.execute(_LIST_TOOLKIT_KEYS)
+        return [
+            ToolkitKeyRow(
+                id=row.id,
+                toolkit_id=row.toolkit_id,
+                revoked=bool(row.revoked),
+                migrated_actor_id=row.migrated_actor_id,
+                label=row.label,
+                key_preview=row.key_preview,
+                last_used_at=_as_utc(row.last_used_at),
+                created_at=_as_utc(row.created_at),
+            )
+            for row in result.all()
+        ]
 
     @staticmethod
     async def list_credentials(session: AsyncSession) -> list[Credential]:
@@ -177,6 +302,40 @@ _INSERT_CREDENTIAL_BINDING = text(
     " (id, agent_id, credential_id, rule_set_id, bound_at, created_by)"
     " VALUES (:id, :agent_id, :credential_id, :rule_set_id, :bound_at, :created_by)"
     " ON CONFLICT (agent_id, credential_id) DO NOTHING"
+)
+
+_SQLITE_TOOLKIT_NAME_COLUMN_EXISTS = text(
+    "SELECT count(*) FROM pragma_table_info('execution_records') WHERE name = 'toolkit_name'"
+)
+
+#: ``current_schema()`` resolves through the connection search_path, which the
+#: postgres backend pins to the admin schema — same-named tables in other
+#: schemas cannot satisfy the probe.
+_PG_TOOLKIT_NAME_COLUMN_EXISTS = text(
+    "SELECT count(*) FROM information_schema.columns"
+    " WHERE table_schema = current_schema()"
+    "   AND table_name = 'execution_records' AND column_name = 'toolkit_name'"
+)
+
+_ADD_TOOLKIT_NAME_COLUMN = text(
+    "ALTER TABLE execution_records ADD COLUMN toolkit_name VARCHAR(255)"
+)
+
+_LIST_UNBACKFILLED_TOOLKIT_IDS = text(
+    "SELECT DISTINCT toolkit_id FROM execution_records"
+    " WHERE toolkit_id IS NOT NULL AND toolkit_name IS NULL"
+)
+
+#: Fallback when the ``toolkit_name`` column does not exist yet (verify runs
+#: read-only, so it cannot add the column): every historical toolkit-path
+#: execution row counts as unbackfilled.
+_LIST_ALL_EXECUTION_TOOLKIT_IDS = text(
+    "SELECT DISTINCT toolkit_id FROM execution_records WHERE toolkit_id IS NOT NULL"
+)
+
+_BACKFILL_TOOLKIT_NAME = text(
+    "UPDATE execution_records SET toolkit_name = :name"
+    " WHERE toolkit_id = :toolkit_id AND toolkit_name IS NULL"
 )
 
 
@@ -254,3 +413,56 @@ class FlatteningAdminRepository:
             },
         )
         return binding_id
+
+    @staticmethod
+    async def _toolkit_name_column_exists(session: AsyncSession) -> bool:
+        probe = (
+            _SQLITE_TOOLKIT_NAME_COLUMN_EXISTS
+            if session.get_bind().dialect.name == "sqlite"
+            else _PG_TOOLKIT_NAME_COLUMN_EXISTS
+        )
+        return bool(int((await session.execute(probe)).scalar_one()))
+
+    @staticmethod
+    async def ensure_execution_toolkit_name_column(session: AsyncSession) -> None:
+        """Add ``execution_records.toolkit_name`` if the migration hasn't yet.
+
+        The documented runbook order is flatten-then-migrate, so the job runs
+        before the admin migration (``c0e1f2a3b4c5``) that also adds this
+        column; whichever runs first wins, both create the identical shape.
+        Idempotent via an explicit existence probe (neither dialect supports
+        ``ADD COLUMN IF NOT EXISTS`` portably).
+        """
+        if not await FlatteningAdminRepository._toolkit_name_column_exists(session):
+            await session.execute(_ADD_TOOLKIT_NAME_COLUMN)
+
+    @staticmethod
+    async def list_unbackfilled_toolkit_ids(session: AsyncSession) -> list[str]:
+        """Distinct toolkit ids on execution rows still missing the denormalized name.
+
+        Works before the ``toolkit_name`` column exists (read-only ``verify``
+        cannot add it): with no column, every toolkit-path row is unbackfilled.
+        """
+        if await FlatteningAdminRepository._toolkit_name_column_exists(session):
+            query = _LIST_UNBACKFILLED_TOOLKIT_IDS
+        else:
+            query = _LIST_ALL_EXECUTION_TOOLKIT_IDS
+        rows = (await session.execute(query)).scalars().all()
+        return [str(toolkit_id) for toolkit_id in rows]
+
+    @staticmethod
+    async def backfill_execution_toolkit_name(
+        session: AsyncSession, *, toolkit_id: str, name: str
+    ) -> int:
+        """Stamp one toolkit's name onto its unnamed execution rows; return the count.
+
+        Batched per distinct toolkit id (one UPDATE per toolkit, however many
+        execution rows it touches). Rows whose toolkit no longer exists in
+        control are never passed here — they keep NULL, exactly as the old
+        read-time resolver reported them.
+        """
+        result = await session.execute(
+            _BACKFILL_TOOLKIT_NAME, {"toolkit_id": toolkit_id, "name": name}
+        )
+        rowcount = getattr(result, "rowcount", 0)  # CursorResult on DML
+        return int(rowcount or 0)

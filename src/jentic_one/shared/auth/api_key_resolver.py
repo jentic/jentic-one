@@ -1,4 +1,4 @@
-"""Unified API-key resolver — resolves jak_/sak_ (and retired jntc_live_) keys to Identity."""
+"""Unified API-key resolver — resolves jak_/sak_ keys to Identity."""
 
 from __future__ import annotations
 
@@ -15,14 +15,6 @@ logger = structlog.get_logger(__name__)
 
 AGENT_API_KEY_PREFIX = "jak_"
 SERVICE_ACCOUNT_API_KEY_PREFIX = "sak_"
-# Theme-5 Phase 4 (key retirement): a retired toolkit key's plaintext keeps
-# authenticating — as the service account the retirement job created for it —
-# because the job copies the key's SHA-256 lookup digest into
-# ``service_account_credentials.api_key_hash`` and this resolver matches by
-# digest, not by prefix. The prefix is DEPRECATED (see the deprecation notice
-# in ``docs/releasing.md``): each successful resolve logs a warning naming
-# the account, and the acceptance is deleted with the toolkit surface.
-RETIRED_TOOLKIT_KEY_PREFIX = "jntc_live_"
 
 
 class ApiKeyResolver:
@@ -30,8 +22,11 @@ class ApiKeyResolver:
 
     - ``jak_`` keys query ``agent_credentials`` joined to ``agents``.
     - ``sak_`` keys query ``service_account_credentials`` joined to ``service_accounts``.
-    - ``jntc_live_`` keys (deprecated) resolve through the service-account
-      lookup — the retirement job migrates each key's digest there.
+    - ``jntc_live_`` toolkit-key plaintexts stopped authenticating in theme-5
+      Phase 6b (the deprecation window announced in ``docs/releasing.md``
+      closed with the toolkit surface): an unknown prefix is a plain invalid
+      key → 401. Holders authenticate with their retirement-created service
+      account's ``sak_`` key instead.
 
     Implements ``TokenResolverProtocol`` (via ``resolve_access_token``) so it
     can be wrapped by ``CachedTokenValidator``.
@@ -50,20 +45,6 @@ class ApiKeyResolver:
             return await self._resolve_agent(raw_key)
         if raw_key.startswith(SERVICE_ACCOUNT_API_KEY_PREFIX):
             return await self._resolve_service_account(raw_key)
-        if raw_key.startswith(RETIRED_TOOLKIT_KEY_PREFIX):
-            identity = await self._resolve_service_account(raw_key)
-            if identity is not None:
-                # WARNING (not info): this is the operator's migration signal —
-                # each line names a caller still presenting a retired key form.
-                logger.warning(
-                    "deprecated_toolkit_key_used",
-                    service_account_id=identity.sub,
-                    actionable_step=(
-                        "Rotate this caller to its service account's sak_ key; "
-                        "jntc_live_ acceptance is removed with the toolkit surface."
-                    ),
-                )
-            return identity
         return None
 
     async def _resolve_agent(self, raw_key: str) -> Identity | None:

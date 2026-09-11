@@ -8,7 +8,7 @@ query that feeds it.
 
 from __future__ import annotations
 
-from jentic_one.broker.repos.toolkit_binding_resolver import _axes_matched
+from jentic_one.broker.repos.credential_binding_resolver import _axes_matched
 from jentic_one.shared.models.api_identity import CredentialScope
 
 

@@ -3,14 +3,12 @@
 Uses raw SQL (``text()``) against the control database so the auth module
 never imports the control ORM — the auth/control module boundary (enforced
 by ``tests/arch/test_module_boundaries.py``) forbids a direct cross-module
-import. Same convention as ``ToolkitNameRepository``.
+import.
 
-Two consumers, both on the direct agent↔credential binding path (theme 5
-phase 1): the bind route's visibility check (the caller must be able to see
-the credential before binding an agent to it — the asymmetry the toolkit
-bind route has is deliberately not carried over), and binding-list
-enrichment (human-readable ``name`` plus the API the credential serves, the
-credential-side analogue of the toolkit ``serves`` list from issue #686).
+Two consumers, both on the direct agent↔credential binding path (theme 5):
+the bind route's visibility check (the caller must be able to see the
+credential before binding an agent to it), and binding-list enrichment
+(human-readable ``name`` plus the API the credential serves, issue #686).
 """
 
 from __future__ import annotations

@@ -225,12 +225,12 @@ class DualTokenValidator:
 def _is_api_key(value: str) -> bool:
     """Check whether a credential string is a prefixed API key.
 
-    ``jntc_live_`` is the retired toolkit-key form (theme-5 Phase 4): the
-    retirement job migrates each key's digest to a service account, and
-    ``ApiKeyResolver`` resolves the unchanged plaintext as that account
-    (logging a deprecation warning). Unmigrated keys resolve to nothing → 401.
+    Only ``jak_`` (agent) and ``sak_`` (service-account) keys authenticate.
+    The retired ``jntc_live_`` toolkit-key form stopped being accepted in
+    theme-5 Phase 6b — such values fall through to the opaque-token path and
+    fail validation there (401).
     """
-    return value.startswith("jak_") or value.startswith("sak_") or value.startswith("jntc_live_")
+    return value.startswith("jak_") or value.startswith("sak_")
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,7 +238,7 @@ class CompositeTokenValidator:
     """Routes API keys, JWTs, and opaque tokens to the right validator.
 
     Dispatch order (most-specific prefix first):
-    1. ``jak_`` / ``sak_`` / retired ``jntc_live_`` prefix → ApiKeyResolver
+    1. ``jak_`` / ``sak_`` prefix → ApiKeyResolver
        (via CachedTokenValidator)
     2. Three-segment dot-separated → JWT verifier
     3. Everything else → opaque token CachedTokenValidator

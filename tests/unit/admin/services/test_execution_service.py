@@ -35,6 +35,9 @@ def _make_record(**overrides: Any) -> MagicMock:
         # rejects as a non-string).
         "credential_id": None,
         "credential_name": None,
+        # theme-5 Phase 6b: the denormalized historical name column (the
+        # control ``toolkits`` table it was resolved from is dropped).
+        "toolkit_name": None,
     }
     defaults.update(overrides)
     record = MagicMock()
@@ -57,21 +60,15 @@ def test_to_view_actor_fields_from_defaults() -> None:
     assert view.actor_type == "user"
 
 
-def test_to_view_toolkit_name_populated_from_names_map() -> None:
-    record = _make_record(toolkit_id="tk_abc123")
-    names_map = {"tk_abc123": "My Toolkit"}
-    view = ExecutionService._to_view(record, names_map=names_map)
+def test_to_view_toolkit_name_from_denormalized_column() -> None:
+    """The view reads the denormalized ``toolkit_name`` column (6b), not a lookup."""
+    record = _make_record(toolkit_id="tk_abc123", toolkit_name="My Toolkit")
+    view = ExecutionService._to_view(record)
     assert view.toolkit_name == "My Toolkit"
 
 
-def test_to_view_toolkit_name_none_when_not_in_map() -> None:
-    record = _make_record(toolkit_id="tk_missing")
-    names_map = {"tk_other": "Other Toolkit"}
-    view = ExecutionService._to_view(record, names_map=names_map)
-    assert view.toolkit_name is None
-
-
-def test_to_view_toolkit_name_none_when_no_map_provided() -> None:
-    record = _make_record(toolkit_id="tk_abc123")
+def test_to_view_toolkit_name_none_when_never_backfilled() -> None:
+    """Rows whose toolkit was deleted pre-backfill keep NULL — rendered as None."""
+    record = _make_record(toolkit_id="tk_abc123", toolkit_name=None)
     view = ExecutionService._to_view(record)
     assert view.toolkit_name is None

@@ -28,16 +28,6 @@
           "type": "string"
         }
       },
-      "JenticToolkitId": {
-        "deprecated": true,
-        "description": "**Legacy.** Toolkit ID the execution was attributed to. Emitted\nonly on the legacy flag-off toolkit path\n(`broker.direct_bindings_enabled: false`); absent on the default\ndirect-binding path, where credential attribution rides\n`Jentic-Credential-Id` / `Jentic-Credential-Name` instead.\nRemoved with the toolkit tables in theme-5 Phase 6b.\n",
-        "schema": {
-          "examples": [
-            "tk_abc123"
-          ],
-          "type": "string"
-        }
-      },
       "Traceparent": {
         "description": "W3C Trace Context — `00-{trace-id}-{parent-id}-01`. The\n`parent-id` is the broker span; downstream services use this to\nlink their own spans into the same distributed trace. Version\n`00` is current; flags `01` = sampled.\n",
         "schema": {
@@ -48,10 +38,10 @@
         }
       },
       "Tracestate": {
-        "description": "W3C Trace Context vendor extensions. Jentic packs a fixed\nfive-field value under the `jentic` vendor key:\n`jentic=<exec_id>:<toolkit_id>:<vendor>:<name>:<version>`, e.g.\n`jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16`. The\nfirst two segments answer *who is calling*; the trailing\nsegments answer *what is being called*. Missing segments are\nemitted as `_` so the shape stays positionally parseable — the\nsecond (legacy toolkit-id) segment is populated only on the\nlegacy flag-off toolkit path and is `_` on the default\ndirect-binding path. Composable with other vendors\n(`jentic=...,datadog=...`).\n",
+        "description": "W3C Trace Context vendor extensions. Jentic packs a fixed\nfive-field value under the `jentic` vendor key:\n`jentic=<exec_id>:<toolkit_id>:<vendor>:<name>:<version>`, e.g.\n`jentic=exec_xyz789:_:stripe:payments:2023-10-16`. The\nfirst two segments answer *who is calling*; the trailing\nsegments answer *what is being called*. Missing segments are\nemitted as `_` so the shape stays positionally parseable — the\nsecond segment is a legacy slot (toolkit attribution on the\npre-theme-5 path, whose tables were dropped in Phase 6b) and is\nalways `_` on current executions. Composable with other vendors\n(`jentic=...,datadog=...`).\n",
         "schema": {
           "examples": [
-            "jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16"
+            "jentic=exec_xyz789:_:stripe:payments:2023-10-16"
           ],
           "type": "string"
         }
@@ -248,9 +238,6 @@
               "type": "string"
             }
           },
-          "Jentic-Toolkit-Id": {
-            "$ref": "#/components/headers/JenticToolkitId"
-          },
           "Preference-Applied": {
             "description": "RFC 7240 — confirms which processing preference was applied.",
             "schema": {
@@ -326,9 +313,6 @@
               ],
               "type": "string"
             }
-          },
-          "Jentic-Toolkit-Id": {
-            "$ref": "#/components/headers/JenticToolkitId"
           },
           "Jentic-Upstream-Status": {
             "description": "HTTP status code returned by the upstream API.",
@@ -586,7 +570,7 @@
     },
     "securitySchemes": {
       "BearerAuth": {
-        "description": "Credential authorizing a Broker call, sent as\n`Authorization: Bearer <token>`. The Broker accepts several\ninterchangeable credential formats, dispatched by prefix/shape:\n\n- **Opaque access tokens** (`at_…`) — the *same* tokens the control\n  plane issues from `POST /oauth/token`. A random string validated by\n  server-side lookup (it is **not** a JWT and cannot be decoded by the\n  client). Broker and control plane share one token store, so a token\n  minted for the control plane authenticates here too.\n- **API keys** — agent (`jak_…`) or service-account (`sak_…`) keys.\n  May alternatively be sent in the `x-jentic-api-key` header. The\n  `jntc_live_…` toolkit-key form is **retired** (theme-5): no new\n  keys are issued, and a presented plaintext authenticates as the\n  service account its retirement migration bound — rotate holders\n  to `sak_…` keys.\n- **Self-contained JWTs** — verified by signature (a dev HS256 shared\n  secret or a configured trusted issuer with JWKS rotation). The Broker\n  is identity-provider-agnostic: the IdP, federation strategy, and\n  token-issuance flow are deployment concerns outside this spec.\n\nEvery protected operation requires the `capabilities:execute` scope,\nwhatever the credential format. Authorization beyond \"may execute\"\n(agent-credential bindings, permission rules, revision pinning) is\nenforced per-request and is not modelled here.\n",
+        "description": "Credential authorizing a Broker call, sent as\n`Authorization: Bearer <token>`. The Broker accepts several\ninterchangeable credential formats, dispatched by prefix/shape:\n\n- **Opaque access tokens** (`at_…`) — the *same* tokens the control\n  plane issues from `POST /oauth/token`. A random string validated by\n  server-side lookup (it is **not** a JWT and cannot be decoded by the\n  client). Broker and control plane share one token store, so a token\n  minted for the control plane authenticates here too.\n- **API keys** — agent (`jak_…`) or service-account (`sak_…`) keys.\n  May alternatively be sent in the `x-jentic-api-key` header. The\n  `jntc_live_…` toolkit-key form is **retired** (theme-5) and no\n  longer authenticates (acceptance ended in Phase 6b) — holders use\n  the `sak_…` key of the service account their key's retirement\n  migration created.\n- **Self-contained JWTs** — verified by signature (a dev HS256 shared\n  secret or a configured trusted issuer with JWKS rotation). The Broker\n  is identity-provider-agnostic: the IdP, federation strategy, and\n  token-issuance flow are deployment concerns outside this spec.\n\nEvery protected operation requires the `capabilities:execute` scope,\nwhatever the credential format. Authorization beyond \"may execute\"\n(agent-credential bindings, permission rules, revision pinning) is\nenforced per-request and is not modelled here.\n",
         "scheme": "bearer",
         "type": "http"
       }

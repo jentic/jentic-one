@@ -6,16 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from jentic_one.shared.lookups import resolve_credential_names, resolve_toolkit_names
-
-
-@pytest.mark.asyncio
-async def test_resolve_toolkit_names_empty_input() -> None:
-    """Empty ID list returns empty dict without hitting the database."""
-    session = AsyncMock()
-    result = await resolve_toolkit_names(session, [])
-    assert result == {}
-    session.execute.assert_not_called()
+from jentic_one.shared.lookups import resolve_credential_names
 
 
 @pytest.mark.asyncio

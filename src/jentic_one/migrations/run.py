@@ -37,7 +37,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-from jentic_one.control.services.upgrade_steps import STEP_NAMES, UpgradeStepService
+from jentic_one.control.services.upgrade_steps import UpgradeStepService, step_names
 from jentic_one.migrations.targets import DB_TARGETS
 from jentic_one.shared.config import load_config
 from jentic_one.shared.context import Context
@@ -185,8 +185,11 @@ def run_upgrade_steps(skip: Collection[str] = ()) -> int:
 
     Any unexpected error (config, connectivity, a bug) is reported as an
     upgrade-step failure — the schema is already at head, so the exit code must
-    say "steps undone", not "migration failed".
+    say "steps undone", not "migration failed". With no step registered this
+    is a no-op that never touches config or the databases.
     """
+    if not step_names():
+        return 0
     try:
         return asyncio.run(_run_upgrade_steps_async(skip))
     except Exception as exc:
@@ -237,10 +240,11 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-upgrade-step",
         action="append",
         default=[],
-        choices=STEP_NAMES,
+        choices=step_names(),
         metavar="NAME",
         help="Skip one post-migration data step (repeatable; "
-        f"one of: {', '.join(STEP_NAMES)}). It then runs on the next full upgrade.",
+        f"one of: {', '.join(step_names()) or 'none registered'}). "
+        "It then runs on the next full upgrade.",
     )
     args = parser.parse_args(argv)
 
