@@ -937,9 +937,10 @@ async def _handle(
                 else "Operation denied by toolkit permission rule (no rule matched)"
             )
             detail = (
-                "The requested operation is denied — this toolkit has no permission rules "
-                "loaded for the target API's vendor. Attach rules to the vendor's binding "
-                "under PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions."
+                "The requested operation is denied — no permission rules are loaded for the "
+                "target API's vendor on this binding. Ask your operator to attach rules "
+                "(with direct bindings, under "
+                "PUT /credentials/{credential_id}/agents/{agent_id}/permissions)."
                 if no_rules
                 else "The requested operation is denied by a toolkit permission rule."
             )

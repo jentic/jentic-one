@@ -211,21 +211,21 @@ def _synthesized_denial_hint(status: int) -> str:
     """Status-keyed recovery when the denial carried no directive (Go twin)."""
     if status == 403:
         return (
-            "This agent isn't bound to a toolkit serving this API. Call whoami to see "
+            "This agent has no credential binding serving this API. Call whoami to see "
             "your bindings, then ask your operator to grant access "
-            "(`jentic access request --toolkit <vendor/name> --wait`)."
+            "(`jentic access request --api <vendor/name> --wait`)."
         )
     if status == 424:
         return (
             "No credential is provisioned for this call. Ask your operator to provision "
-            "one (`jentic access request --toolkit <vendor/name> --provision --wait`), "
+            "one (`jentic access request --provision <vendor/name> --wait`), "
             "then retry."
         )
     if status == 401:
         return (
             "The stored upstream credential needs reconnecting. Ask your operator to "
-            "re-provision it (`jentic access request --toolkit <vendor/name> "
-            "--provision --wait`), then retry."
+            "re-provision it (`jentic access request --provision <vendor/name> "
+            "--wait`), then retry."
         )
     return (
         "The broker denied this call before it reached the upstream API. "

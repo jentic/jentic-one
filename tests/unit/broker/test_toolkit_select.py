@@ -21,7 +21,7 @@ from jentic_one.broker.web.routers.execute import (
     _is_unserved_no_toolkit_binding,
     select_toolkit,
 )
-from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
+from jentic_one.shared.access_guidance import no_credential_serves_api_reason
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import IdentityMismatch, ToolkitDerivation
 from jentic_one.shared.models import ActorType
@@ -105,7 +105,8 @@ async def test_single_candidate_no_header_uses_it() -> None:
 
 async def test_zero_candidates_no_header_toolkit_serves_recommends_binding() -> None:
     # A toolkit serves this API; the caller just isn't bound. The directive
-    # recommends the (approvable) toolkit-binding request.
+    # recommends the (approvable) binding request in the surviving
+    # access-request vocabulary (`--api`, phase-5c agent contract).
     with pytest.raises(ActionDeniedError) as exc:
         await _select(_StubDeriver([], toolkit_serves_api=True), header_toolkit=None)
     assert exc.value.type == "no_toolkit_binding"
@@ -114,7 +115,7 @@ async def test_zero_candidates_no_header_toolkit_serves_recommends_binding() -> 
     assert exc.value.directive.strategy == "prompt_human"
     assert exc.value.directive.parameters["toolkit_serves_api"] is True
     assert exc.value.directive.parameters["suggested_command"] == (
-        "jentic access request --toolkit acme/widgets --wait"
+        "jentic access request --api acme/widgets --wait"
     )
 
 
@@ -134,19 +135,21 @@ async def test_zero_candidates_no_toolkit_serves_recommends_credential_first() -
     assert "provision" in instruction.lower()
 
 
-async def test_no_toolkit_serves_instruction_mentions_existing_toolkit_reuse() -> None:
-    # #897: the provisioning plan does not force a NEW toolkit — the wizard can
-    # fulfil it into a toolkit the operator already has. The agent-relayed
-    # instruction must say so, or an operator with existing toolkits reads the
-    # flow as "recreate everything" and denies (the reporter's dead-end). The
-    # hint lives in the TEXT only: `parameters` stays machine-stable so CLI and
-    # skill parsing of `suggested_command`/`toolkit_serves_api` never breaks.
+async def test_no_toolkit_serves_instruction_names_surviving_provision_contract() -> None:
+    # U-03 (phase 5c): the instruction must name only surviving flags/commands —
+    # the `--provision` plan with proposed `--auth`/`--rules-json` — and never a
+    # retired toolkit-management surface. The hint lives in the TEXT only:
+    # `parameters` stays machine-stable so CLI and skill parsing of
+    # `suggested_command`/`toolkit_serves_api` never breaks.
     deriver = _StubDeriver([], toolkit_serves_api=False)
     with pytest.raises(ActionDeniedError) as exc:
         await _select(deriver, header_toolkit=None)
     directive = exc.value.directive
     assert directive is not None
-    assert "existing toolkit" in directive.human_readable_instruction.lower()
+    instruction = directive.human_readable_instruction
+    assert "toolkit" not in instruction.lower()
+    assert "--auth" in instruction
+    assert "--rules-json" in instruction
     assert directive.parameters["suggested_command"] == (
         'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
     )
@@ -235,7 +238,7 @@ async def test_header_present_not_bound_and_no_candidates_prompts_human() -> Non
     assert exc.value.directive.strategy == "prompt_human"
     assert exc.value.directive.parameters["toolkit_serves_api"] is True
     assert exc.value.directive.parameters["suggested_command"] == (
-        "jentic access request --toolkit acme/widgets --wait"
+        "jentic access request --api acme/widgets --wait"
     )
 
 
@@ -292,16 +295,17 @@ def test_no_toolkit_binding_body_carries_prompt_human_directive() -> None:
     assert body["type"] == "no_toolkit_binding"
     assert body["agent_directive"]["strategy"] == "prompt_human"
     assert body["agent_directive"]["parameters"]["suggested_command"] == (
-        "jentic access request --toolkit acme/widgets --wait"
+        "jentic access request --api acme/widgets --wait"
     )
 
 
 def test_no_toolkit_binding_credential_first_directive_and_denial_reason_agree() -> None:
-    """The broker directive (no toolkit yet) and the control denial reason agree.
+    """The broker directive (nothing serves the API) and the control denial reason agree.
 
-    Regression for issue #683: the ``no_toolkit_binding`` directive must recommend
-    provisioning a credential first, matching the reason the toolkit:bind approval
-    denies with when no toolkit serves the API — so the two never contradict.
+    Pins #683 on the surviving vocabulary: the flag-off ``no_toolkit_binding``
+    directive must recommend provisioning a credential first, matching the
+    reason a bare ``credential:bind`` approval denies with when no credential
+    covers the API — so the two layers never contradict each other.
     """
     directive = no_toolkit_binding_directive(
         vendor="acme", name="widgets", version="1.0.0", toolkit_serves_api=False
@@ -311,11 +315,11 @@ def test_no_toolkit_binding_credential_first_directive_and_denial_reason_agree()
     assert "credential" in instruction
     assert "provision" in instruction
 
-    denial_reason = no_toolkit_serves_api_reason("acme/widgets").lower()
-    # Both recommend provisioning/binding a credential as the first step.
+    denial_reason = no_credential_serves_api_reason("acme/widgets").lower()
+    # Both recommend provisioning a credential as the first step.
     assert "credential" in denial_reason
     assert "provision" in denial_reason
-    assert "no toolkit serves" in denial_reason
+    assert "no credential covers" in denial_reason
 
 
 # --- unserved-API operator event (theme 3 residual) --------------------------
