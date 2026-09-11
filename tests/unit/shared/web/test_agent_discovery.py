@@ -21,13 +21,17 @@ from jentic_one.broker.web.app import create_app as create_broker_app
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.agent_discovery import (
+    CLI_ONLY_REFERENCES,
     LLMS_TXT_PATH,
     LLMS_TXT_WELL_KNOWN_PATH,
     SKILL_ALIAS_PATH,
     SKILL_PATH,
     load_skill_markdown,
+    load_skill_reference,
     render_llms_txt,
     shipped_skill_names,
+    shipped_skill_references,
+    skills_index_rows,
 )
 from jentic_one.shared.web.app_factory import create_combined_app
 from jentic_one.wiring import build_default_container
@@ -112,6 +116,102 @@ def test_skill_traversal_attempts_do_not_serve(client: TestClient, path: str) ->
     assert "# Using Jentic" not in resp.text
 
 
+def test_skill_reference_served_as_markdown(client: TestClient) -> None:
+    """Every shipped reference is served raw at /skills/{name}/references/{file}."""
+    refs = shipped_skill_references("jentic")
+    assert refs == ("cli.md", "mcp.md", "recovery.md")
+    for ref in refs:
+        resp = client.get(f"/skills/jentic/references/{ref}")
+        assert resp.status_code == 200, ref
+        assert resp.headers["content-type"] == "text/markdown; charset=utf-8"
+        assert resp.text == load_skill_reference("jentic", ref)
+        # References are plain markdown: no frontmatter, opening H1.
+        assert not resp.text.lstrip("\n").startswith("---")
+        assert resp.text.lstrip("\n").startswith("# ")
+
+
+def test_cli_only_reference_still_served_over_http(client: TestClient) -> None:
+    """HTTP is the raw neutral channel: cli.md answers 200 here.
+
+    The lane filter (``CLI_ONLY_REFERENCES``) is an MCP-listing decision, not
+    an HTTP one — the same bytes stay public over this route.
+    """
+    assert frozenset({"cli.md"}) == CLI_ONLY_REFERENCES
+    assert set(shipped_skill_references("jentic")) >= CLI_ONLY_REFERENCES
+    resp = client.get("/skills/jentic/references/cli.md")
+    assert resp.status_code == 200
+    assert resp.text == load_skill_reference("jentic", "cli.md")
+
+
+def test_skills_without_references_have_none(client: TestClient) -> None:
+    """Single-audience skills ship no references; their route answers 404."""
+    assert shipped_skill_references("contribute-spec-fix") == ()
+    assert shipped_skill_references("import-new-api") == ()
+    resp = client.get("/skills/contribute-spec-fix/references/cli.md")
+    assert resp.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/skills/does-not-exist/references/cli.md",  # unknown skill
+        "/skills/jentic/references/does-not-exist.md",  # unknown file
+        "/skills/jentic/references/SKILL.md",  # grammar violation (uppercase)
+        "/skills/jentic/references/-bad.md",  # grammar violation (leading hyphen)
+        "/skills/jentic/references/..%2fcli.md",  # encoded traversal
+        "/skills/jentic/references/%2e%2e%2fmcp.md",
+        "/skills/../jentic/references/cli.md",
+        "/skills/jentic/references/a/b.md",  # slash cannot match the converter
+    ],
+)
+def test_skill_reference_battery_never_serves(client: TestClient, path: str) -> None:
+    """Traversal/grammar/allowlist misses on the reference route are clean 404s.
+
+    Same layered fail-closed posture as the skill route: reject before any
+    resource read, never 5xx, never leak a document body.
+    """
+    resp = client.get(path)
+    assert resp.status_code != 200
+    assert resp.status_code < 500
+    assert "read this when" not in resp.text
+    assert "# Using Jentic" not in resp.text
+
+
+def test_skills_index_references_rows(client: TestClient) -> None:
+    """Manifest rows carry a references array with verifiable sha256 + url.
+
+    Rows for skills without references omit the key entirely (no null/empty).
+    """
+    rows = {row["name"]: row for row in client.get("/skills/index.json").json()}
+
+    jentic_refs = rows["jentic"]["references"]
+    assert [r["name"] for r in jentic_refs] == list(shipped_skill_references("jentic"))
+    for ref in jentic_refs:
+        assert set(ref) == {"name", "sha256", "url"}
+        assert ref["url"] == f"http://testserver/skills/jentic/references/{ref['name']}"
+        served = client.get(f"/skills/jentic/references/{ref['name']}").content
+        assert ref["sha256"] == hashlib.sha256(served).hexdigest()
+
+    for name in ("contribute-spec-fix", "import-new-api"):
+        assert "references" not in rows[name]
+
+
+def test_skills_index_rows_is_the_route_body(client: TestClient) -> None:
+    """The exported helper and the HTTP route serve identical rows.
+
+    ``skills_index_rows`` is public because the ``/mcp`` mount's
+    ``skill://index`` resource will serialize the same helper's return —
+    parity between the doors is structural, and this pins helper to route.
+    """
+    assert client.get("/skills/index.json").json() == skills_index_rows("http://testserver")
+
+
+def test_llms_txt_names_the_reference_files(client: TestClient) -> None:
+    """The onboarding pointer sentence gains the one references clause."""
+    body = client.get(LLMS_TXT_PATH).text
+    assert "its `references/` files" in body
+
+
 def test_llms_txt_served_with_request_base_url(client: TestClient) -> None:
     """GET /llms.txt links every discovery document under the request base URL."""
     resp = client.get(LLMS_TXT_PATH)
@@ -166,7 +266,10 @@ def test_skills_index_manifest(client: TestClient) -> None:
     assert names == sorted(shipped_skill_names())  # covers exactly the shipped set, sorted
 
     for row in rows:
-        assert set(row) == {"name", "description", "version", "sha256", "url"}
+        expected_keys = {"name", "description", "version", "sha256", "url"}
+        if shipped_skill_references(row["name"]):
+            expected_keys.add("references")
+        assert set(row) == expected_keys
         assert row["description"].strip()
         assert row["version"]
         # url is absolute + base-stamped (TestClient base URL is http://testserver).
