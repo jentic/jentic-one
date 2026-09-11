@@ -59,6 +59,25 @@ class ConnectSessionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_live_by_credential(
+        session: AsyncSession, credential_id: str
+    ) -> ConnectSession | None:
+        """Return a non-terminal ``ConnectSession`` wrapping the credential, if any.
+
+        Used by the connect-poll scanner to dispatch: a candidate credential
+        with a live session takes the session-mode advancement path, one
+        without takes the raw-credential path. Only ``polling`` and
+        ``created`` sessions count as "live" here (terminal states are
+        already frozen).
+        """
+        stmt = select(ConnectSession).where(
+            ConnectSession.credential_id == credential_id,
+            ConnectSession.state.in_(("created", "polling")),
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    @staticmethod
     async def update_fields(
         session: AsyncSession, session_id: str, **fields: Any
     ) -> ConnectSession | None:

@@ -1700,19 +1700,21 @@ components:
       - token
       title: ClaimRequest
       type: object
-    ConnectChallengeResponse:
-      description: Response from a connect initiation.
+    ConfirmSessionRequest:
       properties:
-        authorize_url:
-          title: Authorize Url
-          type: string
-        state:
-          title: State
-          type: string
+        confirmed_scopes:
+          items:
+            type: string
+          title: Confirmed Scopes
+          type: array
+        permission_rules:
+          items:
+            $ref: '#/components/schemas/PermissionRuleModel'
+          title: Permission Rules
+          type: array
       required:
-      - authorize_url
-      - state
-      title: ConnectChallengeResponse
+      - confirmed_scopes
+      title: ConfirmSessionRequest
       type: object
     ConnectRequestBody:
       description: Request body for initiating a credential connect flow.
@@ -2803,6 +2805,37 @@ components:
       - canonical_base_url
       - host
       title: InstanceIdentityResponse
+      type: object
+    IntegrationsConnectRequest:
+      properties:
+        agent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Id
+        preferred_flow:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Preferred Flow
+        reason:
+          anyOf:
+          - maxLength: 1024
+            type: string
+          - type: 'null'
+          title: Reason
+        requested_scopes:
+          items:
+            type: string
+          title: Requested Scopes
+          type: array
+        vendor:
+          description: Vendor registry key (e.g. 'github')
+          title: Vendor
+          type: string
+      required:
+      - vendor
+      title: IntegrationsConnectRequest
       type: object
     IntrospectRequest:
       description: Introspection endpoint request (form body).
@@ -4767,6 +4800,33 @@ components:
       - data
       title: PermissionRuleListResponse
       type: object
+    PermissionRuleModel:
+      description: One agent permission rule (allow/deny).
+      properties:
+        effect:
+          default: allow
+          enum:
+          - allow
+          - deny
+          title: Effect
+          type: string
+        method:
+          examples:
+          - GET
+          - POST
+          title: Method
+          type: string
+        path:
+          examples:
+          - /repos/**
+          - /repos/*/issues
+          title: Path
+          type: string
+      required:
+      - method
+      - path
+      title: PermissionRuleModel
+      type: object
     PermissionRuleReadSchema:
       description: Permission rule response (includes system fields).
       properties:
@@ -6423,6 +6483,40 @@ components:
           - type: 'null'
           title: Last Name
       title: UserUpdateRequest
+      type: object
+    VendorListResponse:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/VendorSummaryResponse'
+          title: Data
+          type: array
+      required:
+      - data
+      title: VendorListResponse
+      type: object
+    VendorSummaryResponse:
+      properties:
+        display_name:
+          title: Display Name
+          type: string
+        flow_kinds:
+          items:
+            type: string
+          title: Flow Kinds
+          type: array
+        key:
+          title: Key
+          type: string
+        vendor:
+          title: Vendor
+          type: string
+      required:
+      - key
+      - vendor
+      - display_name
+      - flow_kinds
+      title: VendorSummaryResponse
       type: object
     VersionResponse:
       description: The running app version and the latest release known to this backend.
@@ -13168,6 +13262,213 @@ paths:
       summary: Refresh Catalog
       tags:
       - Catalog
+  /connect-sessions/{session_id}:
+    get:
+      description: |-
+        Data the review page needs: vendor display name, resolved flow, the
+        scope catalog flagged with default/requested, current state, reason.
+      operationId: getConnectSession
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Get review data for a connect session
+      tags:
+      - integrations
+  /connect-sessions/{session_id}/status:
+    get:
+      operationId: pollConnectSessionStatus
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+      - description: Opaque poll capability
+        in: query
+        name: poll_token
+        required: true
+        schema:
+          description: Opaque poll capability
+          title: Poll Token
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Poll a connect session's status
+      tags:
+      - integrations
+  /connect-sessions/{session_id}:confirm:
+    post:
+      description: Called by the review page after the human confirms selections.
+      operationId: confirmConnectSession
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmSessionRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Confirm scopes + permissions and kick off the vendor flow
+      tags:
+      - integrations
   /control/health:
     get:
       description: |-
@@ -14351,7 +14652,13 @@ paths:
       - Credentials
   /credentials/{credential_id}/connect:
     post:
-      description: Initiate the OAuth connect flow for a credential.
+      description: |-
+        Initiate the OAuth connect flow for a credential.
+
+        Discriminates on the provider's returned challenge: OAuth2
+        authorization-code providers return an ``authorize_url`` for popup
+        redirect; device-flow providers return ``user_code`` /
+        ``verification_uri`` for the RFC 8628 human step.
       operationId: connectCredential
       parameters:
       - in: path
@@ -14370,8 +14677,7 @@ paths:
         '200':
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/ConnectChallengeResponse'
+              schema: {}
           description: Successful Response
         '400':
           content:
@@ -15350,6 +15656,73 @@ paths:
       summary: Backend identity
       tags:
       - System
+  /integrations:connect:
+    post:
+      description: |-
+        Both entrypoints (agent + UI) use this endpoint.
+
+        Agent callers: `agent_id` in the payload is ignored; the calling agent's
+        own identity is used. UI/user callers: `agent_id` is required.
+      operationId: integrationsConnect
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationsConnectRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Start an integration connect session
+      tags:
+      - integrations
   /jobs:
     get:
       description: List jobs with optional filters.
@@ -19986,6 +20359,135 @@ paths:
       summary: Redeem invite
       tags:
       - Users
+  /vendors:
+    get:
+      description: |-
+        Public metadata for every vendor in the config-seeded registry.
+
+        Used by the UI's "Add integration" picker. Never returns secrets.
+      operationId: listVendors
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VendorListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List verified vendors
+      tags:
+      - vendors
+  /vendors/{vendor_key}/auth-capabilities:
+    get:
+      description: |-
+        Full auth capabilities for one vendor — flows, scopes, classifications.
+
+        Never returns client_secret (authorization-code flow's secret is stripped
+        at response build time).
+      operationId: getAuthCapabilities
+      parameters:
+      - in: path
+        name: vendor_key
+        required: true
+        schema:
+          title: Vendor Key
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Get a vendor's SSO capabilities
+      tags:
+      - vendors
 security:
 - BearerAuth: []
 servers:

@@ -19,7 +19,11 @@ from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
 from jentic_one.control.services.credentials.connect_service import ConnectFlowError, ConnectService
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
-from jentic_one.control.services.credentials.schemas.connect import ConnectCallback, ConnectRequest
+from jentic_one.control.services.credentials.schemas.connect import (
+    AuthCodeChallenge,
+    ConnectCallback,
+    ConnectRequest,
+)
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
 from jentic_one.shared.config import DirectOAuth2ProviderConfig, PipedreamProviderConfig
 from jentic_one.shared.context import Context
@@ -135,6 +139,7 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         updated_at_before = snapshot.updated_at
 
     challenge = await svc.begin(credential_id, ConnectRequest(scopes=["read"]))
+    assert isinstance(challenge, AuthCodeChallenge)
     assert "https://idp.example.com/authorize" in challenge.authorize_url
     assert challenge.state
 
@@ -190,6 +195,7 @@ async def test_direct_oauth2_replay_rejected(
 
     svc = ConnectService(ctx)
     challenge = await svc.begin(credential_id, ConnectRequest())
+    assert isinstance(challenge, AuthCodeChallenge)
 
     token_response = {
         "access_token": "at_1",
@@ -256,6 +262,7 @@ async def test_pipedream_connect_and_callback_stores_account_ref(
 
         challenge = await svc.begin(credential_id, ConnectRequest())
 
+    assert isinstance(challenge, AuthCodeChallenge)
     assert "pipedream.com" in challenge.authorize_url
 
     result_id = await svc.complete(challenge.state, ConnectCallback(account_id="acct_pd_789"))
@@ -358,6 +365,7 @@ async def test_pipedream_replay_rejected(
 
         challenge = await svc.begin(credential_id, ConnectRequest())
 
+    assert isinstance(challenge, AuthCodeChallenge)
     await svc.complete(challenge.state, ConnectCallback(account_id="acct_1"))
 
     with pytest.raises(ConnectFlowError, match="already used"):

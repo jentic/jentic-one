@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,11 +15,37 @@ class ConnectRequest(BaseModel):
     extra: dict[str, str] = Field(default_factory=dict)
 
 
-class ConnectChallenge(BaseModel):
-    """Outbound challenge returned by a provider's begin_connect."""
+class AuthCodeChallenge(BaseModel):
+    """Authorization-code redirect challenge.
 
+    The caller opens ``authorize_url`` in a popup; ``state`` is the signed
+    JWT the OAuth callback route verifies.
+    """
+
+    kind: Literal["authorization_code"] = "authorization_code"
     authorize_url: str
     state: str
+
+
+class DeviceCodeChallenge(BaseModel):
+    """RFC 8628 device-code challenge.
+
+    The caller shows ``user_code`` and asks the human to enter it at
+    ``verification_uri``; the SPA polls ``GET /credentials/{id}`` while
+    the ``ConnectPollScanner`` drives completion server-side.
+    """
+
+    kind: Literal["device_code"] = "device_code"
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str | None = None
+    poll_interval_seconds: int | None = None
+
+
+ConnectChallenge = Annotated[
+    AuthCodeChallenge | DeviceCodeChallenge,
+    Field(discriminator="kind"),
+]
 
 
 class ConnectState(BaseModel):

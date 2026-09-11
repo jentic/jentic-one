@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -103,26 +103,30 @@ class ConfirmSessionRequest(BaseModel):
     permission_rules: list[PermissionRuleModel] = Field(default_factory=list)
 
 
-class ConfirmSessionResponse(BaseModel):
-    """Discriminated on ``kind`` — clients branch on that, not field presence.
+class DeviceFlowConfirmSessionResponse(BaseModel):
+    """RFC 8628 device-code result — user types ``user_code`` at
+    ``verification_uri`` and the client polls ``/status`` until connected."""
 
-    * ``kind == "device_flow"`` — RFC 8628 device-code result: the user
-      types ``user_code`` at ``verification_uri``, and the client polls
-      ``/status`` until connected.
-    * ``kind == "authorization_code"`` — browser redirect target
-      (``authorize_url``); completion lands server-side at
-      ``/credentials/oauth/callback`` and the client observes it via
-      ``/status``.
-    """
-
-    kind: Literal["device_flow", "authorization_code"]
-    # Device-flow branch.
-    user_code: str | None = None
-    verification_uri: str | None = None
+    kind: Literal["device_flow"] = "device_flow"
+    user_code: str
+    verification_uri: str
     verification_uri_complete: str | None = None
     poll_interval_seconds: int | None = None
-    # Auth-code branch.
-    authorize_url: str | None = None
+
+
+class AuthCodeConfirmSessionResponse(BaseModel):
+    """Authorization-code result — browser redirect target; completion
+    lands server-side at ``/credentials/oauth/callback`` and the client
+    observes it via ``/status``."""
+
+    kind: Literal["authorization_code"] = "authorization_code"
+    authorize_url: str
+
+
+ConfirmSessionResponse = Annotated[
+    DeviceFlowConfirmSessionResponse | AuthCodeConfirmSessionResponse,
+    Field(discriminator="kind"),
+]
 
 
 # ---------------------------------------------------------------------------

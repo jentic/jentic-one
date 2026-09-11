@@ -102,12 +102,17 @@ class DeviceFlowHandler:
             poll_interval_seconds=result.interval,
         )
 
-    async def advance(self, row: ConnectSession) -> StatusReport:
+    async def advance(self, credential_id: str) -> StatusReport:
         """Drive one poll tick against the vendor.
 
         Called **only** by ``ConnectPollScanner`` — never from a request
         handler. Client-facing ``/status`` reads stored state and doesn't
         touch the vendor. One code path, one poll driver.
+
+        Takes a bare ``credential_id`` (not a ``ConnectSession``) so the
+        method is entrypoint-agnostic: both the session flow and the
+        raw-credential connect flow write ``device_flow_credentials`` and
+        share this poll body.
 
         Enforces the vendor-supplied device-code TTL and the RFC 8628 poll
         interval as a rate limit. On any non-RFC-8628 error surfaced by
@@ -118,7 +123,7 @@ class DeviceFlowHandler:
         """
         async with self._ctx.control_db.session() as read_session:
             dfc = await DeviceFlowCredentialRepository.get_by_credential(
-                read_session, row.credential_id
+                read_session, credential_id
             )
 
         # Device-code TTL (vendor-supplied) — flow-specific guard.
@@ -138,7 +143,7 @@ class DeviceFlowHandler:
             return StatusReport(kind="pending")
 
         try:
-            return await self._poll_vendor(row, dfc)
+            return await self._poll_vendor(credential_id, dfc)
         except device_flow.DeviceFlowUpstreamError as exc:
             # Non-retryable — any HTTP status the RFC 8628 mapper couldn't
             # recognise (403 revoked app, 401 misconfigured client_id,
@@ -153,7 +158,7 @@ class DeviceFlowHandler:
 
     async def _poll_vendor(
         self,
-        row: ConnectSession,
+        credential_id: str,
         dfc: DeviceFlowCredential | None,
     ) -> StatusReport:
         assert dfc is not None
@@ -168,7 +173,7 @@ class DeviceFlowHandler:
 
         now = datetime.now(UTC)
         async with self._ctx.control_db.transaction() as session:
-            await DeviceFlowCredentialRepository.mark_polled(session, row.credential_id, now)
+            await DeviceFlowCredentialRepository.mark_polled(session, credential_id, now)
 
         if result.status == "pending":
             return StatusReport(kind="pending")
@@ -177,7 +182,7 @@ class DeviceFlowHandler:
             async with self._ctx.control_db.transaction() as session:
                 await DeviceFlowCredentialRepository.update_fields(
                     session,
-                    row.credential_id,
+                    credential_id,
                     poll_interval_seconds=(dfc.poll_interval_seconds or 5) + 5,
                 )
             return StatusReport(kind="pending")

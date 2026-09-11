@@ -18,7 +18,9 @@ import {
 	CreateCredentialDialog,
 	type CreatedCredentialInfo,
 } from '@/shared/credentials/components/CreateCredentialDialog';
+import { DeviceCodeConnectDialog } from '@/shared/credentials/components/DeviceCodeConnectDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
+import type { DeviceCodeChallengeResponse } from '@/shared/credentials/api/types';
 
 /**
  * Credentials module home. Lists stored credentials and hosts the create
@@ -37,6 +39,10 @@ export function CredentialsPage() {
 	const [editId, setEditId] = useState<string | null>(null);
 	const [stickyEditId, setStickyEditId] = useState<string | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
+	const [deviceCodeState, setDeviceCodeState] = useState<{
+		challenge: DeviceCodeChallengeResponse;
+		credentialName: string;
+	} | null>(null);
 
 	// Agent-initiated approval landing. When an agent kicks off a connect
 	// session it hands its owner the `approval_url` (see
@@ -102,7 +108,10 @@ export function CredentialsPage() {
 	 * callback will land on return, so deleting now would destroy a credential
 	 * that's about to connect.
 	 */
-	const handleConnectAfterCreate = async (credentialId: string): Promise<void> => {
+	const handleConnectAfterCreate = async (
+		credentialId: string,
+		credentialName: string,
+	): Promise<void> => {
 		toast({ title: 'Opening sign-in…' });
 		const discard = async (): Promise<void> => {
 			try {
@@ -113,7 +122,12 @@ export function CredentialsPage() {
 			}
 		};
 		try {
-			const outcome = await runConnectFlow(credentialId);
+			const outcome = await runConnectFlow(credentialId, {
+				onDeviceCodeChallenge: (challenge) => {
+					setDeviceCodeState({ challenge, credentialName });
+					return () => setDeviceCodeState(null);
+				},
+			});
 			switch (outcome.status) {
 				case 'connected':
 					toast({ title: 'Connected', variant: 'success' });
@@ -136,6 +150,14 @@ export function CredentialsPage() {
 						variant: 'error',
 					});
 					break;
+				case 'unsupported_challenge':
+					await discard();
+					toast({
+						title: 'Unsupported sign-in challenge',
+						description: 'The unconnected credential was discarded.',
+						variant: 'error',
+					});
+					break;
 			}
 		} catch {
 			await discard();
@@ -150,7 +172,12 @@ export function CredentialsPage() {
 	const handleConnect = async (cred: Credential): Promise<void> => {
 		toast({ title: `Opening sign-in for ${cred.name}…` });
 		try {
-			const outcome = await runConnectFlow(cred.credential_id);
+			const outcome = await runConnectFlow(cred.credential_id, {
+				onDeviceCodeChallenge: (challenge) => {
+					setDeviceCodeState({ challenge, credentialName: cred.name });
+					return () => setDeviceCodeState(null);
+				},
+			});
 			switch (outcome.status) {
 				case 'connected':
 					toast({ title: 'Connected', variant: 'success' });
@@ -165,6 +192,12 @@ export function CredentialsPage() {
 					toast({
 						title: 'Connection timed out',
 						description: 'Finish the sign-in and refresh to see the result.',
+						variant: 'error',
+					});
+					break;
+				case 'unsupported_challenge':
+					toast({
+						title: 'Unsupported sign-in challenge',
 						variant: 'error',
 					});
 					break;
@@ -252,9 +285,16 @@ export function CredentialsPage() {
 						info.provider !== 'static' &&
 						info.needsConnect
 					) {
-						void handleConnectAfterCreate(info.credentialId);
+						void handleConnectAfterCreate(info.credentialId, info.name);
 					}
 				}}
+			/>
+
+			<DeviceCodeConnectDialog
+				open={deviceCodeState != null}
+				challenge={deviceCodeState?.challenge ?? null}
+				credentialName={deviceCodeState?.credentialName ?? ''}
+				onCancel={(): void => setDeviceCodeState(null)}
 			/>
 
 			<EditCredentialSheet

@@ -41,9 +41,11 @@ def test_list_providers_static_only() -> None:
     svc = CredentialService(ctx)
     entries = svc.list_providers()
 
-    assert len(entries) == 1
-    static = entries[0]
-    assert static.id == "static"
+    # ``static`` and ``device_flow`` are always registered; other providers
+    # come from config.
+    by_id = {e.id: e for e in entries}
+    assert set(by_id.keys()) == {"static", "device_flow"}
+    static = by_id["static"]
     assert static.managed is False
     assert static.configured is True
     assert set(static.types) == set(CredentialType)
@@ -63,11 +65,10 @@ def test_list_providers_includes_managed_providers() -> None:
     svc = CredentialService(ctx)
     entries = svc.list_providers()
 
-    assert len(entries) == 2
     by_id = {e.id: e for e in entries}
-
-    assert "static" in by_id
-    assert "my_pipedream" in by_id
+    # ``static`` and ``device_flow`` are always registered; the configured
+    # ``my_pipedream`` provider is added on top.
+    assert set(by_id.keys()) == {"static", "device_flow", "my_pipedream"}
 
     pd = by_id["my_pipedream"]
     assert pd.managed is True
@@ -100,8 +101,8 @@ def test_list_providers_callback_url_none_for_non_oauth2() -> None:
     svc = CredentialService(ctx)
     entries = svc.list_providers()
 
-    static = entries[0]
-    assert static.callback_url is None
+    by_id = {e.id: e for e in entries}
+    assert by_id["static"].callback_url is None
 
 
 def test_list_providers_label_formatting() -> None:
@@ -146,6 +147,4 @@ def test_registry_list_all_returns_all_providers() -> None:
     )
     registry = ProviderRegistry.from_config(cfg)
     all_providers = registry.list_all()
-    assert "static" in all_providers
-    assert "pd" in all_providers
-    assert len(all_providers) == 2
+    assert set(all_providers.keys()) == {"static", "device_flow", "pd"}
