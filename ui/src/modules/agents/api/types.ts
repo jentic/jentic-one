@@ -290,6 +290,12 @@ export interface OAuthGrantEntity {
 	clientOrigin: string | null;
 	userId: string;
 	agentId: string;
+	/**
+	 * Lifecycle state of the bound agent (#1345): a grant on a non-active
+	 * agent stays `active` but is DORMANT — no token resolves until the agent
+	 * is enabled again. Null when the API omitted the annotation.
+	 */
+	agentStatus: string | null;
 	scopes: string[];
 	status: string;
 	createdAt: string;

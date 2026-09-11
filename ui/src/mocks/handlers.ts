@@ -67,6 +67,16 @@ const actorDirectorySeed = [
 		created_at: '2026-01-01T00:00:00Z',
 	},
 	{
+		// The DISABLED agent behind the settings store's dormant grant
+		// (#1345) — resolves so the grant row reads "Nightly Reporter ·
+		// Agent disabled", not a raw id next to the dormancy chip.
+		id: 'nightly-reporter',
+		actor_type: 'agent',
+		name: 'Nightly Reporter',
+		active: false,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
 		id: 'agnt_active_1',
 		actor_type: 'agent',
 		name: 'support-agent',

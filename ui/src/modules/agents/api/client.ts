@@ -950,6 +950,7 @@ function grantToEntity(r: OAuthGrantResponse): OAuthGrantEntity {
 		clientOrigin: r.client_origin ?? null,
 		userId: r.user_id,
 		agentId: r.agent_id,
+		agentStatus: r.agent_status ?? null,
 		scopes: r.scopes,
 		status: r.status,
 		createdAt: r.created_at,
