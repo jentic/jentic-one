@@ -112,7 +112,8 @@ func newMCPServer(a *app, version string, opts *mcpOptions, logger *slog.Logger)
 				"Every tool result carries a top-level `instance` key identifying the Jentic " +
 				"One instance it came from; instance.backend is \"unreachable\" when the " +
 				"control plane could not be reached. The skill://jentic resource is the " +
-				"canonical guide to the whole flow (skill://index lists every skill document); " +
+				"canonical guide to the whole flow (skill://index lists every skill document, " +
+				"and skill://jentic/references/mcp.md carries the MCP-lane detail); " +
 				"read it when unsure how the pieces fit together.",
 			Logger: logger,
 			// Legacy clients (< 2026-07-28) still send initialize; capture

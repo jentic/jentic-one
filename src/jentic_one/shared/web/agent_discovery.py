@@ -7,8 +7,14 @@ skill file, no drift from the running version:
 - ``GET /skills/{name}.md`` — the raw markdown of any shipped skill (allowlisted
   to the set globbed from package data). ``GET /SKILL.md`` is a legacy alias for
   the ``jentic`` onboarding skill.
+- ``GET /skills/{name}/references/{file}.md`` — a skill's level-3 reference
+  documents (lane/variant material its SKILL.md points at), same allowlist
+  posture. HTTP serves ALL references — it is the raw neutral channel; the
+  lane filter (``CLI_ONLY_REFERENCES``) applies only to MCP resource listings.
 - ``GET /skills/index.json`` — a manifest of the set: ``name``, ``description``,
-  ``version``, raw-bytes ``sha256``, and a base-stamped absolute ``url``.
+  ``version``, raw-bytes ``sha256``, and a base-stamped absolute ``url`` —
+  plus, for skills that ship references, a ``references`` array
+  (``{name, sha256, url}`` per file; omitted when empty).
 - ``GET /llms.txt`` (alias ``GET /.well-known/llms.txt``) — an ``llms.txt`` index
   linking every discovery document, including a ``## Skills`` section.
 
@@ -37,6 +43,7 @@ import hashlib
 import importlib.resources
 import re
 from functools import cache
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -64,6 +71,27 @@ MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 #: as an independent constant here (not imported from ``tools``) so the runtime
 #: backend has no dependency on the un-shipped repo-root ``tools`` package.
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
+
+#: Reference-file *stem* grammar (the filename minus ``.md``): the skill-name
+#: stem shape. A skill's optional ``references/*.md`` files are level-3
+#: progressive disclosure — plain markdown, no frontmatter — mirrored from
+#: ``skills/<name>/references/`` by ``tools/skills_sync`` and served raw at
+#: ``GET /skills/{name}/references/{file}.md``.
+REFERENCE_STEM_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+
+#: Lane ownership of a skill's references is a filename convention (one
+#: reserved-name rule per language; the Go mirror is
+#: ``skillgen.CLIOnlyReference`` — a comment there points back here, and both
+#: sides pin the literal ``"cli.md"`` in tests
+#: (``test_cli_only_reference_still_served_over_http`` here,
+#: ``TestBundledReferences`` in Go), so divergence trips a test in either
+#: tree): a reference named ``cli.md`` is CLI-lane and
+#: is therefore excluded from MCP resource listings — an MCP session has no
+#: ``jentic`` CLI, so serving it the CLI lane would only mislead. This is a
+#: serving decision, not a secret: the HTTP routes below are the raw neutral
+#: channel and serve EVERY reference, ``cli.md`` included, exactly like they
+#: serve every skill.
+CLI_ONLY_REFERENCES: frozenset[str] = frozenset({"cli.md"})
 
 #: The app-state attribute :func:`jentic_one.mcp.installer.install_mcp_mount`
 #: stamps on shapes that actually carry the ``/mcp`` transport (control-plane
@@ -112,6 +140,44 @@ def load_skill_markdown(name: str) -> str:
     return resource.read_text(encoding="utf-8")
 
 
+@cache
+def shipped_skill_references(name: str) -> tuple[str, ...]:
+    """The reference filenames shipped for one skill, sorted; empty when none.
+
+    Derived by globbing the shipped ``content/<name>/references/*.md`` package
+    data — the same single-source-of-truth posture as
+    :func:`shipped_skill_names`: a reference is served iff its file ships in
+    the wheel; there is no hand-maintained list. Only called with names from
+    ``shipped_skill_names()`` (a finite key space), so the cache is safe.
+    """
+    ref_dir = importlib.resources.files(_CONTENT_PACKAGE) / _CONTENT_DIR / name / "references"
+    if not ref_dir.is_dir():
+        return ()
+    files: list[str] = []
+    for entry in ref_dir.iterdir():
+        fname = entry.name
+        if not fname.endswith(".md"):
+            continue
+        if REFERENCE_STEM_RE.fullmatch(fname[: -len(".md")]):
+            files.append(fname)
+    return tuple(sorted(files))
+
+
+@cache
+def load_skill_reference(name: str, file: str) -> str:
+    """Raw markdown for one shipped skill reference, read once from package data.
+
+    Cached; only ever called with a (name, file) pair already validated against
+    ``shipped_skill_names()`` x ``shipped_skill_references(name)`` (finite key
+    spaces). References are plain markdown with no frontmatter, served verbatim
+    like the skill bodies (no BaseURL interpolation).
+    """
+    resource = (
+        importlib.resources.files(_CONTENT_PACKAGE) / _CONTENT_DIR / name / "references" / file
+    )
+    return resource.read_text(encoding="utf-8")
+
+
 def _parse_frontmatter(text: str) -> dict[str, str]:
     """Extract flat top-level ``key: value`` frontmatter scalars.
 
@@ -150,26 +216,48 @@ def _collapse_ws(text: str) -> str:
     return " ".join(text.split())
 
 
-def _skills_index(base: str) -> list[dict[str, str]]:
+def skills_index_rows(base: str) -> list[dict[str, Any]]:
     """Manifest rows for the shipped set: name, description, version, sha256, url.
 
     ``sha256`` is the digest of the RAW served bytes (exactly what
     ``GET /skills/<name>.md`` returns), so a client can verify a fetched skill
     against the manifest. ``url`` is base-stamped absolute. Sorted by name.
+
+    A skill that ships ``references/`` gains a ``references`` array —
+    ``{name, sha256, url}`` per file, sha256 over the raw bytes served at
+    ``GET /skills/<name>/references/<file>`` — so manifest consumers discover
+    the level-3 documents without directory listing. Rows without references
+    omit the key entirely (no ``null``/empty array).
+
+    Public because the manifest has more than one consumer: the HTTP route
+    below serves it, and the ``/mcp`` mount's ``skill://index`` resource
+    serializes the SAME rows, making sha256 parity between the two doors
+    structural rather than tested-into-existence.
     """
-    rows: list[dict[str, str]] = []
+    rows: list[dict[str, Any]] = []
     for name in shipped_skill_names():
         text = load_skill_markdown(name)
         fm = _parse_frontmatter(text)
-        rows.append(
+        row: dict[str, Any] = {
+            "name": name,
+            "description": fm.get("description", ""),
+            "version": fm.get("version") or "1",
+            "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "url": f"{base}/skills/{name}.md",
+        }
+        references = [
             {
-                "name": name,
-                "description": fm.get("description", ""),
-                "version": fm.get("version") or "1",
-                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-                "url": f"{base}/skills/{name}.md",
+                "name": file,
+                "sha256": hashlib.sha256(
+                    load_skill_reference(name, file).encode("utf-8")
+                ).hexdigest(),
+                "url": f"{base}/skills/{name}/references/{file}",
             }
-        )
+            for file in shipped_skill_references(name)
+        ]
+        if references:
+            row["references"] = references
+        rows.append(row)
     return rows
 
 
@@ -237,7 +325,9 @@ forward proxy, not a hidden MCP server."""
 
 Agents: read the onboarding skill at {base}{SKILL_PATH} first. It is the
 canonical guide to the identity → discover → request access → execute loop —
-the same canonical guide the `jentic` CLI renders into agent runtimes.
+the same canonical guide the `jentic` CLI renders into agent runtimes — and
+its `references/` files (listed in the skills index) carry the per-surface
+detail.
 
 {mcp_paragraph}
 
@@ -307,7 +397,7 @@ def get_agent_discovery_router() -> APIRouter:
     @router.get("/skills/index.json", include_in_schema=False)
     async def skills_index(request: Request, ctx: Context = Depends(get_ctx)) -> JSONResponse:
         base = deployment_base_url(ctx.config.auth, request)
-        return JSONResponse(_skills_index(base), media_type="application/json")
+        return JSONResponse(skills_index_rows(base), media_type="application/json")
 
     @router.get(SKILL_ALIAS_PATH, include_in_schema=False)
     async def onboarding_skill_alias() -> PlainTextResponse:
@@ -324,6 +414,25 @@ def get_agent_discovery_router() -> APIRouter:
         if not SKILL_NAME_RE.fullmatch(name) or name not in shipped_skill_names():
             raise HTTPException(status_code=404)
         return PlainTextResponse(load_skill_markdown(name), media_type=MARKDOWN_MEDIA_TYPE)
+
+    @router.get("/skills/{name}/references/{file}.md", include_in_schema=False)
+    async def skill_reference(name: str, file: str) -> PlainTextResponse:
+        # The same layered, fail-closed validation as the skill route, per
+        # segment: grammar first (skill name, then reference stem), allowlist
+        # second (shipped names, then that skill's shipped references) — all
+        # BEFORE any resource read. The default ``str`` converters never match
+        # a slash, so traversal shapes don't route here at all. HTTP is the raw
+        # neutral channel: EVERY shipped reference is served, including the
+        # CLI-lane ``cli.md`` that the MCP resource listings deliberately skip
+        # (see CLI_ONLY_REFERENCES).
+        if not SKILL_NAME_RE.fullmatch(name) or name not in shipped_skill_names():
+            raise HTTPException(status_code=404)
+        filename = f"{file}.md"
+        if not REFERENCE_STEM_RE.fullmatch(file) or filename not in shipped_skill_references(name):
+            raise HTTPException(status_code=404)
+        return PlainTextResponse(
+            load_skill_reference(name, filename), media_type=MARKDOWN_MEDIA_TYPE
+        )
 
     @router.get(LLMS_TXT_PATH, include_in_schema=False)
     @router.get(LLMS_TXT_WELL_KNOWN_PATH, include_in_schema=False)
