@@ -354,7 +354,11 @@ export const credentialsHandlers = [
 		const authorizeUrl = managed
 			? `https://pipedream.com/connect/mock-token?credential=${id}`
 			: `https://provider.example.com/oauth/authorize?credential=${id}&state=mock-state`;
-		return HttpResponse.json({ authorize_url: authorizeUrl, state: 'mock-state' });
+		return HttpResponse.json({
+			kind: 'authorization_code',
+			authorize_url: authorizeUrl,
+			state: 'mock-state',
+		});
 	}),
 
 	// ---------------------------------------------------------------------------

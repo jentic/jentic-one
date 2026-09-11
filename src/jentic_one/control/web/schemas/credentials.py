@@ -422,11 +422,37 @@ class ConnectRequestBody(BaseModel):
     extra: dict[str, str] = Field(default_factory=dict)
 
 
-class ConnectChallengeResponse(BaseModel):
-    """Response from a connect initiation."""
+class AuthCodeConnectChallengeResponse(BaseModel):
+    """Authorization-code redirect challenge.
 
+    Client opens ``authorize_url`` in a popup; completion lands
+    server-side via ``/credentials/oauth/callback``.
+    """
+
+    kind: Literal["authorization_code"] = "authorization_code"
     authorize_url: str
     state: str
+
+
+class DeviceCodeConnectChallengeResponse(BaseModel):
+    """RFC 8628 device-code challenge.
+
+    Client shows ``user_code`` at ``verification_uri`` and polls
+    ``GET /credentials/{id}`` until state moves off ``pending``
+    (scanner-driven server-side).
+    """
+
+    kind: Literal["device_code"] = "device_code"
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str | None = None
+    poll_interval_seconds: int | None = None
+
+
+ConnectChallengeResponse = Annotated[
+    AuthCodeConnectChallengeResponse | DeviceCodeConnectChallengeResponse,
+    Field(discriminator="kind"),
+]
 
 
 class ProviderDiscoveryEntryResponse(BaseModel):

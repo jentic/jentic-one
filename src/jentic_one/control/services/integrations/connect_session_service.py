@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
 from jentic_one.control.repos.agent_credential_permission_repo import (
     AgentCredentialPermissionRepository,
@@ -85,23 +86,25 @@ class ReviewData:
 
 
 @dataclass(slots=True, frozen=True)
-class ConfirmResult:
-    """Discriminated on ``kind`` — clients branch on that, not field presence.
+class DeviceFlowConfirmResult:
+    """RFC 8628 confirm outcome — user_code + verification_uri."""
 
-    Only the fields relevant to the discriminated variant are populated;
-    the others stay ``None``. The wire layer serialises this into
-    ``ConfirmSessionResponse``, which carries the same discriminator so a
-    generated client type stays as a proper tagged union.
-    """
-
-    kind: str  # "device_flow" | "authorization_code"
-    # Device-flow branch (RFC 8628).
-    user_code: str | None = None
-    verification_uri: str | None = None
+    user_code: str
+    verification_uri: str
     verification_uri_complete: str | None = None
     poll_interval_seconds: int | None = None
-    # Auth-code branch — browser redirect target.
-    authorize_url: str | None = None
+    kind: str = "device_flow"
+
+
+@dataclass(slots=True, frozen=True)
+class AuthCodeConfirmResult:
+    """Authorization-code confirm outcome — client redirects to authorize_url."""
+
+    authorize_url: str
+    kind: str = "authorization_code"
+
+
+ConfirmResult = DeviceFlowConfirmResult | AuthCodeConfirmResult
 
 
 @dataclass(slots=True, frozen=True)
@@ -395,17 +398,13 @@ class ConnectSessionService:
             rules_count=len(permission_rules),
         )
         if challenge.kind == "device_flow":
-            return ConfirmResult(
-                kind="device_flow",
+            return DeviceFlowConfirmResult(
                 user_code=challenge.user_code,
                 verification_uri=challenge.verification_uri,
                 verification_uri_complete=challenge.verification_uri_complete,
                 poll_interval_seconds=challenge.poll_interval_seconds,
             )
-        return ConfirmResult(
-            kind="authorization_code",
-            authorize_url=challenge.authorize_url,
-        )
+        return AuthCodeConfirmResult(authorize_url=challenge.authorize_url)
 
     # ---- status --------------------------------------------------------
 
@@ -455,13 +454,36 @@ class ConnectSessionService:
 
     # ---- scanner-driven advancement (device flow only) ----------------
 
+    async def advance_polling_target(self, credential_id: str) -> None:
+        """Dispatch entrypoint called by ``ConnectPollScanner`` for each
+        in-flight device-flow credential.
+
+        Two entrypoints write ``device_flow_credentials`` (the scanner's
+        query target): the connect-session flow (has a wrapping
+        ``ConnectSession``) and the raw-credential connect flow (no
+        session). This method checks for a live session and dispatches to
+        the matching advancement path — session mode updates the session
+        state machine, credential mode advances ``credentials.state``
+        directly. Both delegate the vendor conversation to
+        ``DeviceFlowHandler.advance``.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            live_session = await ConnectSessionRepository.get_live_by_credential(
+                read_session, credential_id
+            )
+        if live_session is not None:
+            await self.advance_polling_session(live_session.id)
+        else:
+            await self.advance_polling_credential(credential_id)
+
     async def advance_polling_session(self, session_id: str) -> None:
-        """One poll tick against the vendor, called by ``ConnectPollScanner``.
+        """Session-mode advancement.
 
         Owns the outer clock (session TTL) and the state-machine
         transitions; delegates the vendor conversation itself to
         ``DeviceFlowHandler.advance``. Callback flows never reach here —
-        the scanner filters on ``resolved_flow == "device_flow"``.
+        the scanner filters on the aux row, and callback flows don't
+        write one.
 
         Non-retryable vendor errors surface as terminal ``StatusReport``s
         from the handler (see the fail-fast note in the phase-2 plan); we
@@ -472,13 +494,10 @@ class ConnectSessionService:
         if row is None:
             return
         if row.state != "polling":
-            # Terminal or pre-confirm — no advancement to do. Scanner query
-            # filters these out, but re-check because state may have moved
-            # between the scan and this call.
+            # Terminal or pre-confirm — no advancement to do.
             return
         if row.resolved_flow != DeviceFlowHandler.kind:
             # Callback flows advance via the OAuth callback route.
-            # Defensive; scanner query is expected to filter.
             return
 
         # Session TTL guard (flow-agnostic outer clock).
@@ -488,7 +507,7 @@ class ConnectSessionService:
             return
 
         handler = DeviceFlowHandler(self._ctx)
-        report = await handler.advance(row)
+        report = await handler.advance(row.credential_id)
         if report.kind == "pending":
             return
         if report.kind == "success":
@@ -503,20 +522,78 @@ class ConnectSessionService:
             error_code=report.error_code,
         )
 
+    async def advance_polling_credential(self, credential_id: str) -> None:
+        """Credential-mode advancement.
+
+        Mirrors ``advance_polling_session`` but operates on
+        ``credentials.state`` — the raw-credential connect path (user
+        clicked Connect on a manually-created device-flow credential) has
+        no wrapping session, so terminal transitions land on the credential
+        row directly. Shares ``DeviceFlowHandler.advance`` verbatim with
+        the session path.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            credential = await CredentialRepository.get_by_id(read_session, credential_id)
+        if credential is None:
+            return
+        if credential.state != "pending":
+            # Terminal (connected/failed) — nothing to advance.
+            return
+
+        handler = DeviceFlowHandler(self._ctx)
+        report = await handler.advance(credential.id)
+        if report.kind == "pending":
+            return
+        if report.kind == "success":
+            assert report.tokens is not None
+            await self._finalise_credential_connected(credential, handler, report.tokens)
+            return
+        # Terminal (failed / expired) — flip the credential row and clear
+        # the aux row so the scanner stops picking it up.
+        await self._mark_credential_terminal(
+            credential.id,
+            report.terminal_detail or report.error_code or report.kind,
+        )
+
+    async def _mark_credential_terminal(
+        self,
+        credential_id: str,
+        detail: str,
+    ) -> None:
+        """Move a standalone device-flow credential to ``failed`` + clear aux.
+
+        Clears the aux row's transient state regardless of the specific
+        terminal cause so the scanner stops picking it up on the next
+        tick. ``credentials`` has no ``error_detail`` column today, so
+        detail is logged and lost after this call.
+        """
+        async with self._ctx.control_db.transaction() as session:
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+            if credential is None:
+                return
+            if credential.state == "pending":
+                credential.state = "failed"
+                await session.flush()
+            handler = DeviceFlowHandler(self._ctx)
+            await handler.on_finalise(session, credential_id=credential_id)
+        _logger.info(
+            "credential.device_flow.terminal",
+            credential_id=credential_id,
+            detail=detail,
+        )
+
     async def _finalise_connected(
         self,
         row: ConnectSession,
         handler: AuthFlowHandler,
         tokens: SuccessTokens,
     ) -> StatusResult:
-        """Vault token, echo identity, mark credential connected, close the session.
+        """Session-mode finalise: identity echo → shared write → session close.
 
-        Flow-agnostic — the handler's ``on_finalise`` runs inside the same txn
-        so any transient aux-table state gets cleared atomically with the
-        credential flip to ``connected``. ``bound_scopes`` gets written to
-        ``oauth_token.scope`` from the handler-supplied
-        ``SuccessTokens.granted_scopes`` — terminal readback is uniform
-        across flows.
+        The vendor's ``identity_probe`` comes off the vendor registry entry
+        (session flows always know their vendor_key). A failed echo marks
+        the session ``failed`` and returns without vaulting the token —
+        we can't tie the credential back to a human without it.
         """
         entry = self._vendors.get(row.vendor)
 
@@ -536,6 +613,99 @@ class ConnectSessionService:
             await self._mark_terminal(row.id, "failed", str(exc), error_code="identity_echo_failed")
             return StatusResult(status="failed", error_code="identity_echo_failed")
 
+        await self._write_finalise(
+            credential_id=row.credential_id,
+            handler=handler,
+            tokens=tokens,
+            connected_as=connected_as,
+            created_by=row.initiator_actor_id,
+            close_session_id=row.id,
+        )
+
+        _logger.info(
+            "connect_session.connected",
+            session_id=row.id,
+            credential_id=row.credential_id,
+            connected_as=connected_as,
+        )
+        await self._maybe_import_catalog(
+            api_id=entry.vendor, initiator_actor_id=row.initiator_actor_id
+        )
+        return StatusResult(
+            status="connected",
+            connected_as=connected_as,
+            credential_id=row.credential_id,
+            bound_scopes=tokens.granted_scopes,
+        )
+
+    async def _finalise_credential_connected(
+        self,
+        credential: Credential,
+        handler: AuthFlowHandler,
+        tokens: SuccessTokens,
+    ) -> StatusResult:
+        """Credential-mode finalise: shared write, no session row to close.
+
+        Standalone credentials (users clicking Connect on a manually-created
+        device-flow row) don't have a vendor-registry entry, so identity
+        echo is skipped — ``provider_account_ref`` stays unset and the UI
+        can prompt for a display name later if needed. Catalog auto-import
+        keys on the credential's own ``catalog_api_id`` column instead of
+        a vendor slug.
+        """
+        # Every credential is created via ``POST /credentials`` behind
+        # ``credentials:write``, so ``created_by`` is always populated by
+        # the time a connect finalise runs against it — no need for a
+        # ``"system"`` fallback (which would violate the no-system-actor
+        # invariant enforced by tests/arch).
+        if credential.created_by is None:
+            raise RuntimeError(
+                f"credential {credential.id!r} has no created_by — "
+                "cannot finalise a connect flow without an initiator identity"
+            )
+        await self._write_finalise(
+            credential_id=credential.id,
+            handler=handler,
+            tokens=tokens,
+            connected_as=None,
+            created_by=credential.created_by,
+            close_session_id=None,
+        )
+
+        _logger.info(
+            "credential.device_flow.connected",
+            credential_id=credential.id,
+        )
+        if credential.catalog_api_id:
+            await self._maybe_import_catalog(
+                api_id=credential.catalog_api_id,
+                initiator_actor_id=credential.created_by,
+            )
+        return StatusResult(
+            status="connected",
+            credential_id=credential.id,
+            bound_scopes=tokens.granted_scopes,
+        )
+
+    async def _write_finalise(
+        self,
+        *,
+        credential_id: str,
+        handler: AuthFlowHandler,
+        tokens: SuccessTokens,
+        connected_as: str | None,
+        created_by: str,
+        close_session_id: str | None,
+    ) -> None:
+        """Shared finalise write — vault token, cleanup aux, flip credential.
+
+        One txn covers everything: OAuth token vault, handler's aux-table
+        cleanup (device flow clears its transient state), credential.state
+        flip, optional connect-session close. ``connected_as`` is written
+        onto ``credential.provider_account_ref`` when non-None (session
+        mode after identity echo); credential-mode passes ``None`` and the
+        column stays unset.
+        """
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
         )
@@ -548,7 +718,7 @@ class ConnectSessionService:
         # up with" list — device flow supplies the confirmed set (vendor's
         # ``scope`` field is unreliable there), auth-code supplies what the
         # server actually granted. Persist it verbatim onto
-        # ``oauth_token.scope`` so terminal readback is one column, both flows.
+        # ``oauth_token.scope`` so terminal readback is one column, all flows.
         scope_to_persist = (
             " ".join(tokens.granted_scopes) if tokens.granted_scopes else tokens.scope
         )
@@ -556,55 +726,42 @@ class ConnectSessionService:
         async with self._ctx.control_db.transaction() as session:
             await OAuthTokenRepository.create(
                 session,
-                credential_id=row.credential_id,
+                credential_id=credential_id,
                 encrypted_access_token=encrypted_access,
                 encrypted_refresh_token=encrypted_refresh,
                 expires_at=expires_at,
                 scope=scope_to_persist,
-                created_by=row.initiator_actor_id,
+                created_by=created_by,
             )
-            await handler.on_finalise(session, credential_id=row.credential_id)
-            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+            await handler.on_finalise(session, credential_id=credential_id)
+            credential = await CredentialRepository.get_by_id(session, credential_id)
             if credential is not None:
                 credential.state = "connected"
-                credential.provider_account_ref = echo.display
+                if connected_as is not None:
+                    credential.provider_account_ref = connected_as
                 await session.flush()
-            await ConnectSessionRepository.update_fields(
-                session,
-                row.id,
-                state="connected",
-                connected_as=connected_as,
-            )
+            if close_session_id is not None:
+                await ConnectSessionRepository.update_fields(
+                    session,
+                    close_session_id,
+                    state="connected",
+                    connected_as=connected_as,
+                )
 
-        _logger.info(
-            "connect_session.connected",
-            session_id=row.id,
-            credential_id=row.credential_id,
-            connected_as=connected_as,
-        )
+    async def _maybe_import_catalog(self, *, api_id: str, initiator_actor_id: str) -> None:
+        """Best-effort catalog auto-import — see the phase-1 rationale.
 
-        # A connected credential is only useful to the broker once the vendor's
-        # OpenAPI is registered — the broker's URL→operation discovery is a
-        # registry-DB read and returns 404 for unregistered upstreams. Trigger a
-        # best-effort import so the operator doesn't have to remember it as a
-        # second step. The importer is idempotent (skips when already
-        # registered), best-effort (never raises — the credential is still
-        # valid without the import), and runs after the credential is committed
-        # so a failed import can't roll it back.
-        if self._catalog_auto_importer is not None:
-            await self._catalog_auto_importer.ensure_imported(
-                api_id=entry.vendor,
-                initiator_actor_id=row.initiator_actor_id,
-            )
-
-        # ``granted_scopes`` is flow-specific — see SuccessTokens: device
-        # flow reports the user's confirmed list, auth-code reports what the
-        # server actually granted.
-        return StatusResult(
-            status="connected",
-            connected_as=connected_as,
-            credential_id=row.credential_id,
-            bound_scopes=tokens.granted_scopes,
+        A connected credential is only useful to the broker once the
+        vendor's OpenAPI is registered — the broker's URL→operation
+        discovery is a registry-DB read and returns 404 for unregistered
+        upstreams. Idempotent (skips when already registered), best-effort
+        (never raises — the credential is still valid without the import).
+        """
+        if self._catalog_auto_importer is None:
+            return
+        await self._catalog_auto_importer.ensure_imported(
+            api_id=api_id,
+            initiator_actor_id=initiator_actor_id,
         )
 
     async def _mark_terminal(

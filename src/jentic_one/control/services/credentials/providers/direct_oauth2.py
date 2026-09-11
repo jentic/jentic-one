@@ -13,8 +13,8 @@ from jentic_one.control.services.credentials.providers.base import (
     ProviderError,
 )
 from jentic_one.control.services.credentials.schemas.connect import (
+    AuthCodeChallenge,
     ConnectCallback,
-    ConnectChallenge,
     ConnectRequest,
     ConnectState,
 )
@@ -71,7 +71,7 @@ class DirectOAuth2Provider:
         *,
         api: APIReference,
         request: ConnectRequest,
-    ) -> ConnectChallenge:
+    ) -> AuthCodeChallenge:
         credential_id = request.extra.get("credential_id", "")
         if not credential_id:
             raise ProviderError("credential_id required in request.extra")
@@ -123,7 +123,7 @@ class DirectOAuth2Provider:
         params.update(self._authorize_extra_params)
 
         authorize_url = f"{occ.authorize_url}?{urlencode(params)}"
-        return ConnectChallenge(authorize_url=authorize_url, state=signed_state)
+        return AuthCodeChallenge(authorize_url=authorize_url, state=signed_state)
 
     async def complete_connect(
         self,

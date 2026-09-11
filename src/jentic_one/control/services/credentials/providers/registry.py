@@ -10,6 +10,9 @@ from jentic_one.control.services.credentials.providers.base import (
     CredentialProvider,
     UnknownProviderError,
 )
+from jentic_one.control.services.credentials.providers.device_flow import (
+    DeviceFlowConnectProvider,
+)
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
 from jentic_one.control.services.credentials.providers.static import StaticProvider
@@ -67,7 +70,14 @@ class ProviderRegistry:
         is called). Dynamic entries override YAML entries of the same name.
         Always includes the built-in ``static`` provider.
         """
-        providers: dict[str, CredentialProvider] = {"static": StaticProvider()}
+        providers: dict[str, CredentialProvider] = {
+            "static": StaticProvider(),
+            # ``device_flow`` is the ``credential.provider`` value written by
+            # both the connect-session ``create_session`` path and the raw
+            # manual-create + grant_type=device_code path — always registered
+            # so ``POST /credentials/{id}/connect`` can find it.
+            "device_flow": DeviceFlowConnectProvider(),
+        }
         for name, pc in cfg.providers.items():
             providers[name] = _build_provider(name, pc)
         for name, raw in dynamic.items():

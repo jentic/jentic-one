@@ -16,6 +16,7 @@ from jentic_one.control.services.credentials.providers.base import (
     ProviderError,
 )
 from jentic_one.control.services.credentials.schemas.connect import (
+    AuthCodeChallenge,
     ConnectCallback,
     ConnectRequest,
 )
@@ -37,13 +38,14 @@ from jentic_one.control.web.deps import (
 )
 from jentic_one.control.web.schemas.credentials import (
     APIReferenceResponse,
-    ConnectChallengeResponse,
+    AuthCodeConnectChallengeResponse,
     ConnectRequestBody,
     CredentialCreateRequest,
     CredentialCreateResponse,
     CredentialListResponse,
     CredentialRedactedResponse,
     CredentialUpdateRequest,
+    DeviceCodeConnectChallengeResponse,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
 )
@@ -266,16 +268,21 @@ async def oauth_callback(
     # (agent-driven integration flow). The `sid` claim is set by
     # AuthCodeFlowHandler.begin — its presence routes completion to
     # ConnectSessionService.complete_from_callback instead of the
-    # standalone-credential path.
-    ctx = request.app.state.ctx
-    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    # standalone-credential path. Uses ``app.state.ctx`` for the state
+    # secret rather than a router-level dep so this route stays a single
+    # endpoint (two consumers, one URL). Tests that stub the router without
+    # a wired-up ctx fall through to the standalone path — the code below
+    # re-verifies the state and produces the canonical redirect.
+    ctx = getattr(request.app.state, "ctx", None)
     session_id: str | None = None
-    try:
-        session_id = decode_state(state_secret, state).session_id
-    except StateError:
-        # Fall through to the standard path — it'll re-verify + surface the
-        # canonical error.
-        session_id = None
+    if ctx is not None:
+        state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+        try:
+            session_id = decode_state(state_secret, state).session_id
+        except StateError:
+            # Fall through to the standard path — it'll re-verify + surface
+            # the canonical error.
+            session_id = None
 
     if session_id is not None:
         if error or not code:
@@ -383,14 +390,21 @@ async def delete_credential(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
     responses=with_responses(not_found(), conflict("Credential is not connectable")),
+    response_model=None,
 )
 async def connect_credential(
     credential_id: str,
     body: ConnectRequestBody,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectService = Depends(get_connect_service),
-) -> ConnectChallengeResponse:
-    """Initiate the OAuth connect flow for a credential."""
+) -> AuthCodeConnectChallengeResponse | DeviceCodeConnectChallengeResponse | JSONResponse:
+    """Initiate the OAuth connect flow for a credential.
+
+    Discriminates on the provider's returned challenge: OAuth2
+    authorization-code providers return an ``authorize_url`` for popup
+    redirect; device-flow providers return ``user_code`` /
+    ``verification_uri`` for the RFC 8628 human step.
+    """
     connect_req = ConnectRequest(scopes=body.scopes, extra=body.extra)
     try:
         challenge = await svc.begin(
@@ -400,9 +414,18 @@ async def connect_credential(
             actor_type=identity.actor_type,
         )
     except CredentialNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "Credential not found"})  # type: ignore[return-value]
+        return JSONResponse(status_code=404, content={"detail": "Credential not found"})
     except NotConnectableError as exc:
-        return JSONResponse(status_code=409, content={"detail": str(exc)})  # type: ignore[return-value]
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
     except ProviderError as exc:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})  # type: ignore[return-value]
-    return ConnectChallengeResponse(authorize_url=challenge.authorize_url, state=challenge.state)
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    if isinstance(challenge, AuthCodeChallenge):
+        return AuthCodeConnectChallengeResponse(
+            authorize_url=challenge.authorize_url, state=challenge.state
+        )
+    return DeviceCodeConnectChallengeResponse(
+        user_code=challenge.user_code,
+        verification_uri=challenge.verification_uri,
+        verification_uri_complete=challenge.verification_uri_complete,
+        poll_interval_seconds=challenge.poll_interval_seconds,
+    )

@@ -14,6 +14,7 @@ import {
 } from './client';
 import type { ProviderDiscoveryResponse } from '@/shared/api';
 import type {
+	AuthCodeChallengeResponse,
 	ConnectChallengeResponse,
 	ConnectRequestBody,
 	CredentialCreateRequest,
@@ -21,6 +22,7 @@ import type {
 	CredentialListResponse,
 	CredentialRedactedResponse,
 	CredentialUpdateRequest,
+	DeviceCodeChallengeResponse,
 } from './types';
 import { updateCredential } from './client';
 
@@ -127,13 +129,23 @@ export interface RunConnectOptions {
 	pollMs?: number;
 	/** Give up waiting after this long (ms). */
 	timeoutMs?: number;
+	/**
+	 * Render hook invoked when the begin-connect call returns a device_code
+	 * challenge (RFC 8628). The caller is responsible for showing the
+	 * `user_code` and `verification_uri` to the human; the returned cleanup
+	 * (if any) is invoked once the outcome is known so the caller can tear
+	 * down the modal. Omit for callers that only support authorization_code
+	 * flows — a device_code challenge will surface as `unsupported_challenge`.
+	 */
+	onDeviceCodeChallenge?: (challenge: DeviceCodeChallengeResponse) => (() => void) | void;
 }
 
 export type ConnectOutcome =
 	| { status: 'connected'; credential: CredentialRedactedResponse }
 	| { status: 'redirected' }
 	| { status: 'cancelled' }
-	| { status: 'timeout' };
+	| { status: 'timeout' }
+	| { status: 'unsupported_challenge' };
 
 /**
  * Run the full OAuth connect round-trip for a credential.
@@ -197,23 +209,6 @@ export async function runConnectFlow(
 		// require a real baseline before trusting the `updated_at`/ref deltas.
 		const haveBaseline = before !== null;
 
-		if (mode === 'redirect') {
-			window.location.assign(challenge.authorize_url);
-			return { status: 'redirected' };
-		}
-
-		popup = window.open(
-			challenge.authorize_url,
-			'jentic-oauth-connect',
-			'popup,width=520,height=720',
-		);
-		if (!popup) {
-			window.location.assign(challenge.authorize_url);
-			return { status: 'redirected' };
-		}
-		const activePopup = popup;
-
-		const deadline = Date.now() + timeoutMs;
 		const isConnected = (next: CredentialRedactedResponse | null): boolean => {
 			if (!next) return false;
 			if (!haveBaseline) return false;
@@ -248,6 +243,54 @@ export async function runConnectFlow(
 					resolve();
 				};
 			});
+
+		if (challenge.kind === 'device_code') {
+			// RFC 8628: no browser redirect. The caller renders `user_code` +
+			// `verification_uri`; the ConnectPollScanner drives completion
+			// server-side. Callers that don't opt-in to rendering the human
+			// step get `unsupported_challenge` back — polling in silence would
+			// look like a hang from the user's perspective.
+			if (!options.onDeviceCodeChallenge) {
+				return { status: 'unsupported_challenge' };
+			}
+			const cleanup = options.onDeviceCodeChallenge(challenge);
+			try {
+				const deadline = Date.now() + timeoutMs;
+				while (Date.now() < deadline) {
+					await waitTick();
+					const next = await getCredential(id).catch(() => null);
+					if (isConnected(next)) {
+						return {
+							status: 'connected',
+							credential: next as CredentialRedactedResponse,
+						};
+					}
+				}
+				return { status: 'timeout' };
+			} finally {
+				cleanup?.();
+			}
+		}
+
+		const authCode: AuthCodeChallengeResponse = challenge;
+
+		if (mode === 'redirect') {
+			window.location.assign(authCode.authorize_url);
+			return { status: 'redirected' };
+		}
+
+		popup = window.open(
+			authCode.authorize_url,
+			'jentic-oauth-connect',
+			'popup,width=520,height=720',
+		);
+		if (!popup) {
+			window.location.assign(authCode.authorize_url);
+			return { status: 'redirected' };
+		}
+		const activePopup = popup;
+
+		const deadline = Date.now() + timeoutMs;
 
 		while (Date.now() < deadline) {
 			await waitTick();

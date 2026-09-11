@@ -46,12 +46,15 @@ import {
 
 export interface CreatedCredentialInfo {
 	credentialId: string;
+	name: string;
 	type: CredentialType;
 	provider: string;
 	/**
-	 * Whether the credential carries an authorize URL — i.e. it actually needs a
-	 * browser-based connect flow. `client_credentials` (and other non-redirect
-	 * grants) have no authorize URL and must NOT auto-connect.
+	 * Whether the credential needs a browser-based connect flow before it can
+	 * be used. True for authorization_code grants (browser redirect) and for
+	 * device_code grants (RFC 8628 human step). `client_credentials` (and
+	 * other non-interactive grants) have no user action and must NOT
+	 * auto-connect.
 	 */
 	needsConnect: boolean;
 }
@@ -418,14 +421,16 @@ export function CreateCredentialDialog({
 				});
 				onCreated({
 					credentialId: data.credential.credential_id,
+					name: data.credential.name,
 					type,
 					provider: state.provider,
-					// Only authorization-code style grants (which carry an authorize
-					// URL) need a browser connect flow. client_credentials and other
-					// non-redirect grants must not auto-connect.
+					// User-interactive grants (authorization_code, device_code) need a
+					// connect flow before they're usable. client_credentials and other
+					// non-interactive grants must not auto-connect.
 					needsConnect:
 						state.authorizeUrl.trim().length > 0 ||
-						state.grantType.trim() === 'authorization_code',
+						state.grantType.trim() === 'authorization_code' ||
+						state.grantType.trim() === 'device_code',
 				});
 				// Closing the dialog triggers the open-watching effect which
 				// resets state — no need to call reset() here directly.

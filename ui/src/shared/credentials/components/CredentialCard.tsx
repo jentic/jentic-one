@@ -99,7 +99,7 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 								Connected
 							</Badge>
 						)}
-						<CredentialTypeBadge type={cred.type} />
+						<CredentialTypeBadge type={cred.type} credential={cred} />
 					</div>
 					<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
 						{formatApiReference(cred.api)}

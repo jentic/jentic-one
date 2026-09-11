@@ -8,7 +8,6 @@ import type { BasicAuthCreateRequest } from '../models/BasicAuthCreateRequest';
 import type { BasicAuthUpdateRequest } from '../models/BasicAuthUpdateRequest';
 import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateRequest';
 import type { BearerTokenUpdateRequest } from '../models/BearerTokenUpdateRequest';
-import type { ConnectChallengeResponse } from '../models/ConnectChallengeResponse';
 import type { ConnectRequestBody } from '../models/ConnectRequestBody';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
@@ -243,7 +242,12 @@ export class CredentialsService {
     /**
      * Begin OAuth connect flow
      * Initiate the OAuth connect flow for a credential.
-     * @returns ConnectChallengeResponse Successful Response
+     *
+     * Discriminates on the provider's returned challenge: OAuth2
+     * authorization-code providers return an ``authorize_url`` for popup
+     * redirect; device-flow providers return ``user_code`` /
+     * ``verification_uri`` for the RFC 8628 human step.
+     * @returns any Successful Response
      * @throws ApiError
      */
     public static connectCredential({
@@ -252,7 +256,7 @@ export class CredentialsService {
     }: {
         credentialId: string,
         requestBody: ConnectRequestBody,
-    }): CancelablePromise<ConnectChallengeResponse> {
+    }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/credentials/{credential_id}/connect',

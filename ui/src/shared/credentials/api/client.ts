@@ -60,7 +60,13 @@ export function deleteCredential(credentialId: string): Promise<void> {
 	return CredentialsService.deleteCredential({ credentialId });
 }
 
-/** POST /credentials/{id}/connect — begin the OAuth redirect flow. */
+/** POST /credentials/{id}/connect — begin the OAuth connect flow.
+ *
+ * The wire response is a discriminated union (authorization_code carries
+ * `authorize_url` / `state`; device_code carries `user_code` /
+ * `verification_uri`). The generated client type is stale (models only the
+ * authorization_code shape), so we cast through the hand-authored union in
+ * `./types` until `make openapi` rewires the codegen. */
 export function connectCredential(
 	credentialId: string,
 	body: ConnectRequestBody = {},
@@ -68,7 +74,7 @@ export function connectCredential(
 	return CredentialsService.connectCredential({
 		credentialId,
 		requestBody: body,
-	});
+	}) as unknown as Promise<ConnectChallengeResponse>;
 }
 
 /** GET /credentials/providers — discovery metadata for configured providers. */
