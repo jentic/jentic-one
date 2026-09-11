@@ -479,6 +479,55 @@ async def test_advance_polling_target_dispatches_to_credential_when_no_live_sess
     sess_mock.assert_not_awaited()
 
 
+async def test_advance_polling_credential_advances_a_re_connect_of_a_connected_credential(
+    integration_context: Context,
+    clean_session_tables: None,
+) -> None:
+    # A user clicking Connect on an already-``connected`` credential
+    # starts a fresh device-flow round while the credential row keeps
+    # its ``state="connected"``. The scanner MUST NOT gate on that
+    # state (it used to — a stale ``state != "pending"`` early-return
+    # left the aux row's ``encrypted_device_code`` sitting there until
+    # TTL, so the SPA's ``runConnectFlow`` poll loop never observed a
+    # transition). The aux row's ``encrypted_device_code`` is the sole
+    # "in flight" signal; the scanner query has already filtered by
+    # it, so ``advance_polling_credential`` should hand off to
+    # ``DeviceAuthorizationHandler.advance`` regardless of the
+    # credential's state.
+    from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
+    from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
+        DeviceAuthorizationHandler,
+    )
+
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type="oauth2",
+            name="already-connected device-flow cred",
+            api_vendor="foo",
+            api_name="bar",
+            api_version="v1",
+            provider="device_authorization",
+            created_by=_USER_ID,
+            state="connected",  # ← the re-connect scenario
+        )
+
+    with patch.object(
+        DeviceAuthorizationHandler,
+        "advance",
+        new=AsyncMock(return_value=StatusReport(kind="pending")),
+    ) as advance_mock:
+        await svc.advance_polling_credential(credential.id)
+
+    # The load-bearing assertion: we ACTUALLY called
+    # ``DeviceAuthorizationHandler.advance`` — the previous
+    # ``state != "pending"`` gate would have returned before this.
+    advance_mock.assert_awaited_once_with(credential.id)
+
+
 # ---------------------------------------------------------------------------
 # complete_from_callback (auth-code) — end-to-end vault + finalise
 # ---------------------------------------------------------------------------

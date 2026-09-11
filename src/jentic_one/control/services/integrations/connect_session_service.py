@@ -550,13 +550,20 @@ class ConnectSessionService:
         no wrapping session, so terminal transitions land on the credential
         row directly. Shares ``DeviceAuthorizationHandler.advance`` verbatim with
         the session path.
+
+        The "flow in flight" signal is the aux row's
+        ``encrypted_device_code`` being non-NULL and within its TTL —
+        the scanner query already filters on that, and
+        ``DeviceAuthorizationHandler.on_finalise`` clears it on success
+        + ``_mark_credential_terminal`` clears it on failure. Gating
+        here on ``credential.state`` was tempting but wrong: a user
+        re-connecting an already-connected credential (fresh grant,
+        rotated scopes) starts a new device flow while the credential
+        stays ``connected``, and that flow must still be advanced.
         """
         async with self._ctx.control_db.session() as read_session:
             credential = await CredentialRepository.get_by_id(read_session, credential_id)
         if credential is None:
-            return
-        if credential.state != "pending":
-            # Terminal (connected/failed) — nothing to advance.
             return
 
         handler = DeviceAuthorizationHandler(self._ctx)
@@ -743,21 +750,48 @@ class ConnectSessionService:
         )
 
         async with self._ctx.control_db.transaction() as session:
-            await OAuthTokenRepository.create(
-                session,
-                credential_id=credential_id,
-                encrypted_access_token=encrypted_access,
-                encrypted_refresh_token=encrypted_refresh,
-                expires_at=expires_at,
-                scope=scope_to_persist,
-                created_by=created_by,
-            )
+            # Upsert: a re-connect over an existing token row (same
+            # credential, fresh grant) MUST update in place rather than
+            # INSERT — ``oauth_tokens.credential_id`` is uniquely
+            # indexed, and a plain create would trip the constraint on
+            # the second successful poll. ``update_tokens`` also clears
+            # ``revoked_at``, so a re-connect over a revoked row yields
+            # a live token (the derived ``connected`` flag reads that
+            # column).
+            existing = await OAuthTokenRepository.get_by_credential(session, credential_id)
+            if existing is None:
+                await OAuthTokenRepository.create(
+                    session,
+                    credential_id=credential_id,
+                    encrypted_access_token=encrypted_access,
+                    encrypted_refresh_token=encrypted_refresh,
+                    expires_at=expires_at,
+                    scope=scope_to_persist,
+                    created_by=created_by,
+                )
+            else:
+                await OAuthTokenRepository.update_tokens(
+                    session,
+                    credential_id,
+                    encrypted_access_token=encrypted_access,
+                    encrypted_refresh_token=encrypted_refresh,
+                    expires_at=expires_at,
+                    scope=scope_to_persist,
+                )
             await handler.on_finalise(session, credential_id=credential_id)
             credential = await CredentialRepository.get_by_id(session, credential_id)
             if credential is not None:
                 credential.state = "connected"
                 if connected_as is not None:
                     credential.provider_account_ref = connected_as
+                # Force an ``updated_at`` bump so client-side pollers
+                # detect the transition even on a re-connect where the
+                # state was already ``"connected"``. Without this,
+                # SQLAlchemy may short-circuit the UPDATE when every
+                # assigned column matches its stored value, leaving
+                # ``updated_at`` unchanged and ``runConnectFlow`` /
+                # ``get_credential``-based watchers polling forever.
+                credential.updated_at = datetime.now(UTC)
                 await session.flush()
             if close_session_id is not None:
                 await ConnectSessionRepository.update_fields(
