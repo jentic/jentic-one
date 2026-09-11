@@ -39,5 +39,11 @@ class ToolkitKey(AuditableMixin, ControlBase):
     hashed_key: Mapped[str] = mapped_column(String(255), nullable=False)
     lookup_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Theme-5 Phase 4 (key retirement): the service account (``sva_…``,
+    # cross-DB FK-less reference into the admin database) this key retired
+    # to. Stamped by the migration job; NULL means not (yet) migrated.
+    # Revoking a migrated key must also disable this actor — the plaintext
+    # authenticates as the service account for the deprecation window.
+    migrated_actor_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     toolkit: Mapped[Toolkit] = relationship(back_populates="keys")

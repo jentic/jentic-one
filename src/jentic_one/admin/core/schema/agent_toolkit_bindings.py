@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import DateTime, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -13,7 +13,15 @@ from jentic_one.shared.db.ids import generate_ksuid
 
 
 class AgentToolkitBinding(AuditableMixin, AdminBase):
-    """Binding between an agent and a toolkit."""
+    """Binding between a broker-executing actor and a toolkit.
+
+    ``agent_id`` holds an agent (``agnt_…``) or — since theme-5 Phase 4 — a
+    service account (``sva_…``) migrated from a ``jntc_live_`` toolkit key,
+    whose broker access keeps deriving through its toolkit until the Phase-6a
+    flattening. The two actor kinds live in sibling tables, so the column
+    carries no FK; ``AgentService.delete`` removes an agent's bindings
+    explicitly, and service accounts archive rather than hard-delete.
+    """
 
     __tablename__ = "agent_toolkit_bindings"
     __table_args__ = (
@@ -30,7 +38,6 @@ class AgentToolkitBinding(AuditableMixin, AdminBase):
     )
     agent_id: Mapped[str] = mapped_column(
         String(30),
-        ForeignKey("agents.id", ondelete="CASCADE"),
         nullable=False,
     )
     toolkit_id: Mapped[str] = mapped_column(String(255), nullable=False)
