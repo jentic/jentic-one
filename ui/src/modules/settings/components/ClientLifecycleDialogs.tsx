@@ -82,7 +82,13 @@ export function RotateConfirmDialog({
 	);
 }
 
-export function DeactivateConfirmDialog({
+/**
+ * The reversible kill-switch confirm. The wire verb stays `deactivate`
+ * (`DELETE /admin/oauth-clients/{id}`); user-facing copy says **Disable** —
+ * the lifecycle vocabulary's reversible pair (Disable/Enable), distinct from
+ * the permanent Delete in the danger zone's type-to-confirm dialog.
+ */
+export function DisableConfirmDialog({
 	open,
 	onClose,
 	onConfirm,
@@ -101,27 +107,27 @@ export function DeactivateConfirmDialog({
 		<Dialog
 			open={open}
 			onClose={onClose}
-			title="Deactivate OAuth Client?"
+			title="Disable OAuth Client?"
 			footer={
 				<>
 					<Button variant="outline" onClick={onClose}>
 						Cancel
 					</Button>
 					<Button variant="danger" onClick={onConfirm} disabled={isPending}>
-						{isPending ? 'Deactivating...' : 'Deactivate'}
+						{isPending ? 'Disabling...' : 'Disable'}
 					</Button>
 				</>
 			}
 		>
 			<p className="text-muted-foreground">
 				This will prevent <strong>{clientName}</strong> from initiating new authorization
-				flows. Existing sessions are not affected. You can reactivate the client later — and
-				a deactivated client that re-registers via DCR returns to the approval queue.
+				flows. Existing sessions are not affected. You can enable the client again later —
+				and a disabled client that re-registers via DCR returns to the approval queue.
 			</p>
 			{error != null && (
 				<div className="mt-3">
 					<ErrorAlert
-						message={error instanceof Error ? error : 'Failed to deactivate the client'}
+						message={error instanceof Error ? error : 'Failed to disable the client'}
 					/>
 				</div>
 			)}

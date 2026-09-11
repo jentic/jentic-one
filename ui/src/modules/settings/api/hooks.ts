@@ -156,6 +156,24 @@ export function useDeactivateOAuthClient() {
 	});
 }
 
+/**
+ * Permanently delete a client (`POST /admin/oauth-clients/{id}:delete`) —
+ * terminal, unlike the disable kill switch above: the backend revokes every
+ * active grant + token and removes the row, so the sweep also covers the
+ * shared oauth-grants root (the agents module's "Connected clients" panels
+ * must not keep showing grants of a dead client as active).
+ */
+export function useDeleteOAuthClient() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (id: string) => OAuthClientsService.deleteOauthClient({ id }),
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: QUERY_KEY });
+			void qc.invalidateQueries({ queryKey: sharedQueryKeys.oauthGrantsRoot });
+		},
+	});
+}
+
 export function useReactivateOAuthClient() {
 	const qc = useQueryClient();
 	return useMutation({

@@ -69,7 +69,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		expect(screen.queryByText('Legacy App')).not.toBeInTheDocument();
 	});
 
-	it('status segments carry live counts and Inactive surfaces the approved+inactive zombie (#1312)', async () => {
+	it('status segments carry live counts and Disabled surfaces the approved+inactive zombie (#1312)', async () => {
 		const user = userEvent.setup();
 		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
@@ -79,22 +79,22 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		expect(screen.getByRole('button', { name: 'Active 1' })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Pending 1' })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Denied 1' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Inactive 1' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Disabled 1' })).toBeInTheDocument();
 
-		// The zombie — approved but deactivated, invisible to both queue
-		// filters — lives under the Inactive segment with its chip.
-		await user.click(screen.getByRole('button', { name: 'Inactive 1' }));
+		// The zombie — approved but disabled, invisible to both queue
+		// filters — lives under the Disabled segment with its chip.
+		await user.click(screen.getByRole('button', { name: 'Disabled 1' }));
 		expect(await screen.findByText('Legacy App')).toBeInTheDocument();
-		expect(screen.getByText('Inactive')).toBeInTheDocument();
+		expect(screen.getByText('Disabled')).toBeInTheDocument();
 		expect(screen.queryByText('Internal Dashboard')).not.toBeInTheDocument();
 	});
 
-	it('never offers Reactivate on a denied row — its recovery routes to the queue', async () => {
+	it('never offers Enable on a denied row — its recovery routes to the queue', async () => {
 		const user = userEvent.setup();
 		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
-		// The denied row's kebab: Review in queue, but NO Reactivate (a PATCH
+		// The denied row's kebab: Review in queue, but NO Enable (a PATCH
 		// active=true would leave approval_status=denied — still gate-blocked).
 		await user.click(screen.getByRole('button', { name: 'Denied 1' }));
 		await screen.findByText('Sketchy Tool');
@@ -102,16 +102,16 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		expect(
 			await screen.findByRole('menuitem', { name: 'Review in queue Sketchy Tool' }),
 		).toBeInTheDocument();
-		expect(screen.queryByRole('menuitem', { name: /Reactivate/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole('menuitem', { name: /Enable/ })).not.toBeInTheDocument();
 		await user.keyboard('{Escape}');
 
-		// The approved+inactive zombie DOES get Reactivate — the one state
+		// The approved+inactive zombie DOES get Enable — the one state
 		// where a plain PATCH active=true actually un-blocks the client.
-		await user.click(screen.getByRole('button', { name: 'Inactive 1' }));
+		await user.click(screen.getByRole('button', { name: 'Disabled 1' }));
 		await screen.findByText('Legacy App');
 		await user.click(screen.getByRole('button', { name: 'Actions for Legacy App' }));
 		expect(
-			await screen.findByRole('menuitem', { name: 'Reactivate Legacy App' }),
+			await screen.findByRole('menuitem', { name: 'Enable Legacy App' }),
 		).toBeInTheDocument();
 	});
 
@@ -360,20 +360,129 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		await checkA11y(document.body);
 	});
 
-	it("offers Reactivate in a zombie's detail sheet (recovery from its own console)", async () => {
+	it("offers Enable in a zombie's detail sheet (recovery from its own console)", async () => {
 		const user = userEvent.setup();
 		renderSettingsPage();
 		await screen.findByText('Internal Dashboard');
 
 		// The approved+inactive zombie must not be stranded: its own console
 		// (the danger zone) carries the recovery verb.
-		await user.click(screen.getByRole('button', { name: 'Inactive 1' }));
+		await user.click(screen.getByRole('button', { name: 'Disabled 1' }));
 		await screen.findByText('Legacy App');
 		await user.click(screen.getByRole('button', { name: 'View details for Legacy App' }));
 		const sheet = await screen.findByTestId('sheet-primitive');
 
-		await user.click(within(sheet).getByRole('button', { name: 'Reactivate Legacy App' }));
-		expect(await screen.findByText('Legacy App reactivated')).toBeInTheDocument();
+		await user.click(within(sheet).getByRole('button', { name: 'Enable Legacy App' }));
+		expect(await screen.findByText('Legacy App enabled')).toBeInTheDocument();
+	});
+
+	// ------------------------------------------------------------------
+	// Lifecycle: Disable (reversible) vs Delete (permanent)
+	// ------------------------------------------------------------------
+
+	it('disables a client from the kebab via the Disable confirm (reversible kill switch)', async () => {
+		const user = userEvent.setup();
+		renderSettingsPage();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(screen.getByRole('button', { name: 'Actions for Internal Dashboard' }));
+		await user.click(
+			await screen.findByRole('menuitem', { name: 'Disable Internal Dashboard' }),
+		);
+
+		const dialog = await screen.findByRole('dialog', { name: 'Disable OAuth Client?' });
+		await user.click(within(dialog).getByRole('button', { name: 'Disable' }));
+
+		expect(await screen.findByText('OAuth client disabled')).toBeInTheDocument();
+		// The row leaves the Active segment for the Disabled one — reversibly.
+		expect(await screen.findByRole('button', { name: 'Disabled 2' })).toBeInTheDocument();
+	});
+
+	it('hard-deletes a client: type-to-confirm gates the verb, then the row is gone for good', async () => {
+		const user = userEvent.setup();
+		renderSettingsPage();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(screen.getByRole('button', { name: 'Actions for Internal Dashboard' }));
+		await user.click(
+			await screen.findByRole('menuitem', { name: 'Delete Internal Dashboard' }),
+		);
+
+		// The GitHub-pattern friction gate: the danger button stays disabled
+		// until the user types the confirm word.
+		const dialog = await screen.findByRole('dialog', { name: 'Delete OAuth client' });
+		const confirmBtn = within(dialog).getByRole('button', { name: /Delete client/ });
+		expect(confirmBtn).toBeDisabled();
+		await user.type(within(dialog).getByLabelText(/Type/), 'delete');
+		expect(confirmBtn).toBeEnabled();
+
+		// The opened type-to-confirm dialog passes axe (body portal).
+		await settleHeader();
+		await checkA11y(document.body);
+
+		await user.click(confirmBtn);
+		expect(await screen.findByText('Internal Dashboard deleted')).toBeInTheDocument();
+
+		// Terminal: the row is gone from EVERY segment, not parked under
+		// Disabled — and the store's grants were revoked with it. The roster
+		// refetch after the invalidation is async, so poll the disappearance.
+		await expect.poll(() => screen.queryByText('Internal Dashboard')).toBeNull();
+		expect(await screen.findByRole('button', { name: 'All 3' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Disabled 1' })).toBeInTheDocument();
+	});
+
+	it('renders a failed delete inline in the dialog (no toast) and keeps it open for retry', async () => {
+		const user = userEvent.setup();
+		// The backend refuses (e.g. a conflicting concurrent decision) — the
+		// dialog must surface the error inline and stay open; the row survives.
+		worker.use(
+			http.post('/admin/oauth-clients/:id\\:delete', () =>
+				HttpResponse.json(
+					{ title: 'Conflict', detail: 'client has a decision in flight' },
+					{ status: 409 },
+				),
+			),
+		);
+		renderSettingsPage();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(screen.getByRole('button', { name: 'Actions for Internal Dashboard' }));
+		await user.click(
+			await screen.findByRole('menuitem', { name: 'Delete Internal Dashboard' }),
+		);
+
+		const dialog = await screen.findByRole('dialog', { name: 'Delete OAuth client' });
+		await user.type(within(dialog).getByLabelText(/Type/), 'delete');
+		await user.click(within(dialog).getByRole('button', { name: /Delete client/ }));
+
+		// One error surface: inline in the dialog (post-attempt), never a toast.
+		expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
+		expect(screen.getByRole('dialog', { name: 'Delete OAuth client' })).toBeInTheDocument();
+		expect(screen.queryByText('Internal Dashboard deleted')).not.toBeInTheDocument();
+
+		// The row is untouched — closing the dialog lands back on the intact roster.
+		await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+		expect(await screen.findByText('Internal Dashboard')).toBeInTheDocument();
+	});
+
+	it('deletes from the detail sheet danger zone and closes the sheet (its row is gone)', async () => {
+		const user = userEvent.setup();
+		renderSettingsPage();
+		await screen.findByText('Internal Dashboard');
+
+		await user.click(
+			screen.getByRole('button', { name: 'View details for Internal Dashboard' }),
+		);
+		const sheet = await screen.findByTestId('sheet-primitive');
+		await user.click(within(sheet).getByRole('button', { name: 'Delete Internal Dashboard' }));
+
+		const dialog = await screen.findByRole('dialog', { name: 'Delete OAuth client' });
+		await user.type(within(dialog).getByLabelText(/Type/), 'delete');
+		await user.click(within(dialog).getByRole('button', { name: /Delete client/ }));
+
+		expect(await screen.findByText('Internal Dashboard deleted')).toBeInTheDocument();
+		// The sheet must not stay open on a row that now 404s.
+		await expect.poll(() => screen.queryByTestId('sheet-primitive')).toBeNull();
 	});
 
 	it('revoke honours can_revoke: enabled kill switch vs. disabled with explanation', async () => {
