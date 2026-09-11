@@ -8,9 +8,9 @@ import {
 
 /**
  * Toolkits (real backend). Covers the list empty-state, create-via-UI, detail
- * navigation, and the one-time API key reveal. Verified live: POST /toolkits ->
- * 201 (auto-mints one key), and the detail page exposes key creation under
- * /toolkits/{id}/keys.
+ * navigation, and the keys-retirement surface. Verified live: POST /toolkits ->
+ * 201 (mints NO key — issuance retired, theme 5 phase 4), and the detail
+ * page's Keys tab shows the retirement notice with no create affordance.
  */
 test('toolkits list renders the empty state on a clean backend', async ({ page }) => {
 	const errors = captureConsoleErrors(page);
@@ -39,9 +39,10 @@ test('create a toolkit via the UI and see it in the list', async ({ page }) => {
 	await page.getByLabel('Name').fill(name);
 	await page.getByRole('button', { name: /^create$/i }).click();
 
-	// The dialog reveals the real one-time key (real POST /toolkits -> 201);
-	// dismiss it via the hand-off CTA, then return to the list.
-	await expect(page.getByText(/jntc_live_/).first()).toBeVisible();
+	// The dialog confirms creation with no key reveal (real POST /toolkits ->
+	// 201, issuance retired); dismiss via the hand-off CTA, back to the list.
+	await expect(page.getByText(/is ready/i)).toBeVisible();
+	await expect(page.getByText(/jntc_live_/)).toHaveCount(0);
 	await page.getByRole('button', { name: /open toolkit/i }).click();
 	await expect(page.getByRole('heading', { name })).toBeVisible();
 	await page.getByRole('link', { name: /all toolkits/i }).click();
@@ -50,7 +51,7 @@ test('create a toolkit via the UI and see it in the list', async ({ page }) => {
 	await expect(page.getByText(name)).toBeVisible();
 });
 
-test('open a toolkit detail page and create an API key (one-time reveal)', async ({
+test('toolkit detail Keys tab shows the retirement notice, no create affordance', async ({
 	page,
 	request,
 }) => {
@@ -61,15 +62,12 @@ test('open a toolkit detail page and create an API key (one-time reveal)', async
 	await page.goto(`/app/toolkits/${toolkitId}`);
 	await expect(page.getByRole('heading', { name })).toBeVisible();
 
-	// Create a key on the Keys tab — the freshly-minted plaintext is revealed
-	// exactly once.
+	// Key issuance is retired: the Keys tab points at service accounts and
+	// offers no create/generate affordance (POST …/keys → 410 server-side).
 	await page.getByRole('tab', { name: 'Keys' }).click();
-	await page.getByRole('button', { name: /create key/i }).click();
-	await page.getByRole('button', { name: /^generate$/i }).click();
-
-	await expect(page.getByText(/New API Key Created/i)).toBeVisible();
-	// Real keys are prefixed jntc_…; assert the shape rather than a fixed value.
-	await expect(page.getByText(/jntc_/)).toBeVisible();
+	await expect(page.getByTestId('toolkit-keys-retired-notice')).toBeVisible();
+	await expect(page.getByRole('button', { name: /create key/i })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^generate$/i })).toHaveCount(0);
 });
 
 test('bind a credential with full access, then edit rules and dry-run against the real broker', async ({

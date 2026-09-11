@@ -157,7 +157,7 @@ class ClaimActorNotAllowedError(AuthServiceError):
     """Raised when a non-user actor tries to claim agent ownership.
 
     ``Agent.owner_id`` is a FK to ``users.id``, so only a human user can own an
-    agent. An authenticated agent/service-account/toolkit presenting the claim
+    agent. An authenticated agent/service-account presenting the claim
     token is rejected here rather than being allowed to write a non-user id into
     the users-FK column (which would fail as an unhandled integrity error).
     """

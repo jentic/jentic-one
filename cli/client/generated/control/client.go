@@ -5477,7 +5477,7 @@ type ClientInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -5502,7 +5502,7 @@ type ClientInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -8708,7 +8708,7 @@ func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ..
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -8743,7 +8743,7 @@ func (c *Client) ClaimAgentWithBody(ctx context.Context, agentId string, content
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -23311,7 +23311,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -23336,7 +23336,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -42235,7 +42235,7 @@ func (c *ClientWithResponses) ApproveAgentWithResponse(ctx context.Context, agen
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -42266,7 +42266,7 @@ func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
