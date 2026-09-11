@@ -389,6 +389,14 @@ class AgentService:
         return AgentView.model_validate(agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:
+        # #1233 (disable arm, DECIDED): disable does NOT sweep oauth_client_grants.
+        # Disable is a reversible kill-switch — the enforcement layer already
+        # fail-closes everything while disabled (resolvers gate on status,
+        # refresh re-checks per rotation), so the grants stay DORMANT and
+        # re-enable restores the standing consent without a new consent round
+        # (the GitHub app-suspension model). The honesty half of #1233 is
+        # fixed at the listing layer instead: counts exclude and listings
+        # annotate grants whose agent is non-active.
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.DISABLE)
             await AgentRepository.update_status(session, agent_id, ActorStatus.DISABLED)
@@ -432,8 +440,8 @@ class AgentService:
             # Sweep them in the archive's own transaction, reusing the G10
             # per-agent revocation body (row flip + token sweep + audit +
             # event) with an archive stamp. `disable` deliberately does NOT
-            # sweep: it is reversible, and whether re-enable should require
-            # fresh consent is an open policy question (#1233).
+            # sweep (#1233, decided): it is reversible, grants stay dormant
+            # and re-enable restores the standing consent — see disable().
             await revoke_active_grants_for_agent(
                 session,
                 agent_id,

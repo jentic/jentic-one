@@ -28,6 +28,15 @@ class OAuthGrantAdminResponse(BaseModel):
         "consenter (it is their consent, not the agent's)."
     )
     agent_id: str = Field(description="The agent this grant binds the client to.")
+    agent_status: str | None = Field(
+        default=None,
+        description="Lifecycle state of the bound agent (`active`, `disabled`, "
+        "`archived`, …). A grant on a non-active agent is dormant: the row "
+        "stays `active` (disable is reversible — re-enable restores the "
+        "standing consent without a new consent round) but no token resolves "
+        "while the agent is non-active. Lets listings tell a working "
+        "connection from a dormant one (#1233).",
+    )
     scopes: list[str] = Field(description="Scopes granted at consent (the D2 intersection).")
     status: str = Field(description="Grant lifecycle state: ``active`` or ``revoked``.")
     created_at: datetime
