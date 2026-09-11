@@ -29,7 +29,10 @@ from jentic_one.auth.services.errors import (
     ToolkitBindingConflictError,
     ToolkitBindingNotFoundError,
 )
-from jentic_one.auth.services.oauth_grant_service import revoke_active_grants_for_agent
+from jentic_one.auth.services.oauth_grant_service import (
+    AGENT_ARCHIVE_REVOCATION_REASON,
+    revoke_active_grants_for_agent,
+)
 from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
@@ -423,6 +426,23 @@ class AgentService:
             await AgentRepository.archive(session, agent_id)
             await ActorScopeGrantRepository.revoke_all(session, agent_id)
             await AgentToolkitBindingRepository.delete_for_agent(session, agent_id)
+            # #1233 (archive arm): archive is terminal — the status enum has
+            # no exit — so any consent grant left `active` would misreport
+            # every "active grants" listing/count on a dead agent forever.
+            # Sweep them in the archive's own transaction, reusing the G10
+            # per-agent revocation body (row flip + token sweep + audit +
+            # event) with an archive stamp. `disable` deliberately does NOT
+            # sweep: it is reversible, and whether re-enable should require
+            # fresh consent is an open policy question (#1233).
+            await revoke_active_grants_for_agent(
+                session,
+                agent_id,
+                identity=identity,
+                audit_reason="oauth grant revoked: agent archived",
+                event_reason=AGENT_ARCHIVE_REVOCATION_REASON,
+                summary_cause="was archived",
+                log_event="oauth_grants_revoked_on_agent_archive",
+            )
             await record_audit(
                 session,
                 action=AuditAction.ARCHIVE,
