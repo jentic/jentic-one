@@ -233,6 +233,20 @@ def test_resource_templates_stay_empty() -> None:
         assert resp.json()["result"]["resourceTemplates"] == []
 
 
+def test_listing_cursor_is_accepted_and_ignored() -> None:
+    """Pagination params are accepted and ignored (the served set is small by
+    design): a listing with a cursor still returns the full set, and no
+    ``nextCursor`` is ever emitted — exactly the Go server's posture."""
+    with make_client() as client:
+        resp = client.post(
+            "/mcp", json=_rpc("resources/list", {"cursor": "opaque-cursor"}), headers=_ACCEPT
+        )
+        assert resp.status_code == 200
+        result = resp.json()["result"]
+        assert {r["uri"] for r in result["resources"]} == _SERVED_URIS
+        assert "nextCursor" not in result
+
+
 def test_index_never_enters_the_shipped_set() -> None:
     """``skill://index`` is minted by the resources module, never shipped as a
     document: ``read_skill_resource`` matches ``SKILL_INDEX_URI`` before the
@@ -451,6 +465,19 @@ def test_probe_battery_answers_resource_not_found_pre_and_post_auth(uri: str) ->
         assert anon.json()["error"]["code"] == RESOURCE_NOT_FOUND
         assert authed.status_code == 200
         assert anon.content == authed.content
+
+
+@pytest.mark.parametrize("uri", _PROBES)
+def test_probe_battery_stays_in_band_under_oauth(uri: str) -> None:
+    """The OAuth arm must not convert a hostile pre-auth read into the 401
+    discovery challenge: ``resources/read`` rides the pre-auth whitelist, so
+    the refusal stays the in-band JSON-RPC -32002 (HTTP 200) with
+    ``server.mcp.oauth.enabled`` on, exactly as on the oauth-off arm."""
+    with make_client(oauth_enabled=True) as client:
+        resp = client.post("/mcp", json=_rpc("resources/read", {"uri": uri}), headers=_ACCEPT)
+        assert resp.status_code != 401, uri
+        assert resp.status_code == 200, uri
+        assert resp.json()["error"]["code"] == RESOURCE_NOT_FOUND
 
 
 def test_every_listed_resource_reads_identically_pre_and_post_auth() -> None:
