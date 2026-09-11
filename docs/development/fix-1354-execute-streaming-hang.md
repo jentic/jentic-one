@@ -84,8 +84,23 @@ which is now excluded.
   idle fd / directory / nil.
 - `go build ./...`, `go vet`, package tests, arch and golden suites all pass.
 
+## The `jentic api` sibling
+
+`resolveAPIBody` in `cli/internal/cli/api/api.go` carried the *identical*
+`!term.IsTerminal(os.Stdin.Fd())` + `io.ReadAll` pattern — its comment even says
+it "mirrors execute's body contract" — so a body-less `jentic api <method>
+<path>` would hang the same way on an idle non-TTY stdin. The same
+explicit/implicit split (reusing `stdinHasPipedBody`) is applied there, so both
+body-taking commands are fixed together. (Caught in review of PR #1361.)
+
 ## Files
 
 - `cli/internal/cli/api/execute.go` — split the stdin cases; add
   `stdinHasPipedBody`; drop the now-unused `term` import.
-- `cli/internal/cli/api/execute_test.go` — `TestStdinHasPipedBody`.
+- `cli/internal/cli/api/api.go` — same split in `resolveAPIBody`; drop the
+  now-unused `term` import.
+- `cli/internal/cli/api/execute_test.go` — `TestStdinHasPipedBody` (classifier)
+  plus `TestResolveAPIBody_IdleNonTTYStdinDoesNotHang` and
+  `TestResolveAPIBody_PipedStdinIsRead`, which drive body resolution end to end
+  under a timeout guard: an idle char device (`/dev/null`) returns no body
+  without reading, and a real piped body is still read.
