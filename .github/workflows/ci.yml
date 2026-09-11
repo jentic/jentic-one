@@ -105,6 +105,13 @@ jobs:
               - 'openapi/control/**'
               - 'openapi/broker/**'
               - 'config/config-schema.json'
+              # TestMCPToolSurfaceSpec pins the MCP tool-surface contract
+              # (incl. lane_overrides) from toolSpecs() into this document. A
+              # hand-edit to the pin that keeps the Python side consistent
+              # (byte-identical packaged copy + honest prose) would otherwise
+              # merge green and only fail the Go pin test post-merge on main
+              # (the same class of hole as the openapi/** entries above).
+              - 'docs/reference/mcp-tools.json'
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'
