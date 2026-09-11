@@ -15,6 +15,7 @@ import {
 	AgentsService,
 	AuditService,
 	AuditTargetType,
+	CredentialsService,
 	EventsService,
 	ExecutionsService,
 	GroupBy,
@@ -26,17 +27,24 @@ import {
 	ToolkitsService,
 	type AgentResponse,
 	type AuditResponse,
+	type CredentialBindingResponse,
 	type EventResponse,
 	type OAuthGrantResponse,
+	type PermissionRuleReadSchema,
+	type PermissionRuleSchema,
+	type PermissionTestRequest,
+	type PermissionTestResponse,
 	type ServiceAccountResponse,
 } from '@/shared/api';
 import {
 	agentToEntity,
 	serviceAccountToEntity,
+	type AgentBindableCredential,
 	type AgentEntity,
 	type ApiKeyHistoryEntry,
 	type ApiKeyInfoEntity,
 	type ApiKeyResult,
+	type CredentialBindingEntity,
 	type InstanceIdentityEntity,
 	type LinkableToolkit,
 	type McpLastSeen,
@@ -270,6 +278,203 @@ export async function unbindToolkitFromAgent(agentId: string, toolkitId: string)
 		await AgentsService.unbindToolkit({ agentId, toolkitId });
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to unbind the toolkit.');
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Direct agent↔credential bindings (theme 5 phase 5a).
+//
+// The toolkit-less binding path: `GET/POST /agents/{id}/credentials` +
+// suspend/purge/resume, with per-binding permission rules living on the
+// credential-side `/credentials/{cid}/agents/{aid}/permissions` surface.
+// ---------------------------------------------------------------------------
+
+function bindingToEntity(r: CredentialBindingResponse): CredentialBindingEntity {
+	return {
+		id: r.id,
+		credentialId: r.credential_id,
+		name: r.name ?? null,
+		suspended: r.suspended,
+		ruleSetId: r.rule_set_id ?? null,
+		boundAt: r.bound_at,
+		serves: (r.serves ?? []).map((s) => ({
+			vendor: s.api_vendor,
+			name: s.api_name ?? null,
+			version: s.api_version ?? null,
+		})),
+	};
+}
+
+/** The agent's direct credential bindings (`GET /agents/{id}/credentials`),
+ * suspended rows included with their flag set. */
+export async function listAgentCredentialBindings(
+	agentId: string,
+): Promise<CredentialBindingEntity[]> {
+	try {
+		const res = await AgentsService.listAgentCredentials({ agentId });
+		return res.data.map(bindingToEntity);
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load bound credentials.');
+	}
+}
+
+/**
+ * Bind a credential directly to an agent, with the operator's chosen initial
+ * grant.
+ *
+ * The phase-1 bind body carries ONLY `credential_id` — unlike the toolkit
+ * bind, there is no inline `allow_all`/`permissions` field — so the "decide
+ * the grant at bind time" wizard composes two calls: the bind, then a rules
+ * PUT on the fresh binding. The seam between them is fail-CLOSED: a binding
+ * with zero rules default-denies everything, so if the PUT fails the agent
+ * has gained no access — we surface an honest "bound but blocked" error and
+ * the Access card's zero-rules warning points at the repair (edit rules).
+ * `rules === null` is the deliberate "start blocked" mode (bind only).
+ */
+export async function bindCredentialToAgent(
+	agentId: string,
+	credentialId: string,
+	rules: PermissionRuleSchema[] | null,
+): Promise<CredentialBindingEntity> {
+	let binding: CredentialBindingEntity;
+	try {
+		binding = bindingToEntity(
+			await AgentsService.bindAgentCredential({
+				agentId,
+				requestBody: { credential_id: credentialId },
+			}),
+		);
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to bind the credential.');
+	}
+	if (rules != null && rules.length > 0) {
+		try {
+			await CredentialsService.replaceAgentCredentialPermissions({
+				credentialId,
+				agentId,
+				requestBody: rules,
+			});
+		} catch (error) {
+			throw toAgentsError(
+				error,
+				'The credential was bound, but saving its rules failed — the binding starts blocked (default deny). Edit its rules to grant access.',
+			);
+		}
+	}
+	return binding;
+}
+
+/**
+ * Unbind a credential from an agent. Default (`purge: false`) is a reversible
+ * SUSPEND — the binding row and its permission rules survive and `:resume`
+ * restores access. `purge: true` deletes the binding (and its rules) outright.
+ */
+export async function unbindCredentialFromAgent(
+	agentId: string,
+	credentialId: string,
+	purge: boolean,
+): Promise<void> {
+	try {
+		await AgentsService.unbindAgentCredential({ agentId, credentialId, purge });
+	} catch (error) {
+		throw toAgentsError(
+			error,
+			purge ? 'Failed to unbind the credential.' : 'Failed to suspend the binding.',
+		);
+	}
+}
+
+/** Lift a suspended binding (`POST …/credentials/{id}:resume`). */
+export async function resumeAgentCredentialBinding(
+	agentId: string,
+	credentialId: string,
+): Promise<CredentialBindingEntity> {
+	try {
+		return bindingToEntity(
+			await AgentsService.resumeAgentCredentialBinding({ agentId, credentialId }),
+		);
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to resume the binding.');
+	}
+}
+
+/**
+ * Candidate credentials for the agent-side "Bind credential" picker — the
+ * direct-binding mirror of `listLinkableToolkits`. Reads the org-wide
+ * `GET /credentials` surface through the shared API (the agents module must
+ * not import the credentials page module) and projects to the minimal picker
+ * shape, matching the toolkit bind picker's projection field-for-field.
+ */
+export async function listBindableCredentialsForAgent(): Promise<AgentBindableCredential[]> {
+	try {
+		const res = await CredentialsService.listCredentials({ limit: 100 });
+		return res.data.map((c) => ({
+			credential_id: c.credential_id,
+			name: c.name,
+			type: c.type,
+			vendor: c.api?.vendor ?? null,
+			apiName: c.api?.name ?? null,
+			catalogApiId: c.catalog_api_id ?? null,
+			provider: c.provider ?? null,
+		}));
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load credentials.');
+	}
+}
+
+/** The ordered PBAC rules on one direct binding
+ * (`GET /credentials/{cid}/agents/{aid}/permissions`). */
+export async function listAgentBindingPermissions(
+	agentId: string,
+	credentialId: string,
+): Promise<PermissionRuleReadSchema[]> {
+	try {
+		const res = await CredentialsService.listAgentCredentialPermissions({
+			credentialId,
+			agentId,
+		});
+		return res.data;
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load permission rules.');
+	}
+}
+
+/** Replace the full rule set on one direct binding (idempotent PUT). */
+export async function replaceAgentBindingPermissions(
+	agentId: string,
+	credentialId: string,
+	rules: PermissionRuleSchema[],
+): Promise<PermissionRuleReadSchema[]> {
+	try {
+		const res = await CredentialsService.replaceAgentCredentialPermissions({
+			credentialId,
+			agentId,
+			requestBody: rules,
+		});
+		return res.data;
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to save permission rules.');
+	}
+}
+
+/**
+ * Broker dry-run against one direct binding's SAVED rules
+ * (`POST …/permissions:test`). Unlike the toolkit `:test` there is no vendor
+ * pooling — the verdict is exactly this binding's first-match-wins policy.
+ */
+export async function testAgentBindingPermissions(
+	agentId: string,
+	credentialId: string,
+	body: PermissionTestRequest,
+): Promise<PermissionTestResponse> {
+	try {
+		return await CredentialsService.testAgentCredentialPermissions({
+			credentialId,
+			agentId,
+			requestBody: body,
+		});
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to run the permission test.');
 	}
 }
 

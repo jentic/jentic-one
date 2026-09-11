@@ -81,6 +81,7 @@ import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPa
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
 import { BoundToolkitsCard } from '@/modules/agents/components/detail/BoundToolkitsCard';
+import { BoundCredentialsCard } from '@/modules/agents/components/detail/BoundCredentialsCard';
 import { McpPanel } from '@/modules/agents/components/detail/McpPanel';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
@@ -403,6 +404,9 @@ export default function AgentDetailPage() {
 
 				{activeTab === 'access' && (
 					<>
+						{/* Direct credential bindings (theme 5 phase 5a) — what this
+						    agent may call, first: the tab's primary capability story. */}
+						<BoundCredentialsCard agentId={agent.id} agentStatus={agent.status} />
 						{/* Scopes — platform permissions granted to this agent (#615). */}
 						<ScopesCard actorKind="agent" actorId={agent.id} actorName={agent.name} />
 						{/* Pending access requests this agent has filed (#619). */}

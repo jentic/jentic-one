@@ -10,7 +10,12 @@
  * `actor_id`/`actor_type`, only these adapters change — hooks/views are
  * unaffected.
  */
-import type { AgentResponse, ServiceAccountResponse } from '@/shared/api';
+import type {
+	AgentResponse,
+	PermissionRuleReadSchema,
+	PermissionTestResponse,
+	ServiceAccountResponse,
+} from '@/shared/api';
 import {
 	ACTOR_STATUSES,
 	STATUS_BADGE_VARIANT,
@@ -148,6 +153,71 @@ export interface ToolkitBindingEntity {
 	toolkitId: string;
 	boundAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Direct agent↔credential bindings (theme 5 phase 5a — the toolkit-less path).
+//
+// These shapes mirror the phase-1 web contract (`CredentialBindingResponse`,
+// `CredentialBindRequest`, the `/credentials/{cid}/agents/{aid}/permissions`
+// rule surface) adapted into the module's camelCase entity envelopes, exactly
+// like `ToolkitBindingEntity` above.
+// ---------------------------------------------------------------------------
+
+/** One API a bound credential serves (`ServedApiRef`): name/version may be
+ * null — the "covers all names/versions" wildcard (#775). */
+export interface ServedApiEntity {
+	vendor: string;
+	name: string | null;
+	version: string | null;
+}
+
+/** One direct agent↔credential binding (`GET /agents/{id}/credentials`). */
+export interface CredentialBindingEntity {
+	id: string;
+	credentialId: string;
+	/** The credential's human name (control-DB enrichment; null when the
+	 * credential row is unreachable — the UI falls back to the id). */
+	name: string | null;
+	/** True when the binding is soft-suspended (reversible cut-off): the row
+	 * and its rules survive, but the broker excludes it until resumed. */
+	suspended: boolean;
+	/** Shared rule set this binding points at; null = inline rules apply.
+	 * Read-only here — rule-set management is out of scope for this phase. */
+	ruleSetId: string | null;
+	boundAt: string;
+	serves: ServedApiEntity[];
+}
+
+/**
+ * A candidate credential for the agent-side "Bind credential" picker — the
+ * direct-binding mirror of the toolkit bind picker's projection. Sourced from
+ * the org-wide `GET /credentials` surface via the repository tier (the agents
+ * module cannot import the credentials page module; the shared credential
+ * tier's generated service is reached through `api/client.ts` only).
+ */
+export interface AgentBindableCredential {
+	credential_id: string;
+	name: string;
+	type: string;
+	vendor: string | null;
+	/** The API's `name` segment (sub-API path), for deriving a friendly title. */
+	apiName: string | null;
+	/** Catalog identity slug (`domain[/sub-api]`), when recorded — the
+	 * preferred friendly-title source. */
+	catalogApiId: string | null;
+	provider: string | null;
+}
+
+/** A stored permission rule on a direct binding (includes system fields). */
+export type BindingPermissionRule = PermissionRuleReadSchema;
+
+/** Broker dry-run verdict from the direct-binding `:test` — NO vendor
+ * pooling, so `rule_index` always points into this binding's own rule list. */
+export type BindingPermissionTestResult = PermissionTestResponse;
+
+/** Write shape for a permission rule (allow/deny + methods/path/operations) —
+ * the same shared editor input type every rule-authoring surface uses. */
+export type { PermissionRuleInput } from '@/shared/ui';
 
 /**
  * A candidate toolkit for the agent-side "Bind toolkit" picker (#607). A small

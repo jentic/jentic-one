@@ -285,3 +285,15 @@ export type { IdpDescriptor } from '@/shared/api/idp';
 export { OAuthService } from '@/shared/api/generated/services/OAuthService';
 export type { OAuthGrantResponse } from '@/shared/api/generated/models/OAuthGrantResponse';
 export type { OAuthGrantListResponse } from '@/shared/api/generated/models/OAuthGrantListResponse';
+
+// Direct agent↔credential bindings (theme 5 phase 1). The agent-side surface
+// (list/bind/unbind/resume) lives on `AgentsService`; the credential-side
+// reverse lookup and per-binding rule list / replace / dry-run live on
+// `CredentialsService` (both services already exported above) — only the
+// request/response models are added here. Append-only, like the rest.
+export type { CredentialBindRequest } from '@/shared/api/generated/models/CredentialBindRequest';
+export type { CredentialBindingResponse } from '@/shared/api/generated/models/CredentialBindingResponse';
+export type { CredentialBindingListResponse } from '@/shared/api/generated/models/CredentialBindingListResponse';
+export type { CredentialAgentResponse } from '@/shared/api/generated/models/CredentialAgentResponse';
+export type { CredentialAgentListResponse } from '@/shared/api/generated/models/CredentialAgentListResponse';
+export type { ServedApiRef } from '@/shared/api/generated/models/ServedApiRef';
