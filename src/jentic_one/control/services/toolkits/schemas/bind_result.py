@@ -47,12 +47,11 @@ class BindResult:
 class ToolkitCreateResult:
     """Return value of ``ToolkitService.create``.
 
-    Carries the toolkit + issued plaintext key, and any bind-time
-    warnings emitted for inline-bound ``credential_ids`` (issue #750
-    review — the same discoverability gap applies when a bind happens
-    during create).
+    Carries the toolkit and any bind-time warnings emitted for inline-bound
+    ``credential_ids`` (issue #750 review — the same discoverability gap
+    applies when a bind happens during create). No key: toolkit keys are
+    retired (theme-5 Phase 4 / #1152).
     """
 
     toolkit: Toolkit
-    plaintext_key: str
     warnings: tuple[BindingWarning, ...] = field(default_factory=tuple)

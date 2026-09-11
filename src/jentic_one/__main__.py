@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import json
 import os
 import sys
+from dataclasses import asdict
 from getpass import getpass
 
 import structlog
@@ -21,6 +23,7 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
+from jentic_one.control.services.toolkits.key_retirement import KeyRetirementService
 from jentic_one.shared.config import AppConfig, load_config
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
@@ -281,6 +284,48 @@ async def _reset_password(
     return 0
 
 
+async def _retire_toolkit_keys(*, owner_email: str | None) -> int:
+    """Run the theme-5 Phase 4 toolkit-key retirement job.
+
+    Converts every resolvable ``jntc_live_`` key into a service account
+    carrying exactly ``capabilities:execute``; the unchanged plaintext keeps
+    authenticating as that account. One JSONL report line per key goes to
+    stdout. Idempotent — safe to re-run after a partial failure.
+    """
+    config = load_config()
+    configure_logging(config)
+
+    async with Context(config, allowed_dbs={"admin", "control"}) as ctx:
+        svc = KeyRetirementService(ctx)
+        try:
+            outcomes = await svc.run(fallback_owner_email=owner_email)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+
+    for outcome in outcomes:
+        print(json.dumps(asdict(outcome)), flush=True)
+
+    migrated = sum(1 for o in outcomes if o.action == "migrated")
+    skipped = [o for o in outcomes if o.action == "skipped"]
+    print(
+        f"==> {migrated} key(s) migrated, "
+        f"{sum(1 for o in outcomes if o.action == 'already_migrated')} already migrated, "
+        f"{len(skipped)} skipped.",
+        file=sys.stderr,
+        flush=True,
+    )
+    if any(o.reason == "owner_unresolved" for o in skipped):
+        print(
+            "==> Some keys have no resolvable owner; re-run with "
+            "--owner <admin-email> to assign them.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 3
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Dispatch CLI subcommands. With no subcommand, run the server."""
     parser = argparse.ArgumentParser(prog="jentic_one", description="jentic-one service CLI.")
@@ -310,6 +355,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Temporary password (prompted, or read from stdin when non-interactive, if omitted).",
     )
 
+    retire_keys = sub.add_parser(
+        "retire-toolkit-keys",
+        help=("Migrate jntc_live_ toolkit keys to service accounts (theme-5 Phase 4; idempotent)."),
+    )
+    retire_keys.add_argument(
+        "--owner",
+        help=(
+            "Email of the user to own service accounts whose toolkit key has "
+            "no resolvable creator (such keys are skipped and reported otherwise)."
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "create-admin":
@@ -329,6 +386,9 @@ def main(argv: list[str] | None = None) -> int:
                 password=args.password,
             )
         )
+
+    if args.command == "retire-toolkit-keys":
+        return asyncio.run(_retire_toolkit_keys(owner_email=args.owner))
 
     _serve()
     return 0

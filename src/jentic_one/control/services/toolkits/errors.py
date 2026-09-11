@@ -120,3 +120,20 @@ class ToolkitLevelPermissionsUnsupportedError(ToolkitServiceError):
             "PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions "
             "or inline on the bind request"
         )
+
+
+class ToolkitKeysRetiredError(ToolkitServiceError):
+    """Raised when a caller tries to issue a new ``jntc_live_`` toolkit key.
+
+    Toolkit keys are retired (theme-5 Phase 4): existing keys keep
+    authenticating as the service accounts the retirement job created, but
+    no new key is ever minted. The remediation names the surviving route —
+    register a service account and use its ``sak_`` key (U-03 invariant:
+    every denial points somewhere that still exists).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Toolkit keys are retired; register a service account and use its "
+            "sak_ API key instead (POST /service-accounts)"
+        )
