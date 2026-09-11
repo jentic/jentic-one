@@ -165,10 +165,12 @@ func TestClassifyTokenError_PendingShapes(t *testing.T) {
 
 // TestClassifyTokenError_Rfc6749DistinctCodes pins the #1252 backend dialect:
 // the token endpoint now names conditions with their proper RFC 6749 §5.2 /
-// RFC 8628 codes (invalid_client, unsupported_grant_type, slow_down) instead
-// of a blanket invalid_grant. None of these are a pending approval — they
-// must classify as hard errors carrying the code AND the description, so the
-// register wait loop never polls a condition that can't clear.
+// RFC 8628 codes (invalid_request, invalid_client, unsupported_grant_type,
+// slow_down) instead of a blanket invalid_grant — including the §5.2 401 arm
+// for a client whose HTTP-Basic authentication failed. None of these are a
+// pending approval — they must classify as hard errors carrying the code AND
+// the description, so the register wait loop never polls a condition that
+// can't clear.
 func TestClassifyTokenError_Rfc6749DistinctCodes(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -178,8 +180,24 @@ func TestClassifyTokenError_Rfc6749DistinctCodes(t *testing.T) {
 		desc   string
 	}{
 		{
+			name:   "invalid_request",
+			status: http.StatusBadRequest,
+			body:   `{"error":"invalid_request","error_description":"request body is required"}`,
+			code:   "invalid_request",
+			desc:   "request body is required",
+		},
+		{
 			name:   "invalid_client",
 			status: http.StatusBadRequest,
+			body:   `{"error":"invalid_client","error_description":"client authentication failed"}`,
+			code:   "invalid_client",
+			desc:   "client authentication failed",
+		},
+		{
+			// §5.2: failed HTTP-Basic client authentication answers 401
+			// (+ WWW-Authenticate) with the same dialect body.
+			name:   "invalid_client_basic_401",
+			status: http.StatusUnauthorized,
 			body:   `{"error":"invalid_client","error_description":"client authentication failed"}`,
 			code:   "invalid_client",
 			desc:   "client authentication failed",

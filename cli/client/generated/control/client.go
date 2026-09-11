@@ -6698,7 +6698,10 @@ type ClientInterface interface {
 	//
 	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
 	// ``error_description``), NOT platform Problem Details — reshaped by
-	// ``_TokenRoute``. On the refresh arm, a revoked consent grant answers
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
 	// ``invalid_grant`` with ``error_description: "consent grant has been
 	// revoked"`` — terminal; restart the authorization flow.
 	//
@@ -6713,7 +6716,10 @@ type ClientInterface interface {
 	//
 	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
 	// ``error_description``), NOT platform Problem Details — reshaped by
-	// ``_TokenRoute``. On the refresh arm, a revoked consent grant answers
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
 	// ``invalid_grant`` with ``error_description: "consent grant has been
 	// revoked"`` — terminal; restart the authorization flow.
 	//
@@ -6728,7 +6734,10 @@ type ClientInterface interface {
 	//
 	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
 	// ``error_description``), NOT platform Problem Details — reshaped by
-	// ``_TokenRoute``. On the refresh arm, a revoked consent grant answers
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
 	// ``invalid_grant`` with ``error_description: "consent grant has been
 	// revoked"`` — terminal; restart the authorization flow.
 	//
@@ -10892,7 +10901,10 @@ func (c *Client) SessionContinueEndpoint(ctx context.Context, body SessionContin
 //
 // Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
 // “error_description“), NOT platform Problem Details — reshaped by
-// “_TokenRoute“. On the refresh arm, a revoked consent grant answers
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
 // “invalid_grant“ with “error_description: "consent grant has been
 // revoked"“ — terminal; restart the authorization flow.
 //
@@ -10917,7 +10929,10 @@ func (c *Client) TokenEndpointWithBody(ctx context.Context, contentType string, 
 //
 // Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
 // “error_description“), NOT platform Problem Details — reshaped by
-// “_TokenRoute“. On the refresh arm, a revoked consent grant answers
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
 // “invalid_grant“ with “error_description: "consent grant has been
 // revoked"“ — terminal; restart the authorization flow.
 //
@@ -10942,7 +10957,10 @@ func (c *Client) TokenEndpoint(ctx context.Context, body TokenEndpointJSONReques
 //
 // Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
 // “error_description“), NOT platform Problem Details — reshaped by
-// “_TokenRoute“. On the refresh arm, a revoked consent grant answers
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
 // “invalid_grant“ with “error_description: "consent grant has been
 // revoked"“ — terminal; restart the authorization flow.
 //
@@ -23423,7 +23441,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
 	// ``error_description``), NOT platform Problem Details — reshaped by
-	// ``_TokenRoute``. On the refresh arm, a revoked consent grant answers
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
 	// ``invalid_grant`` with ``error_description: "consent grant has been
 	// revoked"`` — terminal; restart the authorization flow.
 	//
@@ -23438,7 +23459,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
 	// ``error_description``), NOT platform Problem Details — reshaped by
-	// ``_TokenRoute``. On the refresh arm, a revoked consent grant answers
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
 	// ``invalid_grant`` with ``error_description: "consent grant has been
 	// revoked"`` — terminal; restart the authorization flow.
 	//
@@ -23453,7 +23477,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
 	// ``error_description``), NOT platform Problem Details — reshaped by
-	// ``_TokenRoute``. On the refresh arm, a revoked consent grant answers
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
 	// ``invalid_grant`` with ``error_description: "consent grant has been
 	// revoked"`` — terminal; restart the authorization flow.
 	//
@@ -41504,7 +41531,10 @@ func (c *ClientWithResponses) SessionContinueEndpointWithResponse(ctx context.Co
 //
 // Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
 // “error_description“), NOT platform Problem Details — reshaped by
-// “_TokenRoute“. On the refresh arm, a revoked consent grant answers
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
 // “invalid_grant“ with “error_description: "consent grant has been
 // revoked"“ — terminal; restart the authorization flow.
 //
@@ -41525,7 +41555,10 @@ func (c *ClientWithResponses) TokenEndpointWithBodyWithResponse(ctx context.Cont
 //
 // Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
 // “error_description“), NOT platform Problem Details — reshaped by
-// “_TokenRoute“. On the refresh arm, a revoked consent grant answers
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
 // “invalid_grant“ with “error_description: "consent grant has been
 // revoked"“ — terminal; restart the authorization flow.
 //
@@ -41546,7 +41579,10 @@ func (c *ClientWithResponses) TokenEndpointWithResponse(ctx context.Context, bod
 //
 // Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
 // “error_description“), NOT platform Problem Details — reshaped by
-// “_TokenRoute“. On the refresh arm, a revoked consent grant answers
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
 // “invalid_grant“ with “error_description: "consent grant has been
 // revoked"“ — terminal; restart the authorization flow.
 //

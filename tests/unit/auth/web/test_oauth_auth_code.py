@@ -241,7 +241,9 @@ def test_public_client_missing_pkce_verifier_is_rejected(
     )
 
     assert resp.status_code == 400
-    assert resp.json()["error"] == "invalid_grant"
+    # §5.2: the missing code_verifier is a malformed token request —
+    # invalid_request — rejected before any client authentication runs.
+    assert resp.json()["error"] == "invalid_request"
     mock_oauth_svc.authenticate_for_token_endpoint.assert_not_awaited()
     mock_authorize_svc.exchange_code.assert_not_awaited()
 

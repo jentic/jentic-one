@@ -13,6 +13,7 @@ regress to Problem Details (the ``_TokenRoute`` reshaping in
 
 from __future__ import annotations
 
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -133,7 +134,10 @@ def test_dependency_raised_parse_error_speaks_the_dialect_too(
 ) -> None:
     """Errors raised in the DEPENDENCY chain (``_parse_token_request``) are
     reshaped as well — the route-class wrapper sits outside dependency
-    solving, so no arm of the endpoint can leak Problem Details."""
+    solving, so no arm of the endpoint can leak Problem Details. A malformed
+    request is §5.2 ``invalid_request`` (fix and retry), never
+    ``invalid_grant`` (which would tell an RFC-compliant client to restart
+    authorization over a request-shape bug)."""
     mock_token_cls.return_value = MagicMock(access_ttl_seconds=3600)
 
     resp = client.post("/oauth/token", content=b"", headers={"content-type": "application/json"})
@@ -141,7 +145,38 @@ def test_dependency_raised_parse_error_speaks_the_dialect_too(
     assert resp.status_code == 400
     body = resp.json()
     _assert_rfc6749_shape(body)
-    assert body == {"error": "invalid_grant", "error_description": "request body is required"}
+    assert body == {"error": "invalid_request", "error_description": "request body is required"}
+
+
+@patch("jentic_one.auth.web.routers.oauth.OAuthClientService")
+@patch("jentic_one.auth.web.routers.oauth.TokenService")
+def test_basic_auth_failure_is_401_with_www_authenticate(
+    mock_token_cls: MagicMock, mock_oauth_svc_cls: MagicMock, client: TestClient
+) -> None:
+    """§5.2 MUST: failed client authentication that was ATTEMPTED via the
+    ``Authorization`` header (HTTP Basic, RFC 6749 §2.3.1) answers 401 with a
+    matching ``WWW-Authenticate`` challenge — same §5.2 dialect body as the
+    body-credential 400 arm."""
+    mock_oauth_svc = MagicMock()
+    mock_oauth_svc.verify_client_secret = AsyncMock(return_value=False)
+    mock_oauth_svc_cls.return_value = mock_oauth_svc
+    mock_token_svc = MagicMock(access_ttl_seconds=3600)
+    mock_token_svc.refresh = AsyncMock()
+    mock_token_cls.return_value = mock_token_svc
+
+    credentials = base64.b64encode(b"oc_conf_client:jcs_wrong").decode()
+    resp = client.post(
+        "/oauth/token",
+        json={"grant_type": "refresh_token", "refresh_token": "rt_any"},
+        headers={"Authorization": f"Basic {credentials}"},
+    )
+
+    assert resp.status_code == 401
+    body = resp.json()
+    _assert_rfc6749_shape(body)
+    assert body["error"] == "invalid_client"
+    assert resp.headers["WWW-Authenticate"].startswith("Basic")
+    mock_token_svc.refresh.assert_not_awaited()
 
 
 def test_rate_limited_token_request_speaks_slow_down(client: TestClient) -> None:

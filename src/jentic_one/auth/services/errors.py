@@ -51,7 +51,8 @@ class InvalidGrantError(AuthServiceError):
     ``oauth_error_code`` is the RFC 6749 §5.2 error code the token endpoint's
     dialect reshaping (``_TokenRoute`` in ``auth/web/routers/oauth.py``) emits
     as the top-level ``error`` member. It defaults to ``invalid_grant``; raise
-    sites whose condition §5.2 names differently (``invalid_client``,
+    sites whose condition §5.2 names differently (``invalid_request`` for
+    malformed/missing parameters, ``invalid_client``,
     ``unsupported_grant_type``) override it. The platform Problem Details
     handler ignores it (every subclass instance still maps to
     ``type=invalid_grant`` there).
