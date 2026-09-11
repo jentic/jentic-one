@@ -19,6 +19,7 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from jentic_one import __version__
 from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.registry.services.import_service import ImportHandler
+from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
@@ -329,6 +330,8 @@ async def _stop_catalog_update_scanner(
 def _start_connect_poll_scanner(
     ctx: Context,
     enabled_apps: set[str],
+    *,
+    catalog_auto_importer: CatalogAutoImportProtocol | None = None,
 ) -> tuple[ConnectPollScanner, asyncio.Task[None]] | None:
     """Start the connect-session polling scanner when the control surface runs it.
 
@@ -337,12 +340,19 @@ def _start_connect_poll_scanner(
     gate on the ``control`` surface being enabled + control-DB reachability
     (that's where ``connect_sessions`` lives). Broker-only processes with
     control-DB access for credential resolution do not run this scanner.
+
+    ``catalog_auto_importer`` is threaded into the ``ConnectSessionService``
+    each tick builds so a scanner-driven device-flow finalise
+    (``_finalise_connected`` → ``_maybe_import_catalog``) can enqueue the
+    vendor's OpenAPI import. Without this, the request-scoped importer on
+    ``app.state`` is invisible to the scanner and every device-flow connect
+    silently skips the auto-import.
     """
     if "control" not in enabled_apps:
         return None
     if not ctx.has_db("control"):
         return None
-    scanner = ConnectPollScanner(ctx)
+    scanner = ConnectPollScanner(ctx, catalog_auto_importer=catalog_auto_importer)
     task = asyncio.create_task(scanner.run())
     _logger.info("connect_poll_scanner_task_started")
     return scanner, task
@@ -539,7 +549,11 @@ def create_surface_app(
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
             key_retirement_task = _start_key_retirement(ctx, enabled_apps)
-            connect_poll_task = _start_connect_poll_scanner(ctx, enabled_apps)
+            connect_poll_task = _start_connect_poll_scanner(
+                ctx,
+                enabled_apps,
+                catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
+            )
             try:
                 yield
             finally:
@@ -654,7 +668,11 @@ def create_combined_app(
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
             key_retirement_task = _start_key_retirement(ctx, set(apps))
-            connect_poll_task = _start_connect_poll_scanner(ctx, set(apps))
+            connect_poll_task = _start_connect_poll_scanner(
+                ctx,
+                set(apps),
+                catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
+            )
             try:
                 yield
             finally:

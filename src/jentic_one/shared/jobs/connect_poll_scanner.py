@@ -38,6 +38,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 )
 
 if TYPE_CHECKING:
+    from jentic_one.shared.catalog import CatalogAutoImportProtocol
     from jentic_one.shared.context import Context
 
 _logger = structlog.get_logger(__name__)
@@ -54,10 +55,18 @@ class ConnectPollScanner:
         ctx: Context,
         *,
         poll_interval: float = _POLL_INTERVAL_SECONDS,
+        catalog_auto_importer: CatalogAutoImportProtocol | None = None,
     ) -> None:
         self._ctx = ctx
         self._poll_interval = poll_interval
         self._running = False
+        # Threaded into every ``ConnectSessionService`` the scanner
+        # builds so the scanner-driven device-flow finalise can
+        # enqueue the vendor's catalog import — the request-scoped
+        # ``get_connect_session_service`` reads the same value off
+        # ``app.state``, but the scanner runs outside the request
+        # scope, so we have to plumb it in explicitly.
+        self._catalog_auto_importer = catalog_auto_importer
 
     async def run(self) -> None:
         """Main loop — sweep every ``poll_interval`` seconds until cancelled.
@@ -98,7 +107,9 @@ class ConnectPollScanner:
         credential_ids = await self._due_credentials()
         if not credential_ids:
             return
-        service = ConnectSessionService(self._ctx)
+        service = ConnectSessionService(
+            self._ctx, catalog_auto_importer=self._catalog_auto_importer
+        )
         for credential_id in credential_ids:
             try:
                 await service.advance_polling_target(credential_id)
