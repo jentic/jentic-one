@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -1712,5 +1713,186 @@ func TestExecuteMalformedBrokerURLErrors(t *testing.T) {
 	}
 	if !strings.Contains(coded.Msg, "malformed broker_url") {
 		t.Errorf("error should name the malformed broker_url: %q", coded.Msg)
+	}
+}
+
+// TestStdinHasPipedBody pins the #1354 fix: the implicit stdin fallback must
+// read a body ONLY when stdin is a pipe or a non-empty regular file (a real
+// `echo … | execute` / `execute < file`), and must decline every other shape —
+// especially an open, dataless non-TTY fd (a backgrounded process or an
+// interactive agent/harness), on which io.ReadAll would block forever and hang
+// the command. That dataless-pipe case is the exact regression.
+func TestStdinHasPipedBody(t *testing.T) {
+	t.Run("nil is false", func(t *testing.T) {
+		if stdinHasPipedBody(nil) {
+			t.Error("nil stdin must not be treated as a piped body")
+		}
+	})
+
+	t.Run("non-empty regular file is true", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "body")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(`{"a":1}`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			t.Fatal(err)
+		}
+		if !stdinHasPipedBody(f) {
+			t.Error("a non-empty regular file must be read as a body")
+		}
+	})
+
+	t.Run("empty regular file is false", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "empty")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if stdinHasPipedBody(f) {
+			t.Error("an empty regular file carries no body")
+		}
+	})
+
+	t.Run("pipe with data written is true", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		if _, err := w.WriteString(`{"a":1}`); err != nil {
+			t.Fatal(err)
+		}
+		_ = w.Close()
+		if !stdinHasPipedBody(r) {
+			t.Error("a pipe (ModeNamedPipe) must be treated as a piped body")
+		}
+	})
+
+	t.Run("open dataless pipe is still a pipe (true) — but callers must not deadlock", func(t *testing.T) {
+		// A pipe reports ModeNamedPipe regardless of whether bytes are buffered
+		// yet, so the classifier returns true. That is correct: a real
+		// `producer | execute` may not have flushed by the time we Stat. The
+		// deadlock the fix prevents is the NON-pipe idle fd below.
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		defer w.Close()
+		if !stdinHasPipedBody(r) {
+			t.Error("a pipe must classify as a body source even before data is flushed")
+		}
+	})
+
+	t.Run("directory (non-regular, non-pipe) is false", func(t *testing.T) {
+		d, err := os.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		if stdinHasPipedBody(d) {
+			t.Error("a directory is not a body source")
+		}
+	})
+}
+
+// withStdin swaps os.Stdin to f for the duration of fn and restores it after.
+// The body resolvers read the global os.Stdin, so an end-to-end test must
+// redirect it rather than pass a descriptor in.
+func withStdin(t *testing.T, f *os.File, fn func()) {
+	t.Helper()
+	orig := os.Stdin
+	os.Stdin = f
+	defer func() { os.Stdin = orig }()
+	fn()
+}
+
+// runWithTimeout runs fn and fails the test if it does not return within d.
+// A regression that reads a blocking, dataless non-TTY fd would hang forever;
+// this turns that into a bounded, legible test failure instead of a stuck suite.
+func runWithTimeout(t *testing.T, d time.Duration, what string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); fn() }()
+	select {
+	case <-done:
+	case <-time.After(d):
+		t.Fatalf("%s did not return within %s — it read a blocking stdin (regression of #1354)", what, d)
+	}
+}
+
+// TestResolveAPIBody_IdleNonTTYStdinDoesNotHang drives resolveAPIBody end to
+// end (not just the classifier) against the shape #1354 reported: an idle,
+// inherited non-TTY fd that never sends EOF. /dev/null is a character device —
+// a non-pipe, non-regular fd that opens instantly and is guaranteed to have no
+// writer, standing in for the socket/pty an agent/harness inherits. Body-less
+// `jentic api` against it must return (nil, nil) WITHOUT reading, so the call
+// returns immediately rather than blocking in io.ReadAll.
+func TestResolveAPIBody_IdleNonTTYStdinDoesNotHang(t *testing.T) {
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer devnull.Close()
+
+	// Sanity: the classifier itself must reject a char device (non-pipe,
+	// non-regular), or the resolver would fall into the io.ReadAll branch.
+	if stdinHasPipedBody(devnull) {
+		t.Fatalf("%s (char device) must not classify as a piped body", os.DevNull)
+	}
+
+	var body io.Reader
+	var rerr error
+	runWithTimeout(t, 5*time.Second, "resolveAPIBody with idle non-TTY stdin", func() {
+		withStdin(t, devnull, func() {
+			body, rerr = resolveAPIBody(&apiOptions{})
+		})
+	})
+	if rerr != nil {
+		t.Fatalf("resolveAPIBody: %v", rerr)
+	}
+	if body != nil {
+		t.Errorf("body = %v, want nil (idle non-TTY stdin must not be read as a body)", body)
+	}
+}
+
+// TestResolveAPIBody_PipedStdinIsRead is the positive counterpart: a real
+// `echo … | jentic api` (a pipe carrying data) must still be read as the body,
+// so the fix does not regress the legitimate stdin path.
+func TestResolveAPIBody_PipedStdinIsRead(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	const payload = `{"piped":true}`
+	if _, err := w.WriteString(payload); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close() // EOF so io.ReadAll returns
+
+	var body io.Reader
+	var rerr error
+	runWithTimeout(t, 5*time.Second, "resolveAPIBody with piped stdin", func() {
+		withStdin(t, r, func() {
+			body, rerr = resolveAPIBody(&apiOptions{})
+		})
+	})
+	if rerr != nil {
+		t.Fatalf("resolveAPIBody: %v", rerr)
+	}
+	if body == nil {
+		t.Fatal("body = nil, want the piped payload")
+	}
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read resolved body: %v", err)
+	}
+	if string(got) != payload {
+		t.Errorf("body = %q, want %q", got, payload)
 	}
 }
