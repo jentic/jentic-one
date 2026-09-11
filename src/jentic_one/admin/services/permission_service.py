@@ -22,6 +22,7 @@ from jentic_one.admin.services.schemas.permissions import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.scopes import RETIRED_SCOPES
 
 
 class PermissionService:
@@ -132,11 +133,19 @@ class PermissionService:
         return [g.permission for g in grants]
 
     async def validate_grants(self, granter_user_id: str, permissions: list[str]) -> None:
-        """Validate that all permissions exist and the granter can grant them."""
+        """Validate that all permissions exist and the granter can grant them.
+
+        ``RETIRED_SCOPES`` members are accepted and skipped: a stored grant
+        set written before a scope retirement (theme-5 Phase 5b) must
+        re-submit unchanged without a 422. The retired string is stored
+        as-is and grants nothing — Phase 6b sweeps it.
+        """
         granter_effective = await self.get_effective_for_user(granter_user_id)
         granter_set = set(granter_effective.effective)
 
         for perm in permissions:
+            if perm in RETIRED_SCOPES:
+                continue
             if perm not in ALL_PERMISSIONS:
                 raise UnknownPermissionError(perm)
             if perm == ORG_ADMIN and ORG_ADMIN not in granter_set:

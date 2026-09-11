@@ -214,7 +214,7 @@ export interface UsageOverviewParams {
  * Real gateway aggregates via `GET /monitoring/usage` — the ONE endpoint the
  * old composed-only dashboard never called. It returns window stats (incl.
  * latency percentiles + `active_now`), sparse time buckets for the volume
- * chart, and top api/toolkit/agent rows with sparkline trends. org:admin
+ * chart, and top api/credential/agent rows with sparkline trends. org:admin
  * gated server-side; the hook layer gates the query client-side so
  * non-admins never fire a doomed request. Wraps the shared generated
  * `MonitoringService` (already consumed by Monitor) — no new wire types.

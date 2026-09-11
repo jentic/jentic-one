@@ -4,7 +4,7 @@
  *
  * The preferred input is the **catalog identity slug** (`catalog_api_id`,
  * e.g. `nytimes.com/article_search`) — persisted at import time and exposed on
- * API, credential, and toolkit-binding DTOs (#910) — because it is the only
+ * API, credential, and binding DTOs (#910) — because it is the only
  * identity form where the vendor and sub-API stay separable. Surfaces that
  * predate the column (or manually-imported APIs) fall back to humanising the
  * slugified `vendor`/`name` tuple.
@@ -234,21 +234,6 @@ export function apiRefDisplayName(input: {
 	const apiId = input.catalogApiId?.trim();
 	if (apiId) return titleFromApiId(apiId);
 	return tupleDisplayName(input.vendor ?? '', input.name ?? '');
-}
-
-/**
- * Toolkit-binding-row display name — same rule as {@link apiRefDisplayName}
- * keyed to the binding DTO's snake_case identity fields
- * (`ToolkitCredentialBindingResponse`).
- */
-export function toolkitCredDisplayName(input: {
-	catalog_api_id?: string | null;
-	api_vendor?: string | null;
-	api_name?: string | null;
-}): string {
-	const apiId = input.catalog_api_id?.trim();
-	if (apiId) return titleFromApiId(apiId);
-	return tupleDisplayName(input.api_vendor ?? '', input.api_name ?? '');
 }
 
 /**

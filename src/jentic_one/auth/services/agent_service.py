@@ -30,8 +30,6 @@ from jentic_one.auth.services.errors import (
     CredentialNotVisibleError,
     InvalidOwnerError,
     InvalidTransitionError,
-    ToolkitBindingConflictError,
-    ToolkitBindingNotFoundError,
 )
 from jentic_one.auth.services.oauth_grant_service import revoke_active_grants_for_agent
 from jentic_one.auth.services.registration_service import validate_jwks
@@ -401,6 +399,13 @@ class AgentService:
             )
 
     async def list_toolkits(self, agent_id: str, *, identity: Identity) -> list[ToolkitBindingView]:
+        """Toolkit bindings for an agent, name/serves-enriched (read-only).
+
+        The toolkit bind/unbind management routes are gone (theme-5 Phase 5b);
+        this read survives solely for ``GET /me``'s ``toolkit_bindings`` block,
+        which reports the rows the flag-off broker fallback still derives from
+        until Phase 6b retires the toolkit path.
+        """
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentToolkitBindingRepository.list_for_agent(session, agent_id)
@@ -425,68 +430,6 @@ class AgentService:
                     for vendor, name, version in served.get(view.toolkit_id, [])
                 ]
         return views
-
-    async def bind_toolkit(
-        self, agent_id: str, *, toolkit_id: str, identity: Identity
-    ) -> ToolkitBindingView:
-        await self.get_agent(agent_id, identity=identity)
-        async with self._ctx.admin_db.transaction() as session:
-            try:
-                binding = await AgentToolkitBindingRepository.bind(
-                    session, agent_id=agent_id, toolkit_id=toolkit_id, created_by=identity.sub
-                )
-            except IntegrityError:
-                raise ToolkitBindingConflictError(agent_id, toolkit_id) from None
-            await record_audit(
-                session,
-                action=AuditAction.GRANT,
-                target_type=AuditTargetType.AGENT,
-                target_id=agent_id,
-                actor_type=identity.actor_type,
-                actor_id=identity.sub,
-                target_parent_id=toolkit_id,
-                reason="bind_toolkit",
-                origin=identity.origin.value,
-            )
-            await emit_event_best_effort(
-                session,
-                type=EventType.TOOLKIT_BOUND_TO_AGENT,
-                severity=EventSeverity.INFO,
-                summary=f"Toolkit {toolkit_id} bound to agent {agent_id}",
-                created_by=identity.sub,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-            )
-        return ToolkitBindingView.model_validate(binding)
-
-    async def unbind_toolkit(self, agent_id: str, *, toolkit_id: str, identity: Identity) -> None:
-        await self.get_agent(agent_id, identity=identity)
-        async with self._ctx.admin_db.transaction() as session:
-            removed = await AgentToolkitBindingRepository.unbind(
-                session, agent_id=agent_id, toolkit_id=toolkit_id
-            )
-            if not removed:
-                raise ToolkitBindingNotFoundError(agent_id, toolkit_id)
-            await record_audit(
-                session,
-                action=AuditAction.REVOKE,
-                target_type=AuditTargetType.AGENT,
-                target_id=agent_id,
-                actor_type=identity.actor_type,
-                actor_id=identity.sub,
-                target_parent_id=toolkit_id,
-                reason="unbind_toolkit",
-                origin=identity.origin.value,
-            )
-            await emit_event_best_effort(
-                session,
-                type=EventType.TOOLKIT_UNBOUND_FROM_AGENT,
-                severity=EventSeverity.INFO,
-                summary=f"Toolkit {toolkit_id} unbound from agent {agent_id}",
-                created_by=identity.sub,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-            )
 
     def _can_see_credential(self, identity: Identity, created_by: str | None) -> bool:
         """Visibility policy for the direct bind path (theme 5 phase 1).

@@ -2,7 +2,7 @@
  * ActorsToolbar — filter + status segments + refresh for the agents /
  * service-accounts fleet table.
  *
- * Mirrors the Toolkits/Credentials toolbar treatment for cross-page parity:
+ * Mirrors the Credentials toolbar treatment for cross-page parity:
  * sticky below the fixed `h-12` TopNavbar, bleeding to the page gutter edges
  * so its backdrop-blur covers the full width, with a hairline shadow once
  * stuck (zero-height sentinel + IntersectionObserver flips `data-scrolled`).

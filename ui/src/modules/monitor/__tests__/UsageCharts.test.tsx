@@ -66,7 +66,9 @@ function makeUsage(since: number, until: number, trend: number[]): UsageResponse
 
 function renderChart(usage: UsageResponse) {
 	const rows = usageToEntityRows(usage);
-	return renderWithProviders(<UsageCharts usage={usage} apis={rows} toolkits={[]} agents={[]} />);
+	return renderWithProviders(
+		<UsageCharts usage={usage} apis={rows} credentials={[]} agents={[]} />,
+	);
 }
 
 /** The x-axis M/D sub-labels rendered under the bars (y-ticks are bare numbers). */

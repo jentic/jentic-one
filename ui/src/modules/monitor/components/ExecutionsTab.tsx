@@ -93,7 +93,6 @@ export function ExecutionsTab() {
 		status,
 		from: filters.from,
 		actorId: filters.actorId,
-		toolkitId: filters.toolkitId,
 		origin: filters.origin,
 	});
 	const pager = useCursorStack(filterKey);
@@ -101,7 +100,6 @@ export function ExecutionsTab() {
 		status,
 		from: filters.from,
 		actorId: filters.actorId,
-		toolkitId: filters.toolkitId,
 		origin: filters.origin,
 		cursor: pager.cursor,
 	});

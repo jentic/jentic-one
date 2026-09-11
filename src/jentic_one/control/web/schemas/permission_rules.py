@@ -1,18 +1,20 @@
-"""Shared base for permission-rule schemas.
+"""Permission-rule web schemas shared across authoring surfaces.
 
-Two authoring surfaces write into the same enforced table
-(``toolkit_permission_rules``): the toolkit-bindings API (allow / deny)
-and the access-request API (which additionally accepts ``require-approval``
-on filed items). They share every field except ``effect``, so the common
-shape — including save-time path validation and the
-condition-less-``allow`` guard — lives here to prevent the two surfaces
-from drifting.
+Two authoring surfaces write agent↔credential permission rules: the
+credentials API (allow / deny) and the access-request API (which
+additionally accepts ``require-approval`` on filed items). They share every
+field except ``effect``, so the common shape — including save-time path
+validation and the condition-less-``allow`` guard — lives here to prevent
+the two surfaces from drifting.
 
-Concrete subclasses in ``toolkits.py`` and ``access_requests.py`` add the
-appropriate ``effect`` ``Literal``.
+The concrete allow/deny subclass and the read/patch/test models live here
+too (consumed by ``routers/credentials.py`` and ``schemas/credentials.py``);
+``access_requests.py`` adds its own ``effect`` ``Literal``.
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -76,3 +78,87 @@ class BasePermissionRuleSchema(BaseModel):
             msg = "An 'allow' rule must constrain at least one of methods, path, or operations"
             raise ValueError(msg)
         return self
+
+
+class PermissionRuleSchema(BasePermissionRuleSchema):
+    """Permission rule for an agent↔credential binding.
+
+    Rules are evaluated first-match-wins. If no rule matches, the request is
+    denied (default-deny). A binding with zero rules therefore blocks all
+    operations — users must explicitly add at least one allow rule.
+    """
+
+    effect: Literal["allow", "deny"] = Field(
+        description="Whether this rule allows or denies the matched request."
+    )
+
+
+class PermissionRuleReadSchema(BaseModel):
+    """Permission rule response (includes system fields)."""
+
+    effect: Literal["allow", "deny"]
+    methods: list[str] | None = None
+    path: str | None = None
+    match_mode: MatchMode = "regex"
+    operations: list[str] | None = None
+    is_system: bool = Field(alias="_system", default=False)
+    comment: str | None = Field(alias="_comment", default=None)
+
+    model_config = {"populate_by_name": True}
+
+
+class PermissionsPatchRequest(BaseModel):
+    """Patch permission rules — add and/or remove."""
+
+    add: list[PermissionRuleSchema] | None = None
+    remove: list[int] | None = None
+
+
+class PermissionRuleListResponse(BaseModel):
+    """List of permission rules."""
+
+    data: list[PermissionRuleReadSchema]
+
+
+class PermissionTestRequest(BaseModel):
+    """Request body for :test — dry-run a request shape against the binding's rules."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: str = Field(
+        description="HTTP method of the hypothetical request (case-insensitive).",
+    )
+    path: str = Field(
+        description="Path of the hypothetical request as the broker would see it.",
+    )
+    operation_id: str | None = Field(
+        default=None,
+        description="Optional OpenAPI operation id resolved from the request URL.",
+    )
+
+
+class PermissionTestResponse(BaseModel):
+    """Dry-run result matching :class:`PermissionTestResult`."""
+
+    allowed: bool = Field(
+        description="Whether the broker would allow this request under the binding's rules."
+    )
+    matched: bool = Field(
+        description="Whether any rule matched; when false, the outcome is default-deny."
+    )
+    effect: str | None = Field(
+        default=None,
+        description="Effect of the matching rule (`allow`/`deny`); null when no match.",
+    )
+    rule_index: int | None = Field(
+        default=None,
+        description="Zero-based index in the binding's ordered rule list; null when no match.",
+    )
+    credential_id: str | None = Field(
+        default=None,
+        description="The binding whose rule list contributed the matching rule.",
+    )
+    is_system: bool | None = Field(
+        default=None,
+        description="True when the matching rule was written by the system; null when no match.",
+    )

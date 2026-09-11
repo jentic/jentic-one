@@ -1,4 +1,10 @@
-"""Toolkit API key generation and hashing utility."""
+"""Toolkit API key generation and hashing utility.
+
+Key issuance is retired (theme-5 Phase 4), so no service mints new keys; the
+generator remains as key-record plumbing next to the toolkit repos — tests
+fabricating retired ``jntc_live_`` keys still need it — and it dies with the
+toolkit tables in Phase 6b.
+"""
 
 from __future__ import annotations
 

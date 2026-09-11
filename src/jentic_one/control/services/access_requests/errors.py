@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from jentic_one.shared.access_guidance import no_credential_serves_api_reason
-from jentic_one.shared.scopes import GRANTABLE_SCOPES
+from jentic_one.shared.scopes import GRANTABLE_SCOPES, RETIRED_SCOPES
 
 
 def _format_api_reference(reference: dict[str, object]) -> str:
@@ -306,8 +306,16 @@ def assert_grantable_scope(scope: str | None) -> None:
     file-time guard (AccessRequestService) and the decide-time guard
     (EffectApplicator) so the two can never drift. A falsy scope is reported as
     a missing-field error. See issue #672.
+
+    Scopes in :data:`~jentic_one.shared.scopes.RETIRED_SCOPES` are accepted
+    without complaint: stored requests and grants written before the theme-5
+    Phase 5b retirement still carry them, and a re-submit must not 422.
+    Granting one is inert — no route requires a retired scope and the
+    implication map no longer expands it.
     """
     if not scope:
         raise RequiredFieldMissingError("resource_id", context="scope:grant requires a scope value")
+    if scope in RETIRED_SCOPES:
+        return
     if scope not in GRANTABLE_SCOPES:
         raise UnsupportedScopeGrantError(scope)

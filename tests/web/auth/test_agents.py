@@ -199,55 +199,6 @@ def test_verbs_on_archived_agent(admin_client: TestClient, test_agent_id: str) -
 
 
 @pytest.fixture()
-async def toolkit_agent_id(web_context: Context, owner_user_id: str) -> AsyncGenerator[str, None]:
-    async with web_context.admin_db.transaction() as session:
-        agent = await AgentRepository.create(
-            session,
-            name="toolkit-agent",
-            owner_id=owner_user_id,
-            registered_by=owner_user_id,
-            created_by="usr_test",
-        )
-    yield agent.id
-
-    async with web_context.admin_db.session() as session:
-        await session.execute(delete(ActorScopeGrant).where(ActorScopeGrant.actor_id == agent.id))
-        await session.execute(
-            delete(AgentToolkitBinding).where(AgentToolkitBinding.agent_id == agent.id)
-        )
-        await session.execute(delete(Agent).where(Agent.id == agent.id))
-        await session.commit()
-
-
-def test_toolkit_crud(admin_client: TestClient, toolkit_agent_id: str) -> None:
-    agent_id = toolkit_agent_id
-
-    # Bind
-    resp = admin_client.post(f"/agents/{agent_id}/toolkits", json={"toolkit_id": "tk-abc"})
-    assert resp.status_code == 201
-    binding = resp.json()
-    assert binding["toolkit_id"] == "tk-abc"
-    assert binding["agent_id"] == agent_id
-
-    # List
-    resp = admin_client.get(f"/agents/{agent_id}/toolkits")
-    assert resp.status_code == 200
-    assert len(resp.json()["data"]) == 1
-
-    # Duplicate bind -> 409
-    resp = admin_client.post(f"/agents/{agent_id}/toolkits", json={"toolkit_id": "tk-abc"})
-    assert resp.status_code == 409
-
-    # Unbind
-    resp = admin_client.delete(f"/agents/{agent_id}/toolkits/tk-abc")
-    assert resp.status_code == 204
-
-    # Unbind nonexistent -> 404
-    resp = admin_client.delete(f"/agents/{agent_id}/toolkits/tk-abc")
-    assert resp.status_code == 404
-
-
-@pytest.fixture()
 async def binding_agent_id(web_context: Context, owner_user_id: str) -> AsyncGenerator[str, None]:
     """An agent for direct credential-binding tests, with full binding cleanup."""
     async with web_context.admin_db.transaction() as session:

@@ -2,7 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema } from '../models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
+import type { jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema } from '../models/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema';
 import type { PermissionRuleListResponse } from '../models/PermissionRuleListResponse';
 import type { RuleSetCreateRequest } from '../models/RuleSetCreateRequest';
 import type { RuleSetListResponse } from '../models/RuleSetListResponse';
@@ -175,7 +175,7 @@ export class PermissionRuleSetsService {
         requestBody,
     }: {
         ruleSetId: string,
-        requestBody: Array<jentic_one__control__web__schemas__toolkits__PermissionRuleSchema>,
+        requestBody: Array<jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema>,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {
             method: 'PUT',

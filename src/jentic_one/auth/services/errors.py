@@ -27,24 +27,6 @@ class ActorNotFoundError(AuthServiceError):
         self.actor_id = actor_id
 
 
-class ToolkitBindingConflictError(AuthServiceError):
-    """Raised when a toolkit binding already exists."""
-
-    def __init__(self, agent_id: str, toolkit_id: str) -> None:
-        super().__init__(f"Agent '{agent_id}' is already bound to toolkit '{toolkit_id}'")
-        self.agent_id = agent_id
-        self.toolkit_id = toolkit_id
-
-
-class ToolkitBindingNotFoundError(AuthServiceError):
-    """Raised when a toolkit binding does not exist."""
-
-    def __init__(self, agent_id: str, toolkit_id: str) -> None:
-        super().__init__(f"Agent '{agent_id}' has no binding to toolkit '{toolkit_id}'")
-        self.agent_id = agent_id
-        self.toolkit_id = toolkit_id
-
-
 class CredentialBindingConflictError(AuthServiceError):
     """Raised when a direct agent↔credential binding already exists."""
 

@@ -97,7 +97,9 @@ export function RailEventRow({
 	// event's own meta, so a `catalog.update_conflicts_overlay` row explains the
 	// digest drift without a new layout element.
 	const hint = conflictHint(ev);
-	const submeta = [ev.tokens.toolkit_id, ev.meta, hint].filter(Boolean).join(' · ');
+	const submeta = [ev.tokens.credential_id ?? ev.tokens.toolkit_id, ev.meta, hint]
+		.filter(Boolean)
+		.join(' · ');
 	const dest = onNavigate ? primaryDestinationFor(ev) : null;
 	const navProps = dest
 		? {

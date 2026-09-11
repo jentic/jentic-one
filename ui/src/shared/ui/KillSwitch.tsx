@@ -2,7 +2,7 @@
  * KillSwitch — the console-standard suspend/restore toggle: a Power pill
  * showing the entity's live state, with a two-step inline confirm (click to
  * arm, click again to apply) so the destructive flip never fires on a single
- * mis-click. Grown on the toolkit console; agent and service-account headers
+ * mis-click. Agent and service-account headers
  * render the same control wired to their own lifecycle mutations.
  *
  * Purely presentational: the caller owns the mutation and passes `pending`
@@ -25,9 +25,9 @@ export interface KillSwitchProps {
 	activeLabel?: string;
 	/** Pill text when suspended (e.g. "Suspended", "Disabled"). */
 	inactiveLabel?: string;
-	/** Accessible name for the pill while active (e.g. "Suspend toolkit (kill switch)"). */
+	/** Accessible name for the pill while active (e.g. "Suspend agent (kill switch)"). */
 	suspendAriaLabel: string;
-	/** Accessible name for the pill while suspended (e.g. "Restore toolkit access"). */
+	/** Accessible name for the pill while suspended (e.g. "Restore agent access"). */
 	restoreAriaLabel: string;
 	/** Inline confirm question when suspending (e.g. "Block keys + agents?"). */
 	suspendPrompt: string;

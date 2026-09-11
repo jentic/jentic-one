@@ -9,16 +9,10 @@
  *   actor_id    selected actor id (absent = "All actors")
  *   actor_type  the selected actor's type (carried alongside actor_id so the
  *               Events/audit endpoints can filter by both)
- *   toolkit_id  scope executions to one toolkit (absent = all). Only the
- *               executions endpoint supports it, so it's an executions-tab
- *               deep-link param (the toolkit detail's "Open in Monitor" link
- *               writes it) and is dropped on lens switches, unlike the global
- *               filters above.
  *   origin      request origin surface (cli | dashboard | api | agent |
  *               system | mcp — the backend `Origin` enum; absent = all).
- *               Executions-only like toolkit_id (the executions endpoint is
- *               the one list with an `origin` query param), so it's likewise
- *               dropped on lens switches.
+ *               Executions-only (the executions endpoint is the one list with
+ *               an `origin` query param), so it's dropped on lens switches.
  *
  * `from` is derived from `days` as an ISO timestamp `days` before now; "All"
  * omits it. Tabs fold `{ from, actorId, actorType }` into their list params.
@@ -63,13 +57,10 @@ export interface MonitorFilters {
 	days: number | null;
 	actorId: string | null;
 	actorType: string | null;
-	/** Toolkit scope for the executions lens (deep-linked from toolkit detail). */
-	toolkitId: string | null;
 	/** Origin scope for the executions lens (null = all origins). */
 	origin: string | null;
 	setWindow: (value: WindowValue) => void;
 	setActor: (actorId: string | null, actorType: string | null) => void;
-	setToolkit: (toolkitId: string | null) => void;
 	setOrigin: (origin: string | null) => void;
 }
 
@@ -80,7 +71,6 @@ export function useMonitorFilters(): MonitorFilters {
 	const windowValue: WindowValue = isWindowValue(daysParam) ? daysParam : 'all';
 	const actorId = searchParams.get('actor_id');
 	const actorType = searchParams.get('actor_type');
-	const toolkitId = searchParams.get('toolkit_id');
 	const origin = searchParams.get('origin');
 
 	const { from, days } = useMemo(() => {
@@ -122,21 +112,6 @@ export function useMonitorFilters(): MonitorFilters {
 		[setSearchParams],
 	);
 
-	const setToolkit = useCallback(
-		(nextToolkitId: string | null) => {
-			setSearchParams(
-				(prev) => {
-					const next = new URLSearchParams(prev);
-					if (nextToolkitId) next.set('toolkit_id', nextToolkitId);
-					else next.delete('toolkit_id');
-					return next;
-				},
-				{ replace: true },
-			);
-		},
-		[setSearchParams],
-	);
-
 	const setOrigin = useCallback(
 		(nextOrigin: string | null) => {
 			setSearchParams(
@@ -158,11 +133,9 @@ export function useMonitorFilters(): MonitorFilters {
 		days,
 		actorId,
 		actorType,
-		toolkitId,
 		origin,
 		setWindow,
 		setActor,
-		setToolkit,
 		setOrigin,
 	};
 }

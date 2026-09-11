@@ -74,6 +74,7 @@ export type StreamKind =
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
 	trace_id?: string;
+	/** Historical events only — new events carry `credential_id` instead. */
 	toolkit_id?: string;
 	operation_id?: string;
 	credential_id?: string;
@@ -235,8 +236,9 @@ export function idFromLink(link: string | null | undefined): string | undefined 
 function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string {
 	const token =
 		t.tokens.operation_id ??
-		t.tokens.toolkit_id ??
 		t.tokens.credential_id ??
+		// Historical events may only carry the retired toolkit attribution.
+		t.tokens.toolkit_id ??
 		// The request id must outrank the agent id: real `access_request.*`
 		// events carry BOTH (the requesting agent is the top-level actor), and
 		// keying on the agent would collapse two requests filed by the same

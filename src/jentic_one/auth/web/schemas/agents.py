@@ -53,21 +53,6 @@ class ClaimRequest(BaseModel):
     token: str = Field(min_length=1, max_length=512, json_schema_extra=SENSITIVE)
 
 
-class ToolkitBindingResponse(BaseModel):
-    """Toolkit binding representation in API responses."""
-
-    id: str
-    agent_id: str
-    toolkit_id: str
-    bound_at: datetime
-
-
-class ToolkitBindingListResponse(BaseModel):
-    """List of toolkit bindings."""
-
-    data: list[ToolkitBindingResponse]
-
-
 class CredentialBindingResponse(BaseModel):
     """Direct agent↔credential binding representation in API responses."""
 
@@ -147,12 +132,6 @@ class ApiKeyHistoryResponse(BaseModel):
     """Audit trail of API key operations."""
 
     data: list[ApiKeyHistoryEntryResponse]
-
-
-class ToolkitBindRequest(BaseModel):
-    """Request body for binding a toolkit."""
-
-    toolkit_id: str = Field(min_length=1, max_length=255)
 
 
 class CredentialBindRequest(BaseModel):

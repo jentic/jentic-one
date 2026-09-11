@@ -14,9 +14,25 @@ ORG_ADMIN = "org:admin"
 OWNER_CREDENTIALS_READ = "owner:credentials:read"
 OWNER_ACCESS_REQUESTS_READ = "owner:access-requests:read"
 OWNER_AGENTS_READ = "owner:agents:read"
-OWNER_TOOLKITS_READ = "owner:toolkits:read"
 OWNER_RESOURCES_READ = "owner:resources:read"
 OWNER_SERVICE_ACCOUNTS_READ = "owner:service-accounts:read"
+
+# Scopes retired from the catalogue (theme-5 Phase 5b — the toolkit management
+# surface is gone; authorization runs on the agent↔credential axis). Stored
+# grants — user permission rows, agent ``actor_scope_grants``, filed
+# access-request items — still carry these strings, so every validation path
+# that rejects unknown scopes must accept-and-ignore members of this set: a
+# re-submit of a stored grant must never 422 just because it predates the
+# retirement. Holding a retired scope grants nothing (no route requires it and
+# the implication map no longer expands it). The set — and the stored strings —
+# are swept in Phase 6b.
+RETIRED_SCOPES: frozenset[str] = frozenset(
+    {
+        "toolkits:read",
+        "toolkits:write",
+        "owner:toolkits:read",
+    }
+)
 
 DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
     "capabilities:execute",
@@ -27,7 +43,6 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
     "jobs:read",
     "events:read",
     "owner:resources:read",
-    "owner:toolkits:read",
     "owner:agents:read",
     "owner:credentials:read",
     "owner:access-requests:read",

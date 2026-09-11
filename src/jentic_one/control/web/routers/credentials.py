@@ -58,7 +58,7 @@ from jentic_one.control.web.schemas.credentials import (
     RuleSetSummaryResponse,
     RuleSetUpdateRequest,
 )
-from jentic_one.control.web.schemas.toolkits import (
+from jentic_one.control.web.schemas.permission_rules import (
     PermissionRuleListResponse,
     PermissionRuleReadSchema,
     PermissionRuleSchema,

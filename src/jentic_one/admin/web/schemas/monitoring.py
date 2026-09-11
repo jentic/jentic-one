@@ -19,10 +19,17 @@ __all__ = [
 
 
 class GroupBy(StrEnum):
-    """Grouping dimension for usage statistics."""
+    """Grouping dimension for usage statistics.
+
+    ``TOOLKIT`` is deprecated (theme-5 Phase 5b) and will be removed one
+    release later, with the toolkit tables (Phase 6b): execution records
+    carry a ``credential_id`` since Phase 2 and the direct-binding path
+    writes no ``toolkit_id``, so ``CREDENTIAL`` is the replacement axis.
+    """
 
     API = "api"
     TOOLKIT = "toolkit"
+    CREDENTIAL = "credential"
     AGENT = "agent"
 
 

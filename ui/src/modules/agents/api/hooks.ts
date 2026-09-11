@@ -42,17 +42,12 @@ import {
 	getAgentScopes,
 	getServiceAccount,
 	getServiceAccountScopes,
-	getToolkitName,
-	listAgentToolkits,
 	listAgents,
-	listLinkableToolkits,
 	listPermissions,
 	listServiceAccounts,
 	replaceAgentScopes,
 	replaceServiceAccountScopes,
 	revokeAgentApiKey,
-	bindToolkitToAgent,
-	unbindToolkitFromAgent,
 	listAgentCredentialBindings,
 	bindCredentialToAgent,
 	unbindCredentialFromAgent,
@@ -89,14 +84,12 @@ import type {
 	BindingPermissionTestResult,
 	CredentialBindingEntity,
 	InstanceIdentityEntity,
-	LinkableToolkit,
 	McpLastSeen,
 	McpSessionEntity,
 	OAuthGrantEntity,
 	PermissionCatalogEntry,
 	PermissionRuleInput,
 	ServiceAccountEntity,
-	ToolkitBindingEntity,
 } from '@/modules/agents/api/types';
 import type { AccessRequest } from '@/shared/lib';
 import { sharedQueryKeys } from '@/shared/api';
@@ -111,7 +104,6 @@ const agentsKeys = {
 	lists: () => [...agentsKeys.all, 'list'] as const,
 	list: (status: string) => [...agentsKeys.all, 'list', status] as const,
 	detail: (id: string) => [...agentsKeys.all, 'detail', id] as const,
-	toolkits: (id: string) => [...agentsKeys.all, 'toolkits', id] as const,
 	apiKeyInfo: (id: string) => [...agentsKeys.all, 'api-key-info', id] as const,
 	apiKeyHistory: (id: string) => [...agentsKeys.all, 'api-key-history', id] as const,
 	scopes: (id: string) => [...agentsKeys.all, 'scopes', id] as const,
@@ -142,37 +134,6 @@ const serviceAccountKeys = {
  * registry. The `agents` root already owns the `permissions` namespace here.
  */
 const permissionsKey = [...agentsKeys.all, 'permissions'] as const;
-
-/**
- * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Kept
- * under **its own root** (not ``agentsKeys.all``) so a broad
- * ``sharedQueryKeys.agentsRoot`` invalidation — used by approve/deny/create —
- * doesn't pointlessly refetch ``GET /toolkits``. Mirrors the
- * toolkits module keeping its ``linkableAgents`` cache under its own toolkits
- * root for the same reason.
- */
-const linkableToolkitsKey = ['agents-linkable-toolkits'] as const;
-
-/**
- * Human name for a SINGLE bound toolkit, keyed by its id. Powers per-row name
- * resolution on the detail page's "Bound toolkits" card (#607): each row reads
- * `GET /toolkits/{id}` for just its own name instead of the whole workspace
- * paying `useLinkableToolkits`' paginated `GET /toolkits` sweep on every page
- * load (which would also defeat the picker dialog's `enabled` gate).
- *
- * Keyed under the shared `toolkitNameRoot` (`['toolkit-name',id]`) — its OWN
- * top-level root, NOT under `agentsRoot` and NOT under `toolkitsRoot`. That
- * isolation is deliberate: (a) agent lifecycle mutations (approve/deny/create)
- * invalidate `sharedQueryKeys.agentsRoot` and must NOT refetch every visible
- * bound toolkit's cosmetic name; and (b) ordinary toolkit-side mutations (key
- * rotation, credential bind/unbind, active toggle, create/delete) invalidate
- * `toolkitKeys.all` (`['toolkits']`) but leave a toolkit's NAME unchanged, so
- * they must not ripple here either. The one event that changes a name — a
- * rename via the Toolkits module's `useUpdateToolkit` — invalidates this shared
- * root (id-scoped), so a renamed toolkit's cached label refreshes instantly.
- */
-const toolkitNameKey = (toolkitId: string) =>
-	[...sharedQueryKeys.toolkitNameRoot, toolkitId] as const;
 
 /**
  * Access requests filed BY an actor (#619), keyed by the actor's id + status.
@@ -247,116 +208,10 @@ export function useAgent(id: string | null) {
 	});
 }
 
-export function useAgentToolkits(id: string | null) {
-	return useQuery<ToolkitBindingEntity[]>({
-		queryKey: agentsKeys.toolkits(id ?? ''),
-		queryFn: () => listAgentToolkits(id as string),
-		enabled: id != null,
-	});
-}
-
-/**
- * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Fetched
- * only while the dialog is open (``enabled``) so it costs nothing on the rest
- * of the detail page. Keyed under its own root (``linkableToolkitsKey``) rather
- * than ``agentsKeys.all`` so a broad ``sharedQueryKeys.agentsRoot``
- * invalidation (used by approve/deny/create) does not pointlessly refetch
- * ``GET /toolkits``.
- */
-export function useLinkableToolkits({ enabled = true }: { enabled?: boolean } = {}) {
-	return useQuery<LinkableToolkit[]>({
-		queryKey: linkableToolkitsKey,
-		queryFn: () => listLinkableToolkits(),
-		enabled,
-	});
-}
-
-/**
- * Resolve one bound toolkit's human name (`GET /toolkits/{id}`), safe to call
- * once per bound row (#607). Names are slow-changing, so it's cached generously
- * (5 min) — the card can mount many of these without a thundering herd. Returns
- * ``null`` for a since-deleted / not-found toolkit so the row falls back to the
- * id. Disabled until an id is present.
- */
-export function useToolkitName(toolkitId: string | null) {
-	return useQuery<string | null>({
-		queryKey: toolkitNameKey(toolkitId ?? ''),
-		queryFn: () => getToolkitName(toolkitId as string),
-		enabled: toolkitId != null,
-		staleTime: 5 * 60 * 1000,
-	});
-}
-
-/**
- * Bind/unbind an agent↔toolkit (#607) ripples across three surfaces: the
- * agent's own bound-toolkits list, the picker's candidate list (the just-bound
- * toolkit becomes ineligible), and the toolkit-side "Bound Agents" card (the
- * binding is bidirectional). Invalidate them together so none goes stale.
- * Mirrors the sibling `useInvalidateToolkitSurfaces` in the toolkits module.
- *
- * The toolkit-side card is refreshed via the narrow shared
- * `toolkitAgentsRoot` (`['toolkits','agents']`) — the reverse-lookup slices
- * only — rather than the whole `toolkitsRoot`, which would needlessly refetch
- * every mounted toolkits query (list, detail, keys, bindings). Null-guards the
- * agent id so a call before the agent resolves is a no-op on the agent slice.
- */
-function useInvalidateAgentBindingSurfaces(agentId: string | null) {
-	const qc = useQueryClient();
-	// Memoised on [agentId, qc] so the returned handle keeps a stable identity
-	// across renders — a caller can safely store it in a memoised child's props
-	// or an effect dependency list without re-running on every render.
-	return useCallback(() => {
-		if (agentId) qc.invalidateQueries({ queryKey: agentsKeys.toolkits(agentId) });
-		qc.invalidateQueries({ queryKey: linkableToolkitsKey });
-		qc.invalidateQueries({ queryKey: sharedQueryKeys.toolkitAgentsRoot });
-	}, [agentId, qc]);
-}
-
-/** Bind a toolkit to this agent (#607) — refreshes both the agent's bound
- * toolkits list and the picker's candidates list on success. Mirrors the
- * toolkit page's "Link agent". Accepts a nullable agent id and refuses to fire
- * without one so a stray call before the agent has resolved cannot POST to
- * ``/agents//toolkits``. */
-export function useBindToolkitToAgent(agentId: string | null) {
-	const invalidate = useInvalidateAgentBindingSurfaces(agentId);
-	return useMutation<void, Error, string>({
-		mutationFn: (toolkitId: string) => {
-			if (!agentId) {
-				return Promise.reject(new Error('Cannot bind a toolkit before the agent loads.'));
-			}
-			return bindToolkitToAgent(agentId, toolkitId);
-		},
-		onSuccess: () => {
-			invalidate();
-			toast({ title: 'Toolkit bound', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to bind the toolkit.'),
-	});
-}
-
-/** Unbind a toolkit from this agent (#607). See {@link useBindToolkitToAgent}
- * for the null-guard and cache-invalidation rationale. */
-export function useUnbindToolkitFromAgent(agentId: string | null) {
-	const invalidate = useInvalidateAgentBindingSurfaces(agentId);
-	return useMutation<void, Error, string>({
-		mutationFn: (toolkitId: string) => {
-			if (!agentId) {
-				return Promise.reject(new Error('Cannot unbind a toolkit before the agent loads.'));
-			}
-			return unbindToolkitFromAgent(agentId, toolkitId);
-		},
-		onSuccess: () => {
-			invalidate();
-			toast({ title: 'Toolkit unbound', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to unbind the toolkit.'),
-	});
-}
-
 // ---------------------------------------------------------------------------
 // Direct agent↔credential bindings (theme 5 phase 5a).
 //
-// The toolkit-less binding path: the agent detail Access tab's "Bound
+// The direct binding path: the agent detail Access tab's "Bound
 // credentials" card lists/binds/suspends/resumes here, and each binding's
 // rules live on the credential-side `/credentials/{cid}/agents/{aid}/
 // permissions` surface (list / replace / dry-run).
@@ -364,7 +219,7 @@ export function useUnbindToolkitFromAgent(agentId: string | null) {
 
 /**
  * Candidate credentials for the agent-side "Bind credential" picker. Kept
- * under its OWN root (like ``linkableToolkitsKey``) so a broad
+ * under its OWN root (not ``agentsKeys.all``) so a broad
  * ``sharedQueryKeys.agentsRoot`` invalidation — used by approve/deny/create —
  * doesn't pointlessly refetch ``GET /credentials``.
  */
@@ -398,7 +253,6 @@ export function useBindableCredentialsForAgent({ enabled = true }: { enabled?: b
  * credential becomes ineligible), and the credential-side "Bound agents"
  * view (the binding is bidirectional — refreshed through the shared
  * `credentialKeys.agents` slice, the sanctioned cross-surface channel).
- * Mirrors {@link useInvalidateAgentBindingSurfaces} for toolkit bindings.
  */
 function useInvalidateCredentialBindingSurfaces(agentId: string | null) {
 	const qc = useQueryClient();
@@ -422,7 +276,7 @@ function useInvalidateCredentialBindingSurfaces(agentId: string | null) {
  * grant. `rules: null` is the deliberate "start blocked" mode; otherwise the
  * repository composes bind + rules-PUT (the phase-1 bind body carries only
  * `credential_id` — see `bindCredentialToAgent` for the fail-closed seam).
- * Null-guards the agent id like {@link useBindToolkitToAgent}.
+ * Null-guards the agent id so a stray call before the agent resolves is refused.
  */
 export function useBindAgentCredential(agentId: string | null) {
 	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
@@ -496,7 +350,7 @@ export function useResumeAgentCredentialBinding(agentId: string | null) {
 }
 
 /** The ordered rules on one direct binding — read per bound row (the binding
- * list response carries no rules inline, unlike the toolkit bindings). */
+ * list response carries no rules inline). */
 export function useAgentBindingPermissions(agentId: string | null, credentialId: string | null) {
 	return useQuery<BindingPermissionRule[]>({
 		queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId ?? ''),
@@ -681,7 +535,7 @@ export function useUpdateAgent() {
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
 			// A rename changes what every `ActorLabel` renders — monitor rows,
-			// toolkit audit, access requests, and the "Registered by / Approved
+			// audit trails, access requests, and the "Registered by / Approved
 			// by" grid on this very page all resolve names through the actor
 			// directory (5-min staleTime, no focus refetch). Invalidate it so the
 			// new name shows up immediately instead of after the staleTime.
@@ -905,7 +759,7 @@ export function useReplaceServiceAccountScopes() {
 /**
  * Per-actor execution stats for the fleet table's activity columns
  * (`GET /monitoring/usage?group_by=agent`, trailing 7 days). Kept under its
- * OWN root (like `linkableToolkitsKey`) so agent lifecycle invalidations —
+ * OWN root (not under `agentsRoot`) so agent lifecycle invalidations —
  * which sweep `sharedQueryKeys.agentsRoot` on approve/deny/create — don't
  * pointlessly re-aggregate the monitoring window. Resolves `null` for
  * non-admins (403): the table renders without activity columns rather than
@@ -1038,7 +892,7 @@ export function useRevokeOauthGrant(agentId: string | null) {
 /**
  * Actor-scoped audit trail for the detail console's "Recent changes" panel —
  * the lifecycle events recorded against this agent / service account as the
- * TARGET. Mirrors the toolkit console's `useToolkitAudit`. Non-admins resolve
+ * TARGET. Non-admins resolve
  * to an empty list (the client maps 401/403), so the panel renders its
  * graceful "no entries" state instead of erroring.
  */
@@ -1054,8 +908,8 @@ export function useActorAudit(actorKind: 'agent' | 'service-account', actorId: s
 // ---------------------------------------------------------------------------
 // MCP transport visibility (local-MCP 2-E2, #1188).
 //
-// Keyed under their OWN `agents-mcp` root (like `linkableToolkitsKey` /
-// `agents-usage`) so agent lifecycle mutations — which sweep the broad
+// Keyed under their OWN `agents-mcp` root (like `agents-usage`) so agent
+// lifecycle mutations — which sweep the broad
 // `sharedQueryKeys.agentsRoot` on approve/deny/create — don't pointlessly
 // refetch the events table. All are enrichment reads with the same
 // `null`-on-403 / `retry: false` degrade contract as `useActorsUsage`.

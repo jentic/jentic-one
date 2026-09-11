@@ -845,13 +845,15 @@ class BrokerConfig(BaseModel):
     # against toolkits x vendors for the toolkit path. Eviction is LRU by entry
     # count (the TTL only bounds staleness, never memory).
     rule_cache_max_entries: int = 5_000
-    # Theme-5 Phase 2 cutover flag: when True, callers are authorized through
-    # **direct agent→credential bindings** (agent_credential_bindings +
-    # agent_permission_rules / permission_rule_sets) instead of toolkit
-    # derivation. False (default) keeps the toolkit path byte-identical.
-    # Service accounts migrated from jntc_live_ toolkit keys (Phase 4) hold
-    # both binding forms, so they work under either setting.
-    direct_bindings_enabled: bool = False
+    # Theme-5 Phase 2 cutover flag, default-on since Phase 5b: callers are
+    # authorized through **direct agent→credential bindings**
+    # (agent_credential_bindings + agent_permission_rules /
+    # permission_rule_sets). Setting False is an emergency fallback onto the
+    # legacy toolkit-derivation path, which survives until Phase 6b removes it
+    # (and this flag with it). Service accounts migrated from jntc_live_
+    # toolkit keys (Phase 4) hold both binding forms, so they work under
+    # either setting.
+    direct_bindings_enabled: bool = True
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.

@@ -24,48 +24,23 @@ export { AuditService } from '@/shared/api/generated/services/AuditService';
 export { JobsService } from '@/shared/api/generated/services/JobsService';
 export { SystemService } from '@/shared/api/generated/services/SystemService';
 
-// Toolkits domain. Toolkit CRUD lives on `ToolkitsService`;
-// keys / credential bindings / permission rules were split per-tag into
-// Toolkit{Keys,Credentials,Permissions}Service; agent-side toolkit bindings
-// live on `AgentsService` (the /agents router).
-export { ToolkitsService } from '@/shared/api/generated/services/ToolkitsService';
-export { ToolkitKeysService } from '@/shared/api/generated/services/ToolkitKeysService';
-export { ToolkitCredentialsService } from '@/shared/api/generated/services/ToolkitCredentialsService';
-export { ToolkitPermissionsService } from '@/shared/api/generated/services/ToolkitPermissionsService';
+// Agents / service-accounts / dynamic registration. Agent-side credential
+// bindings live on `AgentsService` (the /agents router).
 export { AgentsService } from '@/shared/api/generated/services/AgentsService';
 export { ServiceAccountsService } from '@/shared/api/generated/services/ServiceAccountsService';
 export { AgentRegistrationService } from '@/shared/api/generated/services/AgentRegistrationService';
-export type { ToolkitResponse } from '@/shared/api/generated/models/ToolkitResponse';
-export type { ToolkitListResponse } from '@/shared/api/generated/models/ToolkitListResponse';
-export type { ToolkitCreateRequest } from '@/shared/api/generated/models/ToolkitCreateRequest';
-export type { ToolkitCreateResponse } from '@/shared/api/generated/models/ToolkitCreateResponse';
-export type { ToolkitUpdateRequest } from '@/shared/api/generated/models/ToolkitUpdateRequest';
-export type { ToolkitKeyResponse } from '@/shared/api/generated/models/ToolkitKeyResponse';
-export type { ToolkitKeyListResponse } from '@/shared/api/generated/models/ToolkitKeyListResponse';
-export type { ToolkitKeyCreateRequest } from '@/shared/api/generated/models/ToolkitKeyCreateRequest';
-export type { ToolkitKeyCreateResponse } from '@/shared/api/generated/models/ToolkitKeyCreateResponse';
-export type { ToolkitKeyUpdateRequest } from '@/shared/api/generated/models/ToolkitKeyUpdateRequest';
-export type { ToolkitCredentialBindingResponse } from '@/shared/api/generated/models/ToolkitCredentialBindingResponse';
-export type { ToolkitCredentialListResponse } from '@/shared/api/generated/models/ToolkitCredentialListResponse';
-export type { ToolkitCredentialBindRequest } from '@/shared/api/generated/models/ToolkitCredentialBindRequest';
-export type { ToolkitAgentResponse } from '@/shared/api/generated/models/ToolkitAgentResponse';
-export type { ToolkitAgentListResponse } from '@/shared/api/generated/models/ToolkitAgentListResponse';
 export type { PermissionRuleReadSchema } from '@/shared/api/generated/models/PermissionRuleReadSchema';
-// The codegen retag split the single `PermissionRuleSchema` model into two
-// tag-namespaced variants (access-requests vs toolkits). Toolkit permission
-// rules use the toolkit variant; re-export it under the stable public name so
-// downstream consumers stay unchanged.
-export type { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema as PermissionRuleSchema } from '@/shared/api/generated/models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
-export { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema as PermissionRuleSchemaNS } from '@/shared/api/generated/models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
+// The toolkit-era codegen retag namespaced `PermissionRuleSchema` per web
+// module; with the toolkit routers deleted (theme-5 phase 5b) it now lives in
+// the shared `permission_rules` schema module. Re-exported under the stable
+// public name so downstream consumers stay unchanged.
+export type { jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema as PermissionRuleSchema } from '@/shared/api/generated/models/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema';
+export { jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema as PermissionRuleSchemaNS } from '@/shared/api/generated/models/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema';
 export type { PermissionRuleListResponse } from '@/shared/api/generated/models/PermissionRuleListResponse';
 export type { PermissionsPatchRequest } from '@/shared/api/generated/models/PermissionsPatchRequest';
 export type { PermissionTestRequest } from '@/shared/api/generated/models/PermissionTestRequest';
 export type { PermissionTestResponse } from '@/shared/api/generated/models/PermissionTestResponse';
-export type { BindingWarningSchema } from '@/shared/api/generated/models/BindingWarningSchema';
-export type { ToolkitBindingResponse } from '@/shared/api/generated/models/ToolkitBindingResponse';
-export type { ToolkitBindingListResponse } from '@/shared/api/generated/models/ToolkitBindingListResponse';
-export type { ToolkitBindRequest } from '@/shared/api/generated/models/ToolkitBindRequest';
-// Audit (read-only, toolkit-scoped lens on the shared /audit endpoint via AuditService).
+// Audit (read-only lens on the shared /audit endpoint via AuditService).
 export type { AuditResponse } from '@/shared/api/generated/models/AuditResponse';
 export type { AuditListResponse } from '@/shared/api/generated/models/AuditListResponse';
 export { AuditTargetType } from '@/shared/api/generated/models/AuditTargetType';
@@ -79,8 +54,8 @@ export type { RedeemInviteRequest } from '@/shared/api/generated/models/RedeemIn
 export type { HealthResponse } from '@/shared/api/generated/models/HealthResponse';
 
 // Agents / service-accounts / dynamic registration (ui-agents module).
-// Note: AgentsService + ToolkitBinding* models are already exported above by
-// the toolkits module; agents reuses them and does not re-export to avoid dupes.
+// Note: AgentsService is already exported above; agents reuses it and does
+// not re-export to avoid dupes.
 export type { AgentCreateRequest } from '@/shared/api/generated/models/AgentCreateRequest';
 export type { AgentResponse } from '@/shared/api/generated/models/AgentResponse';
 export type { ApiKeyResponse } from '@/shared/api/generated/models/ApiKeyResponse';
@@ -185,9 +160,9 @@ export { sharedQueryKeys } from '@/shared/api/queryKeys';
 
 // Actor scopes (#615). The platform permission catalogue + the agent/service-
 // account scope grant endpoints. `AgentsService`/`ServiceAccountsService` are
-// already exported above (toolkits/agents blocks); these add the permission
-// catalogue service and the scope request/response models the agents module
-// wires into the Scopes card. Append-only.
+// already exported above (agents block); these add the permission catalogue
+// service and the scope request/response models the agents module wires into
+// the Scopes card. Append-only.
 export { PermissionsService } from '@/shared/api/generated/services/PermissionsService';
 export type { PermissionResponse } from '@/shared/api/generated/models/PermissionResponse';
 export type { PermissionListResponse } from '@/shared/api/generated/models/PermissionListResponse';
@@ -203,7 +178,7 @@ export type { ServiceAccountScopesResponse } from '@/shared/api/generated/models
 // AdminService into per-tag services: Monitor's tabs use ExecutionsService /
 // JobsService / EventsService / AuditService — all exported above.
 // Note: Execution*, Event*, and Audit* models are already exported above (by the
-// dashboard, agent-rail, and toolkits blocks respectively); Monitor reuses them.
+// dashboard, agent-rail, and agents blocks respectively); Monitor reuses them.
 // Only the Job models are not yet re-exported, so add them here (append-only).
 export type { JobResponse } from '@/shared/api/generated/models/JobResponse';
 export type { JobListResponse } from '@/shared/api/generated/models/JobListResponse';
@@ -211,7 +186,7 @@ export type { JobListResponse } from '@/shared/api/generated/models/JobListRespo
 // Monitor Overview parity: the enriched usage-aggregation endpoint
 // (GET /monitoring/usage, `MonitoringService.getUsageStats`).
 // Powers the Monitor Overview — bubble chart, per-row sparkline
-// trends, latency pills, and the api/toolkit/agent grouping toggle. `GroupBy`
+// trends, latency pills, and the api/credential/agent grouping toggle. `GroupBy`
 // is exported as a *value* because callers pass the enum members as the
 // `group_by` query param.
 export { MonitoringService } from '@/shared/api/generated/services/MonitoringService';

@@ -1,7 +1,7 @@
 /**
  * UsageBubbleChart.
  *
- * One bubble per api / toolkit / agent: bubble area encodes execution volume,
+ * One bubble per api / credential / agent: bubble area encodes execution volume,
  * the partial ring around it encodes success rate, and hovering surfaces a
  * calls / success / latency tooltip. The segmented toggle flips between the
  * three lenses without refetching (the Overview pre-fetches all three
@@ -10,7 +10,7 @@
  * Differences from the mini original: no vendor-icon registry in jentic-one,
  * so every bubble renders an initials tile from a stable index palette, and
  * the tooltip drops the cross-entity "Used by" / "Top APIs" sections (the
- * usage endpoint doesn't expose per-toolkit top-API relations).
+ * usage endpoint doesn't expose per-credential top-API relations).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -28,7 +28,7 @@ import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 interface UsageBubbleChartProps {
 	apis: EntityUsageRow[];
-	toolkits: EntityUsageRow[];
+	credentials: EntityUsageRow[];
 	agents: EntityUsageRow[];
 	className?: string;
 }
@@ -44,13 +44,13 @@ interface BubbleNode {
 
 const LENS_TITLES: Record<UsageLens, string> = {
 	apis: 'API Usage',
-	toolkits: 'Toolkit Activity',
+	credentials: 'Credential Activity',
 	agents: 'Agent Activity',
 };
 
 const LENS_NOUNS: Record<UsageLens, string> = {
 	apis: 'API',
-	toolkits: 'toolkit',
+	credentials: 'credential',
 	agents: 'agent',
 };
 
@@ -124,7 +124,7 @@ function packCircles(
 	return placed;
 }
 
-export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBubbleChartProps) {
+export function UsageBubbleChart({ apis, credentials, agents, className }: UsageBubbleChartProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [dimensions, setDimensions] = useState({ width: 600, height: 420 });
 	// Store only the hovered entity id, not the node: background refetches
@@ -157,7 +157,7 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 		setHoveredId(null);
 	}, [lens]);
 
-	const items = lens === 'apis' ? apis : lens === 'toolkits' ? toolkits : agents;
+	const items = lens === 'apis' ? apis : lens === 'credentials' ? credentials : agents;
 
 	const bubbles = useMemo(() => {
 		if (items.length === 0) return [];
@@ -207,7 +207,7 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 				<SegmentedToggle
 					options={[
 						{ value: 'apis', label: 'APIs' },
-						{ value: 'toolkits', label: 'Toolkits' },
+						{ value: 'credentials', label: 'Credentials' },
 						{ value: 'agents', label: 'Agents' },
 					]}
 					value={lens}

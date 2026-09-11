@@ -3,7 +3,7 @@
  * executions yet. A fresh install rendering four empty queue cards and a blank
  * health section tells the operator nothing; this replaces those layers with
  * the shortest path to a working gateway, in the order the concepts build on
- * each other (API → credential → toolkit → agent).
+ * each other (API → credential → agent → binding).
  *
  * Deliberately dumb about progress: it renders only when BOTH probes are empty
  * (`useHasAgents`, recent executions), so there is no per-step "done" state to
@@ -11,7 +11,7 @@
  * over on the next refetch.
  */
 import type { ComponentType } from 'react';
-import { ArrowUpRight, Boxes, Bot, Compass, KeyRound, Rocket } from 'lucide-react';
+import { ArrowUpRight, Bot, Compass, KeyRound, Link2, Rocket } from 'lucide-react';
 import { AppLink, Card } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
 
@@ -37,16 +37,16 @@ export function FirstRunChecklist() {
 			icon: KeyRound,
 		},
 		{
-			href: ROUTES.toolkits,
-			title: 'Create a toolkit',
-			description: 'Bundle operations into the capability an agent may use.',
-			icon: Boxes,
-		},
-		{
 			href: ROUTES.agents,
 			title: 'Register an agent',
 			description: 'Point your agent at the gateway and approve its identity.',
 			icon: Bot,
+		},
+		{
+			href: ROUTES.agents,
+			title: 'Bind a credential',
+			description: "Open the agent's Access tab and grant the credential it may use.",
+			icon: Link2,
 		},
 	];
 
@@ -73,7 +73,7 @@ export function FirstRunChecklist() {
 				{steps.map((step, index) => {
 					const Icon = step.icon;
 					return (
-						<li key={step.href}>
+						<li key={step.title}>
 							<AppLink href={step.href} className="group block h-full">
 								<Card hoverable className="flex h-full flex-col gap-3 p-4">
 									<div className="flex items-center justify-between">

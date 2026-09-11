@@ -221,8 +221,6 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 			'jobs:write',
 			'service-accounts:read',
 			'service-accounts:write',
-			'toolkits:read',
-			'toolkits:write',
 			'users:read',
 			'users:write',
 		],
@@ -236,19 +234,7 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	},
 	{
 		name: 'capabilities:read',
-		description: 'Read capability and toolkit metadata',
-		implies: [],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'toolkits:write',
-		description: 'Create, update, and delete toolkits',
-		implies: ['toolkits:read'],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'toolkits:read',
-		description: 'Read toolkit configuration and status',
+		description: 'Read capability metadata',
 		implies: [],
 		grantable_by_caller: true,
 	},
@@ -345,7 +331,7 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	{
 		name: 'owner:resources:read',
 		description: "Read resources owned by the agent's creator (umbrella)",
-		implies: ['owner:agents:read', 'owner:credentials:read', 'owner:toolkits:read'],
+		implies: ['owner:agents:read', 'owner:credentials:read'],
 		grantable_by_caller: true,
 	},
 	{
@@ -357,12 +343,6 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	{
 		name: 'owner:agents:read',
 		description: "Read agents owned by the agent's creator",
-		implies: [],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'owner:toolkits:read',
-		description: "Read toolkits owned by the agent's creator",
 		implies: [],
 		grantable_by_caller: true,
 	},
@@ -568,7 +548,6 @@ const DEFAULT_AGENT_SCOPES_MOCK = [
 	'jobs:read',
 	'events:read',
 	'owner:resources:read',
-	'owner:toolkits:read',
 	'owner:agents:read',
 	'owner:credentials:read',
 	'owner:access-requests:read',
@@ -671,8 +650,8 @@ function executionRow(opts: {
 	id: string;
 	actorId: string;
 	status: 'completed' | 'failed';
-	toolkitId: string;
-	toolkitName: string;
+	credentialId: string;
+	credentialName: string;
 	operationId: string;
 	durationMs: number;
 	httpStatus: number;
@@ -695,8 +674,12 @@ function executionRow(opts: {
 		pinned_revisions: null,
 		started_at: now(-opts.minutesAgo),
 		status: opts.status,
-		toolkit_id: opts.toolkitId,
-		toolkit_name: opts.toolkitName,
+		credential_id: opts.credentialId,
+		credential_name: opts.credentialName,
+		// Legacy toolkit attribution is null on the direct-binding path (the
+		// columns survive server-side until Phase 6b for historical rows).
+		toolkit_id: null,
+		toolkit_name: null,
 		trace_id: `trace_${opts.id}`,
 	};
 }
@@ -712,8 +695,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_1',
 			actorId: 'agnt_active_1',
 			status: 'completed',
-			toolkitId: 'github',
-			toolkitName: 'github',
+			credentialId: 'github',
+			credentialName: 'github',
 			operationId: 'create_issue',
 			durationMs: 412,
 			httpStatus: 200,
@@ -725,8 +708,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_mcp_1',
 			actorId: 'agnt_active_1',
 			status: 'completed',
-			toolkitId: 'github',
-			toolkitName: 'github',
+			credentialId: 'github',
+			credentialName: 'github',
 			operationId: 'search_issues',
 			durationMs: 180,
 			httpStatus: 200,
@@ -737,8 +720,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_2',
 			actorId: 'agnt_active_1',
 			status: 'failed',
-			toolkitId: 'slack',
-			toolkitName: 'slack',
+			credentialId: 'slack',
+			credentialName: 'slack',
 			operationId: 'post_message',
 			durationMs: 38,
 			httpStatus: 403,
@@ -749,8 +732,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_3',
 			actorId: 'agnt_active_1',
 			status: 'completed',
-			toolkitId: 'github',
-			toolkitName: 'github',
+			credentialId: 'github',
+			credentialName: 'github',
 			operationId: 'list_pull_requests',
 			durationMs: 220,
 			httpStatus: 200,
@@ -760,8 +743,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_4',
 			actorId: 'agnt_active_1',
 			status: 'completed',
-			toolkitId: 'github',
-			toolkitName: 'github',
+			credentialId: 'github',
+			credentialName: 'github',
 			operationId: 'get_repo',
 			durationMs: 145,
 			httpStatus: 200,
@@ -773,8 +756,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_sva_1',
 			actorId: 'sva_active_1',
 			status: 'completed',
-			toolkitId: 'petstore',
-			toolkitName: 'petstore',
+			credentialId: 'petstore',
+			credentialName: 'petstore',
 			operationId: 'sync_inventory',
 			durationMs: 1240,
 			httpStatus: 200,
@@ -784,8 +767,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_sva_2',
 			actorId: 'sva_active_1',
 			status: 'completed',
-			toolkitId: 'petstore',
-			toolkitName: 'petstore',
+			credentialId: 'petstore',
+			credentialName: 'petstore',
 			operationId: 'sync_inventory',
 			durationMs: 1180,
 			httpStatus: 200,
@@ -1030,23 +1013,6 @@ export const agentsHandlers = [
 	http.get('/agents/:id', ({ params }) => {
 		const row = agents.find((a) => a.id === params.id);
 		return row ? HttpResponse.json(row) : new HttpResponse(null, { status: 404 });
-	}),
-	http.get('/agents/:id/toolkits', ({ params }) => {
-		const row = agents.find((a) => a.id === params.id);
-		if (!row) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json({
-			data:
-				row.id === 'agnt_active_1'
-					? [
-							{
-								id: 'tkb_1',
-								agent_id: row.id,
-								toolkit_id: 'github',
-								bound_at: now(-20),
-							},
-						]
-					: [],
-		});
 	}),
 	// Colon-verb lifecycle. MSW matches the literal `:verb` suffix.
 	http.post('/agents/:id\\:approve', ({ params }) => {

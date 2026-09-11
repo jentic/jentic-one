@@ -10,7 +10,7 @@
  * matching how the backend would 403 the call anyway.
  *
  * State model: `range` (24h/7d/30d) re-scopes EVERYTHING in the section;
- * `lens` (APIs/Toolkits/Agents) re-scopes only the top-rows table but rides
+ * `lens` (APIs/Credentials/Agents) re-scopes only the top-rows table but rides
  * the same query — the stats/buckets it returns are lens-independent, so the
  * KPIs and charts stay stable when the lens flips.
  */
@@ -59,7 +59,7 @@ const RANGE_OPTIONS: { value: DashboardRange; label: string }[] = [
 
 const LENS_OPTIONS: { value: GroupBy; label: string }[] = [
 	{ value: GroupBy.API, label: 'APIs' },
-	{ value: GroupBy.TOOLKIT, label: 'Toolkits' },
+	{ value: GroupBy.CREDENTIAL, label: 'Credentials' },
 	{ value: GroupBy.AGENT, label: 'Agents' },
 ];
 
@@ -69,9 +69,13 @@ const RANGE_CAPTION: Record<DashboardRange, string> = {
 	'30d': 'last 30 days',
 };
 
+// `GroupBy.TOOLKIT` is deprecated (removed with the toolkit tables in Phase
+// 6b) and never offered as a lens, but the enum still carries it — caption it
+// generically in case a stale URL/state ever reaches it.
 const LENS_CAPTION: Record<GroupBy, string> = {
 	[GroupBy.API]: 'Busiest APIs',
-	[GroupBy.TOOLKIT]: 'Busiest toolkits',
+	[GroupBy.CREDENTIAL]: 'Busiest credentials',
+	[GroupBy.TOOLKIT]: 'Busiest (retired grouping)',
 	[GroupBy.AGENT]: 'Busiest agents',
 };
 

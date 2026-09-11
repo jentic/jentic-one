@@ -7,8 +7,8 @@ drift, transport edge cases, parameter serialization, query-array limits,
 lifecycle headers, and server-URL resolution.
 
 All ops use the ``executable_harness`` fixture: the broker resolves a credential
-for *every* proxied op (424 otherwise), so a bound toolkit + active credential is
-the minimum wiring even for unsecured ops.
+for *every* proxied op, so a directly bound, allow-all credential is the
+minimum wiring even for unsecured ops.
 
 Open items resolved in-code:
 - broker retry-on-503: none in the proxy path (see resilience module).

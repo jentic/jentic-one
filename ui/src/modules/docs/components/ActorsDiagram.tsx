@@ -1,14 +1,14 @@
 /**
- * ActorsDiagram — companion to FlowDiagram, focused on how the four actor types
+ * ActorsDiagram — companion to FlowDiagram, focused on how the actor types
  * *relate* (not the request path). The shape mirrors the platform's identity
  * model: a human user registers autonomous agents; agents (and non-human
- * service accounts) carry toolkits — credential-bearing groupings the Broker
- * injects at execution time. Service accounts have no human in the loop.
+ * service accounts) carry directly bound credentials the Broker injects at
+ * execution time. Service accounts have no human in the loop.
  *
  * Same layout-primitive + lucide-arrow approach as FlowDiagram so it inherits
  * the theme tokens and reflows on mobile without a binary asset.
  */
-import { UserRound, Bot, Server, Boxes, CornerDownRight } from 'lucide-react';
+import { UserRound, Bot, Server, KeyRound, CornerDownRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 function ActorNode({
@@ -92,12 +92,13 @@ export function ActorsDiagram() {
 
 				<Edge label="both carry" />
 
-				{/* Toolkit hangs off agents and service accounts. */}
+				{/* Credentials hang off agents and service accounts via direct
+				    bindings (not an actor type — no token is issued for them). */}
 				<div className="pl-3">
 					<ActorNode
-						icon={Boxes}
-						title="toolkit"
-						subtitle="Credential-bearing grouping bound to an agent or service account. The Broker injects its secrets at execution time."
+						icon={KeyRound}
+						title="credential"
+						subtitle="Bound directly to an agent or service account, with per-binding permission rules. The Broker injects its secrets at execution time."
 						accent="text-accent-pink"
 					/>
 				</div>

@@ -1,7 +1,7 @@
 /**
  * UsageBreakdown.
  *
- * The "Breakdown" table with a segmented APIs / Toolkits / Agents toggle and
+ * The "Breakdown" table with a segmented APIs / Credentials / Agents toggle and
  * per-row Trend (sparkline), Health (success-rate dot), Volume (relative bar
  * + call count), and Speed (avg latency) columns, fed by the enriched
  * `GET /monitoring/usage` aggregation.
@@ -18,19 +18,19 @@ import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 interface UsageBreakdownProps {
 	apis: EntityUsageRow[];
-	toolkits: EntityUsageRow[];
+	credentials: EntityUsageRow[];
 	agents: EntityUsageRow[];
 }
 
 const LENS_SUBTITLES: Record<UsageLens, string> = {
 	apis: 'Performance for each connected API',
-	toolkits: 'Activity for each toolkit',
+	credentials: 'Activity for each credential',
 	agents: 'Activity per agent identity',
 };
 
 const LENS_NOUNS: Record<UsageLens, string> = {
 	apis: 'API',
-	toolkits: 'toolkit',
+	credentials: 'credential',
 	agents: 'agent',
 };
 
@@ -51,10 +51,10 @@ function VolumeBar({ ratio, color }: { ratio: number; color: string }) {
 	);
 }
 
-export function UsageBreakdown({ apis, toolkits, agents }: UsageBreakdownProps) {
+export function UsageBreakdown({ apis, credentials, agents }: UsageBreakdownProps) {
 	const [lens, setLens] = useState<UsageLens>('apis');
 
-	const items = lens === 'apis' ? apis : lens === 'toolkits' ? toolkits : agents;
+	const items = lens === 'apis' ? apis : lens === 'credentials' ? credentials : agents;
 	const palette = lensPalette(lens);
 
 	const maxExec = useMemo(() => Math.max(1, ...items.map((r) => r.totalExecutions)), [items]);
@@ -69,7 +69,7 @@ export function UsageBreakdown({ apis, toolkits, agents }: UsageBreakdownProps) 
 				<SegmentedToggle
 					options={[
 						{ value: 'apis', label: 'APIs' },
-						{ value: 'toolkits', label: 'Toolkits' },
+						{ value: 'credentials', label: 'Credentials' },
 						{ value: 'agents', label: 'Agents' },
 					]}
 					value={lens}

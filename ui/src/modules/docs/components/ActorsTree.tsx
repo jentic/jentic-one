@@ -3,8 +3,8 @@
  *
  * The CLI prints every control-plane endpoint grouped by its typical caller and
  * the scope(s) it requires, filterable by `--actor`. This renders the *same*
- * join interactively: pick an actor identity (user / agent / service_account /
- * toolkit) and see exactly which endpoints that actor can be the caller of,
+ * join interactively: pick an actor identity (user / agent / service_account)
+ * and see exactly which endpoints that actor can be the caller of,
  * grouped into the same caller buckets (Agent-facing / Operator-facing / Any /
  * Public) the CLI uses, each row showing its required scopes.
  *
@@ -13,7 +13,7 @@
  * the page and the terminal can never disagree about who can call what.
  */
 import { useMemo, useState } from 'react';
-import { UserRound, Bot, Server, Boxes, ChevronRight } from 'lucide-react';
+import { UserRound, Bot, Server, ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ReferencePayload } from '@/modules/docs/api/types';
 import {
@@ -52,13 +52,6 @@ const ACTOR_META: Record<
 		accent: 'text-accent-orange',
 		activeBg: 'bg-accent-orange/10',
 		activeBorder: 'border-accent-orange/50',
-	},
-	toolkit: {
-		icon: Boxes,
-		role: 'Credential-bearing grouping that rides the agent token.',
-		accent: 'text-accent-pink',
-		activeBg: 'bg-accent-pink/10',
-		activeBorder: 'border-accent-pink/50',
 	},
 };
 

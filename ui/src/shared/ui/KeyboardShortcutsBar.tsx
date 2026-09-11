@@ -90,7 +90,7 @@ function ShortcutItem({ shortcut }: { shortcut: KeyboardShortcut }) {
  * the keyboard shortcuts available on the current page.
  *
  * The shortcuts list is accepted as a prop so the same primitive can
- * advertise different bindings on Discover, Toolkits, Credentials, etc.
+ * advertise different bindings on Discover, Agents, Credentials, etc.
  * (each page knows what its own keyboard map does).
  *
  * Layered z-indexes: floating bar sits at `z-30` so it stays below

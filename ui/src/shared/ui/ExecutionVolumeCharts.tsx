@@ -1,7 +1,7 @@
 /**
  * ExecutionVolumeCharts — the console-standard activity chart pair, mirroring
  * the dashboard's arrangement: a stacked succeeded/failed volume chart on the
- * left (2/3) and a success-rate trend line on the right (1/3). Toolkit,
+ * left (2/3) and a success-rate trend line on the right (1/3). Agent
  * agent and service-account detail consoles all render the same pair so
  * "activity" reads identically everywhere.
  *

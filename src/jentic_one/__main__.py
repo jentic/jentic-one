@@ -23,7 +23,7 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
-from jentic_one.control.services.toolkits.key_retirement import KeyRetirementService
+from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.shared.config import AppConfig, load_config
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging

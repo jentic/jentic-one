@@ -148,10 +148,10 @@ describe('DashboardPage', () => {
 			),
 		).toBeInTheDocument();
 
-		await user.click(screen.getByRole('tab', { name: 'Toolkits' }));
+		await user.click(screen.getByRole('tab', { name: 'Credentials' }));
 
 		const table = await screen.findByRole('region', { name: 'Top usage' });
-		expect(await within(table).findByText('tk_payments')).toBeInTheDocument();
+		expect(await within(table).findByText('cred_payments')).toBeInTheDocument();
 
 		await user.click(screen.getByRole('tab', { name: 'Agents' }));
 		const agentsTable = await screen.findByRole('region', { name: 'Top usage' });
@@ -313,7 +313,7 @@ describe('DashboardPage', () => {
 		await user.click(screen.getByRole('button', { name: /Quick actions/ }));
 		expect(screen.getByRole('menuitem', { name: 'Discover APIs' })).toBeInTheDocument();
 		expect(screen.getByRole('menuitem', { name: 'Add credential' })).toBeInTheDocument();
-		expect(screen.getByRole('menuitem', { name: 'Create toolkit' })).toBeInTheDocument();
+		expect(screen.getByRole('menuitem', { name: 'Register agent' })).toBeInTheDocument();
 		expect(screen.getByRole('menuitem', { name: 'Open workspace' })).toBeInTheDocument();
 	});
 

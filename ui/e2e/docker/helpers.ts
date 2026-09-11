@@ -213,20 +213,6 @@ export async function createServiceAccount(
 	return (await res.json()).id;
 }
 
-/** POST /toolkits → 201 (the body nests under `toolkit`). Returns the toolkit id. */
-export async function createToolkit(
-	request: APIRequestContext,
-	name: string,
-	description = 'created by e2e',
-): Promise<string> {
-	const res = await request.post('/toolkits', {
-		headers: authHeaders(),
-		data: { name, description },
-	});
-	expect(res.status(), `createToolkit failed: ${await res.text()}`).toBe(201);
-	return (await res.json()).toolkit.toolkit_id;
-}
-
 /**
  * POST /credentials → 201 (requires the credential-at-rest encryption keyset,
  * see config/local.yaml). Returns the credential id. Defaults to a bearer token.
@@ -333,17 +319,17 @@ export async function replaceAgentScopes(
 	return (await res.json()).scopes;
 }
 
-/** POST /agents/{id}/toolkits → 201. Binds a toolkit to an agent. Returns the binding id. */
-export async function bindToolkitToAgent(
+/** POST /agents/{id}/credentials → 201. Binds a credential directly to an agent. Returns the binding id. */
+export async function bindCredentialToAgent(
 	request: APIRequestContext,
 	agentId: string,
-	toolkitId: string,
+	credentialId: string,
 ): Promise<string> {
-	const res = await request.post(`/agents/${agentId}/toolkits`, {
+	const res = await request.post(`/agents/${agentId}/credentials`, {
 		headers: authHeaders(),
-		data: { toolkit_id: toolkitId },
+		data: { credential_id: credentialId },
 	});
-	expect(res.status(), `bindToolkitToAgent failed: ${await res.text()}`).toBe(201);
+	expect(res.status(), `bindCredentialToAgent failed: ${await res.text()}`).toBe(201);
 	return (await res.json()).id;
 }
 

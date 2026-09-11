@@ -10,17 +10,17 @@ import { Label } from '@/shared/ui/Label';
  * The entity kinds that expose a hard delete (or a terminal,
  * delete-equivalent action like agent/service-account *archive*).
  */
-export type CascadeEntityType = 'credential' | 'api' | 'toolkit' | 'agent' | 'service-account';
+export type CascadeEntityType = 'credential' | 'api' | 'agent' | 'service-account';
 
 /**
  * One group in the blast-radius list. `count` is authoritative (drives the
- * "3 toolkit bindings" headline); `names` is optional detail the dialog lists
+ * "3 agent bindings" headline); `names` is optional detail the dialog lists
  * underneath when present. Shaped to be filled directly from a future backend
  * dependents / `?dry_run=1` response — until that lands, callers omit
  * `dependents` and the dialog falls back to the type-specific generic warning.
  */
 export interface CascadeDependentGroup {
-	/** Human label for the group, e.g. "toolkit binding" (singular). */
+	/** Human label for the group, e.g. "agent binding" (singular). */
 	label: string;
 	/** How many of this dependent the cascade removes. */
 	count: number;
@@ -62,7 +62,6 @@ interface CascadeDeleteDialogProps {
 const DEFAULT_CONFIRM_WORD: Record<CascadeEntityType, string> = {
 	credential: 'delete',
 	api: 'delete',
-	toolkit: 'delete',
 	agent: 'archive',
 	'service-account': 'archive',
 };
@@ -82,7 +81,7 @@ const TYPE_COPY: Record<
 		confirmLabel: 'Delete credential',
 		noun: 'credential',
 		warning:
-			'Agents and toolkits that authenticate with this credential will stop working until you bind a replacement.',
+			'Agents that authenticate with this credential will stop working until you bind a replacement.',
 		icon: Trash2,
 	},
 	api: {
@@ -90,15 +89,7 @@ const TYPE_COPY: Record<
 		confirmLabel: 'Remove API',
 		noun: 'API',
 		warning:
-			'This API and all of its operations leave your workspace. Toolkits and credentials that reference it will no longer resolve until you re-import it.',
-		icon: Trash2,
-	},
-	toolkit: {
-		title: 'Delete toolkit',
-		confirmLabel: 'Delete toolkit',
-		noun: 'toolkit',
-		warning:
-			'Agents granted this toolkit will fail their next call, and any API keys minted for it stop working immediately.',
+			'This API and all of its operations leave your workspace. Credentials that reference it will no longer resolve until you re-import it.',
 		icon: Trash2,
 	},
 	agent: {
@@ -121,7 +112,7 @@ const TYPE_COPY: Record<
 
 /**
  * Pluralise a dependent group's label off its count, e.g.
- * `{ label: 'toolkit binding', count: 3 }` → "3 toolkit bindings".
+ * `{ label: 'agent binding', count: 3 }` → "3 agent bindings".
  *
  * Intentionally naive (`label + 's'`): callers pass singular, space-safe
  * English labels ("agent grant", "API key", "credential binding") where a

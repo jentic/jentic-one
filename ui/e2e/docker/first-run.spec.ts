@@ -43,7 +43,7 @@ test('first-run checklist steps navigate to their surfaces', async ({ page }) =>
 	await expect(page.getByRole('heading', { name: 'Set up your workspace' })).toBeVisible();
 
 	// Checklist links route into the module surfaces (real router, real guard).
-	await page.getByRole('link', { name: /Create a toolkit/ }).click();
-	await expect(page).toHaveURL(/\/app\/toolkits\b/);
-	await expect(page.getByRole('heading', { name: 'Toolkits' })).toBeVisible();
+	await page.getByRole('link', { name: /Register an agent/ }).click();
+	await expect(page).toHaveURL(/\/app\/agents\b/);
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 });

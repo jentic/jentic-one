@@ -84,8 +84,6 @@ from jentic_one.shared.auth.permission_catalog import (
     ALL_PERMISSIONS,
     CREDENTIALS_READ,
     CREDENTIALS_WRITE,
-    TOOLKITS_READ,
-    TOOLKITS_WRITE,
     compute_implies_transitive,
 )
 from jentic_one.shared.context import Context
@@ -1326,8 +1324,6 @@ _OIDC_SCOPE_DESCRIPTIONS: dict[str, str] = {
 _PLATFORM_SCOPE_DESCRIPTIONS: dict[str, str] = {
     AGENTS_READ: "View agents",
     AGENTS_WRITE: "Create and manage agents",
-    TOOLKITS_READ: "View toolkits",
-    TOOLKITS_WRITE: "Create and manage toolkits",
     CREDENTIALS_READ: "View credential metadata",
     CREDENTIALS_WRITE: "Create and manage credentials",
 }

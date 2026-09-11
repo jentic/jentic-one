@@ -5,7 +5,6 @@ import {
 	humanizeDomainSlug,
 	humanizeName,
 	titleFromApiId,
-	toolkitCredDisplayName,
 } from '../api-display';
 
 /**
@@ -134,80 +133,6 @@ describe('titleFromApiId', () => {
 	it('leaves a non-allowlist trailing token in the sub-segment space-joined', () => {
 		// `biz` is not on the TLD allowlist, so no dot-rejoin — stays a space.
 		expect(titleFromApiId('acme.com/foo-biz')).toBe('Foo Biz');
-	});
-});
-
-describe('toolkitCredDisplayName', () => {
-	it('titles from the persisted catalog slug when the binding carries one', () => {
-		// Binding rows expose `catalog_api_id` (#910); it wins over the stored
-		// vendor/name tuple so the row reads exactly like Discover.
-		expect(
-			toolkitCredDisplayName({
-				catalog_api_id: 'nytimes.com/article_search',
-				api_vendor: 'nytimes-com',
-				api_name: 'nytimes-com-article-search',
-			}),
-		).toBe('Article Search');
-		expect(
-			toolkitCredDisplayName({ catalog_api_id: 'stripe.com', api_vendor: 'stripe-com' }),
-		).toBe('stripe.com');
-	});
-
-	it('strips a repeated vendor prefix from the sub-API segment', () => {
-		// Real-world umbrella-vendor payload — the sub-API name mirrors the
-		// vendor. Stripping the prefix yields the Discover-style result
-		// (`Posthog Api`) instead of `Posthog Com Posthog Api`.
-		expect(
-			toolkitCredDisplayName({
-				api_vendor: 'posthog-com',
-				api_name: 'posthog-com/posthog-com-posthog-api',
-			}),
-		).toBe('Posthog Api');
-	});
-
-	it('renders the sub-API name humanised when the vendor prefix does not match', () => {
-		expect(
-			toolkitCredDisplayName({
-				api_vendor: 'nytimes-com',
-				api_name: 'nytimes-com/nytimes-com-article-search',
-			}),
-		).toBe('Article Search');
-	});
-
-	it('falls back to a humanised vendor when the name is a generic placeholder', () => {
-		expect(toolkitCredDisplayName({ api_vendor: 'stripe-com', api_name: 'main' })).toBe(
-			'Stripe.Com',
-		);
-		expect(toolkitCredDisplayName({ api_vendor: 'posthog-com', api_name: '' })).toBe(
-			'Posthog.Com',
-		);
-	});
-
-	it('humanises a bare api_name when api_vendor is null', () => {
-		expect(toolkitCredDisplayName({ api_vendor: null, api_name: 'article_search' })).toBe(
-			'Article Search',
-		);
-	});
-
-	it('returns an empty string when both fields are absent', () => {
-		expect(toolkitCredDisplayName({})).toBe('');
-		expect(toolkitCredDisplayName({ api_vendor: null, api_name: null })).toBe('');
-	});
-
-	it('renders one consistent string when api_name equals api_vendor', () => {
-		// When the sub-API name is exactly the vendor there's no distinguishing
-		// segment, so both fields collapse to the SAME single vendor
-		// humanisation rather than `Github Com` (name path) vs `Github.Com`
-		// (vendor path).
-		expect(toolkitCredDisplayName({ api_vendor: 'github-com', api_name: 'github-com' })).toBe(
-			'Github.Com',
-		);
-		expect(toolkitCredDisplayName({ api_vendor: 'stripe', api_name: 'stripe' })).toBe('Stripe');
-	});
-
-	it('does not surface a generic api_name as the title when api_vendor is null', () => {
-		expect(toolkitCredDisplayName({ api_vendor: null, api_name: 'main' })).toBe('');
-		expect(toolkitCredDisplayName({ api_vendor: null, api_name: 'default' })).toBe('');
 	});
 });
 
@@ -370,7 +295,7 @@ describe('apiRefDisplayName', () => {
 		).toBe(vendorOnly);
 	});
 
-	it('agrees with toolkitCredDisplayName and titleFromApiId on one identity', () => {
+	it('agrees with titleFromApiId on one identity', () => {
 		// Cross-helper consistency pin: the same umbrella sub-API must render
 		// identically whichever DTO shape a surface happens to hold.
 		const fromRef = apiRefDisplayName({
@@ -378,13 +303,8 @@ describe('apiRefDisplayName', () => {
 			vendor: 'nytimes-com',
 			name: 'nytimes-com-article-search',
 		});
-		const fromBinding = toolkitCredDisplayName({
-			api_vendor: 'nytimes-com',
-			api_name: 'nytimes-com/nytimes-com-article-search',
-		});
 		const fromApiId = titleFromApiId('nytimes.com/article-search');
 		expect(fromRef).toBe('Article Search');
-		expect(fromBinding).toBe(fromRef);
 		expect(fromApiId).toBe(fromRef);
 	});
 
@@ -454,7 +374,7 @@ describe('apiIdentityTuple', () => {
 
 	it('does not double the vendor when name is itself a vendor/name tuple', () => {
 		// Real binding rows carry `api_name='posthog-com/posthog-com-posthog-api'`
-		// — the same shape toolkitCredDisplayName peels for its title. The
+		// — the same vendor/name tuple shape the display-name helpers peel. The
 		// subtitle must peel it too, or the vendor renders twice.
 		expect(
 			apiIdentityTuple({

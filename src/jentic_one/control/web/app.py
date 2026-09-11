@@ -8,14 +8,12 @@ from fastapi import APIRouter, FastAPI
 
 from jentic_one.control.services.access_requests.errors import AccessRequestServiceError
 from jentic_one.control.services.credentials.errors import CredentialServiceError
-from jentic_one.control.services.toolkits.errors import ToolkitServiceError
 from jentic_one.control.web.errors import (
     access_request_service_error_handler,
     credential_service_error_handler,
     database_error_handler,
-    toolkit_service_error_handler,
 )
-from jentic_one.control.web.routers import access_requests, credentials, mcp, toolkits
+from jentic_one.control.web.routers import access_requests, credentials, mcp
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import (
     DatabaseDataError,
@@ -34,7 +32,6 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
     return [
         (make_health_router("control"), "/control", []),
         (credentials.router, "", []),
-        (toolkits.router, "", []),
         (access_requests.router, "", []),
         (mcp.router, "", []),
     ]
@@ -44,7 +41,6 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     """Return surface-specific exception handlers to register on the combined app."""
     return [
         (CredentialServiceError, credential_service_error_handler),
-        (ToolkitServiceError, toolkit_service_error_handler),
         (AccessRequestServiceError, access_request_service_error_handler),
         (DatabaseIntegrityError, database_error_handler),
         (DatabaseDataError, database_error_handler),

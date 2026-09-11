@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **200**._
+_Total endpoints: **180**._
 
 
 ## Agent-facing (typically agent / service-account) (31)
@@ -109,7 +109,7 @@ _Total endpoints: **200**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (54)
+## Operator-facing (typically a human operator / admin) (52)
 
 
 ### `access-requests`
@@ -140,8 +140,6 @@ _Total endpoints: **200**._
 | PUT | `/agents/{agent_id}/jwks` | `agents:write` | operator | Update Agent Jwks |
 | GET | `/agents/{agent_id}/scopes` | `agents:read` | operator | Get Agent Scopes |
 | PUT | `/agents/{agent_id}/scopes` | `agents:write` | operator | Replace Agent Scopes |
-| POST | `/agents/{agent_id}/toolkits` | `agents:write` | operator | Bind Toolkit |
-| DELETE | `/agents/{agent_id}/toolkits/{toolkit_id}` | `agents:write` | operator | Unbind Toolkit |
 | POST | `/agents/{agent_id}:approve` | `agents:write` | operator | Approve Agent |
 | POST | `/agents/{agent_id}:claim` | _any authenticated_ | operator | Claim Agent |
 | POST | `/agents/{agent_id}:deny` | `agents:write` | operator | Deny Agent |
@@ -231,7 +229,7 @@ _Total endpoints: **200**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (87)
+## Any authenticated actor (69)
 
 
 ### `access-requests`
@@ -268,7 +266,6 @@ _Total endpoints: **200**._
 | GET | `/agents/{agent_id}` | _any authenticated_ | any | Get Agent |
 | GET | `/agents/{agent_id}/credentials` | _any authenticated_ | any | List Credentials |
 | GET | `/agents/{agent_id}/oauth-grants` | _any authenticated_ | any | List agent OAuth grants |
-| GET | `/agents/{agent_id}/toolkits` | _any authenticated_ | any | List Toolkits |
 
 ### `apis`
 
@@ -381,28 +378,6 @@ _Total endpoints: **200**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/system/version` | _any authenticated_ | any | Running and latest-available app version |
-
-### `toolkits`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/toolkits` | `toolkits:read`, `owner:toolkits:read` | any | List toolkits |
-| POST | `/toolkits` | `toolkits:write` | any | Create toolkit |
-| DELETE | `/toolkits/{toolkit_id}` | `toolkits:write` | any | Delete toolkit |
-| GET | `/toolkits/{toolkit_id}` | `toolkits:read`, `owner:toolkits:read` | any | Get toolkit |
-| PATCH | `/toolkits/{toolkit_id}` | `toolkits:write` | any | Update toolkit |
-| GET | `/toolkits/{toolkit_id}/agents` | `toolkits:read`, `owner:toolkits:read` | any | List agents bound to toolkit |
-| GET | `/toolkits/{toolkit_id}/credentials` | `toolkits:read`, `owner:toolkits:read` | any | List toolkit credential bindings |
-| POST | `/toolkits/{toolkit_id}/credentials` | `toolkits:write` | any | Bind credential to toolkit |
-| DELETE | `/toolkits/{toolkit_id}/credentials/{credential_id}` | `toolkits:write` | any | Unbind credential from toolkit |
-| GET | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:read`, `owner:toolkits:read` | any | List binding permission rules |
-| PATCH | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:write` | any | Patch binding permission rules |
-| PUT | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:write` | any | Replace binding permission rules |
-| POST | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test` | `toolkits:read`, `owner:toolkits:read` | any | Dry-run permission evaluation |
-| GET | `/toolkits/{toolkit_id}/keys` | `toolkits:read`, `owner:toolkits:read` | any | List toolkit keys |
-| POST | `/toolkits/{toolkit_id}/keys` | `toolkits:write` | any | Issue toolkit key (retired) |
-| DELETE | `/toolkits/{toolkit_id}/keys/{key_id}` | `toolkits:write` | any | Revoke toolkit key |
-| PATCH | `/toolkits/{toolkit_id}/keys/{key_id}` | `toolkits:write` | any | Update toolkit key |
 
 ### `users`
 

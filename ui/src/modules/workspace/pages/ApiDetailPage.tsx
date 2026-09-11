@@ -3,7 +3,7 @@
  *
  * Covers the API-only surface
  * jentic-one's registry exposes: overview, operations (current revision), and
- * revision history with promote/archive. Credentials, toolkits, and workflows
+ * revision history with promote/archive. Credentials and agents
  * belong to other modules and are out of
  * scope here.
  *

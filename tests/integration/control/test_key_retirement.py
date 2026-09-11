@@ -6,8 +6,7 @@ control side plus the owner user on the admin side, then asserts the job
 creates the successor service account (account + credential digest + execute
 grant + toolkit binding + per-credential bindings with copied rule sets) and
 stamps ``migrated_actor_id``. Also covers the skip reasons, fallback-owner
-resolution, idempotency, and revoke/delete propagation through
-``ToolkitService``.
+resolution, and idempotency.
 """
 
 from __future__ import annotations
@@ -27,10 +26,8 @@ from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCr
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 from jentic_one.control.core.schema.toolkits import Toolkit
-from jentic_one.control.services.toolkits.key_gen import generate_toolkit_key
-from jentic_one.control.services.toolkits.key_retirement import KeyRetirementService
-from jentic_one.control.services.toolkits.service import ToolkitService
-from jentic_one.shared.auth.identity import Identity
+from jentic_one.control.repos.toolkit_key_gen import generate_toolkit_key
+from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 
@@ -39,11 +36,6 @@ pytestmark = pytest.mark.integration
 _OWNER = "usr_krtest_owner"
 _FALLBACK_OWNER = "usr_krtest_fallback"
 _FALLBACK_EMAIL = "krtest-fallback@test.local"
-_ADMIN_IDENTITY = Identity(
-    sub=_OWNER,
-    email="krtest-owner@test.local",
-    permissions=["org:admin", "toolkits:write"],
-)
 
 
 @pytest.fixture()
@@ -417,36 +409,3 @@ async def test_rerun_is_idempotent(
             .all()
         )
     assert len(rule_sets) == 1
-
-
-async def _service_account_status(admin_db: DatabaseSession, sva_id: str) -> str:
-    rows = await _admin_rows(
-        admin_db, "SELECT status FROM service_accounts WHERE id = :sva", {"sva": sva_id}
-    )
-    assert len(rows) == 1
-    return str(rows[0].status)
-
-
-async def test_revoke_and_delete_propagate_to_service_account(
-    integration_context: Context,
-    control_db: DatabaseSession,
-    admin_db: DatabaseSession,
-    seed_owner: None,
-) -> None:
-    """Revoking/deleting a migrated key cuts (and un-revoke restores) its successor."""
-    toolkit_id, key_id, _ = await _seed_toolkit_with_key(control_db, suffix="prop")
-    outcomes = await KeyRetirementService(integration_context).run()
-    sva_id = {o.key_id: o for o in outcomes}[key_id].service_account_id
-    assert sva_id is not None
-    assert await _service_account_status(admin_db, sva_id) == "active"
-
-    toolkit_service = ToolkitService(integration_context)
-
-    await toolkit_service.update_key(toolkit_id, key_id, identity=_ADMIN_IDENTITY, revoked=True)
-    assert await _service_account_status(admin_db, sva_id) == "disabled"
-
-    await toolkit_service.update_key(toolkit_id, key_id, identity=_ADMIN_IDENTITY, revoked=False)
-    assert await _service_account_status(admin_db, sva_id) == "active"
-
-    await toolkit_service.delete_key(toolkit_id, key_id, identity=_ADMIN_IDENTITY)
-    assert await _service_account_status(admin_db, sva_id) == "disabled"

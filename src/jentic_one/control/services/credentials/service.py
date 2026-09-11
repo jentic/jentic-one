@@ -63,8 +63,8 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     Sigv4Full,
     Sigv4Redacted,
 )
+from jentic_one.control.services.credentials.schemas.permission_test import PermissionTestResult
 from jentic_one.control.services.credentials.schemas.provision import APIReference
-from jentic_one.control.services.toolkits.schemas.permission_test import PermissionTestResult
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
@@ -87,28 +87,11 @@ class CredentialService:
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
-    async def _bound_toolkit_ids(self, identity: Identity) -> list[str]:
-        """Toolkit ids the caller is bound to, widening owner-scoped visibility.
-
-        A credential bound to a toolkit the caller can see must itself be visible
-        to that caller — including an orphaned agent that owns nothing (issues
-        #665/#682). Bindings live in the admin DB, so resolve the ids there and
-        feed them into the control-DB ``build_access_filters``. An ``org:admin``
-        caller is unrestricted already, so skip the lookup.
-        """
-        if ORG_ADMIN in identity.permissions or not identity.sub:
-            return []
-        async with self._ctx.admin_db.session() as session:
-            return await PrerequisiteRepository.list_toolkit_ids_for_agent(
-                session, agent_id=identity.sub
-            )
-
     async def _bound_credential_ids(self, identity: Identity) -> list[str]:
         """Credential ids the caller is directly bound to (theme 5 phase 1).
 
-        The direct-binding analogue of ``_bound_toolkit_ids``: an agent must be
-        able to read a credential it is actively bound to even when it owns
-        nothing (issues #665/#682, minus the toolkit hop). Suspended bindings
+        An agent must be able to read a credential it is actively bound to
+        even when it owns nothing (issues #665/#682). Suspended bindings
         grant no visibility — a cut-off cuts reads of the credential too, while
         the binding row itself stays visible in ``/me``. ``org:admin`` is
         unrestricted already, so skip the lookup.
@@ -363,7 +346,6 @@ class CredentialService:
         access_filters = build_access_filters(
             identity,
             Credential,
-            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
             bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
@@ -386,15 +368,14 @@ class CredentialService:
         """List agents directly bound to a credential. Returns (data, has_more, next_cursor).
 
         The reverse lookup for the credential-detail "Agents" view (theme 5
-        phase 1) — the direct-binding analogue of ``ToolkitService.list_agents``.
-        Visibility is the same gate as ``get``: the caller must be able to see
-        the credential itself before enumerating who is bound to it (hard
-        problem 7/9 owner-gating; existence never leaks past the filters).
+        phase 1). Visibility is the same gate as ``get``: the caller must be
+        able to see the credential itself before enumerating who is bound to
+        it (hard problem 7/9 owner-gating; existence never leaks past the
+        filters).
         """
         access_filters = build_access_filters(
             identity,
             Credential,
-            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
             bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
@@ -442,7 +423,6 @@ class CredentialService:
         access_filters = build_access_filters(
             identity,
             Credential,
-            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
             bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
@@ -858,7 +838,6 @@ class CredentialService:
         access_filters = build_access_filters(
             identity,
             Credential,
-            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
             bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )

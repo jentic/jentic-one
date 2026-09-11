@@ -4,7 +4,7 @@
  * A bordered, muted strip with an
  * optional server-URL header followed by a single flex-wrap row of labelled
  * stats (icon + UPPERCASE label + value) and a right-aligned "Imported X ago".
- * Scoped to jentic-one's revision model — credentials / toolkits / workflows
+ * Scoped to jentic-one's revision model — credentials / agents
  * live in other modules, so the stats here are the API-owned facts: operations,
  * revisions, security schemes, and live-revision state.
  */

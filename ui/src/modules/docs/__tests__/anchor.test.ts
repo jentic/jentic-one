@@ -37,13 +37,13 @@ describe('indexReference', () => {
 		schema: 'jentic.endpoint-scope-tree/v1',
 		total: 2,
 		groups: ['g'],
-		endpoints: [endpoint('GET', '/credentials/{credential_id}'), endpoint('POST', '/toolkits')],
+		endpoints: [endpoint('GET', '/credentials/{credential_id}'), endpoint('POST', '/gadgets')],
 	};
 	const index = indexReference(payload);
 
 	it('keys each endpoint by its canonical (method, path) lookup key', () => {
 		expect(index.get('GET /credentials/{credential_id}')?.method).toBe('GET');
-		expect(index.get('POST /toolkits')?.path).toBe('/toolkits');
+		expect(index.get('POST /gadgets')?.path).toBe('/gadgets');
 		expect(index.size).toBe(2);
 	});
 
@@ -59,9 +59,9 @@ describe('operationAnchorId / modelAnchorId uniqueness', () => {
 			['POST', '/credentials'],
 			['GET', '/credentials/{credential_id}'],
 			['DELETE', '/credentials/{credential_id}'],
-			['PUT', '/toolkits/{toolkit_id}/credentials/{credential_id}/permissions'],
-			['GET', '/toolkits'],
-			['POST', '/toolkits'],
+			['PUT', '/gadgets/{gadget_id}/credentials/{credential_id}/permissions'],
+			['GET', '/gadgets'],
+			['POST', '/gadgets'],
 		];
 		const ids = ops.map(([m, p]) => operationAnchorId(m, p));
 		expect(new Set(ids).size).toBe(ids.length);
@@ -74,13 +74,7 @@ describe('operationAnchorId / modelAnchorId uniqueness', () => {
 	});
 
 	it('produces no duplicate model ids for distinct model names', () => {
-		const names = [
-			'Credential',
-			'CredentialList',
-			'Toolkit',
-			'Toolkit_Binding',
-			'AccessRequest',
-		];
+		const names = ['Credential', 'CredentialList', 'Gadget', 'Gadget_Binding', 'AccessRequest'];
 		const ids = names.map(modelAnchorId);
 		expect(new Set(ids).size).toBe(ids.length);
 	});

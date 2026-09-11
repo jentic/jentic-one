@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Request body for :test — dry-run a request shape against pooled rules.
+ * Request body for :test — dry-run a request shape against the binding's rules.
  */
 export type PermissionTestRequest = {
     /**
