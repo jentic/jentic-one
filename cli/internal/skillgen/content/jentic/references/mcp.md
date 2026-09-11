@@ -179,8 +179,8 @@ carries a `provisioning_url` — relay it to your operator to connect the
 account; there is nothing an MCP tool can do to fix it (do **not** file
 `request_access` for it). The denial taxonomy (`no_toolkit_binding`,
 `credential_undecryptable`, `credential_identity_mismatch`,
-`ambiguous_toolkit` — see `references/cli.md` step 2 for the per-code
-meanings, which are surface-independent) applies unchanged — the same codes,
+`ambiguous_toolkit` — the per-code meanings are surface-independent and
+live in `references/recovery.md`) applies unchanged — the same codes,
 delivered in the envelope instead of stderr.
 
 ## The 9 mount tools (each maps onto the loop)

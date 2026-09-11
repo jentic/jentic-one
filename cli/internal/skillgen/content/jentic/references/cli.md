@@ -120,13 +120,15 @@ duration **with a unit** — `--timeout 120s`, `2m`, `90s`. A bare number
 If you'd rather be reactive, the broker also guides you: when `execute` is
 denied it prints a recovery line on stderr (the `agent_directive`) and
 **exits 2**, so you can branch on the exit code instead of mistaking the 4xx
-body for success. The directive tells you exactly how to recover — which
-differs by denial:
+body for success. The per-code MEANINGS (what each denial signifies, the
+`toolkit_serves_api` fork, `parameters.expected` vs `parameters.found`,
+which recoveries an access request can and cannot fix) are shared by both
+lanes and live in `references/recovery.md`; what follows is this lane's
+mechanics per code:
 
-- **`no_toolkit_binding` (403)** — nothing serves this API yet (no toolkit,
-  and usually no credential). File a **provisioning plan** describing the
-  whole path to first execution, and propose the auth type and permission
-  rules you read from the API spec:
+- **`no_toolkit_binding` (403)** — with `toolkit_serves_api: false` the
+  directive's `suggested_command` points at a **provisioning plan**;
+  propose the auth type and permission rules you read from the API spec:
 
 ```
 jentic access request --provision stripe.com/api \
@@ -136,44 +138,20 @@ jentic access request --provision stripe.com/api \
   --wait
 ```
 
-  - `toolkit_serves_api: false` — **no** toolkit serves this API yet, so a
-    bare `--toolkit` binding request would be denied ("No toolkit serves
-    API …"). Filing it now is a dead-end. File the `--provision` plan above
-    instead: it describes the whole path (create toolkit, provision + bind a
-    credential with your proposed rules, bind you), which a human fulfils
-    and approves in the dashboard. The directive's `suggested_command`
-    already points at `--provision` in this case. The plan does **not**
-    force a new toolkit: during fulfilment the operator can add the
-    credential to a toolkit they already have (the wizard offers both) —
-    worth relaying when your operator mentions an existing toolkit they
-    want to extend.
-  - `toolkit_serves_api: true` — a toolkit already serves this API and you
-    just aren't bound to it; the directive suggests `jentic access request
-    --toolkit <vendor/name> --wait`. File that and wait for approval.
-
-- **`credential_not_provisioned` (424)** — you're bound to a toolkit, but no
-  credential (account) is connected. Filing an access request will **not**
-  fix this; the directive carries a `provisioning_url` — hand it to your
-  operator to connect the account, then retry.
-- **`credential_undecryptable` (424)** — a credential *is* connected, but
-  its stored secret can no longer be decrypted (typically the deployment's
-  encryption key rotated underneath it, e.g. a reinstall over existing
-  data). Neither an access request nor retrying will fix this — ask your
-  operator to remove and re-add the credential, then retry.
-- **`credential_identity_mismatch` (403)** — a toolkit *is* bound and a
-  credential *is* connected, but that credential's stored identity doesn't
-  cover this API (e.g. it targets a different name/version, or was stored in
-  a non-canonical form). Filing an access request will **not** fix this —
-  the binding already exists. The directive's `parameters.expected` vs
-  `parameters.found` name the mismatch; if
-  `parameters.would_match_if_normalized` is `true` the credential just needs
-  re-provisioning to canonicalize its identity. Either way, ask your
-  operator to fix or re-provision the credential so it targets `expected`,
-  then retry.
-- **`ambiguous_toolkit` (409)** — multiple toolkits you're bound to serve
-  this API. The directive lists `candidates`; resend the same `execute` with
-  `--header Jentic-Toolkit-Id=<toolkit_id>` (the directive also gives a
-  copy-pasteable `suggested_command`).
+  With `toolkit_serves_api: true` the directive instead suggests
+  `jentic access request --toolkit <vendor/name> --wait`. File the suggested
+  form and wait for approval.
+- **`credential_not_provisioned` (424)** — the directive carries a
+  `provisioning_url`: hand it to your operator to connect the account, then
+  retry. Do not file an access request for it.
+- **`credential_undecryptable` (424)** — ask your operator to remove and
+  re-add the credential, then retry; nothing you can file fixes it.
+- **`credential_identity_mismatch` (403)** — read the directive's
+  `parameters.expected` vs `parameters.found` and ask your operator to fix
+  or re-provision the credential so it targets `expected`, then retry.
+- **`ambiguous_toolkit` (409)** — resend the same `execute` with `--header
+  Jentic-Toolkit-Id=<toolkit_id>` picked from the directive's `candidates`
+  (the directive also gives a copy-pasteable `suggested_command`).
 
 Always follow the `agent_directive`'s `suggested_command` /
 `provisioning_url` rather than assuming which recovery applies. You can also

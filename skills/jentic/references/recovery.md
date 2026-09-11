@@ -1,6 +1,7 @@
 # Pitfalls, quick reference, and verification — read this when something is off, or you want the cheatsheet
 
-This file carries the lane-labelled pitfall lists, the command/tool
+This file carries the lane-labelled pitfall lists, the shared denial-code
+taxonomy (what each broker denial means, in either lane), the command/tool
 cheatsheets, and the verification checklists for the Jentic loop in
 `SKILL.md`. The shared, lane-neutral pitfalls (decide access first, never
 approve yourself, verify the backend before diagnosing) live in `SKILL.md`;
@@ -58,6 +59,55 @@ this file adds the lane-specific detail.
   `instance_id`) on tool results before diagnosing "missing" data — two MCP
   servers (or an MCP server and a CLI) can each be bound to a different
   backend.
+
+## Denial codes — what each one means (both lanes)
+
+A denied execute carries the same coded taxonomy in both lanes — the CLI
+delivers it as a stderr `agent_directive` plus exit code 2, an MCP session
+as a coded error envelope. The meanings below are surface-independent; the
+CLI delivery mechanics (flags, `suggested_command`, exit codes) live in
+`references/cli.md` step 2, the MCP envelope caveats in `references/mcp.md`
+step 5.
+
+- **`no_toolkit_binding` (403)** — nothing you're bound to serves this API
+  (no toolkit, and usually no credential either). The recovery forks on the
+  directive/envelope's `toolkit_serves_api` field:
+  - `false` — **no** toolkit serves this API at all, so a bare toolkit
+    binding request would auto-deny ("No toolkit serves API …"); filing one
+    is a dead-end. File a **provisioning plan** instead (CLI `--provision`;
+    MCP `request_access {"provision": …}`): it describes the whole path —
+    create toolkit, provision + bind a credential with your proposed rules,
+    bind you — which a human fulfils and approves in the dashboard. The
+    plan does **not** force a new toolkit: during fulfilment the operator
+    can add the credential to a toolkit they already have (the wizard
+    offers both) — worth relaying when your operator mentions an existing
+    toolkit they want to extend.
+  - `true` — a toolkit already serves this API and you just aren't bound to
+    it; request the toolkit binding (CLI `--toolkit <vendor/name>`; MCP
+    `"toolkits"`) and wait for approval.
+- **`credential_not_provisioned` (424)** — you're bound to a toolkit, but
+  no credential (account) is connected. Filing an access request will
+  **not** fix this; the recovery carries a `provisioning_url` — hand it to
+  your operator to connect the account, then retry.
+- **`credential_undecryptable` (424)** — a credential *is* connected, but
+  its stored secret can no longer be decrypted (typically the deployment's
+  encryption key rotated underneath it, e.g. a reinstall over existing
+  data). Neither an access request nor retrying will fix this — ask your
+  operator to remove and re-add the credential, then retry.
+- **`credential_identity_mismatch` (403)** — a toolkit *is* bound and a
+  credential *is* connected, but that credential's stored identity doesn't
+  cover this API (e.g. it targets a different name/version, or was stored
+  in a non-canonical form). Filing an access request will **not** fix this
+  — the binding already exists. `parameters.expected` vs `parameters.found`
+  name the mismatch; if `parameters.would_match_if_normalized` is `true`
+  the credential just needs re-provisioning to canonicalize its identity.
+  Either way, ask your operator to fix or re-provision the credential so it
+  targets `expected`, then retry.
+- **`ambiguous_toolkit` (409)** — multiple toolkits you're bound to serve
+  this API. The recovery lists `candidates`; resend the same execute
+  disambiguated with a `Jentic-Toolkit-Id: <toolkit_id>` header (the CLI
+  directive includes a copy-pasteable `suggested_command` with the exact
+  `--header` flag).
 
 ## Quick Reference — CLI session
 

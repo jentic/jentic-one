@@ -68,6 +68,10 @@ never execute the other lane's verbs.
 
 ### 1. Confirm you have a valid identity
 
+The exact commands (CLI) and tool calls (MCP) for this step and every step
+after it are in `references/cli.md` and `references/mcp.md`; follow your
+session's lane through every step and never execute the other lane's verbs.
+
 You normally don't set up your own identity — your human operator connects
 this agent to a Jentic install out-of-band (via `jentic register`/`jentic
 setup` for a CLI machine, or by authorizing the MCP connection) and a human
@@ -118,9 +122,10 @@ its permission rules as a **first pass** — a human reviews and edits them
 before approving. Do the work up front: inspect the operations you intend to
 call (step 4's lane verb) to read the methods, paths, and declared security
 schemes; pick the auth type from what the spec declares (`bearer`,
-`api_key`, `basic`, `oauth2`, or `none`); then translate the user's
-plain-English intent into concrete `allow`/`deny` rules with
-`methods`/`path`, e.g.
+`api_key`, `basic`, `oauth2`), or `none` if the API needs no credential;
+then translate the user's plain-English intent into concrete `allow`/`deny`
+rules with `methods`/`path` — "Read everything, write only to the prod
+board" becomes
 `[{"effect":"allow","methods":["GET"],"path":".*"}, {"effect":"allow","methods":["POST","PUT"],"path":"/boards/prod/.*"}]`.
 An `allow` rule must constrain at least one of `methods`/`path`/`operations`.
 
