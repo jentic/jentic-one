@@ -9,6 +9,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,7 +71,7 @@ func connectTestClientWithContext(serverCtx context.Context, t *testing.T, s *mc
 func decodeToolJSON(t *testing.T, res *mcp.CallToolResult) map[string]any {
 	t.Helper()
 	if len(res.Content) != 1 {
-		t.Fatalf("content items = %d, want 1", len(res.Content))
+		t.Fatalf("content items = %d, want 1: %s", len(res.Content), toolResultText(res))
 	}
 	text, ok := res.Content[0].(*mcp.TextContent)
 	if !ok {
@@ -81,6 +82,22 @@ func decodeToolJSON(t *testing.T, res *mcp.CallToolResult) map[string]any {
 		t.Fatalf("tool result is not JSON: %v\n%s", err, text.Text)
 	}
 	return payload
+}
+
+// toolResultText renders a tool result's content for failure messages.
+// %v on the content slice prints bare pointers ("[0xc008c1e280]") — exactly
+// what made the AccessLoop CI flake undiagnosable: the one artifact naming
+// the real error was formatted away.
+func toolResultText(res *mcp.CallToolResult) string {
+	parts := make([]string, 0, len(res.Content))
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			parts = append(parts, tc.Text)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%#v", c))
+	}
+	return strings.Join(parts, "\n")
 }
 
 func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
@@ -251,7 +268,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		t.Fatalf("whoami: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("whoami soft-errored: %v", res.Content)
+		t.Fatalf("whoami soft-errored: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["id"] != "agent_1" || payload["status"] != "active" {
@@ -267,7 +284,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		t.Fatalf("search_apis: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("search_apis soft-errored: %v", res.Content)
+		t.Fatalf("search_apis soft-errored: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	hits, ok := payload["data"].([]any)
@@ -292,7 +309,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		t.Fatalf("inspect_operation: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("inspect_operation soft-errored: %v", res.Content)
+		t.Fatalf("inspect_operation soft-errored: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["method"] != "GET" || payload["url"] != "https://acme.com/pets" {
@@ -308,7 +325,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("execute soft-errored: %v", res.Content)
+		t.Fatalf("execute soft-errored: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["status"] != float64(200) || payload["execution_id"] != "exec_42" {
@@ -617,7 +634,7 @@ func TestMCPSession_ContextValuesReachHandlersAndTransport(t *testing.T) {
 		t.Fatalf("get_started: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("get_started errored: %v", res.Content)
+		t.Fatalf("get_started errored: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	// State "ready" is only reachable when the handler saw the session's
@@ -779,7 +796,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 		t.Fatalf("request_access: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("a pending filing is a normal result: %v", res.Content)
+		t.Fatalf("a pending filing is a normal result: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["status"] != statusPending || payload["id"] != "acr_1" {
@@ -806,7 +823,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 		t.Fatalf("request_access poll: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("approved poll soft-errored: %v", res.Content)
+		t.Fatalf("approved poll soft-errored: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["status"] != statusApproved {
@@ -822,7 +839,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 		t.Fatalf("execute retry: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("the retried execute must succeed after approval: %v", res.Content)
+		t.Fatalf("the retried execute must succeed after approval: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["status"] != float64(200) || payload["execution_id"] != "exec_ok" {

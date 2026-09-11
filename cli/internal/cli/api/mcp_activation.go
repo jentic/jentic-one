@@ -75,6 +75,15 @@ func launchdListener() (net.Listener, error) {
 }
 
 // listenerFromFD adopts an inherited descriptor as a net.Listener.
+//
+// Ownership contract: the caller DONATES fd — this function closes it (via
+// the os.NewFile wrapper) whether adoption succeeds or not, and the returned
+// listener runs on a fresh dup made by net.FileListener. Correct for its
+// production inputs (systemd's fd 3, launchd's fd 0: this process is the
+// descriptor's sole owner). Never pass an fd number that another live
+// *os.File still wraps — that second owner's Close/finalizer would later
+// close an unrelated recycled descriptor (the cross-test flake mode pinned
+// in TestListenerFromFD's comment).
 func listenerFromFD(fd uintptr, name string) (net.Listener, error) {
 	f := os.NewFile(fd, name)
 	if f == nil {

@@ -454,20 +454,7 @@ func TestCheckMCPModeFlags(t *testing.T) {
 	}
 }
 
-// TestListenerFromFD proves inherited-fd adoption against a real socket.
-func TestListenerFromFD(t *testing.T) {
-	ln, err := net.Listen("unix", shortSocketPath(t))
-	if err != nil {
-		t.Fatalf("bind: %v", err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	f, err := ln.(*net.UnixListener).File()
-	if err != nil {
-		t.Fatalf("File: %v", err)
-	}
-	adopted, err := listenerFromFD(f.Fd(), "test socket")
-	if err != nil {
-		t.Fatalf("listenerFromFD: %v", err)
-	}
-	_ = adopted.Close()
-}
+// TestListenerFromFD lives in mcp_activation_unix_test.go: donating a raw
+// fd is a unix-only affair (systemd/launchd), and the donation must be a
+// dedicated dup that listenerFromFD exclusively owns — see the fd-ownership
+// contract on listenerFromFD.

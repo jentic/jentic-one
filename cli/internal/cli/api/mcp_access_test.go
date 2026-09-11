@@ -64,7 +64,7 @@ func TestMCPSearchCatalog_EnvelopePassthroughWithStamp(t *testing.T) {
 		t.Fatalf("handleSearchCatalog: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	if gotQuery != "sheets" || gotCursor != "c0" || gotLimit != "25" {
 		t.Errorf("wire params = q %q cursor %q limit %q, want the normalized arguments", gotQuery, gotCursor, gotLimit)
@@ -217,7 +217,7 @@ func TestMCPImportAPI_CompletesAndPromotes(t *testing.T) {
 		t.Fatalf("handleImportAPI: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 
 	// The rawPathEditor hazard: the umbrella api_id must reach the backend
@@ -258,7 +258,7 @@ func TestMCPImportAPI_StillRunningReturnsJobForConvergence(t *testing.T) {
 		t.Fatalf("handleImportAPI: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("a slow import is not an error — the model converges by re-calling: %v", res.Content)
+		t.Fatalf("a slow import is not an error — the model converges by re-calling: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["job_id"] != "job_9" || payload["status"] != "running" {
@@ -453,7 +453,7 @@ func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("a pending filing is a normal result, not an error: %v", res.Content)
+		t.Fatalf("a pending filing is a normal result, not an error: %s", toolResultText(res))
 	}
 
 	// The wire body: compose()'s exact plan — the 4-item provisioning chain
@@ -558,7 +558,7 @@ func TestMCPRequestAccess_DuplicatePendingSingleTargetAttaches(t *testing.T) {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("a single-target duplicate attaches, like the CLI: %v", res.Content)
+		t.Fatalf("a single-target duplicate attaches, like the CLI: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["id"] != "acr_old" || payload["attached_to_existing"] != true {
@@ -604,7 +604,7 @@ func TestMCPRequestAccess_PollArmReportsApproved(t *testing.T) {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("an approved request is a normal result: %v", res.Content)
+		t.Fatalf("an approved request is a normal result: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["id"] != "acr_1" || payload["status"] != statusApproved {
@@ -702,7 +702,7 @@ func TestMCPImportAPI_JobPollFailureIsSoftErrorNotSuccess(t *testing.T) {
 		t.Fatalf("handleImportAPI: %v", err)
 	}
 	if !res.IsError {
-		t.Fatalf("a job-poll failure must be an isError result, never the still-running success shape: %v", res.Content)
+		t.Fatalf("a job-poll failure must be an isError result, never the still-running success shape: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if code, _ := payload["error_code"].(string); code == "" {
