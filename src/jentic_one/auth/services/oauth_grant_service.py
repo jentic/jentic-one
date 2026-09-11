@@ -13,10 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos import (
-    AccessTokenRepository,
     AgentRepository,
     OAuthClientGrantRepository,
-    RefreshTokenRepository,
 )
 from jentic_one.admin.services.oauth_grant_admin_service import (
     GRANT_REVOKE_ADMIN_PERMISSIONS,
@@ -37,7 +35,13 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
+
+# Re-exported: the single revocation body moved to the shared tier so the
+# admin client hard-delete can run it too (admin must not import auth); every
+# auth caller keeps importing it from here.
+from jentic_one.shared.oauth_grant_revocation import (
+    revoke_grant_and_sweep_tokens as revoke_grant_and_sweep_tokens,
+)
 from jentic_one.shared.pagination import Page
 
 logger = structlog.get_logger(__name__)
@@ -63,72 +67,6 @@ AGENT_TRANSFER_REVOCATION_REASON = "agent_ownership_transferred"
 #: grants" listing/count on a dead agent. Same cause-in-data pattern as the
 #: transfer reason above.
 AGENT_ARCHIVE_REVOCATION_REASON = "agent_archived"
-
-
-async def revoke_grant_and_sweep_tokens(
-    session: AsyncSession,
-    grant: OAuthClientGrant,
-    *,
-    actor_type: ActorType,
-    actor_id: str,
-    origin: str | None,
-    audit_reason: str,
-    summary: str,
-    event_reason: str | None = None,
-) -> bool:
-    """Flip one grant row + sweep its tokens + audit + event, in the caller's session.
-
-    THE single revocation body — the manual ``:revoke`` kill switch, the
-    ownership-transfer sweep (G10), and the RFC 7009 refresh-token full
-    disconnect (G11, :mod:`oauth_revocation_service`) all run through here, so
-    the token kill switch and the emitted ``oauth_grant.revoked`` event can
-    never drift between the causes. Flush-only: it joins whatever transaction
-    the caller owns.
-    Returns False (writing no audit/event) when the grant was already revoked;
-    the token sweep re-runs regardless (idempotent belt).
-    """
-    newly_revoked = grant.status == OAuthGrantStatus.ACTIVE.value and (
-        await OAuthClientGrantRepository.revoke(session, grant.id)
-    )
-    swept_access = await AccessTokenRepository.revoke_by_grant(session, grant.id)
-    swept_refresh = await RefreshTokenRepository.revoke_by_grant(session, grant.id)
-    if not newly_revoked:
-        return False
-
-    await record_audit(
-        session,
-        action=AuditAction.REVOKE,
-        target_type=AuditTargetType.OAUTH_GRANT,
-        target_id=grant.id,
-        actor_type=actor_type,
-        actor_id=actor_id,
-        after={
-            "oauth_client_id": grant.oauth_client_id,
-            "agent_id": grant.agent_id,
-            "swept_access_tokens": swept_access,
-            "swept_refresh_tokens": swept_refresh,
-        },
-        reason=audit_reason,
-        origin=origin,
-    )
-    data: dict[str, object] = {
-        "grant_id": grant.id,
-        "oauth_client_id": grant.oauth_client_id,
-        "agent_id": grant.agent_id,
-        "user_id": grant.user_id,
-    }
-    if event_reason is not None:
-        data["reason"] = event_reason
-    await emit_event_best_effort(
-        session,
-        type=EventType.OAUTH_GRANT_REVOKED,
-        severity=EventSeverity.INFO,
-        summary=summary,
-        requires_action=False,
-        data=data,
-        created_by=actor_id,
-    )
-    return True
 
 
 async def revoke_active_grants_for_agent(

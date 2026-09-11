@@ -221,7 +221,7 @@ async def test_transfer_rolls_back_when_grant_revocation_fails(
     # repository itself is real; only this one call blows up.
     with (
         patch(
-            "jentic_one.auth.services.oauth_grant_service.AccessTokenRepository.revoke_by_grant",
+            "jentic_one.shared.oauth_grant_revocation.AccessTokenRepository.revoke_by_grant",
             new=AsyncMock(side_effect=RuntimeError("sweep exploded")),
         ),
         pytest.raises(RuntimeError, match="sweep exploded"),

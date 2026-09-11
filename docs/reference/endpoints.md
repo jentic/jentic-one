@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **185**._
+_Total endpoints: **186**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -228,7 +228,7 @@ _Total endpoints: **185**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (73)
+## Any authenticated actor (74)
 
 
 ### `access-requests`
@@ -255,6 +255,7 @@ _Total endpoints: **185**._
 | PATCH | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Update OAuth client |
 | POST | `/admin/oauth-clients/{id}/rotate-secret` | `oauth-clients:write` | any | Rotate client secret |
 | POST | `/admin/oauth-clients/{id}:approve` | `oauth-clients:write` | any | Approve OAuth client |
+| POST | `/admin/oauth-clients/{id}:delete` | `oauth-clients:write` | any | Delete OAuth client |
 | POST | `/admin/oauth-clients/{id}:deny` | `oauth-clients:write` | any | Deny OAuth client |
 | GET | `/admin/oauth-grants` | `oauth-clients:read` | any | List OAuth grants |
 

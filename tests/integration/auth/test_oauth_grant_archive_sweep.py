@@ -173,7 +173,7 @@ async def test_archive_rolls_back_when_grant_sweep_fails(
 
     with (
         patch(
-            "jentic_one.auth.services.oauth_grant_service.AccessTokenRepository.revoke_by_grant",
+            "jentic_one.shared.oauth_grant_revocation.AccessTokenRepository.revoke_by_grant",
             new=AsyncMock(side_effect=RuntimeError("sweep exploded")),
         ),
         pytest.raises(RuntimeError, match="sweep exploded"),
