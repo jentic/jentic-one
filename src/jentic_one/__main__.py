@@ -24,6 +24,8 @@ from jentic_one.admin.services.errors import (
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
 from jentic_one.control.services.key_retirement import KeyRetirementService
+from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
+from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
 from jentic_one.shared.config import AppConfig, load_config
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
@@ -326,6 +328,124 @@ async def _retire_toolkit_keys(*, owner_email: str | None) -> int:
     return 0
 
 
+def _write_report(findings: list[Finding], report_path: str | None) -> None:
+    """Emit one JSON line per finding, to ``report_path`` or stdout."""
+    if report_path is None:
+        for finding in findings:
+            print(json.dumps(finding.as_dict()), flush=True)
+        return
+    with open(report_path, "w", encoding="utf-8") as fh:
+        for finding in findings:
+            fh.write(json.dumps(finding.as_dict()) + "\n")
+
+
+async def _flatten_toolkits(
+    *,
+    diff_only: bool,
+    report_path: str | None,
+    verify: bool,
+    acknowledge: bool,
+) -> int:
+    """Run the theme-5 Phase 6a flattening job (or its verify mode).
+
+    Default mode derives direct agent↔credential bindings from the toolkit
+    graph (idempotent — re-run and confirm zero creations, the
+    double-run-and-diff check). ``--verify`` runs the R-02 queries instead;
+    ``--verify --acknowledge`` additionally writes the sentinel row Phase
+    6b's drop migrations require. One JSONL report line per finding.
+    """
+    config = load_config()
+    configure_logging(config)
+
+    async with Context(config, allowed_dbs={"admin", "control"}) as ctx:
+        svc = ToolkitFlatteningService(ctx)
+        if verify:
+            result = await svc.verify(acknowledge=acknowledge)
+            _write_report(result.findings, report_path)
+            print(
+                f"==> verify {'PASSED' if result.passed else 'FAILED'}: "
+                f"{result.legacy_pair_count} legacy pair(s), "
+                f"{result.direct_binding_count} direct binding(s), "
+                f"{result.missing_pair_count} missing, "
+                f"{len(result.findings)} report line(s).",
+                file=sys.stderr,
+                flush=True,
+            )
+            if acknowledge:
+                print(
+                    "==> acknowledgement recorded — Phase 6b drops are unblocked."
+                    if result.acknowledged
+                    else "==> acknowledgement REFUSED: verification failed; run "
+                    "flatten-toolkits first, then re-verify.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return 0 if result.passed else 1
+
+        run = await svc.run(diff_only=diff_only)
+        _write_report(run.findings, report_path)
+        verb = "would create" if diff_only else "created"
+        print(
+            f"==> {run.pairs_total} legacy pair(s): {verb} {run.created} binding(s), "
+            f"{run.already_present} already present, {len(run.findings)} report line(s).",
+            file=sys.stderr,
+            flush=True,
+        )
+        if not diff_only:
+            print(
+                "==> Re-run this command and confirm it reports zero creations "
+                "(double-run-and-diff), then run with --verify.",
+                file=sys.stderr,
+                flush=True,
+            )
+    return 0
+
+
+async def _export_toolkits(*, out_path: str | None, import_path: str | None) -> int:
+    """Export the five legacy toolkit tables, or re-import an export file."""
+    config = load_config()
+    configure_logging(config)
+
+    async with Context(config, allowed_dbs={"admin", "control"}) as ctx:
+        svc = ToolkitExportService(ctx)
+        if import_path is not None:
+            try:
+                with open(import_path, encoding="utf-8") as fh:
+                    document = json.load(fh)
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"error: cannot read {import_path}: {exc}", file=sys.stderr)
+                return 2
+            try:
+                outcome = await svc.import_document(document)
+            except ToolkitExportError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            for table in sorted(outcome.inserted):
+                print(
+                    f"==> {table}: {outcome.inserted[table]} inserted, "
+                    f"{outcome.skipped_existing[table]} already present.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return 0
+
+        document = await svc.export()
+        assert out_path is not None  # argparse enforces the either/or
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(document, fh)
+            fh.write("\n")
+        counts = ", ".join(
+            f"{table}={body['row_count']}" for table, body in document["tables"].items()
+        )
+        print(
+            f"==> exported to {out_path} ({counts}). The file embeds key hash "
+            "digests — store it like a secrets backup.",
+            file=sys.stderr,
+            flush=True,
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Dispatch CLI subcommands. With no subcommand, run the server."""
     parser = argparse.ArgumentParser(prog="jentic_one", description="jentic-one service CLI.")
@@ -367,6 +487,57 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    flatten = sub.add_parser(
+        "flatten-toolkits",
+        help=(
+            "Derive direct agent-credential bindings from the toolkit graph "
+            "(theme-5 Phase 6a; idempotent, operator-invoked)."
+        ),
+    )
+    flatten.add_argument(
+        "--diff-only",
+        action="store_true",
+        help="Report what a run would create without writing anything.",
+    )
+    flatten.add_argument(
+        "--report",
+        metavar="PATH",
+        help="Write the JSONL report here instead of stdout.",
+    )
+    flatten.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Run the verification queries instead of flattening: every legacy "
+            "(agent, credential) pair must exist as a direct binding."
+        ),
+    )
+    flatten.add_argument(
+        "--acknowledge",
+        action="store_true",
+        help=(
+            "With --verify: record the operator acknowledgement that gates the "
+            "Phase-6b drop migrations. Refused unless the verification passes "
+            "in this same invocation."
+        ),
+    )
+
+    export_toolkits = sub.add_parser(
+        "export-toolkits",
+        help=(
+            "Export the five legacy toolkit tables to a re-importable JSON file "
+            "(theme-5 Phase 6a; the only row-restoring rollback after Phase 6b)."
+        ),
+    )
+    export_group = export_toolkits.add_mutually_exclusive_group(required=True)
+    export_group.add_argument("--out", metavar="PATH", help="Write the export file here.")
+    export_group.add_argument(
+        "--import",
+        dest="import_path",
+        metavar="PATH",
+        help="Re-import a previously exported file (idempotent by row id).",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "create-admin":
@@ -389,6 +560,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "retire-toolkit-keys":
         return asyncio.run(_retire_toolkit_keys(owner_email=args.owner))
+
+    if args.command == "flatten-toolkits":
+        if args.acknowledge and not args.verify:
+            flatten.error("--acknowledge requires --verify (it records a passed verification)")
+        if args.diff_only and args.verify:
+            flatten.error("--diff-only and --verify are mutually exclusive")
+        return asyncio.run(
+            _flatten_toolkits(
+                diff_only=args.diff_only,
+                report_path=args.report,
+                verify=args.verify,
+                acknowledge=args.acknowledge,
+            )
+        )
+
+    if args.command == "export-toolkits":
+        return asyncio.run(_export_toolkits(out_path=args.out, import_path=args.import_path))
 
     _serve()
     return 0
