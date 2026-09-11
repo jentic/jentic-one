@@ -31,7 +31,7 @@ export type ToolkitUpdate = ToolkitUpdateRequest;
 /** Cursor-paginated toolkit list envelope. */
 export type ToolkitList = ToolkitListResponse;
 
-/** A toolkit API key (plaintext is only present on the create response). */
+/** A toolkit API key. Existing keys only — issuing new toolkit keys is retired. */
 export type ToolkitKey = ToolkitKeyResponse;
 export type ToolkitKeyList = ToolkitKeyListResponse;
 
@@ -59,11 +59,15 @@ export type AgentToolkitBinding = ToolkitBindingResponse;
 /** A single audit-log entry (read-only, from the shared `/audit` endpoint). */
 export type ToolkitAuditEntry = AuditResponse;
 
-/** Result of creating a toolkit: the toolkit plus its one-time plaintext key. */
+/**
+ * Result of creating a toolkit. No key is issued — toolkit keys are retired;
+ * callers authenticate via service accounts (`sak_` keys) instead. `warnings`
+ * carries non-fatal bind-time signals (e.g. inline binds landing with zero
+ * permission rules, which the broker default-denies).
+ */
 export interface CreatedToolkit {
 	toolkit: Toolkit;
-	/** Plaintext `jntc_live_…` key — shown once, never retrievable again. */
-	apiKey: string;
+	warnings: BindingWarning[];
 }
 
 /**

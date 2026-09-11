@@ -192,10 +192,10 @@ def test_list_toolkit_credentials(
 
 
 @pytest.mark.smoke
-def test_create_api_key_for_toolkit(
+def test_create_api_key_for_toolkit_is_retired(
     base_url: str, agent_with_toolkit: tuple[SmokeAgent, str]
 ) -> None:
-    """POST /toolkits/{id}/keys returns 201 with a plaintext API key."""
+    """POST /toolkits/{id}/keys returns 410 — toolkit keys are retired."""
     agent, toolkit_id = agent_with_toolkit
     body, status = authed_request(
         f"{base_url}/toolkits/{toolkit_id}/keys",
@@ -203,7 +203,6 @@ def test_create_api_key_for_toolkit(
         token=agent.owner_token,
         body={"label": "smoke-key"},
     )
-    assert status == 201
+    assert status == 410
     assert isinstance(body, dict)
-    assert "api_key" in body
-    assert len(body["api_key"]) > 0
+    assert body["type"] == "toolkit_keys_retired"

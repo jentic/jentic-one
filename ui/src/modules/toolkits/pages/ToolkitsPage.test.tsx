@@ -141,7 +141,7 @@ describe('ToolkitsPage', () => {
 		expect(link).toHaveAttribute('href', expect.stringContaining('/discover'));
 	});
 
-	it('creates a toolkit and reveals the one-time key before handing off', async () => {
+	it('creates a toolkit — no key is issued — and hands off to the detail page', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<ToolkitsPage />, { route: '/toolkits' });
 		await screen.findByText('GitHub Tools');
@@ -150,18 +150,13 @@ describe('ToolkitsPage', () => {
 		await user.type(screen.getByLabelText('Name'), 'Slack Tools');
 		await user.click(screen.getByRole('button', { name: /^create$/i }));
 
-		// Step 2: the one-time plaintext key is revealed in the dialog (it used
-		// to be silently discarded) with the hand-off CTA.
-		expect(await screen.findByText('jntc_live_mockplaintextkey_show_once')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /open toolkit/i })).toBeInTheDocument();
+		// Step 2 is a plain confirmation with the hand-off CTA: toolkit keys are
+		// retired, so no plaintext key is revealed anywhere in the flow.
+		expect(await screen.findByRole('button', { name: /open toolkit/i })).toBeInTheDocument();
+		expect(screen.queryByText(/jntc_live_/)).not.toBeInTheDocument();
 
-		// Dismissing the dialog wipes the plaintext; the new toolkit is in the list.
+		// Dismissing the dialog leaves the new toolkit in the list.
 		await user.click(screen.getByRole('button', { name: 'Close' }));
-		await waitFor(() =>
-			expect(
-				screen.queryByText('jntc_live_mockplaintextkey_show_once'),
-			).not.toBeInTheDocument(),
-		);
 		expect(await screen.findByText('Slack Tools')).toBeInTheDocument();
 	});
 
@@ -196,7 +191,7 @@ describe('ToolkitsPage', () => {
 		await user.click(await screen.findByRole('checkbox', { name: /bind slack token/i }));
 		await user.click(screen.getByRole('button', { name: /^create$/i }));
 
-		// The key step notes the zero-rules inline bind (broker default-deny).
+		// The confirmation step notes the zero-rules inline bind (broker default-deny).
 		expect(
 			await screen.findByText(/1 credential bound with no permission rules/i),
 		).toBeInTheDocument();

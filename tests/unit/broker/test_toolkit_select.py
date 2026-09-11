@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from jentic.problem_details import Forbidden, ProblemDetailException
 
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
@@ -98,33 +96,6 @@ async def _select(deriver: _StubDeriver, *, header_toolkit: str | None) -> str:
         header_toolkit=header_toolkit,
         instance=_INSTANCE,
     )
-
-
-def _toolkit_identity(toolkit_id: str = "tk_key1") -> Identity:
-    return Identity(
-        sub=toolkit_id,
-        actor_type=ActorType.TOOLKIT,
-        permissions=["capabilities:execute"],
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        active=True,
-    )
-
-
-async def _select_toolkit_actor(
-    deriver: _StubDeriver, *, header_toolkit: str | None, toolkit_id: str = "tk_key1"
-) -> str:
-    return await select_toolkit(
-        deriver=deriver,
-        identity=_toolkit_identity(toolkit_id),
-        api=_API,
-        header_toolkit=header_toolkit,
-        instance=_INSTANCE,
-    )
-
-
-def _detail(exc: ProblemDetailException) -> dict[str, Any]:
-    """The problem-detail body (a dict at runtime, though typed ``str`` on the exc)."""
-    return cast(dict[str, Any], exc.detail)
 
 
 async def test_single_candidate_no_header_uses_it() -> None:
@@ -285,30 +256,6 @@ async def test_derivation_uses_discovered_api_identity() -> None:
     assert deriver.calls == [
         {"agent_id": "agnt_1", "vendor": "acme", "name": "widgets", "version": "1.0.0"}
     ]
-
-
-async def test_toolkit_actor_no_header_uses_key_toolkit() -> None:
-    """A toolkit key names its toolkit directly — derivation is bypassed."""
-    deriver = _StubDeriver(["tk_should_not_be_used"])
-    result = await _select_toolkit_actor(deriver, header_toolkit=None)
-    assert result == "tk_key1"
-    assert deriver.calls == []
-
-
-async def test_toolkit_actor_matching_header_uses_key_toolkit() -> None:
-    deriver = _StubDeriver([])
-    result = await _select_toolkit_actor(deriver, header_toolkit="tk_key1")
-    assert result == "tk_key1"
-    assert deriver.calls == []
-
-
-async def test_toolkit_actor_mismatched_header_raises_403() -> None:
-    deriver = _StubDeriver([])
-    with pytest.raises(Forbidden) as exc:
-        await _select_toolkit_actor(deriver, header_toolkit="tk_other")
-    assert exc.value.status_code == 403
-    assert _detail(exc.value)["type"] == "toolkit_binding_required"
-    assert deriver.calls == []
 
 
 def test_ambiguous_toolkit_body_lists_candidates() -> None:

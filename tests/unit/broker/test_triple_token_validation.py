@@ -46,51 +46,37 @@ def api_key_resolver() -> AsyncMock:
 
 
 @pytest.fixture()
-def toolkit_key_resolver() -> AsyncMock:
-    resolver = AsyncMock()
-    resolver.resolve_access_token = AsyncMock(
-        return_value=_make_identity(sub="tk_toolkit1", actor_type=ActorType.TOOLKIT)
-    )
-    return resolver
-
-
-@pytest.fixture()
-def triple(
-    opaque_resolver: AsyncMock, api_key_resolver: AsyncMock, toolkit_key_resolver: AsyncMock
-) -> CompositeTokenValidator:
+def triple(opaque_resolver: AsyncMock, api_key_resolver: AsyncMock) -> CompositeTokenValidator:
     opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
     api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
-    toolkit_cached = CachedTokenValidator(resolver=toolkit_key_resolver, cache_ttl_seconds=5.0)
-    return CompositeTokenValidator(
-        opaque=opaque_cached, api_key=api_key_cached, toolkit_key=toolkit_cached, jwt=None
-    )
+    return CompositeTokenValidator(opaque=opaque_cached, api_key=api_key_cached, jwt=None)
 
 
 @pytest.mark.asyncio
-async def test_toolkit_key_routes_to_toolkit_path(
+async def test_retired_toolkit_key_routes_to_api_key_path(
     opaque_resolver: AsyncMock,
     api_key_resolver: AsyncMock,
-    toolkit_key_resolver: AsyncMock,
 ) -> None:
-    """A jntc_live_ key routes to the toolkit resolver, not the api-key/opaque path."""
+    """A retired jntc_live_ key routes to the api-key resolver, never the opaque path.
+
+    The retirement job (theme-5 Phase 4) migrates each key's digest to a
+    service account, so the api-key path resolves the unchanged plaintext as
+    that account.
+    """
+    api_key_resolver.resolve_access_token = AsyncMock(
+        return_value=_make_identity(sub="sva_migrated1", actor_type=ActorType.SERVICE_ACCOUNT)
+    )
     opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
     api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
-    toolkit_cached = CachedTokenValidator(resolver=toolkit_key_resolver, cache_ttl_seconds=5.0)
-    triple = CompositeTokenValidator(
-        opaque=opaque_cached,
-        api_key=api_key_cached,
-        toolkit_key=toolkit_cached,
-        jwt=None,
-    )
+    triple = CompositeTokenValidator(opaque=opaque_cached, api_key=api_key_cached, jwt=None)
 
     result = await triple.validate("jntc_live_abc123")  # pragma: allowlist secret
 
-    assert result.sub == "tk_toolkit1"
-    assert result.actor_type is ActorType.TOOLKIT
-    toolkit_key_resolver.resolve_access_token.assert_called_once_with(
+    assert result.sub == "sva_migrated1"
+    assert result.actor_type is ActorType.SERVICE_ACCOUNT
+    api_key_resolver.resolve_access_token.assert_called_once_with(
         "jntc_live_abc123"  # pragma: allowlist secret
     )
-    api_key_resolver.resolve_access_token.assert_not_called()
     opaque_resolver.resolve_access_token.assert_not_called()
 
 
@@ -136,14 +122,10 @@ async def test_jwt_routes_to_jwt_path() -> None:
     api_key_resolver = AsyncMock()
     api_key_resolver.resolve_access_token = AsyncMock()
 
-    toolkit_key_resolver = AsyncMock()
-    toolkit_key_resolver.resolve_access_token = AsyncMock()
-
     opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
     api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
-    toolkit_cached = CachedTokenValidator(resolver=toolkit_key_resolver, cache_ttl_seconds=5.0)
     triple = CompositeTokenValidator(
-        opaque=opaque_cached, api_key=api_key_cached, toolkit_key=toolkit_cached, jwt=jwt_validator
+        opaque=opaque_cached, api_key=api_key_cached, jwt=jwt_validator
     )
 
     jwt_token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.signature"  # pragma: allowlist secret
@@ -161,15 +143,26 @@ async def test_unknown_api_key_raises_typed_error(api_key_resolver: AsyncMock) -
     api_key_resolver.resolve_access_token = AsyncMock(return_value=None)
     opaque_resolver = AsyncMock()
     opaque_resolver.resolve_access_token = AsyncMock()
-    toolkit_key_resolver = AsyncMock()
-    toolkit_key_resolver.resolve_access_token = AsyncMock()
 
     opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
     api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
-    toolkit_cached = CachedTokenValidator(resolver=toolkit_key_resolver, cache_ttl_seconds=5.0)
-    triple = CompositeTokenValidator(
-        opaque=opaque_cached, api_key=api_key_cached, toolkit_key=toolkit_cached, jwt=None
-    )
+    triple = CompositeTokenValidator(opaque=opaque_cached, api_key=api_key_cached, jwt=None)
 
     with pytest.raises(TokenValidationError, match="unknown_token"):
         await triple.validate("jak_bad_key")
+
+
+@pytest.mark.asyncio
+async def test_unmigrated_toolkit_key_raises_typed_error(api_key_resolver: AsyncMock) -> None:
+    """A jntc_live_ key with no migrated service account resolves to nothing → 401."""
+    api_key_resolver.resolve_access_token = AsyncMock(return_value=None)
+    opaque_resolver = AsyncMock()
+    opaque_resolver.resolve_access_token = AsyncMock()
+
+    opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
+    api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
+    triple = CompositeTokenValidator(opaque=opaque_cached, api_key=api_key_cached, jwt=None)
+
+    with pytest.raises(TokenValidationError, match="unknown_token"):
+        await triple.validate("jntc_live_unmigrated")  # pragma: allowlist secret
+    opaque_resolver.resolve_access_token.assert_not_called()

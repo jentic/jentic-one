@@ -5,10 +5,9 @@
 import type { BindingWarningSchema } from './BindingWarningSchema';
 import type { ToolkitResponse } from './ToolkitResponse';
 /**
- * Create response: toolkit + api_key shown once.
+ * Create response — toolkit + bind-time warnings (no key is issued).
  */
 export type ToolkitCreateResponse = {
-    api_key: string;
     toolkit: ToolkitResponse;
     /**
      * Non-fatal signals about the create — e.g. inline-bound credentials that landed with zero permission rules (broker denies by default).

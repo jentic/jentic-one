@@ -13,11 +13,12 @@
  *
  * Directory scope is `user` / `agent` / `service_account` — those are the only
  * actor types `GET /actors` returns (the backend UNION excludes toolkits;
- * "Toolkits are not platform actors"). A toolkit CAN still appear as the
- * `actor_id` of an execution/audit/event record with `actor_type === "toolkit"`
- * (a `jntc_live_…` key authenticating "as the toolkit" on the broker path), so
- * we render those gracefully with a "Toolkit" prefix + the raw `tk_…` id rather
- * than trying — and failing — to resolve a name that the directory never holds.
+ * "Toolkits are not platform actors"). A toolkit can still appear as the
+ * `actor_id` of a HISTORICAL execution/audit/event record with
+ * `actor_type === "toolkit"` (a retired actor type; live `jntc_live_…` keys now
+ * resolve as migrated service accounts), so we render those gracefully with a
+ * "Toolkit" prefix + the raw `tk_…` id rather than trying — and failing — to
+ * resolve a name that the directory never holds.
  *
  * Some attribution fields carry non-id SENTINELS rather than a KSUID — e.g.
  * `registered_by: "self"` (an agent self-registered via DCR). Those render as a
@@ -27,15 +28,19 @@
 import { ActorType } from '@/shared/api';
 import { useActorDirectory } from '@/shared/hooks';
 
-/** Subtle, human-friendly noun for each actor type. */
-const ACTOR_TYPE_LABEL: Partial<Record<ActorType, string>> = {
+/** Subtle, human-friendly noun for each actor type. Keyed by the wire string
+ * (not the enum) because historical rows persist the retired
+ * `actor_type='toolkit'` — the enum no longer carries it, but read paths must
+ * still label it rather than round-trip it through `ActorType`. */
+const ACTOR_TYPE_LABEL: Record<string, string> = {
 	[ActorType.USER]: 'User',
 	[ActorType.AGENT]: 'Agent',
 	[ActorType.SERVICE_ACCOUNT]: 'Service account',
-	// Toolkits are never in the actor directory, but they surface as the actor of
-	// broker-path executions/audit entries — label them so the raw `tk_…` id reads
-	// as a toolkit rather than an unexplained token.
-	[ActorType.TOOLKIT]: 'Toolkit',
+	// Retired actor type: toolkits never mint new identities (their keys resolve
+	// as migrated service accounts), but persisted executions/audit entries still
+	// carry the string — label them so the raw `tk_…` id reads as a toolkit
+	// rather than an unexplained token.
+	toolkit: 'Toolkit',
 };
 
 /**
@@ -51,7 +56,7 @@ const ACTOR_SENTINEL_LABEL: Record<string, string> = {
 /** A subtle type prefix for a known `actor_type`, or undefined otherwise. */
 function typePrefix(actorType: ActorType | string | null | undefined): string | undefined {
 	if (actorType == null) return undefined;
-	return ACTOR_TYPE_LABEL[actorType as ActorType];
+	return ACTOR_TYPE_LABEL[actorType];
 }
 
 export interface ActorLabelProps {

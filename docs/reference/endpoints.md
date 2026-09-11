@@ -30,7 +30,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 _Total endpoints: **200**._
 
 
-## Agent-facing (typically agent / service-account / toolkit) (31)
+## Agent-facing (typically agent / service-account) (31)
 
 
 ### `apis`
@@ -400,7 +400,7 @@ _Total endpoints: **200**._
 | PUT | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:write` | any | Replace binding permission rules |
 | POST | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test` | `toolkits:read`, `owner:toolkits:read` | any | Dry-run permission evaluation |
 | GET | `/toolkits/{toolkit_id}/keys` | `toolkits:read`, `owner:toolkits:read` | any | List toolkit keys |
-| POST | `/toolkits/{toolkit_id}/keys` | `toolkits:write` | any | Issue toolkit key |
+| POST | `/toolkits/{toolkit_id}/keys` | `toolkits:write` | any | Issue toolkit key (retired) |
 | DELETE | `/toolkits/{toolkit_id}/keys/{key_id}` | `toolkits:write` | any | Revoke toolkit key |
 | PATCH | `/toolkits/{toolkit_id}/keys/{key_id}` | `toolkits:write` | any | Update toolkit key |
 

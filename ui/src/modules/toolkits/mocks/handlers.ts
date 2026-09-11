@@ -265,7 +265,8 @@ export const toolkitsHandlers = [
 			name: body.name,
 			description: body.description ?? null,
 			active: true,
-			key_count: 1,
+			// No key is issued on create — toolkit keys are retired.
+			key_count: 0,
 			credential_count: credentialIds.length,
 			permissions: [],
 			created_at: now(),
@@ -287,7 +288,12 @@ export const toolkitsHandlers = [
 				permissions: [],
 			}));
 		}
-		return HttpResponse.json({ toolkit, api_key: 'jntc_live_mockplaintextkey_show_once' });
+		// Mirror the real `ToolkitCreateResponse`: toolkit + bind-time warnings,
+		// no `api_key` (creating a toolkit issues no key).
+		return HttpResponse.json({
+			toolkit,
+			warnings: credentialIds.map(zeroRulesWarning),
+		});
 	}),
 
 	http.get('/toolkits/:toolkitId', ({ params }) => {
@@ -332,25 +338,20 @@ export const toolkitsHandlers = [
 		}),
 	),
 
-	http.post('/toolkits/:toolkitId/keys', async ({ params, request }) => {
-		const toolkitId = params.toolkitId as string;
-		const body = (await request.json()) as {
-			label?: string | null;
-			allowed_ips?: string[] | null;
-		};
-		const key = {
-			key_id: `key_${Math.random().toString(36).slice(2, 8)}`,
-			toolkit_id: toolkitId,
-			label: body.label ?? null,
-			key_preview: 'jntc_live_new…',
-			revoked: false,
-			allowed_ips: body.allowed_ips?.length ? body.allowed_ips : null,
-			last_used_at: null,
-			created_at: now(),
-		};
-		keysByToolkit[toolkitId] = [...(keysByToolkit[toolkitId] ?? []), key];
-		return HttpResponse.json({ key, api_key: 'jntc_live_freshmockplaintext_show_once' });
-	}),
+	// Issuing new toolkit keys is retired — the real route always answers 410
+	// with the `toolkit_keys_retired` problem type. List/patch/delete of
+	// existing keys (below) remain live.
+	http.post('/toolkits/:toolkitId/keys', () =>
+		HttpResponse.json(
+			{
+				type: 'toolkit_keys_retired',
+				title: 'Gone',
+				status: 410,
+				detail: 'Toolkit keys are retired; register a service account and use its sak_ API key instead (POST /service-accounts)',
+			},
+			{ status: 410 },
+		),
+	),
 
 	http.patch('/toolkits/:toolkitId/keys/:keyId', async ({ params, request }) => {
 		const list = keysByToolkit[params.toolkitId as string] ?? [];

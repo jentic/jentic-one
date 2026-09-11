@@ -48,11 +48,12 @@ export class ToolkitKeysService {
         });
     }
     /**
-     * Issue toolkit key
-     * Issue a new API key for a toolkit.
-     *
-     * The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-     * a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
+     * @deprecated
+     * Issue toolkit key (retired)
+     * Always `410 toolkit_keys_retired` — toolkit keys are retired (theme-5
+     * Phase 4). Register a service account and use its `sak_` key instead.
+     * Existing keys keep working (as their migrated service accounts) and can
+     * still be listed, revoked, and deleted here.
      * @returns ToolkitKeyCreateResponse Successful Response
      * @throws ApiError
      */

@@ -289,7 +289,7 @@ func (ToolkitBindingResponse) RequiredFields() []string {
 	return []string{"agent_id", "bound_at", "id", "toolkit_id"}
 }
 func (ToolkitCreateRequest) RequiredFields() []string         { return []string{"name"} }
-func (ToolkitCreateResponse) RequiredFields() []string        { return []string{"api_key", "toolkit"} }
+func (ToolkitCreateResponse) RequiredFields() []string        { return []string{"toolkit"} }
 func (ToolkitCredentialBindRequest) RequiredFields() []string { return []string{"credential_id"} }
 func (ToolkitCredentialBindingResponse) RequiredFields() []string {
 	return []string{"bound_at", "credential_id", "toolkit_id"}

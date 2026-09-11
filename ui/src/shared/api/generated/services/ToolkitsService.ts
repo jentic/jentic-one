@@ -44,12 +44,13 @@ export class ToolkitsService {
     }
     /**
      * Create toolkit
-     * Create a toolkit and issue its first API key.
+     * Create a toolkit.
      *
-     * The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-     * never retrievable again. Optional `credential_ids` bind existing credentials
-     * at creation time; each inline bind emits a ``no_permission_rules`` warning
-     * because the broker denies by default until rules are added.
+     * No API key is issued (toolkit keys are retired — theme-5 Phase 4 /
+     * #1152); headless callers register a service account and use its `sak_`
+     * key. Optional `credential_ids` bind existing credentials at creation
+     * time; each inline bind emits a ``no_permission_rules`` warning because
+     * the broker denies by default until rules are added.
      * @returns ToolkitCreateResponse Successful Response
      * @throws ApiError
      */
