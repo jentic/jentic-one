@@ -102,8 +102,20 @@ class DeviceFlowHandler:
             poll_interval_seconds=result.interval,
         )
 
-    async def status(self, row: ConnectSession) -> StatusReport:
-        """Poll the vendor (lazily, subject to the RFC 8628 interval)."""
+    async def advance(self, row: ConnectSession) -> StatusReport:
+        """Drive one poll tick against the vendor.
+
+        Called **only** by ``ConnectPollScanner`` — never from a request
+        handler. Client-facing ``/status`` reads stored state and doesn't
+        touch the vendor. One code path, one poll driver.
+
+        Enforces the vendor-supplied device-code TTL and the RFC 8628 poll
+        interval as a rate limit. On any non-RFC-8628 error surfaced by
+        ``poll_device_flow`` (403, malformed body, unexpected 4xx/5xx),
+        the outcome is terminal-failed with ``vendor_forbidden`` /
+        ``vendor_error`` — no retry, no exponential backoff. Operator-
+        visible failures beat silent time-wasters.
+        """
         async with self._ctx.control_db.session() as read_session:
             dfc = await DeviceFlowCredentialRepository.get_by_credential(
                 read_session, row.credential_id
@@ -125,7 +137,19 @@ class DeviceFlowHandler:
         if not _should_poll_now(dfc):
             return StatusReport(kind="pending")
 
-        return await self._poll_vendor(row, dfc)
+        try:
+            return await self._poll_vendor(row, dfc)
+        except device_flow.DeviceFlowUpstreamError as exc:
+            # Non-retryable — any HTTP status the RFC 8628 mapper couldn't
+            # recognise (403 revoked app, 401 misconfigured client_id,
+            # 5xx surge that didn't clear, malformed body). Fail loudly
+            # rather than time-waste up to the session TTL.
+            error_code = "vendor_forbidden" if exc.status == 403 else "vendor_error"
+            return StatusReport(
+                kind="failed",
+                error_code=error_code,
+                terminal_detail=f"vendor {exc.status}",
+            )
 
     async def _poll_vendor(
         self,
