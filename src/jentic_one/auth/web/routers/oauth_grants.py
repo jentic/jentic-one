@@ -38,6 +38,7 @@ def grant_response(view: OAuthGrantView) -> OAuthGrantResponse:
         client_origin=view.client_origin,
         user_id=view.user_id,
         agent_id=view.agent_id,
+        agent_status=view.agent_status,
         scopes=view.scopes,
         status=view.status,
         created_at=view.created_at,

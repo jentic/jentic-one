@@ -10,9 +10,14 @@ cross-view — reported live consent on a dead agent. The fix reuses the G10
 transfer sweep (``revoke_active_grants_for_agent``) inside the archive
 transaction with an archive-specific cause stamp.
 
-``disable`` deliberately does NOT sweep — it is reversible, and whether
-re-enable should require fresh consent is an open policy question tracked in
-#1233. The disable test below PINS that current behaviour on purpose.
+``disable`` deliberately does NOT sweep — DECIDED (#1233, disable arm):
+disable is a reversible kill-switch, so grants go DORMANT (the enforcement
+layer fail-closes everything while disabled) and re-enable restores the
+standing consent without a new consent round — the GitHub app-suspension
+model, not the Google Workspace app-block model. The honesty half of the
+issue is fixed at the listing layer instead: client-level counts exclude,
+and grant listings annotate, grants whose agent is non-active. The disable
+test below PINS the decided behaviour.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ from sqlalchemy import select
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos import AgentRepository
+from jentic_one.admin.services.oauth_client_service import OAuthClientService
+from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.oauth_grant_service import (
@@ -121,15 +128,17 @@ async def test_archive_revokes_active_grants_and_fails_refresh_closed(
 async def test_disable_leaves_grants_active_by_design(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """PINS the deliberately-open half of #1233: ``disable`` does NOT sweep.
+    """PINS the DECIDED disable arm of #1233: ``disable`` does NOT sweep.
 
-    Disable is a reversible state — whether re-enable should require fresh
-    consent (sweep on disable) or restore the standing consent (leave grants)
-    is an open policy question, so this test pins the CURRENT behaviour:
-    the grant row stays ``active``, while the platform still fails closed at
-    the token layer (no token resolves and refresh refuses for a non-active
-    agent — the #1136 gates). If a decision lands to sweep on disable, this
-    test is the one to flip.
+    Decided: dormant + honest listings. Disable is a reversible kill-switch —
+    the enforcement layer already fail-closes everything while disabled (no
+    token resolves and refresh refuses for a non-active agent, the #1136
+    gates), so sweeping would make disable semi-terminal (re-enable would
+    force every connected client through a fresh consent round). The grant
+    rows stay ``active`` (dormant); the listing/count surfaces tell the truth
+    about them instead (see ``test_disabled_agent_grants_excluded_from_client_counts``
+    and ``test_grant_listings_annotate_agent_status``). If this policy is
+    ever reversed, this test is the one to flip.
     """
     ctx = integration_context
     owner = await seeds.seed_user(ctx, "usr_dis_owner")
@@ -153,6 +162,108 @@ async def test_disable_leaves_grants_active_by_design(
     assert resolved is None or resolved.active is False
     with pytest.raises(InvalidGrantError, match="not active"):
         await token_svc.refresh(refresh, client_id=seeds.CLIENT_ID)
+
+
+async def test_reenable_restores_standing_consent(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """The dormancy round-trip that makes the no-sweep decision meaningful:
+    disable → refresh refuses; enable → the SAME grant refreshes to fresh
+    working tokens, with no new consent round. If disable ever started
+    sweeping, this test would fail with the grant revoked."""
+    ctx = integration_context
+    owner = await seeds.seed_user(ctx, "usr_ren_owner")
+    admin_id = await seeds.seed_user(ctx, "usr_ren_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=owner, scopes=["apis:read"])
+    await seeds.seed_client(ctx, allowed_scopes=["apis:read"])
+    grant_id, _access, refresh, _ = await seeds.mint_grant_channel_tokens(
+        ctx, user_id=owner, agent_id=agent_id, grant_scopes=["apis:read"]
+    )
+    svc = AgentService(ctx)
+    identity = _admin_identity(admin_id)
+
+    await svc.disable(agent_id, identity=identity)
+    with pytest.raises(InvalidGrantError, match="not active"):
+        await TokenService(ctx).refresh(refresh, client_id=seeds.CLIENT_ID)
+
+    await svc.enable(agent_id, identity=identity)
+
+    grant = await OAuthGrantService(ctx).get_grant(grant_id)
+    assert grant is not None and grant.status == "active"
+    new_access, _new_refresh, _scopes = await TokenService(ctx).refresh(
+        refresh, client_id=seeds.CLIENT_ID
+    )
+    resolved = await TokenService(ctx).resolve_access_token(new_access)
+    assert resolved is not None and resolved.active is True
+
+
+async def test_disabled_agent_grants_excluded_from_client_counts(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """#1233 honesty, count side: a dormant grant (active row, disabled
+    agent) does not count as a working connection on the client surfaces —
+    and comes back when the agent is re-enabled."""
+    ctx = integration_context
+    owner = await seeds.seed_user(ctx, "usr_cnt_owner")
+    admin_id = await seeds.seed_user(ctx, "usr_cnt_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=owner, scopes=["apis:read"])
+    await seeds.seed_client(ctx, allowed_scopes=["apis:read"])
+    await seeds.mint_grant_channel_tokens(
+        ctx, user_id=owner, agent_id=agent_id, grant_scopes=["apis:read"]
+    )
+    client_svc = OAuthClientService(ctx)
+    client_view = await client_svc.get_by_client_id(seeds.CLIENT_ID)
+    assert client_view is not None
+
+    async def _counts() -> tuple[int, int]:
+        per_client = (await client_svc.get(client_view.id)).active_grant_count
+        listed = {c.client_id: c.active_grant_count for c in await client_svc.list_all()}
+        return per_client or 0, listed.get(seeds.CLIENT_ID) or 0
+
+    assert await _counts() == (1, 1)
+
+    identity = _admin_identity(admin_id)
+    await AgentService(ctx).disable(agent_id, identity=identity)
+    assert await _counts() == (0, 0)
+
+    await AgentService(ctx).enable(agent_id, identity=identity)
+    assert await _counts() == (1, 1)
+
+
+async def test_grant_listings_annotate_agent_status(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """#1233 honesty, list side: the per-agent "Connected clients" listing
+    and the admin cross-view stamp each row with the bound agent's lifecycle
+    state, so a dormant grant is never mistaken for a working connection."""
+    ctx = integration_context
+    owner = await seeds.seed_user(ctx, "usr_ann_owner")
+    admin_id = await seeds.seed_user(ctx, "usr_ann_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=owner, scopes=["apis:read"])
+    await seeds.seed_client(ctx, allowed_scopes=["apis:read"])
+    grant_id, _a, _r, _ = await seeds.mint_grant_channel_tokens(
+        ctx, user_id=owner, agent_id=agent_id, grant_scopes=["apis:read"]
+    )
+    identity = _admin_identity(admin_id)
+
+    async def _statuses() -> tuple[str | None, str | None]:
+        per_agent = await OAuthGrantService(ctx).list_grants_for_agent(agent_id, identity=identity)
+        cross_view = await OAuthGrantAdminService(ctx).list_grants(
+            identity=identity, agent_id=agent_id
+        )
+        by_id_a = {v.id: v.agent_status for v in per_agent.data}
+        by_id_x = {v.id: v.agent_status for v in cross_view.data}
+        return by_id_a[grant_id], by_id_x[grant_id]
+
+    assert await _statuses() == ("active", "active")
+
+    await AgentService(ctx).disable(agent_id, identity=identity)
+    # The row is still an ACTIVE grant — dormant, not revoked — but both
+    # listing surfaces now carry the disabled agent status.
+    assert await _statuses() == ("disabled", "disabled")
+
+    await AgentService(ctx).enable(agent_id, identity=identity)
+    assert await _statuses() == ("active", "active")
 
 
 async def test_archive_rolls_back_when_grant_sweep_fails(

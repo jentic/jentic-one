@@ -20,6 +20,11 @@ class OAuthGrantView(BaseModel):
     ``can_revoke`` is the viewer's per-item ``:revoke`` capability — computed
     from the same predicate the revoke endpoint enforces, so the UI never
     advertises a revoke that would 403 (the G10 list/revoke divergence).
+    ``agent_status`` is the bound agent's lifecycle state (#1233): a grant on
+    a disabled agent stays ``active`` by design (dormant — nothing resolves
+    while the agent is non-active, and re-enable restores the standing
+    consent), so listings must let the viewer tell a working connection from
+    a dormant one.
     """
 
     id: str
@@ -28,6 +33,7 @@ class OAuthGrantView(BaseModel):
     client_origin: str | None
     user_id: str
     agent_id: str
+    agent_status: str | None
     scopes: list[str]
     status: str
     created_at: datetime
@@ -47,7 +53,11 @@ def redirect_uri_origin(client: OAuthClient | None) -> str | None:
 
 
 def grant_to_view(
-    grant: OAuthClientGrant, client: OAuthClient | None, *, can_revoke: bool
+    grant: OAuthClientGrant,
+    client: OAuthClient | None,
+    *,
+    can_revoke: bool,
+    agent_status: str | None = None,
 ) -> OAuthGrantView:
     """Build the enriched view; ``client`` may be None for a deleted row."""
     return OAuthGrantView(
@@ -57,6 +67,7 @@ def grant_to_view(
         client_origin=redirect_uri_origin(client),
         user_id=grant.user_id,
         agent_id=grant.agent_id,
+        agent_status=agent_status,
         scopes=list(grant.scopes),
         status=grant.status,
         created_at=grant.created_at,

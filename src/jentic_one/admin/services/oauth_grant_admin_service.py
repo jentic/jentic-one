@@ -9,6 +9,7 @@ owner-or-admin check) the per-agent "Connected clients" panel.
 
 from __future__ import annotations
 
+from jentic_one.admin.repos import AgentRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services.errors import InvalidInputError
@@ -101,6 +102,12 @@ class OAuthGrantAdminService:
             clients = await OAuthClientRepository.list_by_client_ids(
                 session, sorted({g.oauth_client_id for g in grants})
             )
+            # #1233 honesty: annotate each row with the bound agent's
+            # lifecycle state, so a dormant grant (active row, disabled
+            # agent) is distinguishable from a working connection.
+            agent_statuses = await AgentRepository.get_status_by_ids(
+                session, sorted({g.agent_id for g in grants})
+            )
 
         clients_by_id = {c.client_id: c for c in clients}
         views = [
@@ -108,6 +115,7 @@ class OAuthGrantAdminService:
                 g,
                 clients_by_id.get(g.oauth_client_id),
                 can_revoke=viewer_can_revoke(g.user_id, identity),
+                agent_status=agent_statuses.get(g.agent_id),
             )
             for g in grants
         ]
