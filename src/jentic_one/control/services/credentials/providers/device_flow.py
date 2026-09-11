@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import httpx
-
 from jentic_one.control.repos.device_flow_credential_repo import (
     DeviceFlowCredentialRepository,
 )
@@ -28,6 +26,7 @@ from jentic_one.control.services.credentials.providers.base import (
     NotRefreshableError,
     ProviderError,
 )
+from jentic_one.control.services.credentials.providers.oauth2 import OAuth2Provider
 from jentic_one.control.services.credentials.schemas.connect import (
     ConnectCallback,
     ConnectRequest,
@@ -42,10 +41,9 @@ from jentic_one.control.services.credentials.schemas.provision import (
 )
 from jentic_one.control.services.integrations import device_flow as df
 from jentic_one.shared.context import Context
-from jentic_one.shared.models.credentials import CredentialType
 
 
-class DeviceFlowConnectProvider:
+class DeviceFlowConnectProvider(OAuth2Provider):
     """Provider for OAUTH2_DEVICE_CODE credentials (public-client OAuth)."""
 
     name: str = "device_flow"
@@ -53,13 +51,6 @@ class DeviceFlowConnectProvider:
     @property
     def managed(self) -> bool:
         return False
-
-    @property
-    def supported_types(self) -> list[CredentialType]:
-        return [CredentialType.OAUTH2]
-
-    def supports(self, wire_type: CredentialType) -> bool:
-        return wire_type == CredentialType.OAUTH2
 
     async def begin_connect(
         self,
@@ -142,24 +133,14 @@ class DeviceFlowConnectProvider:
         if dfc is None:
             raise NotRefreshableError(f"credential {token.credential_id!r} has no device-flow row")
         refresh_token = await token.decrypt()
-        payload = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": dfc.client_id,
-        }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                dfc.token_url, data=payload, headers={"Accept": "application/json"}
-            )
-        if response.status_code != 200:
-            raise ProviderError(
-                f"device-flow refresh failed: HTTP {response.status_code} {response.text[:200]}"
-            )
-        try:
-            data: dict[str, str] = response.json()
-        except ValueError as exc:
-            raise ProviderError("device-flow token endpoint returned non-JSON") from exc
-
+        data = await self._post_token(
+            dfc.token_url,
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": dfc.client_id,
+            },
+        )
         access_token = data.get("access_token")
         if not access_token:
             raise ProviderError("device-flow refresh returned no access_token")
