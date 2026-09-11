@@ -480,7 +480,7 @@ async def test_kill_radius_client_deactivate(
     assert await token_svc.resolve_access_token(access) is None
     broker_resolved = await broker.resolve_access_token(access)
     assert broker_resolved is not None and broker_resolved.active is False
-    with pytest.raises(InvalidGrantError, match="deactivated"):
+    with pytest.raises(InvalidGrantError, match="not active"):
         await token_svc.refresh(refresh, client_id=_CLIENT_ID)
 
 
