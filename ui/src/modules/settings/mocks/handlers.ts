@@ -341,6 +341,23 @@ export const settingsHandlers = [
 		appendAudit(row, 'oauth_client.deactivate');
 		return new HttpResponse(null, { status: 204 });
 	}),
+	// Hard delete (the terminal arm): revoke the client's active grants (full
+	// disconnect), then remove the row. Audit rows survive — appended before
+	// the removal, like the backend's FK-free audit table.
+	http.post('/admin/oauth-clients/:id\\:delete', ({ params }) => {
+		const row = oauthClients.find((c) => c.id === params.id);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		for (const grant of oauthGrants) {
+			if (grant.oauth_client_id === row.client_id && grant.status === 'active') {
+				grant.status = 'revoked';
+				grant.revoked_at = now();
+				grant.can_revoke = false;
+			}
+		}
+		appendAudit(row, 'oauth_client.delete');
+		oauthClients = oauthClients.filter((c) => c.id !== row.id);
+		return new HttpResponse(null, { status: 204 });
+	}),
 	http.post('/admin/oauth-clients/:id/rotate-secret', ({ params }) => {
 		const row = oauthClients.find((c) => c.id === params.id);
 		if (!row) return new HttpResponse(null, { status: 404 });

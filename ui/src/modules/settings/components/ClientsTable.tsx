@@ -8,8 +8,8 @@
  * table swaps to stacked cards (`renderCard`).
  *
  * The toolbar replaces the old unlabelled "Show inactive" checkbox with
- * status segments carrying live counts — the Inactive segment surfaces the
- * approved-but-deactivated zombies (#1312) that used to match neither the
+ * status segments carrying live counts — the Disabled segment surfaces the
+ * approved-but-disabled zombies (#1312) that used to match neither the
  * default list nor the queue filters. The filter input is the client-side
  * Filter affordance (status-and-filter rule), disabled when there is nothing
  * to narrow.
@@ -56,13 +56,17 @@ import {
 	TimeCell,
 } from '@/modules/settings/components/clientBadges';
 
-export type ClientAction = 'edit' | 'rotate' | 'deactivate' | 'reactivate' | 'review-in-queue';
+export type ClientAction =
+	'edit' | 'rotate' | 'deactivate' | 'reactivate' | 'delete' | 'review-in-queue';
 
 const ACTION_LABEL: Record<ClientAction, string> = {
 	edit: 'Edit',
 	rotate: 'Rotate secret',
-	deactivate: 'Deactivate',
-	reactivate: 'Reactivate',
+	// Lifecycle vocabulary: Disable/Enable is the reversible kill switch
+	// (the wire verbs stay deactivate/reactivate); Delete is permanent.
+	deactivate: 'Disable',
+	reactivate: 'Enable',
+	delete: 'Delete',
 	'review-in-queue': 'Review in queue',
 };
 
@@ -81,15 +85,18 @@ const SEGMENT_ORDER: Record<Exclude<ClientStatusFilter, 'all'>, number> = {
  */
 const SEGMENT_EMPTY_MESSAGE: Record<ClientStatusFilter, string> = {
 	all: 'No clients registered yet.',
-	active: 'No active clients — check the Pending or Inactive views.',
+	active: 'No active clients — check the Pending or Disabled views.',
 	pending: 'No pending clients — new DCR registrations land in the approval queue.',
 	denied: 'No denied clients.',
-	inactive: 'No inactive clients — every approved client is live.',
+	inactive: 'No disabled clients — every approved client is live.',
 };
 
 /**
  * The lifecycle verbs a row offers. Reactivate deliberately requires
  * approved+inactive (see module comment); denied rows get "Review in queue".
+ * Delete (permanent) is offered on EVERY row — the GitHub model: any
+ * lifecycle state can be terminally removed (the section-level
+ * type-to-confirm dialog carries the friction).
  */
 function actionsFor(client: OAuthClient): ClientAction[] {
 	const actions: ClientAction[] = ['edit'];
@@ -97,10 +104,11 @@ function actionsFor(client: OAuthClient): ClientAction[] {
 	if (client.active) actions.push('deactivate');
 	if (canReactivate(client)) actions.push('reactivate');
 	if (toApprovalStatus(client.approval_status) === 'denied') actions.push('review-in-queue');
+	actions.push('delete');
 	return actions;
 }
 
-const DANGER_ACTIONS: ReadonlySet<ClientAction> = new Set(['deactivate']);
+const DANGER_ACTIONS: ReadonlySet<ClientAction> = new Set(['deactivate', 'delete']);
 
 function RowActionsMenu({
 	client,

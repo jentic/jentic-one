@@ -6,7 +6,8 @@
  * ConnectedClientsCard, via the admin cross-view `GET
  * /admin/oauth-grants?client_id=…`), the client-scoped audit trail ("Recent
  * changes" — where deny reasons finally surface), and a danger zone
- * (deactivate / rotate secret, confirmed at the section level).
+ * (disable/enable, rotate secret, and the permanent delete — all confirmed
+ * at the section level).
  *
  * A detail view, not a form — no drafts to preserve — but the revoke confirm
  * is a stateless Dialog (conditional mount is fine per the dialog-state
@@ -286,10 +287,12 @@ export interface ClientDetailSheetProps {
 	onEdit: (client: OAuthClient) => void;
 	/** Opens the section-level rotate confirm (then the one-time secret dialog). */
 	onRotate: (client: OAuthClient) => void;
-	/** Opens the section-level deactivate confirm (explains the DCR re-queue). */
+	/** Opens the section-level disable confirm (explains the DCR re-queue). */
 	onDeactivate: (client: OAuthClient) => void;
-	/** Fires the section-level reactivate mutation (approved+inactive only). */
+	/** Fires the section-level enable mutation (approved+inactive only). */
 	onReactivate: (client: OAuthClient) => void;
+	/** Opens the section-level type-to-confirm delete dialog (permanent). */
+	onDelete: (client: OAuthClient) => void;
 }
 
 export function ClientDetailSheet({
@@ -300,6 +303,7 @@ export function ClientDetailSheet({
 	onRotate,
 	onDeactivate,
 	onReactivate,
+	onDelete,
 }: ClientDetailSheetProps) {
 	// Re-read while open so decisions taken from the queue/roster (approve,
 	// rotate, deactivate) refresh the sheet; the seed row renders immediately.
@@ -315,27 +319,27 @@ export function ClientDetailSheet({
 			? [
 					{
 						key: 'deactivate',
-						title: 'Deactivate client',
+						title: 'Disable client',
 						description:
-							'Blocks new authorization flows. A deactivated client that re-registers via DCR returns to the approval queue.',
-						buttonLabel: 'Deactivate',
-						ariaLabel: `Deactivate ${client.name}`,
+							'Blocks new authorization flows — reversible. A disabled client that re-registers via DCR returns to the approval queue.',
+						buttonLabel: 'Disable',
+						ariaLabel: `Disable ${client.name}`,
 						emphasis: 'outline' as const,
 					},
 				]
 			: []),
 		// The approved+inactive zombie's escape hatch — without it a
-		// deactivated client's own console offers no recovery path.
+		// disabled client's own console offers no recovery path.
 		// (Denied rows never reach here: `canReactivate` requires approved.)
 		...(canReactivate(client)
 			? [
 					{
 						key: 'reactivate',
-						title: 'Reactivate client',
+						title: 'Enable client',
 						description:
 							'Restores the client — it can start authorization flows again immediately.',
-						buttonLabel: 'Reactivate',
-						ariaLabel: `Reactivate ${client.name}`,
+						buttonLabel: 'Enable',
+						ariaLabel: `Enable ${client.name}`,
 						emphasis: 'outline' as const,
 					},
 				]
@@ -353,6 +357,19 @@ export function ClientDetailSheet({
 					},
 				]
 			: []),
+		// Delete is offered in EVERY lifecycle state (the GitHub model:
+		// terminal removal is always available); the type-to-confirm dialog
+		// owned by the section carries the friction. Solid emphasis — the one
+		// irreversible verb in the zone.
+		{
+			key: 'delete',
+			title: 'Delete client',
+			description:
+				'Permanently deletes the client: every grant and token is revoked and connected applications are disconnected. This cannot be undone.',
+			buttonLabel: 'Delete',
+			ariaLabel: `Delete ${client.name}`,
+			emphasis: 'solid' as const,
+		},
 	];
 
 	return (
@@ -493,6 +510,7 @@ export function ClientDetailSheet({
 							if (key === 'deactivate') onDeactivate(client);
 							if (key === 'reactivate') onReactivate(client);
 							if (key === 'rotate') onRotate(client);
+							if (key === 'delete') onDelete(client);
 						}}
 					/>
 				)}

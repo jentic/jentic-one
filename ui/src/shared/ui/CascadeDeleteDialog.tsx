@@ -10,7 +10,8 @@ import { Label } from '@/shared/ui/Label';
  * The entity kinds that expose a hard delete (or a terminal,
  * delete-equivalent action like agent/service-account *archive*).
  */
-export type CascadeEntityType = 'credential' | 'api' | 'toolkit' | 'agent' | 'service-account';
+export type CascadeEntityType =
+	'credential' | 'api' | 'toolkit' | 'agent' | 'service-account' | 'oauth-client';
 
 /**
  * One group in the blast-radius list. `count` is authoritative (drives the
@@ -65,6 +66,7 @@ const DEFAULT_CONFIRM_WORD: Record<CascadeEntityType, string> = {
 	toolkit: 'delete',
 	agent: 'archive',
 	'service-account': 'archive',
+	'oauth-client': 'delete',
 };
 
 /**
@@ -116,6 +118,14 @@ const TYPE_COPY: Record<
 		warning:
 			'Archiving is permanent — the service account can no longer authenticate or be restored, and its grants are released.',
 		icon: Archive,
+	},
+	'oauth-client': {
+		title: 'Delete OAuth client',
+		confirmLabel: 'Delete client',
+		noun: 'OAuth client',
+		warning:
+			'Deleting is permanent — every consent grant and token issued to this client is revoked, and connected applications are disconnected immediately. If the application registers itself again, it starts over as a new client awaiting approval.',
+		icon: Trash2,
 	},
 };
 
