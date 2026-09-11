@@ -131,3 +131,28 @@ def test_stop_clears_running_flag() -> None:
     scanner._running = True
     scanner.stop()
     assert scanner._running is False
+
+
+@pytest.mark.asyncio()
+async def test_tick_threads_catalog_auto_importer_into_session_service() -> None:
+    # The scanner runs outside the request scope, so it can't see the
+    # request-scoped ``app.state.catalog_auto_importer`` that
+    # ``get_connect_session_service`` reads. If it forgets to thread the
+    # importer through, every scanner-driven device-flow finalise
+    # silently skips ``_maybe_import_catalog`` and the vendor's OpenAPI
+    # never lands in the workspace catalog. Pin the threading here.
+    importer = object()  # opaque — we only care that it's passed through
+    scanner = ConnectPollScanner(_make_context(), catalog_auto_importer=importer)  # type: ignore[arg-type]
+    with (
+        patch.object(
+            scanner,
+            "_due_credentials",
+            new=AsyncMock(return_value=["cred_1"]),
+        ),
+        patch("jentic_one.shared.jobs.connect_poll_scanner.ConnectSessionService") as service_cls,
+    ):
+        service_cls.return_value.advance_polling_target = AsyncMock()
+        await scanner._tick()
+    # Constructed with the importer keyword; the same object identity.
+    _, kwargs = service_cls.call_args
+    assert kwargs.get("catalog_auto_importer") is importer
