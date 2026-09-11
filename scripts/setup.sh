@@ -7,31 +7,63 @@ cd "$PROJECT_ROOT"
 
 PG_PORT="${JENTIC_PG_PORT:-5432}"
 
+COMPOSE_FILE="docker/local-setup/docker-compose.yaml"
+
+# Run psql inside the db container against the jentic database.
+psql_db() {
+    docker compose -f "$COMPOSE_FILE" exec -T db \
+        psql -U postgres -d jentic "$@"
+}
+
 echo "==> Starting Docker services..."
-docker compose -f docker/local-setup/docker-compose.yaml up -d
+docker compose -f "$COMPOSE_FILE" up -d
 
 echo "==> Waiting for database to become healthy..."
-MAX_WAIT=60
-elapsed=0
-# Use a real query rather than pg_isready: on first boot the Postgres image
-# runs a temporary internal server for init scripts that pg_isready can match,
-# then restarts the real server, leaving a brief window where the socket is
-# gone. `SELECT 1` only succeeds once the real server is accepting connections.
-until docker compose -f docker/local-setup/docker-compose.yaml exec -T db \
-    psql -U postgres -d jentic -tAc 'SELECT 1' >/dev/null 2>&1; do
-    if [ "$elapsed" -ge "$MAX_WAIT" ]; then
-        echo "ERROR: db did not become ready within ${MAX_WAIT}s"
-        exit 1
+MAX_WAIT="${JENTIC_DB_MAX_WAIT:-60}"
+# On first boot the Postgres image runs a temporary internal server for init
+# scripts, then shuts it down and starts the real one. That temporary server
+# answers real queries on the container's unix socket, so a single successful
+# `SELECT 1` can land inside the restart window — and the next psql dies with
+# "FATAL: the database system is shutting down" (or "is starting up", or
+# connection refused). Treat all of those as not-yet-ready: require several
+# consecutive successful probes, and only fail once the deadline passes.
+REQUIRED_OK=3
+SECONDS=0
+ok=0
+while [ "$ok" -lt "$REQUIRED_OK" ]; do
+    if psql_db -tAc 'SELECT 1' >/dev/null 2>&1; then
+        ok=$((ok + 1))
+    else
+        ok=0
+        if [ "$SECONDS" -ge "$MAX_WAIT" ]; then
+            echo "ERROR: db did not become ready within ${MAX_WAIT}s; last probe:"
+            psql_db -tAc 'SELECT 1' >/dev/null || true
+            exit 1
+        fi
     fi
     sleep 1
-    elapsed=$((elapsed + 1))
 done
-echo "    db is ready"
+echo "    db is ready (${REQUIRED_OK} consecutive probes over ${SECONDS}s)"
+
+# Run a psql statement, retrying transient startup/shutdown/connection errors
+# until the shared MAX_WAIT deadline (SECONDS keeps counting from the wait
+# above). On timeout, re-run unsuppressed so the real error reaches the log.
+retry_psql() {
+    local what="$1"
+    shift
+    until psql_db "$@" >/dev/null 2>&1; do
+        if [ "$SECONDS" -ge "$MAX_WAIT" ]; then
+            echo "ERROR: ${what} still failing after ${MAX_WAIT}s; last attempt:"
+            psql_db "$@" >/dev/null || true
+            exit 1
+        fi
+        sleep 1
+    done
+}
 
 echo "==> Ensuring schemas exist..."
 for schema in registry control admin; do
-    docker compose -f docker/local-setup/docker-compose.yaml exec -T db psql -U postgres -d jentic -c \
-        "CREATE SCHEMA IF NOT EXISTS ${schema};" >/dev/null
+    retry_psql "CREATE SCHEMA ${schema}" -c "CREATE SCHEMA IF NOT EXISTS ${schema};"
     echo "    schema '$schema' ensured"
 done
 
