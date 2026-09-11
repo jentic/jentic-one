@@ -32,7 +32,6 @@ from jentic_one.control.services.integrations.errors import ConnectSessionServic
 from jentic_one.control.services.integrations.flow_handlers.base import (
     AuthCodeChallenge,
     BeginResult,
-    StatusReport,
     SuccessTokens,
 )
 from jentic_one.shared.config import VendorAuthorizationCodeFlowConfig, VendorFlowConfig
@@ -123,14 +122,6 @@ class AuthCodeFlowHandler:
         authorize_url = f"{flow.authorize_url}?{urlencode(params)}"
 
         return AuthCodeChallenge(authorize_url=authorize_url)
-
-    async def status(self, row: ConnectSession) -> StatusReport:
-        # Auth-code completion is server-driven via the callback route — the
-        # human's browser leaves us for the vendor, comes back to
-        # /credentials/oauth/callback, and the callback handler flips the
-        # session to `connected` server-side. The status call here just
-        # reports pending; the client observes `connected` on the next tick.
-        return StatusReport(kind="pending")
 
     async def on_finalise(
         self,

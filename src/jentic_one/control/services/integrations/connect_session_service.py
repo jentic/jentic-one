@@ -35,6 +35,7 @@ from jentic_one.control.services.integrations.errors import (
 from jentic_one.control.services.integrations.flow_handlers import (
     AuthCodeFlowHandler,
     AuthFlowHandler,
+    DeviceFlowHandler,
     handler_for,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
@@ -414,12 +415,13 @@ class ConnectSessionService:
         *,
         poll_token: str,
     ) -> StatusResult:
-        """Return the session's current status.
+        """Return the session's current status — stored-state read only.
 
-        Delegates the "how do we know?" question to the handler — device
-        flow polls the vendor upstream, auth-code returns pending and waits
-        for the callback route to drive completion. Terminal states are
-        served from stored state without touching the handler at all.
+        Never touches the vendor. Vendor advancement is scanner-driven for
+        polling flows (``ConnectPollScanner`` → ``advance_polling_session``)
+        and callback-driven for redirect flows (the OAuth callback route
+        → ``complete_from_callback``). One code path drives progress; this
+        method just reports whatever state the row is currently in.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -427,44 +429,16 @@ class ConnectSessionService:
                 raise SessionNotFoundError(session_id)
             _verify_poll_token(row, poll_token)
 
-        try:
-            handler_cls = handler_for(row.resolved_flow)
-        except KeyError as exc:
-            raise NoOpForFlowError(row.resolved_flow) from exc
-        handler = handler_cls(self._ctx)
-
-        # Terminal states are immutable — return them without touching the
-        # handler. bound_scopes comes off ``oauth_token.scope`` — a single
-        # flow-agnostic column that ``_finalise_connected`` populates from
+        # Terminal states are immutable. bound_scopes comes off
+        # ``oauth_token.scope`` — a single flow-agnostic column that
+        # ``_finalise_connected`` populates from
         # ``SuccessTokens.granted_scopes`` for both flows.
         if row.state in ("connected", "expired", "failed"):
             return _terminal_status(row, await self._bound_scopes(row))
 
-        if row.state != "polling":
-            # `created` = confirm not called yet; report as pending so the
-            # agent knows to wait on the human.
-            return StatusResult(status="pending")
-
-        # Session TTL guard (flow-agnostic).
-        session_age = (datetime.now(UTC) - row.created_at).total_seconds()
-        if session_age > _SESSION_TTL_SECONDS:
-            await self._mark_terminal(row.id, "expired", "session TTL exceeded")
-            return StatusResult(status="expired", error_code="session_expired")
-
-        report = await handler.status(row)
-        if report.kind == "pending":
-            return StatusResult(status="pending")
-        if report.kind == "success":
-            assert report.tokens is not None
-            return await self._finalise_connected(row, handler, report.tokens)
-        # Terminal (failed / expired) — persist + report.
-        await self._mark_terminal(
-            row.id,
-            report.kind,
-            report.terminal_detail or report.error_code or report.kind,
-            error_code=report.error_code,
-        )
-        return StatusResult(status=report.kind, error_code=report.error_code)
+        # ``created`` = confirm not called yet; ``polling`` = advancement
+        # in flight (scanner or callback route). Both surface as pending.
+        return StatusResult(status="pending")
 
     async def _bound_scopes(self, row: ConnectSession) -> list[str] | None:
         """Read ``oauth_token.scope`` for a terminal session (flow-agnostic).
@@ -478,6 +452,56 @@ class ConnectSessionService:
         if token is None or not token.scope:
             return None
         return token.scope.split()
+
+    # ---- scanner-driven advancement (device flow only) ----------------
+
+    async def advance_polling_session(self, session_id: str) -> None:
+        """One poll tick against the vendor, called by ``ConnectPollScanner``.
+
+        Owns the outer clock (session TTL) and the state-machine
+        transitions; delegates the vendor conversation itself to
+        ``DeviceFlowHandler.advance``. Callback flows never reach here —
+        the scanner filters on ``resolved_flow == "device_flow"``.
+
+        Non-retryable vendor errors surface as terminal ``StatusReport``s
+        from the handler (see the fail-fast note in the phase-2 plan); we
+        persist them and stop. No retry, no exponential backoff.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+        if row is None:
+            return
+        if row.state != "polling":
+            # Terminal or pre-confirm — no advancement to do. Scanner query
+            # filters these out, but re-check because state may have moved
+            # between the scan and this call.
+            return
+        if row.resolved_flow != DeviceFlowHandler.kind:
+            # Callback flows advance via the OAuth callback route.
+            # Defensive; scanner query is expected to filter.
+            return
+
+        # Session TTL guard (flow-agnostic outer clock).
+        session_age = (datetime.now(UTC) - row.created_at).total_seconds()
+        if session_age > _SESSION_TTL_SECONDS:
+            await self._mark_terminal(row.id, "expired", "session TTL exceeded")
+            return
+
+        handler = DeviceFlowHandler(self._ctx)
+        report = await handler.advance(row)
+        if report.kind == "pending":
+            return
+        if report.kind == "success":
+            assert report.tokens is not None
+            await self._finalise_connected(row, handler, report.tokens)
+            return
+        # Terminal (failed / expired) — persist and stop.
+        await self._mark_terminal(
+            row.id,
+            report.kind,
+            report.terminal_detail or report.error_code or report.kind,
+            error_code=report.error_code,
+        )
 
     async def _finalise_connected(
         self,

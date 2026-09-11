@@ -21,6 +21,7 @@ from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
+from jentic_one.shared.jobs.connect_poll_scanner import ConnectPollScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
@@ -271,6 +272,42 @@ async def _stop_catalog_update_scanner(
         await asyncio.wait_for(task, timeout=5.0)
 
 
+def _start_connect_poll_scanner(
+    ctx: Context,
+    enabled_apps: set[str],
+) -> tuple[ConnectPollScanner, asyncio.Task[None]] | None:
+    """Start the connect-session polling scanner when the control surface runs it.
+
+    Drives the device-flow vendor poll loop server-side so the HTTP
+    ``/status`` surface stays read-only. Control-plane background job:
+    gate on the ``control`` surface being enabled + control-DB reachability
+    (that's where ``connect_sessions`` lives). Broker-only processes with
+    control-DB access for credential resolution do not run this scanner.
+    """
+    if "control" not in enabled_apps:
+        return None
+    if not ctx.has_db("control"):
+        return None
+    scanner = ConnectPollScanner(ctx)
+    task = asyncio.create_task(scanner.run())
+    _logger.info("connect_poll_scanner_task_started")
+    return scanner, task
+
+
+async def _stop_connect_poll_scanner(
+    handle: tuple[ConnectPollScanner, asyncio.Task[None]] | None,
+) -> None:
+    """Signal and cancel the connect-poll scanner (best-effort)."""
+    if handle is None:
+        return
+    scanner, task = handle
+    scanner.stop()
+    if not task.done():
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await asyncio.wait_for(task, timeout=5.0)
+
+
 async def _stop_worker(handle: tuple[WorkerLoop, asyncio.Task[None]] | None) -> None:
     """Gracefully drain then stop the worker (§09 E4.3 teardown step 2).
 
@@ -447,6 +484,7 @@ def create_surface_app(
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
+            connect_poll_task = _start_connect_poll_scanner(ctx, enabled_apps)
             try:
                 yield
             finally:
@@ -458,6 +496,7 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
+                await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
@@ -540,9 +579,11 @@ def create_combined_app(
             worker_task = _start_worker(ctx, set(apps))
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
+            connect_poll_task = _start_connect_poll_scanner(ctx, set(apps))
             try:
                 yield
             finally:
+                await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)

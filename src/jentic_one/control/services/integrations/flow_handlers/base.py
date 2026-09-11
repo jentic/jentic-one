@@ -111,16 +111,16 @@ class AuthFlowHandler(Protocol):
       needs to remember about the session (aux row, etc.). Caller doesn't
       know about "aux tables".
     * ``begin`` — confirm: talk to the vendor and return the challenge.
-    * ``status`` — each GET /status tick while state=polling: report
-      progress. Polling flows drive the vendor upstream inside this call;
-      callback flows return ``pending`` and wait for the callback route to
-      drive completion.
-    * ``on_finalise`` — inside the finalise txn: cleanup + persist any
-      flow-agnostic annotations (e.g. ``bound_scopes`` onto
-      ``oauth_token.scope``) so terminal readback is uniform.
+    * ``on_finalise`` — inside the finalise txn: cleanup any flow-specific
+      transient state (device flow clears device_code; auth-code no-op).
 
-    ``complete_from_callback`` lives on the concrete callback-flow class
-    only; it is not part of this Protocol.
+    Progress observation lives on the service: ``get_status`` is a pure
+    stored-state read for *every* flow. Vendor advancement is
+    scanner-driven for polling flows (``DeviceFlowHandler.advance``, called
+    only by ``ConnectPollScanner``) and callback-driven for redirect flows
+    (``AuthCodeFlowHandler.complete_from_callback``, called only by the
+    callback router). Neither is on this Protocol — a Protocol lie is
+    worse than a small concrete-type check at the call site.
     """
 
     #: Discriminator matching ``VendorFlowConfig.kind``.
@@ -151,14 +151,6 @@ class AuthFlowHandler(Protocol):
         confirmed_scopes: list[str],
     ) -> BeginResult:
         """Start the vendor conversation. Returns the challenge for the user."""
-
-    async def status(self, row: ConnectSession) -> StatusReport:
-        """Report current progress.
-
-        Device flow polls the vendor upstream (subject to a lazy interval);
-        auth-code returns pending because completion is driven by the
-        callback route, not by this method.
-        """
 
     async def on_finalise(
         self,
