@@ -74,6 +74,40 @@ is simply superseded by the next one — every release rebuilds all artifacts fr
 scratch, so nothing is lost by skipping it.
 
 
+## Upgrading to the first theme-5 release
+
+Operator-facing changes shipped by the theme-5 (toolkit removal) release —
+read this before rolling it out. Each active window below is also tracked in
+the Deprecations table.
+
+- **`jntc_live_` toolkit keys are retired; migration to `sak_` is automatic.**
+  No new keys are issued. Run `jentic_one retire-toolkit-keys` once: every
+  existing key digest is migrated to a service account, and the **unchanged
+  plaintext keeps authenticating** — as that service account — for the
+  deprecation window. Watch `deprecated_toolkit_key_used` WARNING logs to find
+  holders still presenting the old key form, and rotate them to `sak_` keys.
+- **The toolkit management surface is gone.** All `/toolkits/*` and
+  `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
+  `toolkits:write`, and `owner:toolkits:read` scopes are retired: no route
+  requires them and they grant nothing, but they are **tolerated in stored
+  grants** — re-submitting a permission row or access request that predates
+  the retirement never fails validation. Access is managed on the
+  agent↔credential axis instead: the agent detail **Access** tab ("Bound
+  credentials") in the UI, or `POST /agents/{agent_id}/credentials`.
+- **CLI: `--toolkit` → `--api`.** `jentic access request --api <vendor/name>`
+  is the verb (`--provision` when nothing serves the API yet). `--toolkit`
+  survives as a hidden, deprecated alias for `--api`.
+- **Broker headers.** Requests are disambiguated with `Jentic-Credential-Name`
+  or `Jentic-Credential-Id` (the id is authoritative); responses attribute the
+  credential used via the same two headers. The `Jentic-Toolkit-Id` response
+  header is emitted only on the legacy flag-off toolkit path
+  (`broker.direct_bindings_enabled: false`) and is removed in Phase 6b —
+  adopt the credential headers now.
+- **Toolkit tables are still present.** The stored toolkit rows (bindings,
+  keys) survive this release; they are dropped in Phase 6b. The Phase 6a
+  export/acknowledge runbook — how to export the legacy toolkit data and
+  acknowledge the drop — lands in a release **before** the tables are removed.
+
 ## Deprecations
 
 Active deprecation windows are registered here (the named channel) and
