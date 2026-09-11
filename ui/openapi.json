@@ -30463,7 +30463,7 @@
     },
     "/oauth/token": {
       "post": {
-        "description": "Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.",
+        "description": "Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.\n\nError responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +\n``error_description``), NOT platform Problem Details — reshaped by\n``_TokenRoute``. On the refresh arm, a revoked consent grant answers\n``invalid_grant`` with ``error_description: \"consent grant has been\nrevoked\"`` — terminal; restart the authorization flow.",
         "operationId": "tokenEndpoint",
         "requestBody": {
           "content": {
@@ -30674,21 +30674,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "The request was malformed or failed a precondition.",
-                  "instance": "/example/path",
-                  "status": 400,
-                  "title": "Bad Request",
-                  "type": "bad_request"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Bad Request"
+            "description": "RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): `{\"error\": \"invalid_grant\" | \"invalid_client\" | \"unsupported_grant_type\", \"error_description\": \"...\"}`. A revoked consent grant surfaces on the refresh arm as `invalid_grant` with `error_description: \"consent grant has been revoked\"` — clients should treat it as terminal and restart the authorization flow."
           },
           "422": {
             "content": {
@@ -30712,6 +30698,9 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "429": {
+            "description": "Per-client+IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
           },
           "500": {
             "content": {

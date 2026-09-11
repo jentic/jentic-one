@@ -240,10 +240,75 @@ _TOKEN_REQUEST_BODY: dict[str, object] = {
 }
 
 
-@router.post(
+class _TokenRoute(APIRoute):
+    """Route class making ``POST /oauth/token`` errors speak RFC 6749 §5.2.
+
+    §5.2 REQUIRES the token endpoint's error body to be a top-level
+    ``{"error": …, "error_description": …}`` object. The platform-wide
+    handlers emit RFC 9457 Problem Details (``{"type": …, "detail": …}``)
+    instead, which real MCP clients (mcp-remote's zod schema, Cursor's MCP
+    SDK) do not parse — a revoked-grant client sees an opaque 400 rather than
+    ``invalid_grant`` and keeps replaying its dead refresh token instead of
+    restarting authorization (#1252). The reshaping wraps the framework's
+    whole route handler, so errors raised by the endpoint body AND by its
+    dependencies (``_parse_token_request``, ``_check_token_rate_limit``) are
+    covered. Same posture as the RFC 7009 form arm below and the DCR door's
+    RFC 7591 §3.2.2 reshaping: spec-facing doors speak their spec's dialect;
+    everything else stays Problem Details.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await original(request)
+            except InvalidGrantError as exc:
+                # §5.2 error code chosen at the raise site (invalid_grant
+                # unless the condition is named differently — invalid_client,
+                # unsupported_grant_type); the exception reason becomes
+                # error_description.
+                response = _rfc6749_error(400, str(exc), error_code=exc.oauth_error_code)
+            except RateLimitExceededError as exc:
+                # Mirrors the RFC 7009 form arm: §5.2 defines no rate-limit
+                # code, so `slow_down` (RFC 8628 §3.5) is the registered
+                # token-endpoint error code for "back off".
+                record_rate_limited_request(request.url.path)
+                response = _rfc6749_error(
+                    429, "rate limit exceeded, retry later", error_code="slow_down"
+                )
+                response.headers["Retry-After"] = str(max(1, math.ceil(exc.retry_after)))
+            # §5.2's error responses carry the same no-store posture as §5.1
+            # success responses (the endpoint handler sets these on success).
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
+            return response
+
+        return handler
+
+
+token_router = APIRouter(route_class=_TokenRoute)
+
+
+@token_router.post(
     "/oauth/token",
     dependencies=[Depends(_check_token_rate_limit)],
     openapi_extra=_TOKEN_REQUEST_BODY,
+    responses={
+        400: {
+            "description": "RFC 6749 §5.2 error dialect (NOT platform Problem Details — "
+            "this is a spec-facing endpoint real OAuth/MCP clients parse): "
+            '`{"error": "invalid_grant" | "invalid_client" | "unsupported_grant_type", '
+            '"error_description": "..."}`. A revoked consent grant surfaces on the '
+            'refresh arm as `invalid_grant` with `error_description: "consent grant '
+            'has been revoked"` — clients should treat it as terminal and restart '
+            "the authorization flow."
+        },
+        429: {
+            "description": "Per-client+IP rate limit exceeded (`Retry-After` header set; "
+            "RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
+        },
+    },
     # RFC 6749 §5.1 + OIDC Core §3.1.3.3: optional members the grant did not
     # mint (id_token on grant-bearing agent-channel codes per D11, refresh_token
     # on grants that don't rotate one) are omitted from the response, never
@@ -263,7 +328,14 @@ async def token_endpoint(
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
     oauth_client_svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> TokenResponse:
-    """Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens."""
+    """Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+
+    Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+    ``error_description``), NOT platform Problem Details — reshaped by
+    ``_TokenRoute``. On the refresh arm, a revoked consent grant answers
+    ``invalid_grant`` with ``error_description: "consent grant has been
+    revoked"`` — terminal; restart the authorization flow.
+    """
     # RFC 6749 §5.1: token responses MUST NOT be cached by any intermediary.
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
@@ -295,7 +367,9 @@ async def token_endpoint(
             if not await oauth_client_svc.authenticate_for_token_endpoint(
                 body.client_id, body.client_secret
             ):
-                raise InvalidGrantError("invalid_client")
+                raise InvalidGrantError(
+                    "client authentication failed", oauth_error_code="invalid_client"
+                )
             third_party_client_id = body.client_id
         access_token, refresh_token, id_token, scopes = await authorize_svc.exchange_code(
             code=body.code,
@@ -342,7 +416,10 @@ async def token_endpoint(
         )
 
     if body.grant_type != "refresh_token":
-        raise InvalidGrantError(f"unsupported grant_type: {body.grant_type}")
+        raise InvalidGrantError(
+            f"unsupported grant_type: {body.grant_type}",
+            oauth_error_code="unsupported_grant_type",
+        )
 
     if not body.refresh_token:
         raise InvalidGrantError("refresh_token is required for grant_type=refresh_token")
@@ -350,7 +427,9 @@ async def token_endpoint(
     verified_client_id: str | None = None
     if body.client_id and body.client_secret:
         if not await oauth_client_svc.verify_client_secret(body.client_id, body.client_secret):
-            raise InvalidGrantError("invalid_client")
+            raise InvalidGrantError(
+                "client authentication failed", oauth_error_code="invalid_client"
+            )
         verified_client_id = body.client_id
     elif body.client_id and await oauth_client_svc.is_public_client(body.client_id):
         # Public clients can't authenticate — RFC 6749 §6 still requires the
@@ -369,6 +448,11 @@ async def token_endpoint(
         expires_in=token_svc.access_ttl_seconds,
         scope=_scope_member(scopes),
     )
+
+
+# Mounted via its own router so `_TokenRoute` owns the endpoint's error
+# dialect (same include pattern as `revocation_router` below).
+router.include_router(token_router)
 
 
 @router.post("/oauth/mint")

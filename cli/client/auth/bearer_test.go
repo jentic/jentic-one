@@ -121,9 +121,10 @@ func TestRefreshBearerToken_StaticCredentialsPassThrough(t *testing.T) {
 }
 
 // TestClassifyTokenError_PendingShapes pins that BOTH wire shapes of a pending
-// 400 classify as *PendingError: the RFC 7807 problem-details the shipped
-// backend actually emits ({"type": "invalid_grant"} — auth/web/errors.py), and
-// the RFC 6749 OAuth shape ({"error": "invalid_grant"}). The V2 port
+// 400 classify as *PendingError: the RFC 6749 OAuth shape the shipped backend's
+// token endpoint now emits ({"error": "invalid_grant"} — the #1252 §5.2
+// dialect reshaping), and the RFC 7807 problem-details shape older backends
+// emitted ({"type": "invalid_grant"} — auth/web/errors.py). The V2 port
 // originally read only the OAuth key, so a real pending agent surfaced as a
 // hard "token exchange failed (status 400)" instead of the approval wait.
 func TestClassifyTokenError_PendingShapes(t *testing.T) {
@@ -159,6 +160,59 @@ func TestClassifyTokenError_PendingShapes(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "actor_not_found") {
 		t.Errorf("error should carry the code: %v", err)
+	}
+}
+
+// TestClassifyTokenError_Rfc6749DistinctCodes pins the #1252 backend dialect:
+// the token endpoint now names conditions with their proper RFC 6749 §5.2 /
+// RFC 8628 codes (invalid_client, unsupported_grant_type, slow_down) instead
+// of a blanket invalid_grant. None of these are a pending approval — they
+// must classify as hard errors carrying the code AND the description, so the
+// register wait loop never polls a condition that can't clear.
+func TestClassifyTokenError_Rfc6749DistinctCodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		code   string
+		desc   string
+	}{
+		{
+			name:   "invalid_client",
+			status: http.StatusBadRequest,
+			body:   `{"error":"invalid_client","error_description":"client authentication failed"}`,
+			code:   "invalid_client",
+			desc:   "client authentication failed",
+		},
+		{
+			name:   "unsupported_grant_type",
+			status: http.StatusBadRequest,
+			body:   `{"error":"unsupported_grant_type","error_description":"unsupported grant_type: password"}`,
+			code:   "unsupported_grant_type",
+			desc:   "unsupported grant_type: password",
+		},
+		{
+			name:   "slow_down",
+			status: http.StatusTooManyRequests,
+			body:   `{"error":"slow_down","error_description":"rate limit exceeded, retry later"}`,
+			code:   "slow_down",
+			desc:   "rate limit exceeded, retry later",
+		},
+	}
+	for _, tc := range cases {
+		resp := &http.Response{
+			StatusCode: tc.status,
+			Body:       io.NopCloser(strings.NewReader(tc.body)),
+		}
+		err := classifyTokenError(resp)
+		var pending *PendingError
+		if errors.As(err, &pending) {
+			t.Errorf("%s: classified as pending — only 400 invalid_grant may pend", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.code) || !strings.Contains(err.Error(), tc.desc) {
+			t.Errorf("%s: error should carry code %q and description %q: %v", tc.name, tc.code, tc.desc, err)
+		}
 	}
 }
 

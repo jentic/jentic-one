@@ -77,7 +77,8 @@ def test_jwt_bearer_grant_missing_assertion(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    # RFC 6749 §5.2 dialect (reshaped by _TokenRoute) — not Problem Details.
+    assert data["error"] == "invalid_grant"
 
 
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
@@ -104,7 +105,8 @@ def test_jwt_bearer_grant_invalid_assertion(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    assert data["error"] == "invalid_grant"
+    assert data["error_description"] == "Assertion is invalid"
 
 
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
@@ -122,4 +124,5 @@ def test_unsupported_grant_type_returns_400(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    # Missing credentials on a SUPPORTED grant type stays invalid_grant.
+    assert data["error"] == "invalid_grant"

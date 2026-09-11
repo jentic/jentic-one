@@ -283,11 +283,12 @@ func performOAuthExchange(creds Credentials) (*TokenSet, error) {
 
 // classifyTokenError decodes the error body of a non-200 token response.
 // A 400 invalid_grant means the identity is unapproved -> *PendingError; anything
-// else is wrapped with the status and error code. The shipped backend emits
-// RFC 7807 problem-details ({"type": "invalid_grant", "detail": ...} — see
-// auth/web/errors.py), which is what the V1 client parsed; the RFC 6749 OAuth
-// shape ({"error": ..., "error_description": ...}) is also accepted so an
-// RFC-compliant server classifies identically.
+// else is wrapped with the status and error code. The shipped backend's token
+// endpoint emits the RFC 6749 §5.2 OAuth shape ({"error": ...,
+// "error_description": ...} — reshaped by _TokenRoute in
+// auth/web/routers/oauth.py, #1252); the RFC 7807 problem-details shape
+// ({"type": "invalid_grant", "detail": ...}) that older backends emitted is
+// still accepted so this client classifies identically against them.
 func classifyTokenError(resp *http.Response) error {
 	// #1207: redirects are never followed on auth calls (noFollowRedirects), so
 	// a 3xx lands here as the final response. Name it explicitly — "token

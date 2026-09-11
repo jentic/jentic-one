@@ -682,6 +682,12 @@ export class OAuthService {
     /**
      * Token Endpoint
      * Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+     *
+     * Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+     * ``error_description``), NOT platform Problem Details — reshaped by
+     * ``_TokenRoute``. On the refresh arm, a revoked consent grant answers
+     * ``invalid_grant`` with ``error_description: "consent grant has been
+     * revoked"`` — terminal; restart the authorization flow.
      * @returns TokenResponse Successful Response
      * @throws ApiError
      */
@@ -705,8 +711,9 @@ export class OAuthService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad Request`,
+                400: `RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): \`{"error": "invalid_grant" | "invalid_client" | "unsupported_grant_type", "error_description": "..."}\`. A revoked consent grant surfaces on the refresh arm as \`invalid_grant\` with \`error_description: "consent grant has been revoked"\` — clients should treat it as terminal and restart the authorization flow.`,
                 422: `Unprocessable Entity`,
+                429: `Per-client+IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

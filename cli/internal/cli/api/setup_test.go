@@ -34,9 +34,10 @@ func setupServer(t *testing.T, pendingPolls int32) (*httptest.Server, *atomic.In
 			if polls.Add(1) <= pendingPolls {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
-				// RFC 7807 problem-details — the REAL backend error shape
-				// (auth/web/errors.py), which pending-classification must parse.
-				_, _ = w.Write([]byte(`{"type":"invalid_grant","status":400,"detail":"agent pending approval","instance":"/oauth/token"}`))
+				// RFC 6749 §5.2 dialect — the REAL backend token-endpoint
+				// error shape (#1252; the legacy RFC 7807 shape stays
+				// covered by client/auth's classifier table tests).
+				_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"agent pending approval"}`))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")

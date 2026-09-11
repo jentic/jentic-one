@@ -110,7 +110,8 @@ def test_client_credentials_missing_client_id(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    # RFC 6749 §5.2 dialect (reshaped by _TokenRoute) — not Problem Details.
+    assert data["error"] == "invalid_grant"
 
 
 @patch("jentic_one.auth.web.routers.oauth.ServiceAccountAuthService")
@@ -138,7 +139,7 @@ def test_client_credentials_invalid_secret(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    assert data["error"] == "invalid_grant"
 
 
 @patch("jentic_one.auth.web.routers.oauth.ServiceAccountAuthService")
