@@ -14,6 +14,73 @@ func TestBundledNamesSorted(t *testing.T) {
 	}
 }
 
+// TestBundledNamesUnaffectedBySubdirs pins that the per-skill references
+// subdirectories (content/<name>/references/) do not leak into the shipped
+// *name* set: BundledNames skips directory entries, so the reference embed
+// pattern cannot mint a phantom skill.
+func TestBundledNamesUnaffectedBySubdirs(t *testing.T) {
+	if refs := BundledReferences("jentic"); len(refs) == 0 {
+		t.Fatal("test premise: the jentic skill must ship references")
+	}
+	for _, name := range BundledNames() {
+		if strings.Contains(name, "/") || strings.HasSuffix(name, "references") {
+			t.Errorf("BundledNames leaked a directory entry: %q", name)
+		}
+	}
+}
+
+// TestBundledReferences pins the shipped reference sets and the raw
+// accessors: the jentic skill ships the three lane files (sorted); the
+// single-audience flow skills ship none; every shipped reference reads
+// verbatim, is plain markdown with NO frontmatter, and opens with a
+// "read this when…" H1 (the level-3 disclosure contract).
+func TestBundledReferences(t *testing.T) {
+	got := BundledReferences("jentic")
+	want := []string{"cli.md", "mcp.md", "recovery.md"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("BundledReferences(jentic) = %v, want %v", got, want)
+	}
+	for _, name := range []string{"contribute-spec-fix", "import-new-api", "no-such-skill"} {
+		if refs := BundledReferences(name); refs != nil {
+			t.Errorf("BundledReferences(%s) = %v, want nil", name, refs)
+		}
+	}
+	for _, ref := range got {
+		data, err := RawBundledReference("jentic", ref)
+		if err != nil {
+			t.Fatalf("RawBundledReference(jentic, %s): %v", ref, err)
+		}
+		s := strings.TrimLeft(string(data), "\n")
+		if strings.HasPrefix(s, "---") {
+			t.Errorf("%s must not carry frontmatter (references are plain markdown)", ref)
+		}
+		if !strings.HasPrefix(s, "# ") {
+			t.Errorf("%s must open with a one-line H1, got %.40q", ref, s)
+		}
+	}
+	if _, err := RawBundledReference("jentic", "nope.md"); err == nil {
+		t.Error("RawBundledReference must fail for an unshipped reference")
+	}
+	// The lane convention is a reserved-name rule; both reserved names must
+	// actually exist in the jentic set so the filters filter something.
+	if CLIOnlyReference != "cli.md" || MCPOnlyReference != "mcp.md" {
+		t.Errorf("lane constants = %q/%q, want cli.md/mcp.md", CLIOnlyReference, MCPOnlyReference)
+	}
+}
+
+// TestRenderedReferencesExcludeMCPLane pins the mirror-image lane filter for
+// rendered CLI installs: everything except mcp.md.
+func TestRenderedReferencesExcludeMCPLane(t *testing.T) {
+	got := renderedReferences("jentic")
+	want := []string{"cli.md", "recovery.md"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("renderedReferences(jentic) = %v, want %v", got, want)
+	}
+	if refs := renderedReferences("import-new-api"); refs != nil {
+		t.Errorf("renderedReferences(import-new-api) = %v, want nil", refs)
+	}
+}
+
 func TestBundledParsesCanonicalJentic(t *testing.T) {
 	c, err := Bundled("jentic", "http://example.test")
 	if err != nil {

@@ -25,15 +25,21 @@ cannot diverge.
 from __future__ import annotations
 
 import pytest
+import tools.skills_sync as skills_sync
 from tools.skills_sync import (
     CLI_CONTENT,
     SERVED_SKILLS,
+    SKILL_MAX_LINES,
     WEB_CONTENT,
     SkillError,
     _source_path,
     _validate,
+    source_references,
     sync,
 )
+
+#: Every (skill, reference) pair the source tree ships, for parametrization.
+_REFERENCE_PAIRS = [(name, ref) for name in SERVED_SKILLS for ref in source_references(name)]
 
 
 @pytest.mark.arch
@@ -70,3 +76,73 @@ def test_each_served_skill_is_byte_identical_across_copies(name: str) -> None:
     web_copy = WEB_CONTENT / f"{name}.md"
     assert cli_copy.read_bytes() == source, f"{cli_copy} drifted from source (run `make skills`)"
     assert web_copy.read_bytes() == source, f"{web_copy} drifted from source (run `make skills`)"
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize(("name", "ref"), _REFERENCE_PAIRS)
+def test_each_reference_is_byte_identical_across_copies(name: str, ref: str) -> None:
+    """Reference files are pinned across the triangle exactly like skill bytes."""
+    source = (_source_path(name).parent / "references" / ref).read_bytes()
+    cli_copy = CLI_CONTENT / name / "references" / ref
+    web_copy = WEB_CONTENT / name / "references" / ref
+    assert cli_copy.read_bytes() == source, f"{cli_copy} drifted from source (run `make skills`)"
+    assert web_copy.read_bytes() == source, f"{web_copy} drifted from source (run `make skills`)"
+
+
+@pytest.mark.arch
+def test_jentic_ships_the_lane_references() -> None:
+    """The jentic skill ships the three lane files; cli.md is in BOTH mirrors.
+
+    ``cli.md`` is deliberately present in the mirror trees (HTTP serves every
+    reference — the raw neutral channel) even though the MCP resource listings
+    skip it (``CLI_ONLY_REFERENCES`` / ``skillgen.CLIOnlyReference``); the
+    lane filter is a serving decision at the MCP doors, never a mirroring one.
+    """
+    assert source_references("jentic") == ("cli.md", "mcp.md", "recovery.md")
+    for tree in (CLI_CONTENT, WEB_CONTENT):
+        assert (tree / "jentic" / "references" / "cli.md").is_file()
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize(("name", "ref"), _REFERENCE_PAIRS)
+def test_references_are_plain_markdown_with_h1(name: str, ref: str) -> None:
+    """References carry NO frontmatter and open with a one-line H1.
+
+    They are level-3 progressive disclosure, not skills: the Agent-Skills spec
+    requires frontmatter on SKILL.md only, and the opening "read this when…"
+    H1 is what orients a model landing on the file cold.
+    """
+    text = (_source_path(name).parent / "references" / ref).read_text(encoding="utf-8")
+    assert not text.lstrip("\n").startswith("---"), f"{name}/{ref} must not carry frontmatter"
+    assert text.lstrip("\n").startswith("# "), f"{name}/{ref} must open with an H1"
+
+
+@pytest.mark.arch
+def test_validate_enforces_the_line_ceiling() -> None:
+    """A SKILL.md over the 500-line ceiling fails validation (fail closed).
+
+    ``contribute-spec-fix`` is grandfathered at its frozen pre-rule size; any
+    growth past that trips the error too, so the exemption cannot rot into a
+    loophole.
+    """
+    fm = "---\nname: jentic\ndescription: d\n---\n"
+    oversize = fm + "line\n" * (SKILL_MAX_LINES + 1)
+    with pytest.raises(SkillError, match="lines"):
+        _validate("jentic", oversize)
+    # The grandfathered skill still validates at its current size…
+    _validate("contribute-spec-fix", _source_path("contribute-spec-fix").read_text("utf-8"))
+    # …but may not grow.
+    grown = "---\nname: contribute-spec-fix\ndescription: d\n---\n" + "line\n" * 600
+    with pytest.raises(SkillError, match="lines"):
+        _validate("contribute-spec-fix", grown)
+
+
+@pytest.mark.arch
+def test_source_references_rejects_bad_filenames(tmp_path, monkeypatch) -> None:
+    """A reference violating the filename grammar is an error, not a skip."""
+    ref_dir = tmp_path / "bad-skill" / "references"
+    ref_dir.mkdir(parents=True)
+    (ref_dir / "Bad_Name.md").write_text("# nope\n", encoding="utf-8")
+    monkeypatch.setattr(skills_sync, "SKILLS_DIR", tmp_path)
+    with pytest.raises(SkillError, match="filename grammar"):
+        skills_sync.source_references("bad-skill")
