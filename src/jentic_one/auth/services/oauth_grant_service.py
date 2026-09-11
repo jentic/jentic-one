@@ -57,6 +57,13 @@ _ADMIN_READ_PERMISSIONS: frozenset[str] = GRANT_REVOKE_ADMIN_PERMISSIONS | {OAUT
 #: following the ``OVERLAY_DEPRECATED`` cause-in-data pattern).
 AGENT_TRANSFER_REVOCATION_REASON = "agent_ownership_transferred"
 
+#: The revocation cause stamped on grants swept by an agent archive (#1233):
+#: archive is terminal (the status enum has no exit from it), so leaving the
+#: agent's consent grants ``active`` forever would misreport every "active
+#: grants" listing/count on a dead agent. Same cause-in-data pattern as the
+#: transfer reason above.
+AGENT_ARCHIVE_REVOCATION_REASON = "agent_archived"
+
 
 async def revoke_grant_and_sweep_tokens(
     session: AsyncSession,
@@ -129,22 +136,30 @@ async def revoke_active_grants_for_agent(
     agent_id: str,
     *,
     identity: Identity,
+    audit_reason: str = "oauth grant revoked: agent ownership transferred",
+    event_reason: str = AGENT_TRANSFER_REVOCATION_REASON,
+    summary_cause: str = "changed owner",
+    log_event: str = "oauth_grants_revoked_on_agent_transfer",
 ) -> int:
-    """Revoke EVERY active grant bound to ``agent_id`` — the transfer sweep (G10, #1222).
+    """Revoke EVERY active grant bound to ``agent_id`` — the per-agent sweep.
 
-    Called by ``AgentService.update_agent`` inside the ownership-transfer
-    transaction: a transferred agent must not keep grants consented by its
-    previous owner (the new owner could not revoke them self-serve — the
-    ``:revoke`` predicate keys on the consenting user). Runs the same
-    per-grant revocation body as the manual kill switch, stamped with
-    :data:`AGENT_TRANSFER_REVOCATION_REASON` and attributed to the actor
-    performing the transfer.
+    Born as the transfer sweep (G10, #1222; the cause parameters default to
+    that stamp so the transfer call site reads unchanged): a transferred
+    agent must not keep grants consented by its previous owner (the new owner
+    could not revoke them self-serve — the ``:revoke`` predicate keys on the
+    consenting user). ``AgentService.archive`` reuses it with the archive
+    stamp (#1233): archive is terminal, so its grants would otherwise stay
+    ``active`` forever. Any new caller MUST pass its own ``audit_reason`` /
+    ``event_reason`` / ``summary_cause`` / ``log_event`` — never let a
+    different cause masquerade as a transfer. Runs the same per-grant
+    revocation body as the manual kill switch, attributed to the actor
+    performing the mutation.
 
     Deliberately NO ``viewer_can_revoke`` check: authority comes from the
-    ``agents:write`` gate on the transfer itself. Flush-only and NOT
+    ``agents:write`` gate on the mutation itself. Flush-only and NOT
     best-effort — an exception propagates so a failed sweep rolls the whole
-    transfer back rather than leaving a transferred agent with live grants.
-    Returns the number of grants revoked.
+    mutation back rather than leaving a dead/transferred agent with live
+    grants. Returns the number of grants revoked.
     """
     grants = await OAuthClientGrantRepository.list_active_for_agent(session, agent_id)
     for grant in grants:
@@ -154,16 +169,16 @@ async def revoke_active_grants_for_agent(
             actor_type=identity.actor_type,
             actor_id=identity.sub,
             origin=identity.origin.value,
-            audit_reason="oauth grant revoked: agent ownership transferred",
+            audit_reason=audit_reason,
             summary=(
                 f"OAuth grant {grant.id} for client '{grant.oauth_client_id}' was "
-                f"revoked because agent {agent_id} changed owner"
+                f"revoked because agent {agent_id} {summary_cause}"
             ),
-            event_reason=AGENT_TRANSFER_REVOCATION_REASON,
+            event_reason=event_reason,
         )
     if grants:
         logger.info(
-            "oauth_grants_revoked_on_agent_transfer",
+            log_event,
             agent_id=agent_id,
             count=len(grants),
             actor_id=identity.sub,
