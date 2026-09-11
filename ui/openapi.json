@@ -28581,7 +28581,7 @@
     },
     "/integrations:connect": {
       "post": {
-        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is ignored; the calling agent's\nown identity is used. UI/user callers: `agent_id` is required.",
+        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and currently ignored downstream,\nsince credentials still bind through toolkits — it becomes mandatory\nonce agent-credential bindings replace toolkit membership.",
         "operationId": "integrationsConnect",
         "requestBody": {
           "content": {

@@ -19,7 +19,7 @@ class ConnectSessionRepository:
         *,
         credential_id: str,
         vendor: str,
-        agent_id: str,
+        agent_id: str | None,
         initiator_actor_id: str,
         state: str,
         resolved_flow: str,
