@@ -48,7 +48,7 @@ def test_set_permissions_updates_effective(base_url: str, admin_token: str) -> N
             f"{base_url}/users/{user_id}/permissions",
             method="PUT",
             token=admin_token,
-            body={"permissions": ["toolkits:write"]},
+            body={"permissions": ["credentials:write"]},
         )
         assert perm_status == 200
 
@@ -56,6 +56,6 @@ def test_set_permissions_updates_effective(base_url: str, admin_token: str) -> N
         assert user_status == 200
         assert isinstance(user_body, dict)
         effective_names = [p["name"] for p in user_body["permissions"]["effective"]]
-        assert "toolkits:write" in effective_names
+        assert "credentials:write" in effective_names
     finally:
         authed_request(f"{base_url}/users/{user_id}", method="DELETE", token=admin_token)

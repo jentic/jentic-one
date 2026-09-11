@@ -45,7 +45,7 @@ from tests.smoke.conftest import (
     _app_is_reachable,
     authed_request,
     broker_call,
-    provision_toolkit_and_credential,
+    provision_bound_credential,
     unique_vendor,
 )
 
@@ -204,7 +204,7 @@ def test_broker_e2e_sigv4_to_real_opensearch(
     """The complete #776 flow, exactly as a user would drive it.
 
     Import the collection as an API → store a ``sigv4`` credential through the
-    control plane (secret encrypted at rest) → bind agent + toolkit → execute
+    control plane (secret encrypted at rest) → direct agent↔credential bind → execute
     ``GET /_cat/indices`` through the broker proxy. The broker resolves the
     credential, decrypts the material, and the SigV4SigningRunner signs the
     final wire request — a 200 from the real collection proves the whole
@@ -261,8 +261,8 @@ def test_broker_e2e_sigv4_to_real_opensearch(
     assert status == 200 and isinstance(result, dict), f"job result: {status} {result}"
     api_ref = result["revisions"][0]["api"]
 
-    # 2. Toolkit + sigv4 credential through the real control plane.
-    toolkit_id, credential_id = provision_toolkit_and_credential(
+    # 2. Directly bound sigv4 credential through the real control plane.
+    provision_bound_credential(
         base_url,
         test_agent,
         credential_body={
@@ -280,17 +280,10 @@ def test_broker_e2e_sigv4_to_real_opensearch(
             "aws_region": material.region,
             "aws_service": "aoss",
         },
+        # The broker default-denies bindings with zero permission rules, so
+        # allow GET across this (single-endpoint, throwaway) API.
+        rules=[{"effect": "allow", "methods": ["GET"], "path": "/", "match_mode": "prefix"}],
     )
-
-    # The broker default-denies bindings with zero permission rules, so allow
-    # GET across this (single-endpoint, throwaway) API before executing.
-    _, status = authed_request(
-        f"{base_url}/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
-        method="PUT",
-        token=test_agent.owner_token,
-        body=[{"effect": "allow", "methods": ["GET"], "path": "/", "match_mode": "prefix"}],
-    )
-    assert status == 200, f"binding permission rules failed: {status}"
 
     # 3. Execute through the broker proxy — the signing runner does the rest.
     raw, status, _headers = broker_call(
@@ -305,5 +298,5 @@ def test_broker_e2e_sigv4_to_real_opensearch(
         f"broker → OpenSearch returned {status}: {text[:500]}\n"
         "Signature was not rejected — a 403 here usually means the collection's "
         "data-access policy lacks aoss:DescribeIndex for this principal; a "
-        "broker envelope (403/424 JSON) means toolkit/credential wiring failed."
+        "broker envelope (403/424 JSON) means binding/credential wiring failed."
     )

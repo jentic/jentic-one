@@ -1,4 +1,10 @@
-"""Smoke tests for toolkit creation, credential management, and toolkit-credential binding."""
+"""Smoke tests for credential management and direct agent↔credential bindings.
+
+The theme-5 Phase 5b replacement for the deleted toolkit-axis suite: the
+management surface under test is ``POST /credentials`` plus the direct-binding
+routes (``/agents/{id}/credentials``) and the per-binding permission rules
+(``/credentials/{cid}/agents/{aid}/permissions``).
+"""
 
 from __future__ import annotations
 
@@ -9,59 +15,27 @@ import pytest
 from tests.smoke.conftest import SmokeAgent, authed_request, unique_vendor
 
 
-@pytest.mark.smoke
-def test_create_toolkit(base_url: str, test_agent: SmokeAgent) -> None:
-    """POST /toolkits returns 201 with a toolkit_id."""
-    name = f"smoke-tk-{uuid.uuid4().hex[:12]}"
+def _credential_body(vendor: str) -> dict[str, object]:
+    return {
+        "type": "bearer_token",
+        "name": f"smoke-cred-{uuid.uuid4().hex[:8]}",
+        "api": {"vendor": vendor, "name": "petstore", "version": "3.0.0"},
+        "provider": "static",
+        "token": "sk-test-secret-value",
+    }
+
+
+def _create_credential(base_url: str, agent: SmokeAgent, vendor: str) -> str:
     body, status = authed_request(
-        f"{base_url}/toolkits",
+        f"{base_url}/credentials",
         method="POST",
-        token=test_agent.owner_token,
-        body={"name": name},
-    )
-    assert status == 201
-    assert isinstance(body, dict)
-    assert "toolkit" in body
-    assert "toolkit_id" in body["toolkit"]
-
-
-@pytest.mark.smoke
-def test_bind_toolkit_to_agent(base_url: str, test_agent: SmokeAgent) -> None:
-    """POST /agents/{id}/toolkits returns 201 with binding details."""
-    toolkit_name = f"smoke-bind-{uuid.uuid4().hex[:12]}"
-    create_body, _ = authed_request(
-        f"{base_url}/toolkits",
-        method="POST",
-        token=test_agent.owner_token,
-        body={"name": toolkit_name},
-    )
-    assert isinstance(create_body, dict)
-    toolkit_id = create_body["toolkit"]["toolkit_id"]
-
-    bind_body, bind_status = authed_request(
-        f"{base_url}/agents/{test_agent.agent_id}/toolkits",
-        method="POST",
-        token=test_agent.owner_token,
-        body={"toolkit_id": toolkit_id},
-    )
-    assert bind_status == 201
-    assert isinstance(bind_body, dict)
-    assert bind_body["toolkit_id"] == toolkit_id
-    assert bind_body["agent_id"] == test_agent.agent_id
-
-
-@pytest.mark.smoke
-def test_list_agent_toolkits(base_url: str, agent_with_toolkit: tuple[SmokeAgent, str]) -> None:
-    """GET /agents/{id}/toolkits lists the bound toolkit."""
-    agent, toolkit_id = agent_with_toolkit
-    body, status = authed_request(
-        f"{base_url}/agents/{agent.agent_id}/toolkits",
         token=agent.owner_token,
+        body=_credential_body(vendor),
     )
-    assert status == 200
+    assert status == 201, f"Credential creation failed: {status} {body}"
     assert isinstance(body, dict)
-    toolkit_ids = [t["toolkit_id"] for t in body["data"]]
-    assert toolkit_id in toolkit_ids
+    credential_id: str = body["credential"]["credential_id"]
+    return credential_id
 
 
 @pytest.mark.smoke
@@ -72,13 +46,7 @@ def test_create_credential(base_url: str, test_agent: SmokeAgent) -> None:
         f"{base_url}/credentials",
         method="POST",
         token=test_agent.owner_token,
-        body={
-            "type": "bearer_token",
-            "name": f"smoke-cred-{uuid.uuid4().hex[:8]}",
-            "api": {"vendor": vendor, "name": "petstore", "version": "3.0.0"},
-            "provider": "static",
-            "token": "sk-test-secret-value",
-        },
+        body=_credential_body(vendor),
     )
     assert status == 201
     assert isinstance(body, dict)
@@ -91,17 +59,13 @@ def test_create_credential(base_url: str, test_agent: SmokeAgent) -> None:
 def test_list_credentials_redacted(base_url: str, test_agent: SmokeAgent) -> None:
     """GET /credentials returns credentials without exposing secrets."""
     vendor = unique_vendor("cred-list")
+    creation = _credential_body(vendor)
+    creation["token"] = "sk-hidden-value"
     authed_request(
         f"{base_url}/credentials",
         method="POST",
         token=test_agent.owner_token,
-        body={
-            "type": "bearer_token",
-            "name": f"smoke-cred-{uuid.uuid4().hex[:8]}",
-            "api": {"vendor": vendor, "name": "petstore", "version": "3.0.0"},
-            "provider": "static",
-            "token": "sk-hidden-value",
-        },
+        body=creation,
     )
 
     body, status = authed_request(
@@ -117,92 +81,114 @@ def test_list_credentials_redacted(base_url: str, test_agent: SmokeAgent) -> Non
 
 
 @pytest.mark.smoke
-def test_bind_credential_to_toolkit(
-    base_url: str, agent_with_toolkit: tuple[SmokeAgent, str]
-) -> None:
-    """POST /toolkits/{id}/credentials binds a credential."""
-    agent, toolkit_id = agent_with_toolkit
-    vendor = unique_vendor("bind-cred")
-
-    cred_body, cred_status = authed_request(
-        f"{base_url}/credentials",
-        method="POST",
-        token=agent.owner_token,
-        body={
-            "type": "bearer_token",
-            "name": f"smoke-cred-{uuid.uuid4().hex[:8]}",
-            "api": {"vendor": vendor, "name": "petstore", "version": "3.0.0"},
-            "provider": "static",
-            "token": "sk-binding-test",
-        },
-    )
-    assert cred_status == 201
-    assert isinstance(cred_body, dict)
-    credential_id = cred_body["credential"]["credential_id"]
+def test_bind_credential_to_agent(base_url: str, test_agent: SmokeAgent) -> None:
+    """POST /agents/{id}/credentials returns 201 with binding details."""
+    credential_id = _create_credential(base_url, test_agent, unique_vendor("bind-cred"))
 
     bind_body, bind_status = authed_request(
-        f"{base_url}/toolkits/{toolkit_id}/credentials",
+        f"{base_url}/agents/{test_agent.agent_id}/credentials",
         method="POST",
-        token=agent.owner_token,
+        token=test_agent.owner_token,
         body={"credential_id": credential_id},
     )
     assert bind_status == 201
     assert isinstance(bind_body, dict)
+    assert bind_body["credential_id"] == credential_id
+    assert bind_body["agent_id"] == test_agent.agent_id
 
 
 @pytest.mark.smoke
-def test_list_toolkit_credentials(
-    base_url: str, agent_with_toolkit: tuple[SmokeAgent, str]
-) -> None:
-    """GET /toolkits/{id}/credentials lists bound credentials."""
-    agent, toolkit_id = agent_with_toolkit
-    vendor = unique_vendor("list-tk-cred")
-
-    cred_body, _ = authed_request(
-        f"{base_url}/credentials",
+def test_list_agent_credentials(base_url: str, test_agent: SmokeAgent) -> None:
+    """GET /agents/{id}/credentials lists the direct binding."""
+    credential_id = _create_credential(base_url, test_agent, unique_vendor("list-cred"))
+    _, bind_status = authed_request(
+        f"{base_url}/agents/{test_agent.agent_id}/credentials",
         method="POST",
-        token=agent.owner_token,
-        body={
-            "type": "bearer_token",
-            "name": f"smoke-cred-{uuid.uuid4().hex[:8]}",
-            "api": {"vendor": vendor, "name": "petstore", "version": "3.0.0"},
-            "provider": "static",
-            "token": "sk-list-test",
-        },
-    )
-    assert isinstance(cred_body, dict)
-    credential_id = cred_body["credential"]["credential_id"]
-
-    authed_request(
-        f"{base_url}/toolkits/{toolkit_id}/credentials",
-        method="POST",
-        token=agent.owner_token,
+        token=test_agent.owner_token,
         body={"credential_id": credential_id},
     )
+    assert bind_status == 201
 
     body, status = authed_request(
-        f"{base_url}/toolkits/{toolkit_id}/credentials",
-        token=agent.owner_token,
+        f"{base_url}/agents/{test_agent.agent_id}/credentials",
+        token=test_agent.owner_token,
     )
     assert status == 200
     assert isinstance(body, dict)
-    assert "data" in body
-    cred_ids = [b["credential_id"] for b in body["data"]]
-    assert credential_id in cred_ids
+    credential_ids = [b["credential_id"] for b in body["data"]]
+    assert credential_id in credential_ids
 
 
 @pytest.mark.smoke
-def test_create_api_key_for_toolkit_is_retired(
-    base_url: str, agent_with_toolkit: tuple[SmokeAgent, str]
-) -> None:
-    """POST /toolkits/{id}/keys returns 410 — toolkit keys are retired."""
-    agent, toolkit_id = agent_with_toolkit
-    body, status = authed_request(
-        f"{base_url}/toolkits/{toolkit_id}/keys",
+def test_binding_permission_rules_round_trip(base_url: str, test_agent: SmokeAgent) -> None:
+    """PUT then GET the per-binding permission rules for a direct binding."""
+    credential_id = _create_credential(base_url, test_agent, unique_vendor("rules-cred"))
+    _, bind_status = authed_request(
+        f"{base_url}/agents/{test_agent.agent_id}/credentials",
         method="POST",
-        token=agent.owner_token,
-        body={"label": "smoke-key"},
+        token=test_agent.owner_token,
+        body={"credential_id": credential_id},
     )
-    assert status == 410
+    assert bind_status == 201
+
+    rules_url = f"{base_url}/credentials/{credential_id}/agents/{test_agent.agent_id}/permissions"
+    put_body, put_status = authed_request(
+        rules_url,
+        method="PUT",
+        token=test_agent.owner_token,
+        body=[{"effect": "allow", "methods": ["GET"], "path": "/v1/.*", "match_mode": "regex"}],
+    )
+    assert put_status == 200, f"rules PUT failed: {put_status} {put_body}"
+
+    body, status = authed_request(rules_url, token=test_agent.owner_token)
+    assert status == 200
     assert isinstance(body, dict)
-    assert body["type"] == "toolkit_keys_retired"
+    assert len(body["data"]) == 1
+    rule = body["data"][0]
+    assert rule["effect"] == "allow"
+    assert rule["path"] == "/v1/.*"
+
+
+@pytest.mark.smoke
+def test_unbind_credential_suspends_then_purges(base_url: str, test_agent: SmokeAgent) -> None:
+    """DELETE /agents/{id}/credentials/{cid} suspends; purge=true removes the row."""
+    credential_id = _create_credential(base_url, test_agent, unique_vendor("unbind-cred"))
+    _, bind_status = authed_request(
+        f"{base_url}/agents/{test_agent.agent_id}/credentials",
+        method="POST",
+        token=test_agent.owner_token,
+        body={"credential_id": credential_id},
+    )
+    assert bind_status == 201
+
+    # Default unbind = suspend (reversible).
+    _, status = authed_request(
+        f"{base_url}/agents/{test_agent.agent_id}/credentials/{credential_id}",
+        method="DELETE",
+        token=test_agent.owner_token,
+    )
+    assert status == 204
+
+    # :resume restores the binding.
+    _, status = authed_request(
+        f"{base_url}/agents/{test_agent.agent_id}/credentials/{credential_id}:resume",
+        method="POST",
+        token=test_agent.owner_token,
+    )
+    assert status in (200, 204)
+
+    # purge=true deletes the row outright.
+    _, status = authed_request(
+        f"{base_url}/agents/{test_agent.agent_id}/credentials/{credential_id}?purge=true",
+        method="DELETE",
+        token=test_agent.owner_token,
+    )
+    assert status == 204
+
+    body, status = authed_request(
+        f"{base_url}/agents/{test_agent.agent_id}/credentials",
+        token=test_agent.owner_token,
+    )
+    assert status == 200
+    assert isinstance(body, dict)
+    assert credential_id not in [b["credential_id"] for b in body["data"]]

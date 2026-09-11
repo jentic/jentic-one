@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy import delete
 
 from jentic_one.admin.core.permissions import (
+    CREDENTIALS_READ,
+    CREDENTIALS_WRITE,
     EVENTS_WRITE,
     ORG_ADMIN,
-    TOOLKITS_READ,
-    TOOLKITS_WRITE,
     USERS_READ,
     USERS_WRITE,
 )
@@ -104,7 +104,7 @@ async def test_get_effective_expands_implications(
     assert ORG_ADMIN in view.effective
     assert USERS_WRITE in view.effective
     assert USERS_READ in view.effective
-    assert TOOLKITS_WRITE in view.effective
+    assert CREDENTIALS_WRITE in view.effective
 
 
 async def test_get_assigned_for_user(integration_context: Context, admin_user: str) -> None:
@@ -174,15 +174,15 @@ async def test_set_assigned(integration_context: Context, admin_user: str) -> No
     service = PermissionService(ctx)
     result = await service.set_assigned(
         target_id,
-        [TOOLKITS_WRITE, USERS_READ],
+        [CREDENTIALS_WRITE, USERS_READ],
         identity=Identity(sub=admin_user, email="test@local"),
     )
-    assert TOOLKITS_WRITE in result
+    assert CREDENTIALS_WRITE in result
     assert USERS_READ in result
 
     # Verify effective includes implied
     view = await service.get_effective_for_user(target_id)
-    assert TOOLKITS_READ in view.effective
+    assert CREDENTIALS_READ in view.effective
 
     # Cleanup
     async with ctx.admin_db.session() as session:

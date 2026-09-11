@@ -18,7 +18,7 @@ import pytest
 import structlog
 from sqlalchemy import text
 
-from jentic_one.control.services.toolkits.key_gen import generate_toolkit_key
+from jentic_one.control.repos.toolkit_key_gen import generate_toolkit_key
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType

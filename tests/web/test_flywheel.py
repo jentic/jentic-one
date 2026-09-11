@@ -2,11 +2,11 @@
 
 Exercises the whole loop against the REAL combined control-plane app + a real
 database, spanning three surfaces (admin `/users`, auth `/agents`, control
-`/toolkits`):
+`/credentials`):
 
   1. an org admin exists;
   2. the admin creates multiple users with different permission sets;
-  3. the admin and a write-capable user create agents and toolkits;
+  3. the admin and a write-capable user create agents and credentials;
   4. reads are verified BY ROLE — who can list what, who is 403'd, and that the
      owner-scoping filter shows admins everything but non-admins only their own.
 
@@ -45,7 +45,7 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services._support.tokens import issue_jwt
-from jentic_one.control.core.schema.toolkits import Toolkit
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.web.app_factory import create_combined_app
@@ -96,8 +96,8 @@ async def actors(web_context: Context) -> AsyncGenerator[dict[str, _Actor], None
     """Seed three real users with distinct permission sets and mint their tokens.
 
     - admin:   org:admin (sees + does everything)
-    - manager: agents/toolkits read+write (can create; owner-scoped reads)
-    - reader:  agents/toolkits read only (can list, cannot create; no users:read)
+    - manager: agents/credentials read+write (can create; owner-scoped reads)
+    - reader:  agents/credentials read only (can list, cannot create; no users:read)
 
     Users are created directly via repositories (fast + deterministic) rather
     than the invite→redeem round-trip; the API-level create flow is covered
@@ -109,9 +109,9 @@ async def actors(web_context: Context) -> AsyncGenerator[dict[str, _Actor], None
         "admin": (f"fw-admin-{sfx}@test.local", {"org:admin"}),
         "manager": (
             f"fw-mgr-{sfx}@test.local",
-            {"agents:read", "agents:write", "toolkits:read", "toolkits:write"},
+            {"agents:read", "agents:write", "credentials:read", "credentials:write"},
         ),
-        "reader": (f"fw-reader-{sfx}@test.local", {"agents:read", "toolkits:read"}),
+        "reader": (f"fw-reader-{sfx}@test.local", {"agents:read", "credentials:read"}),
     }
     created: dict[str, _Actor] = {}
     ids: list[str] = []
@@ -143,10 +143,10 @@ async def actors(web_context: Context) -> AsyncGenerator[dict[str, _Actor], None
     yield created
 
     # Teardown order matters: agents/service-accounts FK-reference the owning
-    # user (agents.owner_id) and toolkits carry created_by, so remove everything
-    # these actors created before deleting the users themselves.
+    # user (agents.owner_id) and credentials carry created_by, so remove
+    # everything these actors created before deleting the users themselves.
     async with ctx.control_db.session() as session:
-        await session.execute(delete(Toolkit).where(Toolkit.created_by.in_(ids)))
+        await session.execute(delete(Credential).where(Credential.created_by.in_(ids)))
         await session.commit()
     async with ctx.admin_db.session() as session:
         await session.execute(delete(Agent).where(Agent.owner_id.in_(ids)))
@@ -221,15 +221,41 @@ def test_write_capable_actors_create_agents_reader_denied(
     assert r.status_code == 403, r.text
 
 
-def test_write_capable_actors_create_toolkits_reader_denied(
+def _credential_payload(name: str) -> dict[str, object]:
+    return {
+        "type": "api_key",
+        "name": name,
+        "api": {"vendor": "flywheel.test.local", "name": "demo", "version": "1"},
+        "provider": "static",
+        "key": "sk-flywheel-test-key",
+        "location": "query",
+        "field_name": "appid",
+    }
+
+
+def test_write_capable_actors_create_credentials_reader_denied(
     client: TestClient, actors: dict[str, _Actor]
 ) -> None:
+    """Post-Phase-5b the control-plane write surface is the credential axis
+    (toolkit management routes are gone)."""
     admin, manager, reader = actors["admin"], actors["manager"], actors["reader"]
-    r = client.post("/toolkits", headers=admin.headers, json={"name": f"fw-admin-tk-{_suffix()}"})
+    r = client.post(
+        "/credentials",
+        headers=admin.headers,
+        json=_credential_payload(f"fw-admin-cred-{_suffix()}"),
+    )
     assert r.status_code == 201, r.text
-    r = client.post("/toolkits", headers=manager.headers, json={"name": f"fw-mgr-tk-{_suffix()}"})
+    r = client.post(
+        "/credentials",
+        headers=manager.headers,
+        json=_credential_payload(f"fw-mgr-cred-{_suffix()}"),
+    )
     assert r.status_code == 201, r.text
-    r = client.post("/toolkits", headers=reader.headers, json={"name": f"fw-rdr-tk-{_suffix()}"})
+    r = client.post(
+        "/credentials",
+        headers=reader.headers,
+        json=_credential_payload(f"fw-rdr-cred-{_suffix()}"),
+    )
     assert r.status_code == 403, r.text
 
 
