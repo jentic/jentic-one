@@ -136,21 +136,40 @@ class PipedreamProvider:
             raise ProviderError("No provider_account_ref for Pipedream token refresh")
 
         app_token = await self._get_app_token()
-        token_data = await self._get_account_token(
+        account = await self._get_account(
             app_token=app_token,
             account_id=token.provider_account_ref,
         )
 
-        expires_at = None
-        if "expires_at" in token_data:
-            expires_at = datetime.fromtimestamp(int(token_data["expires_at"]), tz=UTC)
-        elif "expires_in" in token_data:
-            expires_at = datetime.now(UTC) + timedelta(
-                seconds=int(token_data["expires_in"]) - self._expiry_skew_seconds
+        credentials = account.get("credentials") or {}
+        # OAuth apps (BYO client) expose oauth_access_token; key-based apps
+        # (e.g. Stripe) expose app-specific fields — fall back through the
+        # common shapes so both kinds inject.
+        access_token = (
+            credentials.get("oauth_access_token")
+            or credentials.get("api_key")
+            or credentials.get("access_token")
+            or credentials.get("token")
+        )
+        if not access_token:
+            raise ProviderError(
+                "Pipedream returned no usable credential for account "
+                f"{token.provider_account_ref!r} (fields: {sorted(credentials)}). "
+                "OAuth apps require your own OAuth client on Pipedream to expose "
+                "credentials."
             )
 
+        expires_at = None
+        raw_expiry = account.get("expires_at")
+        if raw_expiry:
+            try:
+                parsed = datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
+                expires_at = parsed - timedelta(seconds=self._expiry_skew_seconds)
+            except ValueError:
+                expires_at = None
+
         return RefreshResult(
-            access_token=token_data["access_token"],
+            access_token=access_token,
             expires_at=expires_at,
         )
 
@@ -182,18 +201,17 @@ class PipedreamProvider:
         app_token: str,
         external_id: str,
     ) -> dict[str, str]:
-        payload = {
-            "project_id": self._project_id,
-            "environment": self._environment,
-            "external_id": external_id,
-        }
+        # Current Connect API shape: project id in the path, environment in
+        # the x-pd-environment header, and the user key is external_user_id.
+        payload = {"external_user_id": external_id}
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{self._base_url}/connect/tokens",
+                f"{self._base_url}/connect/{self._project_id}/tokens",
                 json=payload,
                 headers={
                     "Authorization": f"Bearer {app_token}",
                     "Accept": "application/json",
+                    "x-pd-environment": self._environment,
                 },
             )
 
@@ -204,21 +222,23 @@ class PipedreamProvider:
         data: dict[str, str] = response.json()
         return data
 
-    async def _get_account_token(
+    async def _get_account(
         self,
         *,
         app_token: str,
         account_id: str,
-    ) -> dict[str, str]:
+    ) -> dict:
         if not _ACCOUNT_ID_RE.match(account_id):
             raise ProviderError(f"Invalid account_id format: {account_id!r}")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                f"{self._base_url}/connect/accounts/{account_id}/token",
+                f"{self._base_url}/connect/{self._project_id}/accounts/{account_id}",
+                params={"include_credentials": "true"},
                 headers={
                     "Authorization": f"Bearer {app_token}",
                     "Accept": "application/json",
+                    "x-pd-environment": self._environment,
                 },
             )
 
@@ -226,5 +246,8 @@ class PipedreamProvider:
             self._app_token = None
             raise PipedreamAPIError(response.status_code, response.text)
 
-        data: dict[str, str] = response.json()
+        data: dict = response.json()
+        # Some API versions envelope the account under "data".
+        if isinstance(data.get("data"), dict):
+            return data["data"]
         return data

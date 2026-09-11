@@ -243,9 +243,12 @@ async def test_refresh_fetches_access_token_for_account() -> None:
     ctx = Context(_make_config())
 
     app_token_response = {"access_token": "pd-app-token-123"}
-    account_token_response = {
-        "access_token": "vendor-at-live",
-        "expires_in": 3600,
+    account_response = {
+        "data": {
+            "id": "acct_pd_456",
+            "credentials": {"oauth_access_token": "vendor-at-live"},
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
     }
 
     async def fake_decrypt() -> str:
@@ -264,13 +267,50 @@ async def test_refresh_fetches_access_token_for_account() -> None:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.post = AsyncMock(return_value=httpx.Response(200, json=app_token_response))
-        mock_client.get = AsyncMock(return_value=httpx.Response(200, json=account_token_response))
+        mock_client.get = AsyncMock(return_value=httpx.Response(200, json=account_response))
         mock_client_cls.return_value = mock_client
 
         result = await provider.refresh(ctx, token=token_view)
 
     assert result.access_token == "vendor-at-live"
     assert result.expires_at is not None
+
+
+@pytest.mark.asyncio()
+async def test_refresh_falls_back_to_api_key_for_keys_apps() -> None:
+    """Key-based Pipedream apps (e.g. Stripe) expose api_key, not oauth_access_token."""
+    provider = _make_provider()
+    ctx = Context(_make_config())
+
+    app_token_response = {"access_token": "pd-app-token-123"}
+    account_response = {
+        "id": "acct_pd_456",
+        "credentials": {"api_key": "sk_live_secret"},
+    }
+
+    async def fake_decrypt() -> str:
+        return ""
+
+    token_view = OAuthTokenView(
+        credential_id="cred_123",
+        provider="pipedream",
+        provider_account_ref="acct_pd_456",
+        expires_at=None,
+        decrypt=fake_decrypt,
+    )
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=app_token_response))
+        mock_client.get = AsyncMock(return_value=httpx.Response(200, json=account_response))
+        mock_client_cls.return_value = mock_client
+
+        result = await provider.refresh(ctx, token=token_view)
+
+    assert result.access_token == "sk_live_secret"
+    assert result.expires_at is None
 
 
 @pytest.mark.asyncio()
