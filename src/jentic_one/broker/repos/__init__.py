@@ -6,7 +6,6 @@ from jentic_one.broker.repos.credential_binding_resolver import CredentialBindin
 from jentic_one.broker.repos.rule_evaluator import RuleEvaluator
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.broker.repos.toolkit_binding_resolver import ToolkitBindingResolver
-from jentic_one.broker.repos.toolkit_key_resolver import ToolkitKeyResolver
 
 __all__ = [
     "AgentRuleEvaluator",
@@ -15,5 +14,4 @@ __all__ = [
     "InProcessTokenResolver",
     "RuleEvaluator",
     "ToolkitBindingResolver",
-    "ToolkitKeyResolver",
 ]

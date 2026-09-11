@@ -138,10 +138,11 @@ async def require_execute_scope(request: Request) -> Identity:
     """Authenticate and require the broker execute scope (no toolkit logic here)."""
     resolved = await require_broker_identity(request)
 
-    # Toolkit keys carry BROKER_EXECUTE_SCOPE implicitly (set by ToolkitKeyResolver):
-    # a toolkit has no actor_scope_grants, so holding a valid key *is* the execute
-    # capability. Anything beyond "may execute" is gated by the toolkit permission
-    # rules (RuleEvaluator) in the handler, not by scopes.
+    # Every executing actor carries BROKER_EXECUTE_SCOPE via actor_scope_grants —
+    # including service accounts the theme-5 Phase 4 retirement job created for
+    # jntc_live_ toolkit keys (the job grants exactly this scope). Anything
+    # beyond "may execute" is gated by the permission rules in the handler,
+    # not by scopes.
     if BROKER_EXECUTE_SCOPE not in resolved.permissions:
         _record_auth_failure(resolved.sub, request)
         raise Forbidden(
