@@ -29,8 +29,15 @@ def generate_nonce() -> str:
 
 
 def encode_state(secret: str, state: ConnectState, ttl_seconds: int) -> str:
-    """Encode a ConnectState into a signed JWT."""
-    claims = {
+    """Encode a ConnectState into a signed JWT.
+
+    The optional ``sid`` claim carries a connect-session id when the state
+    was signed by the connect-session flow (agent-driven integrations); at
+    callback time its presence routes completion to
+    ``ConnectSessionService`` instead of the standalone-credential path.
+    Absent for legacy credential-connect states — those keep working as-is.
+    """
+    claims: dict[str, object] = {
         "cid": state.credential_id,
         "prv": state.provider,
         "aid": state.actor_id,
@@ -38,6 +45,8 @@ def encode_state(secret: str, state: ConnectState, ttl_seconds: int) -> str:
         "sat": state.issued_at.timestamp(),
         "nonce": state.nonce,
     }
+    if state.session_id is not None:
+        claims["sid"] = state.session_id
     return issue_jwt(claims, secret, ttl_seconds)
 
 
@@ -57,4 +66,5 @@ def decode_state(secret: str, raw: str) -> ConnectState:
         actor_type=claims.get("act"),
         issued_at=datetime.fromtimestamp(claims["sat"], tz=UTC),
         nonce=claims["nonce"],
+        session_id=claims.get("sid"),
     )

@@ -193,11 +193,17 @@ async def confirm_connect_session(
         _logger.exception("connect_session.confirm_failed", session_id=session_id)
         return JSONResponse(status_code=500, content={"detail": str(exc)})
 
+    if result.kind == "device_flow":
+        return ConfirmSessionResponse(
+            kind="device_flow",
+            user_code=result.user_code,
+            verification_uri=result.verification_uri,
+            verification_uri_complete=result.verification_uri_complete,
+            poll_interval_seconds=result.poll_interval_seconds,
+        )
     return ConfirmSessionResponse(
-        user_code=result.user_code,
-        verification_uri=result.verification_uri,
-        verification_uri_complete=result.verification_uri_complete,
-        poll_interval_seconds=result.poll_interval_seconds,
+        kind="authorization_code",
+        authorize_url=result.authorize_url,
     )
 
 
@@ -224,7 +230,7 @@ async def poll_connect_session_status(
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> StatusResponse | JSONResponse:
     try:
-        result = await svc.poll_status(session_id, poll_token=poll_token)
+        result = await svc.get_status(session_id, poll_token=poll_token)
     except SessionNotFoundError:
         return JSONResponse(status_code=404, content={"detail": "session not found"})
     except InvalidPollTokenError:

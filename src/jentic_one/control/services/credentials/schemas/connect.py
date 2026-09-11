@@ -22,7 +22,13 @@ class ConnectChallenge(BaseModel):
 
 
 class ConnectState(BaseModel):
-    """Verified, decoded state payload from the connect flow."""
+    """Verified, decoded state payload from the connect flow.
+
+    ``session_id`` is optional and only set when the state was signed by the
+    connect-session flow (agent-driven integrations). At callback time its
+    presence routes completion to ``ConnectSessionService`` rather than the
+    standalone ``ConnectService`` path — one callback URL, two consumers.
+    """
 
     credential_id: str
     provider: str
@@ -30,6 +36,7 @@ class ConnectState(BaseModel):
     actor_type: str | None = None
     issued_at: datetime
     nonce: str
+    session_id: str | None = None
 
 
 class ConnectCallback(BaseModel):

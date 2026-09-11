@@ -104,10 +104,25 @@ class ConfirmSessionRequest(BaseModel):
 
 
 class ConfirmSessionResponse(BaseModel):
-    user_code: str | None
-    verification_uri: str | None
-    verification_uri_complete: str | None
-    poll_interval_seconds: int | None
+    """Discriminated on ``kind`` — clients branch on that, not field presence.
+
+    * ``kind == "device_flow"`` — RFC 8628 device-code result: the user
+      types ``user_code`` at ``verification_uri``, and the client polls
+      ``/status`` until connected.
+    * ``kind == "authorization_code"`` — browser redirect target
+      (``authorize_url``); completion lands server-side at
+      ``/credentials/oauth/callback`` and the client observes it via
+      ``/status``.
+    """
+
+    kind: Literal["device_flow", "authorization_code"]
+    # Device-flow branch.
+    user_code: str | None = None
+    verification_uri: str | None = None
+    verification_uri_complete: str | None = None
+    poll_interval_seconds: int | None = None
+    # Auth-code branch.
+    authorize_url: str | None = None
 
 
 # ---------------------------------------------------------------------------
