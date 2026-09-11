@@ -813,6 +813,42 @@ describe('AgentDetailPage', () => {
 			),
 		).toBeInTheDocument();
 		expect(screen.getByText(/fail-closes/)).toBeInTheDocument();
+		// The placeholder arm keeps sending the operator to a human — the
+		// backend reported no broker URL, so the UI must not guess one.
+		expect(screen.getByText(/Ask your operator/)).toBeInTheDocument();
+	});
+
+	it('renders the real broker URL in the register snippet when the instance reports one (#1249)', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'remote',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					broker_url: 'https://broker.jentic.example.test',
+				}),
+			),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
+
+		// The backend advertises server.mcp.broker_url via GET /instance, so
+		// the snippet is copy-paste complete — no placeholder, no "ask your
+		// operator" dead end.
+		expect(
+			await screen.findByText(
+				'jentic register --url "https://jentic.example.test" --broker-url "https://broker.jentic.example.test"',
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/Ask your operator/)).not.toBeInTheDocument();
+		// The operator-facing meta row shows the data plane address too.
+		expect(screen.getByText('Broker URL')).toBeInTheDocument();
+		expect(screen.getByText('https://broker.jentic.example.test')).toBeInTheDocument();
 	});
 
 	// --- #607: agent-side bind / unbind toolkit ---------------------------

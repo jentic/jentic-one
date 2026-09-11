@@ -16,10 +16,11 @@
  *     mirroring McpPanel's gate: advertising the URL unconditionally would
  *     show an endpoint that 404s on default installs, so the disabled arm
  *     says so instead.
- *
- * The broker (data plane) URL — the other half of #1249 — is deliberately
- * NOT shown: no HTTP surface exposes `server.mcp.broker_url`, so the SPA
- * cannot know it; surfacing it needs a backend change first.
+ *   - The broker (data plane) URL — the other half of #1249 — when the
+ *     backend reports one (`broker_url` on `GET /instance`, sourced from
+ *     `server.mcp.broker_url`). Null means the backend can't honestly
+ *     advertise it (older backend, or a remote install whose configured
+ *     broker is loopback), so the row simply doesn't render — never a guess.
  */
 import { Plug } from 'lucide-react';
 import { Card, CardBody, CardTitle, CodeSnippet } from '@/shared/ui';
@@ -42,6 +43,10 @@ export function McpConnectCard() {
 	if (!identity.data) return null;
 
 	const enabled = identity.data.mcp_enabled === true;
+	// Older backends predate the field; the backend also nulls it when the
+	// configured broker is loopback on a remote install (unreachable for any
+	// client) — either way there is nothing honest to show.
+	const brokerUrl = identity.data.broker_url ?? null;
 
 	return (
 		<Card>
@@ -71,6 +76,20 @@ export function McpConnectCard() {
 						<code className="font-mono text-xs">jentic</code> CLI — see an agent's MCP
 						tab.
 					</p>
+				)}
+				{/* #1249: the deployment-level broker (data plane) pointer.
+				    Rendered in BOTH arms — the broker serves `jentic execute`
+				    over stdio too, independent of the HTTP MCP endpoint. */}
+				{brokerUrl && (
+					<>
+						<CodeSnippet label="Broker (data plane) URL" code={brokerUrl} />
+						<p className="text-muted-foreground text-sm">
+							The data plane that executes API calls. On a remote install, pass it to{' '}
+							<code className="font-mono text-xs">jentic register --broker-url</code>{' '}
+							on the agent machine — without it{' '}
+							<code className="font-mono text-xs">jentic execute</code> fail-closes.
+						</p>
+					</>
 				)}
 			</CardBody>
 		</Card>

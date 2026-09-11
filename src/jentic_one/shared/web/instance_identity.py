@@ -10,17 +10,21 @@ backends.
 This endpoint gives any client a cheap, unauthenticated way to read the
 identity of the backend it is talking to, so it can label its responses and a
 human/agent can tell local from remote at a glance. It intentionally exposes
-only non-sensitive identity metadata: the operator-declared ``backend`` locality
-(``server.backend``) and the instance's own canonical base URL / host (from
-``auth.canonical_base_url``, with any userinfo stripped before echoing). The
-``instance_id`` is a one-way digest *derived from* the telemetry instance id —
-distinct installs get distinct values, but the durable telemetry identifier
-itself is never published.
+only non-sensitive identity/deployment metadata: the operator-declared
+``backend`` locality (``server.backend``), the instance's own canonical base
+URL / host (from ``auth.canonical_base_url``, with any userinfo stripped before
+echoing), whether the ``/mcp`` endpoint is served, and the broker (data plane)
+URL clients need for ``execute`` (``server.mcp.broker_url``, when honestly
+advertisable — see ``_advertised_broker_url``). The ``instance_id`` is a
+one-way digest *derived from* the telemetry instance id — distinct installs get
+distinct values, but the durable telemetry identifier itself is never
+published.
 """
 
 from __future__ import annotations
 
 import hashlib
+from ipaddress import ip_address
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
@@ -84,6 +88,19 @@ class InstanceIdentityResponse(BaseModel):
             "anyway."
         ),
     )
+    broker_url: str | None = Field(
+        default=None,
+        description=(
+            "The broker (data plane) base URL a client should send `execute` traffic "
+            "to, as configured by the operator (server.mcp.broker_url), with any "
+            "userinfo stripped. Null when the platform cannot honestly advertise "
+            "one: on a 'remote' backend a loopback-host value (the config default) "
+            "describes the control plane's own machine, not an address any client "
+            "can dial, so it is withheld rather than published as misleading "
+            "guidance. Deployment metadata, not a secret — the broker URL is handed "
+            "to every client expected to call it (issue #1249)."
+        ),
+    )
 
 
 def _public_instance_id(instance_id: str | None) -> str | None:
@@ -112,6 +129,47 @@ def _sanitized_url_parts(canonical_base_url: str) -> tuple[str, str]:
     return canonical_base_url, host
 
 
+def _is_loopback_host(hostname: str | None) -> bool:
+    """``localhost`` or a literal loopback IP — parsed, never prefix-matched.
+
+    Same semantics as the MCP execute proxy's guard (``mcp/execute.py``) and the
+    Go client's ``isLoopbackHost``; kept local because ``shared.web`` must not
+    import from the ``mcp`` module (shared is imported by every module).
+    """
+    if hostname is None:
+        return False
+    name = hostname.lower()
+    if name == "localhost":
+        return True
+    try:
+        return ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
+def _advertised_broker_url(config_broker_url: str, backend: str) -> str | None:
+    """The broker URL ``/instance`` may honestly advertise, or ``None``.
+
+    ``server.mcp.broker_url`` is the address the CONTROL PLANE dials for its
+    server-side execute proxy hop. It is the best broker pointer the platform
+    has, so it is republished for clients (issue #1249) — except when doing so
+    would mislead: on a ``remote`` backend a loopback host (notably the config
+    default ``http://127.0.0.1:8100``) names the control plane's own machine,
+    which no remote client can dial, so ``None`` (→ the UI keeps its
+    ``<broker-url>`` placeholder + "ask your operator" fallback). On a
+    ``local`` backend the loopback default is exactly the address a client on
+    that machine should use. Userinfo is stripped before echoing, mirroring
+    ``canonical_base_url``.
+    """
+    if not config_broker_url:
+        return None
+    parts = urlsplit(config_broker_url)
+    if backend == "remote" and _is_loopback_host(parts.hostname):
+        return None
+    sanitized, _host = _sanitized_url_parts(config_broker_url)
+    return sanitized
+
+
 def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
     """Build the backend-identity payload from the live application ``Context``."""
     canonical_base_url = ctx.config.auth.canonical_base_url or ""
@@ -124,6 +182,9 @@ def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
         host=host,
         instance_id=_public_instance_id(ctx.instance_id),
         mcp_enabled=ctx.config.server.mcp.enabled,
+        broker_url=_advertised_broker_url(
+            ctx.config.server.mcp.broker_url, ctx.config.server.backend
+        ),
     )
 
 

@@ -256,6 +256,15 @@ export interface InstanceIdentityEntity {
 	 * variant so the UI never advertises a transport that 404s.
 	 */
 	mcpEnabled: boolean;
+	/**
+	 * The broker (data plane) base URL the backend advertises
+	 * (`server.mcp.broker_url` via `GET /instance`, #1249). Null when the
+	 * backend cannot honestly report one — older backends predate the field,
+	 * and a remote install whose configured broker is loopback withholds it —
+	 * in which case the register snippet keeps its `<broker-url>` placeholder
+	 * and the "ask your operator" help text.
+	 */
+	brokerUrl: string | null;
 }
 
 // ---------------------------------------------------------------------------

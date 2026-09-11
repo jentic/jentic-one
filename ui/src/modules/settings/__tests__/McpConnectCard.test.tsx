@@ -72,6 +72,52 @@ describe('McpConnectCard', () => {
 
 		expect(await screen.findByText(`${window.location.origin}/mcp`)).toBeInTheDocument();
 	});
+
+	it('shows the broker (data plane) URL when the backend reports one (#1249)', async () => {
+		useInstanceHandler({
+			backend: 'remote',
+			canonical_base_url: 'https://jentic.example.test',
+			host: 'jentic.example.test',
+			mcp_enabled: true,
+			broker_url: 'https://broker.jentic.example.test',
+		});
+		const { container } = renderWithProviders(<McpConnectCard />);
+
+		expect(await screen.findByText('Broker (data plane) URL')).toBeInTheDocument();
+		expect(screen.getByText('https://broker.jentic.example.test')).toBeInTheDocument();
+		expect(screen.getByText(/jentic register --broker-url/)).toBeInTheDocument();
+		await checkA11y(container);
+	});
+
+	it('renders the broker row in the MCP-disabled arm too — the broker serves stdio execute', async () => {
+		useInstanceHandler({
+			backend: 'remote',
+			canonical_base_url: 'https://jentic.example.test',
+			host: 'jentic.example.test',
+			mcp_enabled: false,
+			broker_url: 'https://broker.jentic.example.test',
+		});
+		renderWithProviders(<McpConnectCard />);
+
+		expect(await screen.findByText(/does not serve the HTTP MCP endpoint/)).toBeInTheDocument();
+		expect(screen.getByText('https://broker.jentic.example.test')).toBeInTheDocument();
+	});
+
+	it('omits the broker row when the backend reports null or predates the field', async () => {
+		// Null = the backend withholds a loopback broker on a remote install;
+		// absent = an older backend. Either way, no guess is rendered.
+		useInstanceHandler({
+			backend: 'remote',
+			canonical_base_url: 'https://jentic.example.test',
+			host: 'jentic.example.test',
+			mcp_enabled: true,
+			broker_url: null,
+		});
+		renderWithProviders(<McpConnectCard />);
+
+		expect(await screen.findByText('https://jentic.example.test/mcp')).toBeInTheDocument();
+		expect(screen.queryByText('Broker (data plane) URL')).not.toBeInTheDocument();
+	});
 });
 
 describe('mcpEndpointUrl', () => {

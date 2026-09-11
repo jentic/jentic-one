@@ -356,8 +356,10 @@ jentic api GET /instance   # reads the connected backend's identity (auth attach
 ```
 
 The unauthenticated `/instance` response reports `backend` (`local` / `remote` —
-the install's declared `server.backend`), `canonical_base_url`, `host`, and an
-opaque `instance_id` (null when telemetry is off). If it's not the backend you
+the install's declared `server.backend`), `canonical_base_url`, `host`, an
+opaque `instance_id` (null when telemetry is off), and `broker_url` (the broker
+/ data-plane base URL for `execute`, when the backend can advertise one — null
+otherwise). If it's not the backend you
 meant to use (e.g. an MCP server still on a remote backend while you imported
 locally), repoint that client at the right base URL rather than
 importing/searching again.
@@ -423,8 +425,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   refuses up front (it never dials the local default for a remote control
   plane). This means the environment was onboarded without a broker: set it
   with `jentic register --url <URL> --broker-url <broker URL>` (or
-  `JENTIC_BROKER_URL` in file-less mode) — ask the operator for the broker
-  URL; do **not** assume a local broker.
+  `JENTIC_BROKER_URL` in file-less mode). Read the broker URL from the
+  unauthenticated `GET /instance` on the control plane (`broker_url`); if
+  that reports null, ask the operator — do **not** assume a local broker.
 
 - **Stopped instance (connection refused on a local target).** If the target
   is already local (`127.0.0.1` / `localhost`) and the connection is
