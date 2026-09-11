@@ -87,6 +87,23 @@ class RefreshTokenRepository:
         return int(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
+    async def revoke_by_client(session: AsyncSession, oauth_client_id: str) -> int:
+        """Revoke every live refresh token carrying one client's lineage.
+
+        The client hard-delete sweep — see
+        :meth:`AccessTokenRepository.revoke_by_client`. Returns rows revoked.
+        """
+        stmt = (
+            update(RefreshToken)
+            .where(RefreshToken.oauth_client_id == oauth_client_id)
+            .where(RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
     async def delete_expired(session: AsyncSession, before: datetime) -> int:
         stmt = delete(RefreshToken).where(RefreshToken.expires_at < before)
         result = await session.execute(stmt)

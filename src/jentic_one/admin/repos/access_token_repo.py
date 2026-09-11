@@ -89,6 +89,25 @@ class AccessTokenRepository:
         return int(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
+    async def revoke_by_client(session: AsyncSession, oauth_client_id: str) -> int:
+        """Revoke every live token carrying one client's lineage.
+
+        The client hard-delete sweep: the per-grant sweep covers grant-lineage
+        tokens, but confidential ``consent_model='user'`` clients mint tokens
+        with ``oauth_client_id`` set and NO grant — this catches those (and is
+        an idempotent belt over the grant sweep). Returns rows revoked.
+        """
+        stmt = (
+            update(AccessToken)
+            .where(AccessToken.oauth_client_id == oauth_client_id)
+            .where(AccessToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
     async def delete_expired(session: AsyncSession, before: datetime) -> int:
         stmt = delete(AccessToken).where(AccessToken.expires_at < before)
         result = await session.execute(stmt)

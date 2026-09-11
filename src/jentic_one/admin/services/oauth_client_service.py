@@ -11,8 +11,10 @@ from urllib.parse import urlparse
 import structlog
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
+from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
+from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.admin.services._support.passwords import hash_password, verify_password
 from jentic_one.admin.services._support.tokens import generate_client_id, generate_client_secret
 from jentic_one.admin.services.errors import (
@@ -32,11 +34,18 @@ from jentic_one.shared.models.oauth_clients import (
     OAuthConsentModel,
     TokenEndpointAuthMethod,
 )
+from jentic_one.shared.oauth_grant_revocation import revoke_grant_and_sweep_tokens
 
 logger = structlog.get_logger(__name__)
 
 _MAX_REDIRECT_URIS = 20
 _MAX_REDIRECT_URI_LENGTH = 2048
+
+#: The revocation cause stamped (event ``data.reason``) on grants swept by a
+#: client hard delete — distinguishes the delete sweep from the manual
+#: ``:revoke`` (no ``reason`` key), the G10 transfer sweep, the #1340 archive
+#: sweep, and the RFC 7009 disconnect, following the cause-in-data pattern.
+OAUTH_CLIENT_DELETED_REVOCATION_REASON = "oauth_client_deleted"
 
 #: Hosts for which an ``http`` redirect_uri is acceptable (RFC 8252 §7.3
 #: loopback redirects). Applies on every door — the private-use-scheme
@@ -490,7 +499,7 @@ class OAuthClientService:
             return _to_view(client)
 
     async def deactivate(self, id: str, *, identity: Identity) -> None:
-        """Soft-delete an OAuth client by setting active=False."""
+        """Disable an OAuth client — the reversible kill switch (active=False)."""
         async with self._ctx.admin_db.transaction() as session:
             existing = await OAuthClientRepository.get_by_id(session, id)
             if existing is None:
@@ -504,7 +513,10 @@ class OAuthClientService:
 
             await record_audit(
                 session,
-                action=AuditAction.DELETE,
+                # DISABLE, not DELETE (which the hard delete below owns): the
+                # kill switch is reversible — PATCH active=true / the roster's
+                # re-enable verb restores the client, and the row survives.
+                action=AuditAction.DISABLE,
                 target_type=AuditTargetType.OAUTH_CLIENT,
                 target_id=id,
                 actor_type=identity.actor_type,
@@ -513,6 +525,110 @@ class OAuthClientService:
                 after={"active": False},
                 origin=identity.origin.value,
             )
+
+    async def delete(self, id: str, *, identity: Identity) -> None:
+        """Hard-delete an OAuth client — terminal, the GitHub model.
+
+        In ONE transaction, ordered so the full-disconnect semantics (G11)
+        stay coherent while the client row still exists:
+
+        1. every ACTIVE grant is revoked through the single revocation body
+           (:func:`revoke_grant_and_sweep_tokens` — grant row ``revoked``,
+           grant-lineage tokens swept, per-grant audit +
+           ``oauth_grant.revoked`` event with cause ``oauth_client_deleted``);
+        2. any remaining live tokens carrying the client's lineage are swept
+           (``revoke_by_client`` — covers grant-less ``consent_model='user'``
+           confidential-client tokens the grant sweep can't see);
+        3. the row is hard-deleted — the D8/G13 DCR dedupe can never re-attach
+           to it, so a later re-registration mints a fresh ``pending`` row
+           (a genuinely new client, never a resurrection);
+        4. the terminal audit entry is recorded (``audit_entries`` reference
+           the client by plain id strings — no FK — so the trail survives);
+        5. any live actionable ``oauth_client.registered`` event is settled
+           (best-effort), so deleting a pending client clears its queue alert.
+
+        Grant/token history rows survive as revoked history (plain id
+        columns, no FKs); grant listings already tolerate a missing client.
+        Allowed from ANY lifecycle state — the 404 arm is the only refusal.
+        """
+        async with self._ctx.admin_db.transaction() as session:
+            existing = await OAuthClientRepository.get_by_id(session, id)
+            if existing is None:
+                raise OAuthClientNotFoundError(id)
+
+            before_snapshot = _snapshot(existing)
+            before_snapshot["client_id"] = existing.client_id
+            before_snapshot["registration_source"] = existing.registration_source
+            before_snapshot["software_id"] = existing.software_id
+            client_name = existing.name
+            public_client_id = existing.client_id
+
+            grants = await OAuthClientGrantRepository.list_active_for_client(
+                session, public_client_id
+            )
+            for grant in grants:
+                await revoke_grant_and_sweep_tokens(
+                    session,
+                    grant,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    origin=identity.origin.value,
+                    audit_reason="oauth grant revoked: client deleted",
+                    summary=(
+                        f"OAuth grant {grant.id} for client '{grant.oauth_client_id}' was "
+                        f"revoked because the client was deleted"
+                    ),
+                    event_reason=OAUTH_CLIENT_DELETED_REVOCATION_REASON,
+                )
+            swept_access = await AccessTokenRepository.revoke_by_client(session, public_client_id)
+            swept_refresh = await RefreshTokenRepository.revoke_by_client(session, public_client_id)
+
+            success = await OAuthClientRepository.delete(session, id)
+            if not success:
+                raise OAuthClientNotFoundError(id)
+
+            await record_audit(
+                session,
+                action=AuditAction.DELETE,
+                target_type=AuditTargetType.OAUTH_CLIENT,
+                target_id=id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before=before_snapshot,
+                after={
+                    "deleted": True,
+                    "revoked_grants": len(grants),
+                    "swept_access_tokens": swept_access,
+                    "swept_refresh_tokens": swept_refresh,
+                },
+                reason="oauth client permanently deleted",
+                origin=identity.origin.value,
+            )
+            # A deleted pending client's actionable registration alert must
+            # not stay live on the dashboard (best-effort: the delete must
+            # never roll back over a settle failure) — mirrors _set_approval.
+            try:
+                async with session.begin_nested():
+                    await settle_actionable_events(
+                        session,
+                        event_type=EventType.OAUTH_CLIENT_REGISTERED,
+                        acknowledged_by=identity.sub,
+                        acknowledgement_note="client deleted",
+                        data_match={"oauth_client_id": id},
+                    )
+            except Exception:
+                logger.warning("oauth_client_registered_settle_failed", oauth_client_id=id)
+
+        logger.info(
+            "oauth_client_deleted",
+            oauth_client_id=id,
+            client_id=public_client_id,
+            client_name=client_name,
+            revoked_grants=len(grants),
+            swept_access_tokens=swept_access,
+            swept_refresh_tokens=swept_refresh,
+            actor_id=identity.sub,
+        )
 
     async def approve(self, id: str, *, identity: Identity) -> OAuthClientView:
         """Approve an OAuth client: ``approval_status='approved'`` + ``active=true`` (D7).

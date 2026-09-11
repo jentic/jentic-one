@@ -81,6 +81,27 @@ class OAuthClientGrantRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def list_active_for_client(
+        session: AsyncSession, oauth_client_id: str
+    ) -> list[OAuthClientGrant]:
+        """Every active grant held against ONE public ``client_id`` — the
+        client hard-delete sweep set.
+
+        Like :meth:`list_active_for_agent`, deliberately unpaginated: the
+        delete transaction must revoke the complete set or fail the delete.
+        """
+        stmt = (
+            select(OAuthClientGrant)
+            .where(
+                OAuthClientGrant.oauth_client_id == oauth_client_id,
+                OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value,
+            )
+            .order_by(OAuthClientGrant.created_at.asc(), OAuthClientGrant.id.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_grants(
         session: AsyncSession,
         *,

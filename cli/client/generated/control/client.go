@@ -5101,6 +5101,21 @@ type ClientInterface interface {
 	// Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
 	ApproveOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteOauthClient Delete OAuth client
+	//
+	// Permanently delete an OAuth client. This cannot be undone.
+	//
+	// Terminal, unlike the reversible kill switch (``DELETE`` on this
+	// resource, which only sets ``active=false``): every active grant is
+	// revoked, every token carrying the client's lineage is revoked, and the
+	// registration row is removed — connected applications are fully
+	// disconnected. The audit trail survives. A client that later re-registers
+	// via dynamic client registration is a NEW registration and re-enters the
+	// approval queue as pending; it is never re-attached to the deleted one.
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:delete (the `DeleteOauthClient` operationId).
+	DeleteOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DenyOauthClientWithBody Deny OAuth client
 	//
 	// Deny an OAuth client — sets approval_status=denied and active=false.
@@ -7914,6 +7929,31 @@ func (c *Client) RotateOauthClientSecret(ctx context.Context, id string, reqEdit
 // Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
 func (c *Client) ApproveOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApproveOauthClientRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteOauthClient Delete OAuth client
+//
+// Permanently delete an OAuth client. This cannot be undone.
+//
+// Terminal, unlike the reversible kill switch (“DELETE“ on this
+// resource, which only sets “active=false“): every active grant is
+// revoked, every token carrying the client's lineage is revoked, and the
+// registration row is removed — connected applications are fully
+// disconnected. The audit trail survives. A client that later re-registers
+// via dynamic client registration is a NEW registration and re-enters the
+// approval queue as pending; it is never re-attached to the deleted one.
+//
+// Corresponds with POST /admin/oauth-clients/{id}:delete (the `DeleteOauthClient` operationId).
+func (c *Client) DeleteOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteOauthClientRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -13166,6 +13206,40 @@ func NewApproveOauthClientRequest(server string, id string) (*http.Request, erro
 	}
 
 	operationPath := fmt.Sprintf("/admin/oauth-clients/%s:approve", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteOauthClientRequest constructs an http.Request for the DeleteOauthClient method
+func NewDeleteOauthClientRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients/%s:delete", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -21694,6 +21768,23 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
 	ApproveOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ApproveOauthClientHTTPResp, error)
 
+	// DeleteOauthClientWithResponse Delete OAuth client
+	//
+	// Permanently delete an OAuth client. This cannot be undone.
+	//
+	// Terminal, unlike the reversible kill switch (``DELETE`` on this
+	// resource, which only sets ``active=false``): every active grant is
+	// revoked, every token carrying the client's lineage is revoked, and the
+	// registration row is removed — connected applications are fully
+	// disconnected. The audit trail survives. A client that later re-registers
+	// via dynamic client registration is a NEW registration and re-enters the
+	// approval queue as pending; it is never re-attached to the deleted one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:delete (the `DeleteOauthClient` operationId).
+	DeleteOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteOauthClientHTTPResp, error)
+
 	// DenyOauthClientWithBodyWithResponse Deny OAuth client
 	//
 	// Deny an OAuth client — sets approval_status=denied and active=false.
@@ -26046,6 +26137,89 @@ func (r ApproveOauthClientHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ApproveOauthClientHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteOauthClientHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteOauthClientHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteOauthClientHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteOauthClientHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteOauthClientHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -38949,6 +39123,29 @@ func (c *ClientWithResponses) ApproveOauthClientWithResponse(ctx context.Context
 	return ParseApproveOauthClientHTTPResp(rsp)
 }
 
+// DeleteOauthClientWithResponse Delete OAuth client
+//
+// Permanently delete an OAuth client. This cannot be undone.
+//
+// Terminal, unlike the reversible kill switch (“DELETE“ on this
+// resource, which only sets “active=false“): every active grant is
+// revoked, every token carrying the client's lineage is revoked, and the
+// registration row is removed — connected applications are fully
+// disconnected. The audit trail survives. A client that later re-registers
+// via dynamic client registration is a NEW registration and re-enters the
+// approval queue as pending; it is never re-attached to the deleted one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /admin/oauth-clients/{id}:delete (the `DeleteOauthClient` operationId).
+func (c *ClientWithResponses) DeleteOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteOauthClientHTTPResp, error) {
+	rsp, err := c.DeleteOauthClient(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteOauthClientHTTPResp(rsp)
+}
+
 // DenyOauthClientWithBodyWithResponse Deny OAuth client
 //
 // Deny an OAuth client — sets approval_status=denied and active=false.
@@ -44172,6 +44369,77 @@ func ParseApproveOauthClientHTTPResp(rsp *http.Response) (*ApproveOauthClientHTT
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteOauthClientHTTPResp parses an HTTP response from a DeleteOauthClientWithResponse call
+func ParseDeleteOauthClientHTTPResp(rsp *http.Response) (*DeleteOauthClientHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteOauthClientHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ProblemDetail
