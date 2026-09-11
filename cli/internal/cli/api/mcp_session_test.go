@@ -220,7 +220,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/me":
-			_, _ = w.Write([]byte(`{"type":"agent","id":"agent_1","name":"pets-agent","scopes":["execute"],"status":"active","token_scopes":["execute"],"toolkit_bindings":[]}`))
+			_, _ = w.Write([]byte(`{"type":"agent","id":"agent_1","name":"pets-agent","scopes":["execute"],"status":"active","token_scopes":["execute"],"toolkit_bindings":[],"credential_bindings":[]}`))
 		case "/search":
 			_, _ = w.Write([]byte(`{
 				"data": [{"type":"operation","api":{"vendor":"acme","name":"pets","version":"v1","host":"acme.com"},"operation_id":"op1","method":"GET","url":"/pets","name":"List Pets","relevance_score":0.9,"_links":{"inspect":"/inspect?id=GET%20/pets"}}],
@@ -651,9 +651,9 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.Header().Set("Jentic-Error-Origin", "broker")
 			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"detail":"no toolkit binding","agent_directive":{"strategy":"prompt_human",` +
-				`"parameters":{"suggested_command":"jentic access request --toolkit acme/pets --wait"},` +
-				`"human_readable_instruction":"Ask your operator to bind this agent to acme/pets."}}`))
+			_, _ = w.Write([]byte(`{"detail":"no credential binding","agent_directive":{"strategy":"prompt_human",` +
+				`"parameters":{"suggested_command":"jentic access request --api acme/pets --wait"},` +
+				`"human_readable_instruction":"Ask your operator to bind this agent to a credential for acme/pets."}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -666,7 +666,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 		return `{"id":"acr_1","status":"` + status + `","actor_id":"agent_1","created_by":"agent_1",` +
 			`"requested_by":"agent_1","approve_url":"/console/access-requests/acr_1",` +
 			`"filed_at":"2026-08-31T12:00:00Z","expires_at":"2026-09-07T12:00:00Z",` +
-			`"items":[{"id":"item_1","resource_type":"toolkit","action":"bind","status":"` + status + `"}]}`
+			`"items":[{"id":"item_1","resource_type":"credential","action":"bind","status":"` + status + `"}]}`
 	}
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -714,7 +714,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 	// 2. request_access files the bind and returns approve_url + pending.
 	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "request_access",
-		Arguments: map[string]any{"toolkits": []string{"acme/pets"}, "reason": "list pets for the demo"},
+		Arguments: map[string]any{"apis": []string{"acme/pets"}, "reason": "list pets for the demo"},
 	})
 	if err != nil {
 		t.Fatalf("request_access: %v", err)

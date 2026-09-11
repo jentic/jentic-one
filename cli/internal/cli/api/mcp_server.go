@@ -108,7 +108,7 @@ func newMCPServer(a *app, version string, opts *mcpOptions, logger *slog.Logger)
 			Instructions: "Jentic One tool server. On a new machine, or after any tool returns an " +
 				"auth or connectivity error, call get_started first — it diagnoses this " +
 				"machine's setup state and returns the exact operator instruction to fix it. " +
-				"Call whoami to see the agent identity, status, scopes, and toolkit bindings. " +
+				"Call whoami to see the agent identity, status, scopes, and credential bindings. " +
 				"Every tool result carries a top-level `instance` key identifying the Jentic " +
 				"One instance it came from; instance.backend is \"unreachable\" when the " +
 				"control plane could not be reached. The skill://jentic resource is the " +
@@ -236,7 +236,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				Name:  "whoami",
 				Title: "Show agent identity",
 				Description: "Show the calling agent's identity as the Jentic control plane sees it: " +
-					"id, status, scopes, and toolkit bindings with the APIs each one serves. " +
+					"id, status, scopes, and credential bindings with the APIs each one serves. " +
 					"Call after get_started reports ready, and before requesting access or " +
 					"executing operations — never execute an operation just to probe whether " +
 					"you have access. On an auth error, call get_started for the fix.",

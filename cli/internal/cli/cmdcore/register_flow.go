@@ -214,7 +214,7 @@ func (a *App) printNextSteps(st theme.Styles) {
 		{"Browse the API catalog", "jentic catalog"},
 		{"Find an operation (each result prints a ready-to-paste inspect/execute target)", "jentic search \"send a slack message\""},
 		{"See what you can run right now", "jentic access whoami"},
-		{"A fresh agent is bound to no APIs — request access to one you found", "jentic access request --toolkit <vendor/name> --wait"},
+		{"A fresh agent is bound to no APIs — request access to one you found", "jentic access request --api <vendor/name> --wait"},
 		{"Inspect that operation (paste the target search printed)", "jentic inspect <METHOD:url from search>"},
 		{"Run it (same target)", "jentic execute <METHOD:url from search> -d '{\"key\":\"value\"}'"},
 	}

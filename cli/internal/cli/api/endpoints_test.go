@@ -31,7 +31,7 @@ const sampleReference = `{
       "path": "/credentials",
       "summary": "Create Credential",
       "public": false,
-      "actor_types": ["user", "agent", "service_account", "toolkit"],
+      "actor_types": ["user", "agent", "service_account"],
       "required_scopes": [],
       "typical_caller": "any"
     },

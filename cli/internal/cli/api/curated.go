@@ -99,14 +99,14 @@ func CuratedBindings() []CuratedBinding {
 		},
 		{
 			// access request: the file body is the composed access request. `items`
-			// is built from the target-flag FAMILY (--toolkit/--toolkit-id/--scope/
-			// --provision, plus --auth/--rules-json shaping the provision chain), so
-			// it is bound to the primary --toolkit flag as a representative; --reason
-			// carries the free-text justification (ARCH-21 A3, off internal/accessclient).
+			// is built from the target-flag FAMILY (--api/--scope/--provision, plus
+			// --auth/--rules-json shaping the provision chain), so it is bound to
+			// the primary --api flag as a representative; --reason carries the
+			// free-text justification (ARCH-21 A3, off internal/accessclient).
 			Command: "access request",
 			Params:  control.AccessRequestFileRequest{},
 			Bind: map[string]string{
-				"items":  "toolkit",
+				"items":  "api",
 				"reason": "reason",
 			},
 			NotExposed: map[string]string{},

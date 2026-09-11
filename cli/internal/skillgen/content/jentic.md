@@ -78,13 +78,13 @@ context).
 
 ### 2. Check what you can do, and request access if needed
 
-See your own identity, status, scopes, and which toolkits you're bound to:
+See your own identity, status, scopes, and which credentials you're bound to:
 
 ```
 jentic access whoami
 ```
 
-Each toolkit binding lists the APIs it **serves** (`serves: [{vendor, name,
+Each credential binding lists the API it **serves** (`serves: [{vendor, name,
 version}]`). This tells you exactly what you can already call. Combined with the
 catalog (what's available to add — see step 3), it's your map of the workspace.
 
@@ -107,8 +107,8 @@ jentic access request --provision <vendor/name> \
 ```
 
 `--wait` blocks until a human fulfils and approves the plan in the dashboard;
-once approved, the toolkit binding is live immediately — just retry `execute`.
-Always pass `--reason` on **every** access request (`--provision`, `--toolkit`,
+once approved, the credential binding is live immediately — just retry `execute`.
+Always pass `--reason` on **every** access request (`--provision`, `--api`,
 or `--scope`): a human reviews it before approving and your reason is shown to
 them — a clear one-liner ("fetch the user's open PRs to summarise them") is what
 gets you approved faster.
@@ -128,14 +128,14 @@ jentic access request \
   --rules-json 'slack.com/api=[{"effect":"allow","methods":["POST"],"path":"/chat\\.postMessage"}]' \
   --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \
   --rules-json 'googleapis.com/sheets=[{"effect":"allow","methods":["GET"],"path":".*"}]' \
-  --toolkit github.com/api \
+  --api github.com/api \
   --reason "one reason covering the whole job" \
   --wait
 ```
 
 Each `--provision` adds a full plan for that API — keep every plan complete
 (auth, rules, reason), exactly as you would for a single one;
-`--toolkit`/`--toolkit-id`/`--scope` add single items. With more than one
+`--api`/`--scope` add single items. With more than one
 `--provision`, key `--auth` and `--rules-json` by the same
 `vendor/name[/version]` you passed to `--provision` (include the version in
 the key if you used one); the bare form applies when there is exactly one.
@@ -152,10 +152,8 @@ it prints a recovery line on stderr (the `agent_directive`) and **exits 2**, so
 you can branch on the exit code instead of mistaking the 4xx body for success.
 The directive tells you exactly how to recover — which differs by denial:
 
-- **`no_toolkit_binding` (403)** — nothing serves this API yet (no toolkit, and
-  usually no credential). File a **provisioning plan** describing the whole path
-  to first execution, and propose the auth type and permission rules you read
-  from the API spec:
+- **`no_credential_binding` (403)** — no credential binding of yours serves this
+  API. Check the directive's `parameters.api_served`:
 
 ```
 jentic access request --provision stripe.com/api \
@@ -165,21 +163,18 @@ jentic access request --provision stripe.com/api \
   --wait
 ```
 
-  - `toolkit_serves_api: false` — **no** toolkit serves this API yet, so a bare
-    `--toolkit` binding request would be denied ("No toolkit serves API …").
-    Filing it now is a dead-end. File the `--provision` plan above instead: it
-    describes the whole path (create toolkit, provision + bind a credential with
-    your proposed rules, bind you), which a human fulfils and approves in the
-    dashboard. The directive's `suggested_command` already points at `--provision`
-    in this case. The plan does **not** force a new toolkit: during fulfilment
-    the operator can add the credential to a toolkit they already have (the
-    wizard offers both) — worth relaying when your operator mentions an
-    existing toolkit they want to extend.
-  - `toolkit_serves_api: true` — a toolkit already serves this API and you just
-    aren't bound to it; the directive suggests `jentic access request --toolkit
+  - `api_served: false` — **no** credential is provisioned for this API yet, so
+    a bare `--api` binding request would be denied ("No credential covers API
+    …"). Filing it now is a dead-end. File the `--provision` plan above instead:
+    it describes the whole path to first execution (provision a credential with
+    your proposed auth type and rules, bind you), which a human fulfils and
+    approves in the dashboard. The directive's `suggested_command` already
+    points at `--provision` in this case.
+  - `api_served: true` — a credential already serves this API and you just
+    aren't bound to it; the directive suggests `jentic access request --api
     <vendor/name> --wait`. File that and wait for approval.
 
-- **`credential_not_provisioned` (424)** — you're bound to a toolkit, but no
+- **`credential_not_provisioned` (424)** — you're bound, but no
   credential (account) is connected. Filing an access request will **not** fix
   this; the directive carries a `provisioning_url` — hand it to your operator to
   connect the account, then retry.
@@ -188,7 +183,7 @@ jentic access request --provision stripe.com/api \
   encryption key rotated underneath it, e.g. a reinstall over existing data).
   Neither an access request nor retrying will fix this — ask your operator to
   remove and re-add the credential, then retry.
-- **`credential_identity_mismatch` (403)** — a toolkit *is* bound and a
+- **`credential_identity_mismatch` (403)** — a binding exists and a
   credential *is* connected, but that credential's stored identity doesn't cover
   this API (e.g. it targets a different name/version, or was stored in a
   non-canonical form). Filing an access request will **not** fix this — the
@@ -197,10 +192,12 @@ jentic access request --provision stripe.com/api \
   is `true` the credential just needs re-provisioning to canonicalize its
   identity. Either way, ask your operator to fix or re-provision the credential
   so it targets `expected`, then retry.
-- **`ambiguous_toolkit` (409)** — multiple toolkits you're bound to serve this
-  API. The directive lists `candidates`; resend the same `execute` with
-  `--header Jentic-Toolkit-Id=<toolkit_id>` (the directive also gives a
-  copy-pasteable `suggested_command`).
+- **`ambiguous_credential_binding` (409)** — multiple credentials you're bound
+  to cover this API. The directive lists `candidates` and carries
+  `parameters.headers`; resend the same `execute` with
+  `--header Jentic-Credential-Id=<credential_id>` (the authoritative
+  tie-breaker — `--header Jentic-Credential-Name=<name>` also works when
+  credential names are unique).
 
 Always follow the `agent_directive`'s `suggested_command` / `provisioning_url`
 rather than assuming which recovery applies. You can also request access
@@ -238,12 +235,12 @@ approving. Do the work up front:
 4. You never enter the credential secret and you never approve — the human fills
    the secret in the dashboard and grants the plan. You propose; they decide.
 
-A plain `toolkit:bind` (`--toolkit`) is only the **last mile** — use it when a
-toolkit for the API already exists (e.g. an operator created one) and you just
-need to be bound to it. When nothing serves the API yet, `--provision` is the
-right first move; a bare `--toolkit` would auto-deny.
+A plain `credential:bind` (`--api`) is only the **last mile** — use it when a
+credential for the API already exists (e.g. an operator provisioned one) and you
+just need to be bound to it. When nothing serves the API yet, `--provision` is
+the right first move; a bare `--api` would auto-deny.
 
-`--toolkit`/`--provision` take a `vendor/name[/version]` reference (the broker
+`--api`/`--provision` take a `vendor/name[/version]` reference (the broker
 also suggests the exact command in its `agent_directive`). `--wait` blocks until
 a human decides and sets the exit code: **0** = approved, **2** = denied —
 read the item's `decision_reason` (in the JSON, or shown under the item on a
@@ -253,10 +250,10 @@ approved. Without `--wait` you get a request id and an `approve_url` to hand to
 your operator. Granting is always a human action — you file and wait, you never
 approve yourself.
 
-If you file a bare `toolkit:bind` (`--toolkit`) for an API that nothing serves
-yet, approval comes back **denied** with `decision_reason: "No toolkit serves
-API <vendor/name>; provision and bind a credential for it first"`. That is the
-signal to file a `--provision` plan instead: it describes the missing toolkit,
+If you file a bare `credential:bind` (`--api`) for an API that nothing serves
+yet, approval comes back **denied** with `decision_reason: "No credential covers
+API <vendor/name>; provision a credential for it first"`. That is the
+signal to file a `--provision` plan instead: it describes the missing
 credential, rules, and binding as one request the operator can fulfil and
 approve in the dashboard.
 
@@ -343,7 +340,7 @@ the catalog manifest from upstream but requires `org:admin`, so it too is an
 operator action.)
 
 **Before concluding "the data is gone", confirm which backend you're on.** If
-APIs, credentials, or toolkits you *know* existed appear missing — or IDs look
+APIs or credentials you *know* existed appear missing — or IDs look
 unfamiliar — you may be talking to a **different** backend than you expect. A
 hosted (`remote`) Jentic install and a `local` self-hosted one have independent
 registries and credentials, and the CLI, an agent, or an MCP server can each be
@@ -445,14 +442,16 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   the control plane (Reference → CLI) — the same reference rendered for humans,
   next to the HTTP API and Broker API references.
 - `jentic context view` — the active context (environment + identity + base_url); start here.
-- `jentic access whoami` — your identity, status, scopes, and toolkit bindings
-  with the APIs each one **serves** (check this before executing or provisioning).
+- `jentic access whoami` — your identity, status, scopes, and credential
+  bindings with the API each one **serves** (check this before executing or
+  provisioning).
 - `jentic access request` — ask a human for access. `--provision <vendor/name>`
   files the whole path to first execution as one plan when nothing serves the
-  API yet; `--toolkit <vendor/name>` asks to be bound to an **existing**
-  toolkit; `--scope <scope>` requests a missing scope. All target flags repeat
-  and combine into **one composite request**. Always pass `--reason`; add
-  `--wait` to block on approval (see Procedure for full examples).
+  API yet; `--api <vendor/name>` asks to be bound to an **existing**
+  credential serving that API; `--scope <scope>` requests a missing scope. All
+  target flags repeat and combine into **one composite request**. Always pass
+  `--reason`; add `--wait` to block on approval (see Procedure for full
+  examples).
 - `jentic access list | status <id> | withdraw <id>` — track your requests.
 - `jentic access refresh` — re-mint your token after an approved **scope**
   grant that `whoami` flags as not yet on your token. Bindings need no
@@ -534,15 +533,14 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   `jenticctl start`, then retry rather than abandoning the task. Only a
   broker **denial** (an `agent_directive` on stderr, exit **2**) is an
   access/credential issue:
-  - **403 `no_toolkit_binding`** → check the directive's
-    `parameters.toolkit_serves_api`. If `true`, a toolkit already serves the API
-    and you just aren't bound — run the `jentic access request --toolkit …` it
+  - **403 `no_credential_binding`** → check the directive's
+    `parameters.api_served`. If `true`, a credential already serves the API
+    and you just aren't bound — run the `jentic access request --api …` it
     suggests and wait for approval. If `false`, nothing serves the API yet and a
-    bare `--toolkit` bind would be **denied** ("No toolkit serves API …"); the
+    bare `--api` bind would be **denied** ("No credential covers API …"); the
     directive suggests `--provision` instead — file that plan (propose `--auth`
     and `--rules-json` from the spec, pass `--reason`) and your operator fulfils
-    it in the dashboard, into a new toolkit **or one they already have** — an
-    existing toolkit never has to be recreated.
+    it in the dashboard.
   - **424 `credential_not_provisioned`** → the directive gives a
     `provisioning_url` for your operator to connect an account (an access
     request won't help).
@@ -553,6 +551,10 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
     identity doesn't cover this API (`parameters.expected` vs
     `parameters.found`). An access request won't help — ask your operator to fix
     or re-provision the credential so it targets `expected`, then retry.
+  - **409 `ambiguous_credential_binding`** → several bound credentials cover
+    this API; resend with `--header Jentic-Credential-Id=<id>` picked from the
+    directive's `candidates` (`Jentic-Credential-Name` works too when names
+    are unique).
   Follow the directive; don't keep re-sending the same `execute`.
 - You file and wait for access; you can't approve your own requests.
 - **Don't execute to test access.** `whoami` already tells you what your bindings

@@ -352,7 +352,7 @@ def build_mcp_server(ctx: Context) -> Server[Any]:
         version=version,
         instructions=(
             "Jentic One tool server (daemon-native HTTP endpoint). Call whoami to see "
-            "the agent identity, status, scopes, and toolkit bindings before "
+            "the agent identity, status, scopes, and credential bindings before "
             "requesting access or executing operations. Every tool result carries a "
             "top-level `instance` key identifying the Jentic One instance it came "
             "from. The flow is whoami → search_apis → inspect_operation → execute; "

@@ -51,7 +51,7 @@ func newAPICmd(app *app) *cobra.Command {
 			"By default any transport-successful response (2xx or 4xx/5xx) exits 0 and\n" +
 			"the body is emitted as-is; --fail-on-error maps non-2xx to exit 1.",
 		Example: "  jentic api GET /credentials\n" +
-			"  jentic api POST /toolkits -d '{\"name\":\"clarity\"}'\n" +
+			"  jentic api POST /service-accounts -d '{\"name\":\"clarity\"}'\n" +
 			"  jentic api POST /apis < api.json\n" +
 			"  jentic api GET \"/apis?limit=10\"",
 		Args: cobra.ExactArgs(2),

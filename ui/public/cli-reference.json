@@ -1473,7 +1473,7 @@
             {
               "name": "actor",
               "type": "string",
-              "usage": "only endpoints callable by this actor type (user, agent, service_account, toolkit)"
+              "usage": "only endpoints callable by this actor type (user, agent, service_account)"
             },
             {
               "name": "context",
@@ -1702,7 +1702,7 @@
           "path": "jentic execute",
           "use": "execute \u003cMETHOD:url | METHOD:/path | operation_id\u003e",
           "short": "Execute an operation through the Jentic broker",
-          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker. The space form (`GET \u003curl\u003e`) is also\n     accepted, but the colon form is canonical (it needs no shell quoting).\n  2. operation_id — resolve via inspect, then route through the broker.\n  3. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you are not bound to a toolkit\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http. For a REMOTE\ncontrol plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\nrefuses with RESOLVE_FAILED rather than dialing the local default.",
+          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker. The space form (`GET \u003curl\u003e`) is also\n     accepted, but the colon form is canonical (it needs no shell quoting).\n  2. operation_id — resolve via inspect, then route through the broker.\n  3. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you have no credential binding\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http. For a REMOTE\ncontrol plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\nrefuses with RESOLVE_FAILED rather than dialing the local default.",
           "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute listPets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n  jentic execute listPets --broker-scheme http --broker-host 127.0.0.1:8100",
           "group_title": "Find and run operations",
           "flags": [
@@ -1802,8 +1802,8 @@
           "name": "access",
           "path": "jentic access",
           "use": "access",
-          "short": "Inspect your access and request more (toolkits, scopes)",
-          "long": "access is how an agent closes the gap between having an identity and having\nthe access to use it. An approved agent starts bound to no toolkits, so its\nfirst execute fails with a 403 telling it to request access. Use this group\nto see what you can do now (whoami), ask a human to grant more (request),\nand track those requests (list, status, withdraw).\n\nApproval is a human action: filing a request prints an approve_url for your\noperator. Output defaults to JSON when stdout is not a TTY (agent-friendly).",
+          "short": "Inspect your access and request more (credentials, scopes)",
+          "long": "access is how an agent closes the gap between having an identity and having\nthe access to use it. An approved agent starts bound to no credentials, so its\nfirst execute fails with a 403 telling it to request access. Use this group\nto see what you can do now (whoami), ask a human to grant more (request),\nand track those requests (list, status, withdraw).\n\nApproval is a human action: filing a request prints an approve_url for your\noperator. Output defaults to JSON when stdout is not a TTY (agent-friendly).",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -1827,8 +1827,8 @@
               "name": "whoami",
               "path": "jentic access whoami",
               "use": "whoami",
-              "short": "Show your agent identity, scopes, and toolkit bindings",
-              "long": "whoami answers \"what can I do right now?\" — your agent id, status, granted\nscopes, and the toolkits you are bound to. An empty bindings list means you\ncannot execute against any API yet; use `jentic access request` to ask.",
+              "short": "Show your agent identity, scopes, and credential bindings",
+              "long": "whoami answers \"what can I do right now?\" — your agent id, status, granted\nscopes, and the credentials you are bound to (each with the APIs it serves).\nAn empty bindings list means you cannot execute against any API yet; use\n`jentic access request` to ask.",
               "flags": [
                 {
                   "name": "context",
@@ -1857,10 +1857,16 @@
               "name": "request",
               "path": "jentic access request",
               "use": "request",
-              "short": "File a request for toolkit bindings, scope grants, or provisioning plans",
-              "long": "request files one access request for the access you are missing and prints an\napprove_url for your human operator. Name a toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen nothing serves an API yet (a fresh import with no toolkit/credential),\nuse --provision vendor/name to file the whole path to first execution as one\nplan: create a toolkit, provision a credential, bind it (with your proposed\n--rules-json), and bind yourself. A human fulfils the create/provision steps\nin the dashboard (they enter the secret — it never rides in your request) and\napproves. Use --auth to declare the credential type you detected from the spec\n(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\nAll target flags repeat and combine, so a job needing several APIs files ONE\ncomposite request the human decides in one sitting: each --provision appends\na provisioning plan, each --toolkit/--toolkit-id/--scope appends a single\nitem. With more than one --provision, key --auth and --rules-json by the\nsame vendor/name[/version] passed to --provision; the bare form applies\nwhen there is exactly one.\n\nAn existing pending request for the same resource is reused when this request\nnames a single target; a composite aborts instead (drop the already-pending\ntarget or withdraw the older request, then re-file).\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
-              "example": "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --toolkit-id tk_123 --wait\n  jentic access request --scope owner:toolkits:read --json\n  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n    --toolkit github.com/api --scope apis:write \\\n    --reason \"release-notes automation\" --wait",
+              "short": "File a request for credential bindings, scope grants, or provisioning plans",
+              "long": "request files one access request for the access you are missing and prints an\napprove_url for your human operator. Name an API you found in search to be\nbound to a credential serving it (--api vendor/name), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen no credential serves an API yet (a fresh import), use --provision\nvendor/name to file the whole path to first execution as one plan: provision\na credential and bind yourself to it (with your proposed --rules-json). A\nhuman fulfils the provision step in the dashboard (they enter the secret —\nit never rides in your request) and approves. Use --auth to declare the\ncredential type you detected from the spec (bearer, api_key, basic, oauth2,\nor none for a no-auth API).\n\nAll target flags repeat and combine, so a job needing several APIs files ONE\ncomposite request the human decides in one sitting: each --provision appends\na provisioning plan, each --api/--scope appends a single item. With more\nthan one --provision, key --auth and --rules-json by the same\nvendor/name[/version] passed to --provision; the bare form applies when\nthere is exactly one.\n\nAn existing pending request for the same resource is reused when this request\nnames a single target; a composite aborts instead (drop the already-pending\ntarget or withdraw the older request, then re-file).\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
+              "example": "  jentic access request --api httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --scope owner:credentials:read --json\n  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n    --api github.com/api --scope apis:write \\\n    --reason \"release-notes automation\" --wait",
               "flags": [
+                {
+                  "name": "api",
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "request a binding to a credential serving this API (vendor/name[/version]; repeatable)"
+                },
                 {
                   "name": "auth",
                   "type": "stringArray",
@@ -1916,18 +1922,6 @@
                   "type": "duration",
                   "default": "10m0s",
                   "usage": "max time to wait with --wait"
-                },
-                {
-                  "name": "toolkit",
-                  "type": "stringArray",
-                  "default": "[]",
-                  "usage": "request a binding to the toolkit serving this API (vendor/name[/version]; repeatable)"
-                },
-                {
-                  "name": "toolkit-id",
-                  "type": "stringArray",
-                  "default": "[]",
-                  "usage": "request a binding to this toolkit id (tk_…; repeatable)"
                 },
                 {
                   "name": "wait",
@@ -2244,7 +2238,7 @@
           "use": "api \u003cMETHOD\u003e \u003cPATH\u003e",
           "short": "Authenticated passthrough to the control plane",
           "long": "api sends an arbitrary request to the control plane, reusing the same\nauth, session, and transport as every other command. The PATH must match a\nroute in the CLI's embedded OpenAPI spec (use --live to allow routes the\nconnected server serves that this binary predates). Discover routes with\n`jentic api ops` and their contract with `jentic api describe`.\n\nRequest body (mirrors `jentic execute`): -d/--data inline JSON, -d - for\nstdin, --data-file \u003cpath\u003e, or auto-stdin when a body is piped/redirected.\n\nBy default any transport-successful response (2xx or 4xx/5xx) exits 0 and\nthe body is emitted as-is; --fail-on-error maps non-2xx to exit 1.",
-          "example": "  jentic api GET /credentials\n  jentic api POST /toolkits -d '{\"name\":\"clarity\"}'\n  jentic api POST /apis \u003c api.json\n  jentic api GET \"/apis?limit=10\"",
+          "example": "  jentic api GET /credentials\n  jentic api POST /service-accounts -d '{\"name\":\"clarity\"}'\n  jentic api POST /apis \u003c api.json\n  jentic api GET \"/apis?limit=10\"",
           "group_title": "Find and run operations",
           "flags": [
             {

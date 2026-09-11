@@ -445,7 +445,7 @@ func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
 		"provision": ["stripe.com/api"],
 		"auth": ["bearer"],
 		"rules_json": [{"effect":"allow","methods":["GET"],"path":".*"}],
-		"toolkits": ["github.com/api"],
+		"apis": ["github.com/api"],
 		"scopes": ["catalog:import"],
 		"reason": "read invoices for the summary task"
 	}`))
@@ -491,7 +491,7 @@ func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
 		t.Errorf("credential:bind rules = %s, want the proposed rules_json intact (never comma-split)", wire.Items[1].Rules)
 	}
 	if ref := wire.Items[2].ResourceReference; ref["vendor"] != "github.com" {
-		t.Errorf("reference bind = %v, want the --toolkit api filed as a credential bind by reference", ref)
+		t.Errorf("reference bind = %v, want the apis target filed as a credential bind by reference", ref)
 	}
 	if wire.Items[3].ResourceID == nil || *wire.Items[3].ResourceID != "catalog:import" {
 		t.Errorf("scope item = %+v, want resource_id catalog:import", wire.Items[3])
@@ -521,13 +521,13 @@ func TestMCPRequestAccess_AutoDenialSurfacesInSameResult(t *testing.T) {
 	plane := &accessControlPlane{
 		fileStatus: statusPending,
 		pollStatus: statusDenied,
-		itemsJSON:  `[{"id":"item_1","resource_type":"toolkit","action":"bind","status":"denied","decision_reason":"No toolkit serves API acme/pets; provision and bind a credential for it first"}]`,
+		itemsJSON:  `[{"id":"item_1","resource_type":"credential","action":"bind","status":"denied","decision_reason":"No credential serves API acme/pets; provision one for it first"}]`,
 	}
 	srv := httptest.NewServer(plane.handler(t))
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"toolkits":["acme/pets"],"reason":"r"}`))
+	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestMCPRequestAccess_AutoDenialSurfacesInSameResult(t *testing.T) {
 		t.Fatalf("denial must carry the full request for its decision_reason: %v", payload)
 	}
 	items, _ := request["items"].([]any)
-	if len(items) != 1 || !strings.Contains(fmt.Sprint(items[0]), "No toolkit serves") {
+	if len(items) != 1 || !strings.Contains(fmt.Sprint(items[0]), "No credential serves") {
 		t.Errorf("request.items = %v, want the decision_reason relayed", request["items"])
 	}
 }
@@ -557,6 +557,8 @@ func TestMCPRequestAccess_DuplicatePendingSingleTargetAttaches(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
+	// The legacy "toolkits" spelling rides the deprecated alias — this doubles
+	// as the alias-compat regression while the alias survives (one release).
 	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"toolkits":["acme/pets"]}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccess: %v", err)
@@ -577,7 +579,7 @@ func TestMCPRequestAccess_DuplicatePendingCompositeIsSoftError(t *testing.T) {
 
 	s := fastAccessServer(t)
 	res, err := s.handleRequestAccess(activeCtx(srv.URL),
-		callToolRequest("request_access", `{"toolkits":["acme/pets"],"scopes":["catalog:import"]}`))
+		callToolRequest("request_access", `{"apis":["acme/pets"],"scopes":["catalog:import"]}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
@@ -631,7 +633,7 @@ func TestMCPRequestAccess_MissingTargetIsInvalidParams(t *testing.T) {
 	if res != nil {
 		t.Fatalf("want a protocol error, got a result: %v", res)
 	}
-	for _, name := range []string{"provision", "toolkits", "scopes", "request_id"} {
+	for _, name := range []string{"provision", "apis", "scopes", "request_id"} {
 		if err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("err %v must name the parameter %q", err, name)
 		}
@@ -641,7 +643,7 @@ func TestMCPRequestAccess_MissingTargetIsInvalidParams(t *testing.T) {
 func TestMCPRequestAccess_RequestIDPlusTargetsIsInvalidParams(t *testing.T) {
 	s := fastAccessServer(t)
 	res, err := s.handleRequestAccess(activeCtx("http://127.0.0.1:0"),
-		callToolRequest("request_access", `{"request_id":"acr_1","toolkits":["acme/pets"]}`))
+		callToolRequest("request_access", `{"request_id":"acr_1","apis":["acme/pets"]}`))
 	if res != nil {
 		t.Fatalf("want a protocol error, got a result: %v", res)
 	}
@@ -661,7 +663,7 @@ func TestMCPRequestAccess_NeverSelfApproves(t *testing.T) {
 
 	s := fastAccessServer(t)
 	ctx := activeCtx(srv.URL)
-	if res, err := s.handleRequestAccess(ctx, callToolRequest("request_access", `{"toolkits":["acme/pets"],"reason":"r"}`)); err != nil || res.IsError {
+	if res, err := s.handleRequestAccess(ctx, callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`)); err != nil || res.IsError {
 		t.Fatalf("filing arm: err %v, res %v", err, res)
 	}
 	if res, err := s.handleRequestAccess(ctx, callToolRequest("request_access", `{"request_id":"acr_1"}`)); err != nil || res.IsError {
@@ -813,7 +815,7 @@ func TestMCPRequestAccess_FilingForbiddenIsBrokerDenied(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"toolkits":["acme/pets"],"reason":"r"}`))
+	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
@@ -843,7 +845,7 @@ func TestMCPRequestAccess_PollArmRejectsStrayFilingParams(t *testing.T) {
 		"stray auth":          `{"request_id":"acr_1","auth":["bearer"]}`,
 		"stray rules_json":    `{"request_id":"acr_1","rules_json":[{"effect":"allow"}]}`,
 		"malformed rules":     `{"request_id":"acr_1","rules_json":42}`,
-		"target and poll mix": `{"request_id":"acr_1","toolkits":["acme/pets"]}`,
+		"target and poll mix": `{"request_id":"acr_1","apis":["acme/pets"]}`,
 	} {
 		res, err := s.handleRequestAccess(activeCtx("http://127.0.0.1:0"), callToolRequest("request_access", argsJSON))
 		if res != nil {

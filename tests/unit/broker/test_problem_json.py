@@ -19,8 +19,12 @@ from jentic_one.broker.core.exceptions import (
     OperationNotFoundError,
     UpstreamTimeoutError,
     action_denied_directive,
+    ambiguous_credential_binding_directive,
     ambiguous_toolkit_directive,
     credential_identity_mismatch_directive,
+    direct_action_denied_directive,
+    direct_credential_identity_mismatch_directive,
+    no_credential_binding_directive,
     no_toolkit_binding_directive,
     switch_toolkit_directive,
 )
@@ -61,9 +65,71 @@ def test_directive_factories_emit_known_strategies() -> None:
             )
         ),
         action_denied_directive(),
+        no_credential_binding_directive(
+            vendor="acme", name="widgets", version="1.0.0", api_served=True
+        ),
+        ambiguous_credential_binding_directive(["cred_a", "cred_b"]),
+        direct_credential_identity_mismatch_directive(
+            mismatch=IdentityMismatch(
+                expected_vendor="acme",
+                expected_name="widgets",
+                expected_version="1.0.0",
+                found_vendor="acme",
+                found_name="gadgets",
+                found_version="1.0.0",
+                would_match_if_normalized=False,
+            )
+        ),
+        direct_action_denied_directive(),
     ]
     for d in directives:
         assert d.strategy in _ALLOWED_STRATEGIES, d.strategy
+
+
+def test_no_credential_binding_directive_names_surviving_commands() -> None:
+    """The default-path missing-binding directive carries a runnable command.
+
+    U-03 (phase 5c): every directive names a surviving flag/command. Served →
+    a bind request by API reference (`--api`); unserved → the provisioning
+    plan (`--provision`). Neither variant may reference the retired toolkit
+    vocabulary.
+    """
+    served = no_credential_binding_directive(
+        vendor="acme", name="widgets", version="1.0.0", api_served=True
+    )
+    assert served.strategy == "prompt_human"
+    assert served.parameters["api_served"] is True
+    assert served.parameters["suggested_command"] == (
+        "jentic access request --api acme/widgets --wait"
+    )
+    assert "toolkit" not in served.human_readable_instruction.lower()
+
+    unserved = no_credential_binding_directive(
+        vendor="acme", name="widgets", version="1.0.0", api_served=False
+    )
+    assert unserved.strategy == "prompt_human"
+    assert unserved.parameters["api_served"] is False
+    assert unserved.parameters["suggested_command"] == (
+        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
+    )
+    instruction = unserved.human_readable_instruction
+    assert "--auth" in instruction
+    assert "--rules-json" in instruction
+    assert "toolkit" not in instruction.lower()
+
+
+def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> None:
+    """The direct-path 409 twin retries via the Jentic-Credential-Id header.
+
+    ``modify_headers`` + ``parameters.headers`` is the machine contract; the
+    prose names ``Jentic-Credential-Name`` as the alternative when names are
+    unique.
+    """
+    d = ambiguous_credential_binding_directive(["cred_a", "cred_b"])
+    assert d.strategy == "modify_headers"
+    assert d.parameters["candidates"] == ["cred_a", "cred_b"]
+    assert d.parameters["headers"] == {"Jentic-Credential-Id": "cred_a"}
+    assert "Jentic-Credential-Name" in d.human_readable_instruction
 
 
 def test_ambiguous_toolkit_suggested_command_is_runnable() -> None:

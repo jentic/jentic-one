@@ -163,8 +163,8 @@ func TestExecuteCmdDeniedSurfacesDirectiveAndExits2(t *testing.T) {
 			"error_origin": "broker",
 			"agent_directive": {
 				"strategy": "prompt_human",
-				"parameters": {"suggested_command": "jentic access request --toolkit api.example.com --wait"},
-				"human_readable_instruction": "You are not bound to a toolkit for this API."
+				"parameters": {"suggested_command": "jentic access request --api api.example.com --wait"},
+				"human_readable_instruction": "You have no credential binding for this API."
 			}
 		}`))
 	}))
@@ -193,10 +193,10 @@ func TestExecuteCmdDeniedSurfacesDirectiveAndExits2(t *testing.T) {
 		t.Fatalf("expected exit code 2 on denial, got err=%v", err)
 	}
 	// The recovery directive must be surfaced on stderr, including the command.
-	if !strings.Contains(errBuf.String(), "jentic access request --toolkit api.example.com --wait") {
+	if !strings.Contains(errBuf.String(), "jentic access request --api api.example.com --wait") {
 		t.Errorf("stderr missing suggested_command; got: %s", errBuf.String())
 	}
-	if !strings.Contains(errBuf.String(), "not bound to a toolkit") {
+	if !strings.Contains(errBuf.String(), "no credential binding") {
 		t.Errorf("stderr missing instruction; got: %s", errBuf.String())
 	}
 	// The 403 envelope is still emitted on stdout for machine parsing.
@@ -264,7 +264,7 @@ func TestExecuteCmdDirectivelessDenialExits2(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden) // 403, no agent_directive
 		_, _ = w.Write([]byte(`{
 			"type": "action_denied",
-			"title": "The requested operation is denied by a toolkit permission rule.",
+			"title": "The requested operation is denied by a permission rule.",
 			"status": 403,
 			"error_origin": "broker"
 		}`))

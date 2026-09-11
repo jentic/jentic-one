@@ -38,7 +38,7 @@ import (
 const defaultImportWaitBudget = 20 * time.Second
 
 // defaultAccessPollBudget is request_access's short post-file poll: long
-// enough to catch a server-side auto-decision (a bare toolkit:bind for an
+// enough to catch a server-side auto-decision (a bare credential:bind for an
 // unserved API auto-denies), far too short to sit out a human approval —
 // that wait belongs to the model's own request_id polling, never inside one
 // tool call (client-side tool timeouts, §3.4).
@@ -67,7 +67,11 @@ var importAPIParams = []paramSpec{
 var requestAccessParams = []paramSpec{
 	{name: "request_id", aliases: []string{"id"}, kind: paramString},
 	{name: "provision", aliases: []string{"provisions"}, kind: paramStringList},
-	{name: "toolkits", aliases: []string{"toolkit"}, kind: paramStringList},
+	// "toolkits"/"toolkit" are the deprecated spellings of "apis" (toolkits
+	// were retired, theme-5); accepted as aliases for one release.
+	{name: "apis", aliases: []string{"api", "toolkits", "toolkit"}, kind: paramStringList},
+	// toolkit_ids stays accepted so an old caller gets compose()'s re-file
+	// error naming "apis"/--api instead of an unknown-parameter failure.
 	{name: "toolkit_ids", aliases: []string{"toolkit_id"}, kind: paramStringList},
 	{name: "scopes", aliases: []string{"scope"}, kind: paramStringList},
 	{name: "auth", aliases: []string{"auths"}, kind: paramStringList},
@@ -391,7 +395,7 @@ func (s *mcpServer) handleRequestAccess(ctx context.Context, req *mcp.CallToolRe
 		}
 		if opts.targetCount() > 0 || opts.reason != "" || len(opts.auths) > 0 || len(opts.rulesJSONs) > 0 {
 			return nil, invalidParams(errors.New(`pass EITHER "request_id" (to poll an existing request) ` +
-				`OR filing parameters ("provision"/"toolkits"/"toolkit_ids"/"scopes" with "auth"/"rules_json"/"reason") ` +
+				`OR filing parameters ("provision"/"apis"/"scopes" with "auth"/"rules_json"/"reason") ` +
 				`to file a new one, not both`))
 		}
 		reqState, getErr := s.app.getAccessRequest(cctx, client, requestID)
@@ -424,7 +428,7 @@ func (s *mcpServer) handleRequestAccess(ctx context.Context, req *mcp.CallToolRe
 	if err != nil {
 		if errors.Is(err, errAccessTargetRequired) {
 			return nil, invalidParams(errors.New(`request_access requires a target: "provision" (vendor/name plans), ` +
-				`"toolkits" (vendor/name binds), "toolkit_ids" (tk_… binds), or "scopes" — or "request_id" to poll ` +
+				`"apis" (vendor/name binds), or "scopes" — or "request_id" to poll ` +
 				`an existing request`))
 		}
 		// compose()'s messages name the CLI spellings (--provision, --auth,
@@ -501,7 +505,7 @@ func (s *mcpServer) handleRequestAccess(ctx context.Context, req *mcp.CallToolRe
 }
 
 // awaitAutoDecision short-polls a just-filed request so a server-side
-// auto-decision (e.g. the auto-deny of a bare toolkit:bind for an unserved
+// auto-decision (e.g. the auto-deny of a bare credential:bind for an unserved
 // API) reaches the model in the SAME tool result. Bounded by
 // accessPollBudget — a human approval takes minutes and belongs to the
 // model's own request_id polling, never inside one call.
@@ -564,7 +568,7 @@ func (s *mcpServer) accessRequestResult(ctx context.Context, st *clictx.ActiveSt
 			Code: ux.CodeBrokerDenied,
 			Msg:  fmt.Sprintf("access request %s was denied", req.Id),
 			Actionable: "Read the items' decision_reason in this result to learn why before giving up. A bare " +
-				"toolkit bind for an API nothing serves auto-denies — file a provisioning plan " +
+				"bind request for an API no credential serves auto-denies — file a provisioning plan " +
 				`({"provision": ["vendor/name"], …}) instead. Only re-file if something material changed.`,
 		}, "whoami", map[string]any{"request": payload})
 	case statusExpired, statusWithdrawn:
@@ -667,8 +671,8 @@ func requestAccessOptions(args map[string]any) (*accessRequestOptions, error) {
 	if v, ok := args["provision"].([]string); ok {
 		opts.provisions = v
 	}
-	if v, ok := args["toolkits"].([]string); ok {
-		opts.toolkits = v
+	if v, ok := args["apis"].([]string); ok {
+		opts.apis = v
 	}
 	if v, ok := args["toolkit_ids"].([]string); ok {
 		opts.toolkitIDs = v
@@ -789,21 +793,16 @@ var requestAccessSchema = map[string]any{
 			"type":  "array",
 			"items": map[string]any{"type": "string"},
 			"description": "APIs to file full provisioning plans for, as vendor/name[/version] references " +
-				"(e.g. \"stripe.com/api\"). Use when NOTHING you're bound to serves the API yet: the plan " +
-				"describes the whole path to first execution (create toolkit, provision + bind a credential " +
-				"with your proposed rules, bind you), which a human fulfils and approves.",
+				"(e.g. \"stripe.com/api\"). Use when NO credential you're bound to serves the API yet: the plan " +
+				"describes the whole path to first execution (provision a credential, bind you to it " +
+				"with your proposed rules), which a human fulfils and approves.",
 		},
-		"toolkits": map[string]any{
+		"apis": map[string]any{
 			"type":  "array",
 			"items": map[string]any{"type": "string"},
-			"description": "Toolkits to be bound to, as vendor/name[/version] API references. The LAST MILE only: " +
-				"use when a toolkit already serves the API and you just aren't bound to it — for an unserved " +
-				"API this auto-denies; use provision instead.",
-		},
-		"toolkit_ids": map[string]any{
-			"type":        "array",
-			"items":       map[string]any{"type": "string"},
-			"description": "Toolkits to be bound to, by id (tk_…).",
+			"description": "APIs to be bound to a credential for, as vendor/name[/version] references. The LAST MILE " +
+				"only: use when a credential already serves the API and you just aren't bound to it — for an " +
+				"unserved API this auto-denies; use provision instead.",
 		},
 		"scopes": map[string]any{
 			"type":        "array",
@@ -869,7 +868,7 @@ func (s *mcpServer) accessToolSpecs() []mcpToolSpec {
 					"converges (idempotent) and finishes the promotion. Requires the catalog:import scope " +
 					"(agents hold it by default); on a denial, request it via request_access — do not guess " +
 					"other scopes. Importing makes an API discoverable but does NOT grant access to call " +
-					"it: check whoami for a toolkit binding serving it — never execute just to probe — and " +
+					"it: check whoami for a credential binding serving it — never execute just to probe — and " +
 					"use request_access if nothing serves it.",
 				InputSchema: importAPISchema,
 				Annotations: &mcp.ToolAnnotations{IdempotentHint: true},
@@ -885,10 +884,10 @@ func (s *mcpServer) accessToolSpecs() []mcpToolSpec {
 					"access. If a whoami binding already serves the API, you have access; if NOTHING serves " +
 					`it, file a provisioning plan: {"provision": ["vendor/name"], "auth": ["bearer"], ` +
 					`"rules_json": [{"effect":"allow","methods":["GET"],"path":".*"}], "reason": "…"} — it ` +
-					"describes the whole path to first execution (create toolkit, provision + bind a " +
-					"credential with your proposed rules, bind you), which a human fulfils in the dashboard " +
-					"(they enter the secret; it never rides in your request). A bare toolkit bind " +
-					`({"toolkits": ["vendor/name"]}) is only the last mile when a toolkit already serves the ` +
+					"describes the whole path to first execution (provision a credential, bind you to it " +
+					"with your proposed rules), which a human fulfils in the dashboard " +
+					"(they enter the secret; it never rides in your request). A bare bind request " +
+					`({"apis": ["vendor/name"]}) is only the last mile when a credential already serves the ` +
 					"API; for an unserved API it auto-denies — use provision. ALWAYS include reason. File " +
 					"once, richly: combine every target this task needs into ONE composite request instead " +
 					"of filing piecemeal. The result carries approve_url: relay it to your human operator — " +

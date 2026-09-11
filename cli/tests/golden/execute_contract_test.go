@@ -66,6 +66,8 @@ func TestGolden_ExecuteContract(t *testing.T) {
 	}
 	// A broker denial carrying a rich agent_directive: every rendering branch
 	// (instruction, run:, open:, candidates, retry-after, stuck?) is frozen.
+	// The wire type is the legacy flag-off no_toolkit_binding — still emitted
+	// by pre-direct-binding brokers — with the surviving --api command copy.
 	brokerDenial403Directive := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header()["Date"] = nil
 		w.Header().Set("Content-Type", "application/problem+json")
@@ -79,12 +81,35 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			"agent_directive": {
 				"strategy": "wait",
 				"parameters": {
-					"suggested_command": "jentic access request --toolkit acme/pets --wait",
+					"suggested_command": "jentic access request --api acme/pets --wait",
 					"provisioning_url": "https://console.example/connect/acme",
 					"candidates": ["acme/pets", "acme/pets-admin"],
 					"retry_after_seconds": 30
 				},
-				"human_readable_instruction": "You are not bound to a toolkit for this API."
+				"human_readable_instruction": "You are not bound for 'acme/pets'. File an access request yourself with \u0060jentic access request --api acme/pets --wait\u0060, then ask your operator to approve it — only a human can grant the binding. Once approved, retry this call."
+			}
+		}`))
+	}
+	// The default direct-binding denial (no_credential_binding, theme-5): the
+	// 403 an agent without a credential binding gets when the flag is on.
+	brokerDenial403CredentialBinding := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header()["Date"] = nil
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{
+			"type": "no_credential_binding",
+			"title": "No credential binding for this API",
+			"status": 403,
+			"error_origin": "broker",
+			"agent_directive": {
+				"strategy": "prompt_human",
+				"parameters": {
+					"api": {"vendor": "acme", "name": "pets", "version": "v1"},
+					"api_served": true,
+					"suggested_command": "jentic access request --api acme/pets --wait"
+				},
+				"human_readable_instruction": "You have no credential binding for 'acme/pets'. File an access request yourself with \u0060jentic access request --api acme/pets --wait\u0060, then ask your operator to approve it — only a human can grant the binding (they can also bind directly via POST /agents/{agent_id}/credentials). Once bound, retry this call."
 			}
 		}`))
 	}
@@ -135,6 +160,11 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			name:   "execute_broker_denial_directive_json",
 			target: "GET:/v1/pets",
 			broker: brokerDenial403Directive,
+		},
+		{
+			name:   "execute_broker_denial_credential_binding_json",
+			target: "GET:/v1/pets",
+			broker: brokerDenial403CredentialBinding,
 		},
 		{
 			name:   "execute_broker_denial_no_directive_json",

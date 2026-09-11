@@ -91,10 +91,10 @@ func TestPlanRejectsBadRulesJSON(t *testing.T) {
 	}
 }
 
-func TestComposeToolkitFlagFilesCredentialBind(t *testing.T) {
-	// --toolkit vendor/name survives as an alias for the direct
-	// credential:bind-by-reference (the toolkit vocabulary is retired).
-	opts := &accessRequestOptions{toolkits: []string{"github.com/rest-api"}}
+func TestComposeAPIFlagFilesCredentialBind(t *testing.T) {
+	// --api vendor/name files the direct credential:bind-by-reference (the
+	// toolkit vocabulary is retired).
+	opts := &accessRequestOptions{apis: []string{"github.com/rest-api"}}
 	items, err := opts.compose()
 	if err != nil {
 		t.Fatalf("compose() error: %v", err)
@@ -112,11 +112,32 @@ func TestComposeToolkitFlagFilesCredentialBind(t *testing.T) {
 	}
 }
 
+func TestComposeDeprecatedToolkitAliasFoldsIntoAPIs(t *testing.T) {
+	// The hidden --toolkit alias files the same credential:bind item as --api
+	// (one release of compatibility); duplicates across the two spellings are
+	// rejected like any other duplicate --api.
+	opts := &accessRequestOptions{deprecatedToolkits: []string{"github.com/rest-api"}}
+	items, err := opts.compose()
+	if err != nil {
+		t.Fatalf("compose() error: %v", err)
+	}
+	if len(items) != 1 || string(items[0].ResourceType) != "credential" || string(items[0].Action) != "bind" {
+		t.Fatalf("expected the alias to file one credential:bind, got %+v", items)
+	}
+	dup := &accessRequestOptions{
+		apis:               []string{"github.com/rest-api"},
+		deprecatedToolkits: []string{"github.com/rest-api"},
+	}
+	if _, err := dup.compose(); err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Errorf("the same API via --api and --toolkit should be rejected as a duplicate, got: %v", err)
+	}
+}
+
 func TestComposeToolkitIDIsRetired(t *testing.T) {
 	opts := &accessRequestOptions{toolkitIDs: []string{"tk_123"}}
 	if _, err := opts.compose(); err == nil {
 		t.Fatal("expected --toolkit-id to be rejected after toolkit retirement")
-	} else if !strings.Contains(err.Error(), "--toolkit <vendor/name>") {
+	} else if !strings.Contains(err.Error(), "--api <vendor/name>") {
 		t.Errorf("the error should carry the re-file directive, got: %v", err)
 	}
 }
