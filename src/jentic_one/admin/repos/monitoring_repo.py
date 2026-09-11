@@ -319,6 +319,14 @@ class MonitoringRepository:
             key_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
             label_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
             group_cols = [ExecutionRecord.toolkit_id]
+        elif group_by == "credential":
+            # credential_id is the direct-binding attribution axis (theme-5
+            # Phase 2); rows without one (legacy toolkit-path executions,
+            # credential-less calls) pool under "unknown" like the toolkit
+            # branch above.
+            key_expr = func.coalesce(ExecutionRecord.credential_id, "unknown")
+            label_expr = func.coalesce(ExecutionRecord.credential_id, "unknown")
+            group_cols = [ExecutionRecord.credential_id]
         else:
             key_expr = _slash_join(
                 ExecutionRecord.actor_type, literal("/"), ExecutionRecord.actor_id
@@ -387,6 +395,8 @@ class MonitoringRepository:
             )
         elif group_by == "toolkit":
             key_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
+        elif group_by == "credential":
+            key_expr = func.coalesce(ExecutionRecord.credential_id, "unknown")
         else:
             key_expr = _slash_join(
                 ExecutionRecord.actor_type, literal("/"), ExecutionRecord.actor_id

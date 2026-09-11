@@ -31,6 +31,10 @@ identifiers). The combined/control server also runs the job once at startup
 (best-effort, idempotent) so an upgrade migrates resolvable keys without an
 operator step — the CLI remains the recovery path for keys needing
 ``--owner``.
+
+Lives directly under ``control/services/`` since theme-5 Phase 5b deleted the
+toolkits service package; the job itself runs until Phase 6b retires the
+toolkit tables.
 """
 
 from __future__ import annotations

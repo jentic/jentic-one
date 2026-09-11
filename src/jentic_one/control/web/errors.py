@@ -35,17 +35,6 @@ from jentic_one.control.services.credentials.errors import (
     RuleSetNotFoundError,
     UnsupportedProviderForTypeError,
 )
-from jentic_one.control.services.toolkits.errors import (
-    BindingNotFoundError,
-    ConflictingApiBindingError,
-    DuplicateBindingError,
-    KeyAlreadyRevokedError,
-    ToolkitAccessDeniedError,
-    ToolkitKeyNotFoundError,
-    ToolkitKeysRetiredError,
-    ToolkitLevelPermissionsUnsupportedError,
-    ToolkitNotFoundError,
-)
 from jentic_one.shared.db.errors import (
     DatabaseDataError,
     DatabaseIntegrityError,
@@ -66,20 +55,6 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 }
 
 credential_service_error_handler = make_service_error_handler(_ERROR_MAP)
-
-_TOOLKIT_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
-    ToolkitNotFoundError: (404, "toolkit_not_found"),
-    ToolkitAccessDeniedError: (403, "toolkit_access_denied"),
-    ToolkitKeyNotFoundError: (404, "toolkit_key_not_found"),
-    BindingNotFoundError: (404, "binding_not_found"),
-    DuplicateBindingError: (409, "duplicate_binding"),
-    ConflictingApiBindingError: (409, "conflicting_api_binding"),
-    KeyAlreadyRevokedError: (409, "key_already_revoked"),
-    ToolkitKeysRetiredError: (410, "toolkit_keys_retired"),
-    ToolkitLevelPermissionsUnsupportedError: (422, "toolkit_level_permissions_unsupported"),
-}
-
-toolkit_service_error_handler = make_service_error_handler(_TOOLKIT_ERROR_MAP)
 
 _ACCESS_REQUEST_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     AccessRequestNotFoundError: (404, "access_request_not_found"),

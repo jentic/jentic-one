@@ -1,4 +1,4 @@
-"""Agents router — lifecycle CRUD and toolkit bindings."""
+"""Agents router — lifecycle CRUD and credential bindings."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
     CredentialBindingView,
-    ToolkitBindingView,
 )
 from jentic_one.auth.web.deps import get_agent_auth_service, get_agent_service
 from jentic_one.auth.web.schemas.agents import (
@@ -31,9 +30,6 @@ from jentic_one.auth.web.schemas.agents import (
     CredentialBindRequest,
     DenyRequest,
     JwksUpdateRequest,
-    ToolkitBindingListResponse,
-    ToolkitBindingResponse,
-    ToolkitBindRequest,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
@@ -57,15 +53,6 @@ def _agent_response(view: AgentView) -> AgentResponse:
         created_at=view.created_at,
         approved_at=view.approved_at,
         has_api_key=view.has_api_key,
-    )
-
-
-def _toolkit_response(view: ToolkitBindingView) -> ToolkitBindingResponse:
-    return ToolkitBindingResponse(
-        id=view.id,
-        agent_id=view.agent_id,
-        toolkit_id=view.toolkit_id,
-        bound_at=view.bound_at,
     )
 
 
@@ -212,7 +199,7 @@ async def archive_agent(
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> Response:
-    """Soft-archive an agent — revokes scope grants and toolkit bindings."""
+    """Soft-archive an agent — revokes scope grants and bindings."""
     await agent_svc.archive(agent_id, identity=identity)
     return Response(status_code=204)
 
@@ -238,44 +225,6 @@ async def replace_agent_scopes(
     """Replace all scopes for an agent."""
     scopes = await agent_svc.replace_scopes(agent_id, body.scopes, identity=identity)
     return AgentScopesResponse(scopes=scopes)
-
-
-@router.get("/agents/{agent_id}/toolkits", operation_id="listAgentToolkits")
-async def list_toolkits(
-    agent_id: str,
-    request: Request,
-    identity: Identity = get_current_identity(allow_expired_password=True),
-    agent_svc: AgentService = Depends(get_agent_service),
-) -> ToolkitBindingListResponse:
-    """List toolkit bindings for an agent — requires agents:read or self."""
-    view = await agent_svc.get_agent(agent_id, identity=identity)
-    _check_read_access(identity, view, request)
-    bindings = await agent_svc.list_toolkits(agent_id, identity=identity)
-    return ToolkitBindingListResponse(data=[_toolkit_response(b) for b in bindings])
-
-
-@router.post("/agents/{agent_id}/toolkits", status_code=201)
-async def bind_toolkit(
-    agent_id: str,
-    body: ToolkitBindRequest,
-    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
-    agent_svc: AgentService = Depends(get_agent_service),
-) -> ToolkitBindingResponse:
-    """Bind a toolkit to an agent."""
-    binding = await agent_svc.bind_toolkit(agent_id, toolkit_id=body.toolkit_id, identity=identity)
-    return _toolkit_response(binding)
-
-
-@router.delete("/agents/{agent_id}/toolkits/{toolkit_id}", status_code=204)
-async def unbind_toolkit(
-    agent_id: str,
-    toolkit_id: str,
-    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
-    agent_svc: AgentService = Depends(get_agent_service),
-) -> Response:
-    """Unbind a toolkit from an agent."""
-    await agent_svc.unbind_toolkit(agent_id, toolkit_id=toolkit_id, identity=identity)
-    return Response(status_code=204)
 
 
 def _credential_binding_response(view: CredentialBindingView) -> CredentialBindingResponse:

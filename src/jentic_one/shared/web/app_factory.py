@@ -17,7 +17,7 @@ from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one import __version__
-from jentic_one.control.services.toolkits.key_retirement import KeyRetirementService
+from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort

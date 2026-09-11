@@ -157,13 +157,11 @@ class PrerequisiteRepository:
     async def list_toolkit_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
         """Return the ids of every toolkit the agent is actively bound to.
 
-        Used to widen control-surface read scoping: an agent must always be able
-        to see a toolkit (and its credentials) it is bound to, even when the
-        toolkit is owned by someone else — or by no one, as with the orphaned
-        bootstrap agent (issues #665/#682). The binding lives in the admin DB, so
-        this runs against an admin session and returns plain ids the caller feeds
-        into ``build_access_filters`` (the control scoping module must not import
-        admin ORM models or query across databases).
+        Caller-less since theme-5 Phase 5b collapsed credential read scoping
+        onto the direct-binding axis (``list_credential_ids_for_agent``
+        below); kept with the surviving toolkit tables until Phase 6b. Runs
+        against an admin session and returns plain ids (the control scoping
+        module must not import admin ORM models or query across databases).
         """
         result = await session.execute(
             text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :agent_id"),
@@ -175,15 +173,15 @@ class PrerequisiteRepository:
     async def list_credential_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
         """Return the credential ids the agent is directly and actively bound to.
 
-        The direct-binding analogue of ``list_toolkit_ids_for_agent`` above
-        (theme 5 phase 1): an agent must be able to read a credential it is
-        bound to even when it owns nothing — same orphaned-agent rationale as
-        issues #665/#682, minus the toolkit hop. Suspended bindings grant no
-        visibility: a suspension is a cut-off, so the agent keeps seeing the
-        binding (with its flag) in ``/me`` but loses the widened read of the
-        credential itself until resumed. Runs against an admin session and
-        returns plain ids for ``build_access_filters`` (the control scoping
-        module must not import admin ORM models or query across databases).
+        Read-scoping seam (theme 5 phase 1): an agent must be able to read a
+        credential it is bound to even when it owns nothing — same
+        orphaned-agent rationale as issues #665/#682. Suspended bindings
+        grant no visibility: a suspension is a cut-off, so the agent keeps
+        seeing the binding (with its flag) in ``/me`` but loses the widened
+        read of the credential itself until resumed. Runs against an admin
+        session and returns plain ids for ``build_access_filters`` (the
+        control scoping module must not import admin ORM models or query
+        across databases).
         """
         result = await session.execute(
             text(

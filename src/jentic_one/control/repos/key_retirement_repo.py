@@ -73,9 +73,10 @@ class KeyRetirementRepository:
     ) -> None:
         """Cut (or restore) a migrated key's successor actor.
 
-        The legacy toolkit-key revoke/delete surface calls this so that
-        revoking a migrated key also stops its plaintext resolving as the
-        service account — "revoked" must mean revoked.
+        Caller-less since the toolkit-key management surface is gone (theme-5
+        Phase 5b). Kept with the rest of this repository until Phase 6b
+        retires the toolkit tables, so operator tooling can still cut a
+        successor account.
         """
         await session.execute(
             _SET_SERVICE_ACCOUNT_STATUS,
