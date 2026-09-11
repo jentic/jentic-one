@@ -42,6 +42,7 @@ from jentic_one.control.services.toolkits.errors import (
     KeyAlreadyRevokedError,
     ToolkitAccessDeniedError,
     ToolkitKeyNotFoundError,
+    ToolkitKeysRetiredError,
     ToolkitLevelPermissionsUnsupportedError,
     ToolkitNotFoundError,
 )
@@ -74,6 +75,7 @@ _TOOLKIT_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     DuplicateBindingError: (409, "duplicate_binding"),
     ConflictingApiBindingError: (409, "conflicting_api_binding"),
     KeyAlreadyRevokedError: (409, "key_already_revoked"),
+    ToolkitKeysRetiredError: (410, "toolkit_keys_retired"),
     ToolkitLevelPermissionsUnsupportedError: (422, "toolkit_level_permissions_unsupported"),
 }
 

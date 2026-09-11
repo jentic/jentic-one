@@ -173,10 +173,9 @@ class BindingWarningSchema(BaseModel):
 
 
 class ToolkitCreateResponse(BaseModel):
-    """Create response: toolkit + api_key shown once."""
+    """Create response — toolkit + bind-time warnings (no key is issued)."""
 
     toolkit: ToolkitResponse
-    api_key: str = Field(json_schema_extra=SENSITIVE)
     warnings: list[BindingWarningSchema] = Field(
         default_factory=list,
         description=(
