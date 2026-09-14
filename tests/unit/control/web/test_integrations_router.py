@@ -40,6 +40,8 @@ from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.state import MemoryStateBackend
 from jentic_one.shared.web import deps as shared_deps
 
 _USER_IDENTITY = Identity(sub="usr_alice", permissions=["credentials:write"])
@@ -378,3 +380,42 @@ def test_status_error_taxonomy(raiser: Exception, expected_status: int) -> None:
     with TestClient(app) as client:
         resp = client.get("/connect-sessions/sess_x/status", params={"poll_token": "t"})
     assert resp.status_code == expected_status
+
+
+# ---------------------------------------------------------------------------
+# Per-actor rate limit on POST /integrations:connect
+# ---------------------------------------------------------------------------
+
+
+def test_connect_rate_limit_returns_429_with_retry_after() -> None:
+    # The router builds a token-bucket limiter lazily; a burst of
+    # requests from the same actor must land a 429 before the burst is
+    # exhausted by any legitimate load. Set the rpm/burst to tight
+    # values for the duration of this test so we can trip the limiter
+    # in a handful of calls without shipping unrealistic knobs.
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.create_session = AsyncMock(
+        return_value=CreatedSession(
+            session_id="sess_1",
+            approval_url="https://example.com/app",
+            poll_token="tok",
+            resolved_flow="device_authorization",
+        )
+    )
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+
+    # Tighten the caps so the burst is 2, then the third call must 429.
+    app.state.integrations_connect_limiter = RateLimiter(
+        MemoryStateBackend(),
+        default_rpm=1,
+        burst=2,
+        namespace="test_integrations_connect",
+    )
+
+    with TestClient(app) as client:
+        assert client.post("/integrations:connect", json={"vendor": "gh"}).status_code == 201
+        assert client.post("/integrations:connect", json={"vendor": "gh"}).status_code == 201
+        third = client.post("/integrations:connect", json={"vendor": "gh"})
+        assert third.status_code == 429
+        assert "Retry-After" in third.headers
+        assert int(third.headers["Retry-After"]) >= 1
