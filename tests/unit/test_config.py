@@ -830,8 +830,12 @@ def test_load_config_from_pipe_is_cached(sample_config_dict: dict[str, Any]):
         os.close(write_fd)
         pipe_path = Path(f"/dev/fd/{read_fd}")
         first = load_config(pipe_path)
-        second = load_config(pipe_path)  # would be EOF without the cache
+        with structlog.testing.capture_logs() as logs:
+            second = load_config(pipe_path)  # would be EOF without the cache
         assert first.databases.registry.name == second.databases.registry.name
+        # The reuse leaves a trail: "why didn't my config change take effect"
+        # must be answerable from the logs.
+        assert any(log["event"] == "oneshot_config_cache_reused" for log in logs)
     finally:
         os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()

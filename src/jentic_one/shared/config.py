@@ -1733,6 +1733,9 @@ def _read_config_text(path: Path) -> str:
         key = (st.st_dev, st.st_ino, str(path))
         with _ONESHOT_CACHE_LOCK:
             if key in _ONESHOT_CONFIG_CACHE:
+                # "Why didn't my config change take effect" needs a trail: a
+                # one-shot source is served from the process cache, not re-read.
+                _logger.info("oneshot_config_cache_reused", source=str(path))
                 return _ONESHOT_CONFIG_CACHE[key]
     with path.open() as f:
         fst = os.fstat(f.fileno())
@@ -1749,6 +1752,7 @@ def _read_config_text(path: Path) -> str:
         # must wait and take the cached document, never race the pipe read.
         with _ONESHOT_CACHE_LOCK:
             if key in _ONESHOT_CONFIG_CACHE:
+                _logger.info("oneshot_config_cache_reused", source=str(path))
                 return _ONESHOT_CONFIG_CACHE[key]
             text = f.read()
             if not text.strip():
