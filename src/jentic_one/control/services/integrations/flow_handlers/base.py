@@ -12,9 +12,7 @@ of dummy stubs.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, Literal, Protocol
-
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, ClassVar, Literal, Protocol
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.shared.config import VendorFlowConfig
@@ -147,7 +145,11 @@ class AuthFlowHandler(Protocol):
 
     async def prepare(
         self,
-        db_session: AsyncSession,
+        # ``Any`` because control services must not import
+        # ``sqlalchemy.ext.asyncio`` directly (tests/arch/test_no_direct_db.py);
+        # the concrete session is passed straight to a repository, which types
+        # it as ``AsyncSession``.
+        db_session: Any,
         *,
         credential_id: str,
         flow: VendorFlowConfig,
@@ -167,7 +169,7 @@ class AuthFlowHandler(Protocol):
 
     async def on_finalise(
         self,
-        db_session: AsyncSession,
+        db_session: Any,
         *,
         credential_id: str,
     ) -> None:

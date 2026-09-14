@@ -42,7 +42,7 @@ from jentic_one.shared.web import get_current_identity
 
 _logger = structlog.get_logger(__name__)
 
-router = APIRouter(tags=["integrations"])
+router = APIRouter(tags=["Integrations"])
 
 
 # ---------------------------------------------------------------------------

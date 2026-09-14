@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import Field
 
@@ -75,8 +75,9 @@ from jentic_one.control.web.schemas.permission_rules import (
     PermissionTestResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
@@ -249,10 +250,10 @@ def _oauth_callback_error() -> RedirectResponse:
 
 @router.get("/credentials/oauth/callback", summary="OAuth connect callback")
 async def oauth_callback(
-    request: Request,
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
+    ctx: Context = Depends(get_ctx),
     svc: ConnectService = Depends(get_connect_service),
     session_svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> Response:
@@ -290,24 +291,20 @@ async def oauth_callback(
         return _oauth_callback_error()
 
     # Peek the state to see if this callback belongs to a connect-session
-    # (agent-driven integration flow). The `sid` claim is set by
-    # AuthCodeFlowHandler.begin — its presence routes completion to
-    # ConnectSessionService.complete_from_callback instead of the
-    # standalone-credential path. Uses ``app.state.ctx`` for the state
-    # secret rather than a router-level dep so this route stays a single
-    # endpoint (two consumers, one URL). Tests that stub the router without
-    # a wired-up ctx fall through to the standalone path — the code below
-    # re-verifies the state and produces the canonical redirect.
-    ctx = getattr(request.app.state, "ctx", None)
-    session_id: str | None = None
-    if ctx is not None:
-        state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
-        try:
-            session_id = decode_state(state_secret, state).session_id
-        except StateError:
-            # Fall through to the standard path — it'll re-verify + surface
-            # the canonical error.
-            session_id = None
+    # (agent-driven integration flow). The ``sid`` claim is set by
+    # ``AuthCodeFlowHandler.begin`` — its presence routes completion to
+    # ``ConnectSessionService.complete_from_callback`` instead of the
+    # standalone-credential path. One URL, two consumers; the peek runs the
+    # verify + one-shot nonce consume inside whichever service we dispatch
+    # to, so no bypass around replay protection.
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    session_id: str | None
+    try:
+        session_id = decode_state(state_secret, state).session_id
+    except StateError:
+        # Fall through to the standalone path — it'll re-verify + surface
+        # the canonical error.
+        session_id = None
 
     if session_id is not None:
         if error or not code:

@@ -9,9 +9,7 @@ column, written at finalise time — the service reads it flow-agnostically.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import ClassVar
-
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, ClassVar
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.device_authorization_credentials import (
@@ -44,7 +42,7 @@ class DeviceAuthorizationHandler:
 
     async def prepare(
         self,
-        db_session: AsyncSession,
+        db_session: Any,
         *,
         credential_id: str,
         flow: VendorFlowConfig,
@@ -221,7 +219,7 @@ class DeviceAuthorizationHandler:
 
     async def on_finalise(
         self,
-        db_session: AsyncSession,
+        db_session: Any,
         *,
         credential_id: str,
     ) -> None:
