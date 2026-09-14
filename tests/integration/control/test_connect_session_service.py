@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from pydantic import SecretStr
@@ -31,6 +32,7 @@ from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientC
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
+from jentic_one.control.services.credentials.state import StateReplayedError
 from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.connect_session_service import (
@@ -43,7 +45,12 @@ from jentic_one.control.services.integrations.errors import (
     InvalidPollTokenError,
     SessionNotFoundError,
 )
+from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
+from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
+    DeviceAuthorizationHandler,
+)
 from jentic_one.shared.config import (
+    DirectOAuth2ProviderConfig,
     VendorAuthConfig,
     VendorAuthorizationCodeFlowConfig,
     VendorDeviceAuthorizationFlowConfig,
@@ -136,8 +143,6 @@ def seed_test_vendors(integration_context: Context) -> None:
     )
     # Auth-code flow shares the DirectOAuth2Provider redirect_uri — the
     # handler asserts it's set. Seed it if a prior test left it unset.
-    from jentic_one.shared.config import DirectOAuth2ProviderConfig
-
     integration_context.config.credentials.providers.setdefault(
         "direct_oauth2",
         DirectOAuth2ProviderConfig(
@@ -494,11 +499,6 @@ async def test_advance_polling_credential_advances_a_re_connect_of_a_connected_c
     # it, so ``advance_polling_credential`` should hand off to
     # ``DeviceAuthorizationHandler.advance`` regardless of the
     # credential's state.
-    from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
-    from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
-        DeviceAuthorizationHandler,
-    )
-
     ctx = integration_context
     svc = ConnectSessionService(ctx)
 
@@ -542,8 +542,6 @@ def _state_from_authorize_url(authorize_url: str) -> str:
     that need to drive ``complete_from_callback`` post-confirm read the
     real signed state from here rather than manufacturing a JWT.
     """
-    from urllib.parse import parse_qs, urlsplit
-
     parts = urlsplit(authorize_url)
     q = parse_qs(parts.query)
     return q["state"][0]
@@ -633,8 +631,6 @@ async def test_complete_from_callback_refuses_state_replay(
     # → service path enforces one-shot semantics on the session flow
     # too — the same guarantee ``ConnectService.complete`` has always
     # given the standalone flow.
-    from jentic_one.control.services.credentials.state import StateReplayedError
-
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(

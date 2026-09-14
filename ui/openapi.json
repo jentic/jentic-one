@@ -23418,7 +23418,7 @@
         ],
         "summary": "Get review data for a connect session",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -23572,7 +23572,7 @@
         ],
         "summary": "Poll a connect session's status",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -23722,7 +23722,7 @@
         ],
         "summary": "Cancel an in-flight connect session",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -23876,7 +23876,7 @@
         ],
         "summary": "Confirm scopes + permissions and kick off the vendor flow",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -27149,7 +27149,7 @@
         ],
         "summary": "Start an integration connect session",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -38162,7 +38162,7 @@
         ],
         "summary": "List verified vendors",
         "tags": [
-          "vendors"
+          "Vendors"
         ]
       }
     },
@@ -38306,7 +38306,7 @@
         ],
         "summary": "Get a vendor's SSO capabilities",
         "tags": [
-          "vendors"
+          "Vendors"
         ]
       }
     }
@@ -38342,6 +38342,14 @@
     {
       "description": "Sub-resource of **Toolkits** (Core / Access bounded context). The fine-grained PBAC tier — per-`(toolkit, credential)` allow / deny / require-approval rules evaluated server-side. Rules use a priority model: `deny` > `require-approval` > `allow` — the strictest matching rule wins. Absence of a matching rule is an implicit deny. System rules (`_system: true`) participate in the same priority pool as user rules.\n\nToolkits have no separate scope tier of their own: a toolkit API key is minted with the fixed broker-execute scope (`capabilities:execute`), and every gated operation is decided by these per-binding rules.",
       "name": "Toolkit Permissions"
+    },
+    {
+      "description": "Part of the **Core / Access** bounded context — the platform-curated catalog of verified vendors that support agent-initiated OAuth connect flows. Each entry describes the OAuth flows available (device_authorization, authorization_code) and the scope catalog with read/write classification. Vendor entries are seeded from operator config, not user-managed — the API surfaces them read-only so the SPA and agents can discover which vendors are available and pick a flow at ``:connect`` time.",
+      "name": "Vendors"
+    },
+    {
+      "description": "Part of the **Core / Access** bounded context — agent-initiated OAuth connect sessions. A caller (agent or UI) begins a session via ``POST /integrations:connect``, choosing a vendor and requested scope set; the platform provisions a pending credential, initiates the vendor's OAuth flow (device_authorization or authorization_code depending on the vendor), and returns a session id + human-facing challenge (device user_code / authorize_url).\n\nThe initiator polls ``GET /connect-sessions/{id}/status`` until the session reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are capped by a TTL; unfinished sessions can be cancelled via ``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only hand-off that binds any pre-declared permission rules to the resulting credential.",
+      "name": "Integrations"
     },
     {
       "description": "Actor-agnostic, multi-item access-request surface (Core / Access bounded context). When an agent's brokered call is rejected by a permission rule — or the agent needs access it doesn't yet have — the agent files an `AccessRequest` containing one or more line items (`AccessRequestItem`). The request enters `pending` state and surfaces an `approve_url` that the agent presents to a human reviewer.\n\nReviewers `:decide` individual items (approve or deny each); filers can `:amend` pending items (adjust rules or target) or `:withdraw` the entire request. Each item transitions independently; the envelope status reflects the aggregate (`pending` while any item is pending, `partially_approved` when some items are decided but others remain, terminal once all items resolve).\n\nPending requests carry a TTL (default 7 days, configurable). Envelope lifecycle: `pending → partially_approved → approved | denied | withdrawn | expired`.\n\n**Identity scoping.** List and get operations are identity-scoped: filers see their own requests, reviewers see their inbox, `org:admin` sees all. Non-owners receive `404` (not `403`) to avoid leaking existence.\n\n**Security.** Mutating operations (`POST`, `:decide`, `:amend`, `:withdraw`) require `agents:write`; read operations require `agents:read`.",
@@ -38461,6 +38469,8 @@
       "name": "Core / Access",
       "tags": [
         "Credentials",
+        "Vendors",
+        "Integrations",
         "Toolkits",
         "Toolkit Keys",
         "Toolkit Credentials",

@@ -1,13 +1,48 @@
-# Vendored fallback of the ORM enforcement facts — do not hand-edit except to track upstream (test_rules_facts_vendored.py guards it when a fuller rules source is mounted).
+# Machine-readable ORM conventions — the single source of truth.
+#
+# This file is the authoritative source for the *enforceable* ORM facts. The
+# prose in orm-overview.md / orm-add-table.md / orm-review-checklist.md explains
+# and rationalises these values; this file is what a conformance test reads.
+# Edit THIS file to change what is enforced, then update the prose to match.
+#
+# Consumed by the jentic-one arch test tests/arch/test_orm_conventions.py, which
+# loads it from the mounted rules repo (falling back to a vendored copy when the
+# rules repo is not mounted).
 schema_version: jentic.orm-facts/v1
+
+# Primary-key strategy for non-exempt tables. "ksuid" => the id column must use
+# server_default=func.generate_ksuid("<prefix>") (K-Sortable string id,
+# String(30)). This is the enforced convention; UUID is legacy (see exempt list).
 primary_key: ksuid
-valid_bases: [RegistryBase, ControlBase, AdminBase]
-audit_mixins: [AuditableMixin]
+
+# ORM models are recognised by inheriting one of these declarative bases.
+valid_bases:
+  - RegistryBase
+  - ControlBase
+  - AdminBase
+
+# Mixins that supply audit columns (created_at, updated_at, created_by). A model
+# inheriting one of these satisfies the created_at requirement without declaring
+# the column directly.
+audit_mixins:
+  - AuditableMixin
+
 tablename:
-  snake_case: true
-  plural_suffixes: [s, data]
-required_columns: [id, created_at]
+  snake_case: true          # table names must match ^[a-z][a-z0-9]*(_[a-z0-9]+)*$
+  plural_suffixes: [s, data] # table names must end with one of these
+
+# Columns every model must have (created_at may come from an audit mixin).
+required_columns:
+  - id
+  - created_at
+
+# Tables exempt from the KSUID primary-key requirement. Two groups:
+#   1. Legacy registry tables that still use uuid.UUID + gen_random_uuid().
+#   2. Structurally single-row tables whose id is a fixed sentinel (not a
+#      per-entity ksuid) — the constant key is what makes a concurrent
+#      insert collide on the primary key instead of appending a second row.
 ksuid_exempt_tables:
+  # Legacy registry tables (uuid.UUID PKs).
   - apis
   - api_revisions
   - operation_url_indexes
@@ -20,6 +55,11 @@ ksuid_exempt_tables:
   - oauth_client_credentials
   - basic_credentials
   - token_value_credentials
-  - catalog_snapshots
-  - setup_sentinels
-  - instance_identities
+  # Auxiliary credential tables keyed 1:1 by the parent ``credentials.id``
+  # (FK, CASCADE). The parent supplies the id; a ksuid server_default here
+  # would generate a value that doesn't match any credentials row.
+  - device_authorization_credentials
+  # Single-row sentinel tables (fixed id, not a ksuid).
+  - catalog_snapshots   # SINGLETON_ID — concurrent refresh collides instead of duplicating
+  - setup_sentinels     # SETUP_SENTINEL_ID — first-admin lock; a ksuid default would defeat it
+  - instance_identities # INSTANCE_IDENTITY_ID ("singleton") — once-per-instance telemetry dedupe

@@ -15,6 +15,7 @@ These tests pin:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
@@ -37,6 +38,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 )
 from jentic_one.control.web.deps import get_connect_service, get_connect_session_service
 from jentic_one.control.web.routers import credentials as credentials_router
+from jentic_one.shared.web import get_ctx
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 # Public SPA route the popup is redirected to (under the /app SPA mount).
@@ -54,6 +56,23 @@ _FORBIDDEN_LEAK_FRAGMENTS = (
 )
 
 
+def _fake_ctx() -> SimpleNamespace:
+    """Minimal ctx stand-in — the router only reads ``state_secret`` for the
+    ``sid`` peek. The state strings these tests pass are not valid JWTs, so
+    ``decode_state`` raises ``StateError`` and dispatch falls through to the
+    standalone-credential path (which is what these tests exercise).
+    """
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            credentials=SimpleNamespace(
+                connect=SimpleNamespace(
+                    state_secret=SimpleNamespace(get_secret_value=lambda: "test-secret"),
+                ),
+            ),
+        ),
+    )
+
+
 def _build_app(*, complete_mock: AsyncMock) -> FastAPI:
     """Build a minimal FastAPI app exposing only the credentials router."""
     app = FastAPI()
@@ -66,9 +85,10 @@ def _build_app(*, complete_mock: AsyncMock) -> FastAPI:
 
     app.dependency_overrides[get_connect_service] = lambda: fake_service
     # Standalone-credential callback tests never trigger the connect-session
-    # branch (no ``sid`` claim to peek at without an ``app.state.ctx``), so
-    # this stub is only here to satisfy the router-level Depends resolution.
+    # branch (no valid ``sid`` claim in the state), so this stub is only here
+    # to satisfy the router-level Depends resolution.
     app.dependency_overrides[get_connect_session_service] = lambda: fake_session_service
+    app.dependency_overrides[get_ctx] = _fake_ctx
     return app
 
 

@@ -282,6 +282,36 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "Vendors",
+        "description": (
+            "Part of the **Core / Access** bounded context — the platform-curated catalog "
+            "of verified vendors that support agent-initiated OAuth connect flows. Each "
+            "entry describes the OAuth flows available (device_authorization, "
+            "authorization_code) and the scope catalog with read/write classification. "
+            "Vendor entries are seeded from operator config, not user-managed — the API "
+            "surfaces them read-only so the SPA and agents can discover which vendors "
+            "are available and pick a flow at ``:connect`` time."
+        ),
+    },
+    {
+        "name": "Integrations",
+        "description": (
+            "Part of the **Core / Access** bounded context — agent-initiated OAuth "
+            "connect sessions. A caller (agent or UI) begins a session via "
+            "``POST /integrations:connect``, choosing a vendor and requested scope set; "
+            "the platform provisions a pending credential, initiates the vendor's OAuth "
+            "flow (device_authorization or authorization_code depending on the vendor), "
+            "and returns a session id + human-facing challenge (device user_code / "
+            "authorize_url).\n\n"
+            "The initiator polls ``GET /connect-sessions/{id}/status`` until the session "
+            "reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are "
+            "capped by a TTL; unfinished sessions can be cancelled via "
+            "``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only "
+            "hand-off that binds any pre-declared permission rules to the resulting "
+            "credential."
+        ),
+    },
+    {
         "name": "Access Requests",
         "description": (
             "Actor-agnostic, multi-item access-request surface (Core / Access bounded "
@@ -684,6 +714,8 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "name": "Core / Access",
         "tags": [
             "Credentials",
+            "Vendors",
+            "Integrations",
             "Toolkits",
             "Toolkit Keys",
             "Toolkit Credentials",
@@ -870,6 +902,9 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/toolkits/[^/]+/credentials"), "Toolkit Credentials"),
     (re.compile(r"^/toolkits"), "Toolkits"),
     (re.compile(r"^/access-requests"), "Access Requests"),
+    (re.compile(r"^/integrations"), "Integrations"),
+    (re.compile(r"^/connect-sessions"), "Integrations"),
+    (re.compile(r"^/vendors"), "Vendors"),
     (re.compile(r"^/apis/.+/overlays"), "Overlays"),
     (re.compile(r"^/apis/.+/operations$"), "API Operations"),
     (re.compile(r"^/apis/.+/openapi$"), "API Spec"),

@@ -13080,7 +13080,7 @@ paths:
       - BearerAuth: []
       summary: Get review data for a connect session
       tags:
-      - integrations
+      - Integrations
   /connect-sessions/{session_id}/status:
     get:
       operationId: pollConnectSessionStatus
@@ -13151,7 +13151,7 @@ paths:
       - BearerAuth: []
       summary: Poll a connect session's status
       tags:
-      - integrations
+      - Integrations
   /connect-sessions/{session_id}:cancel:
     post:
       description: |-
@@ -13228,7 +13228,7 @@ paths:
       - BearerAuth: []
       summary: Cancel an in-flight connect session
       tags:
-      - integrations
+      - Integrations
   /connect-sessions/{session_id}:confirm:
     post:
       description: Called by the review page after the human confirms selections.
@@ -13298,7 +13298,7 @@ paths:
       - BearerAuth: []
       summary: Confirm scopes + permissions and kick off the vendor flow
       tags:
-      - integrations
+      - Integrations
   /control/health:
     get:
       description: |-
@@ -14863,7 +14863,7 @@ paths:
       - BearerAuth: []
       summary: Start an integration connect session
       tags:
-      - integrations
+      - Integrations
   /jobs:
     get:
       description: List jobs with optional filters.
@@ -19973,7 +19973,7 @@ paths:
       - BearerAuth: []
       summary: List verified vendors
       tags:
-      - vendors
+      - Vendors
   /vendors/{vendor_key}/auth-capabilities:
     get:
       description: |-
@@ -20041,7 +20041,7 @@ paths:
       - BearerAuth: []
       summary: Get a vendor's SSO capabilities
       tags:
-      - vendors
+      - Vendors
 security:
 - BearerAuth: []
 servers:
@@ -20070,6 +20070,13 @@ tags:
 
     Toolkits have no separate scope tier of their own: a toolkit API key is minted with the fixed broker-execute scope (`capabilities:execute`), and every gated operation is decided by these per-binding rules.
   name: Toolkit Permissions
+- description: Part of the **Core / Access** bounded context — the platform-curated catalog of verified vendors that support agent-initiated OAuth connect flows. Each entry describes the OAuth flows available (device_authorization, authorization_code) and the scope catalog with read/write classification. Vendor entries are seeded from operator config, not user-managed — the API surfaces them read-only so the SPA and agents can discover which vendors are available and pick a flow at ``:connect`` time.
+  name: Vendors
+- description: |-
+    Part of the **Core / Access** bounded context — agent-initiated OAuth connect sessions. A caller (agent or UI) begins a session via ``POST /integrations:connect``, choosing a vendor and requested scope set; the platform provisions a pending credential, initiates the vendor's OAuth flow (device_authorization or authorization_code depending on the vendor), and returns a session id + human-facing challenge (device user_code / authorize_url).
+
+    The initiator polls ``GET /connect-sessions/{id}/status`` until the session reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are capped by a TTL; unfinished sessions can be cancelled via ``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only hand-off that binds any pre-declared permission rules to the resulting credential.
+  name: Integrations
 - description: |-
     Actor-agnostic, multi-item access-request surface (Core / Access bounded context). When an agent's brokered call is rejected by a permission rule — or the agent needs access it doesn't yet have — the agent files an `AccessRequest` containing one or more line items (`AccessRequestItem`). The request enters `pending` state and surfaces an `approve_url` that the agent presents to a human reviewer.
 
@@ -20197,6 +20204,8 @@ x-tagGroups:
 - name: Core / Access
   tags:
   - Credentials
+  - Vendors
+  - Integrations
   - Toolkits
   - Toolkit Keys
   - Toolkit Credentials

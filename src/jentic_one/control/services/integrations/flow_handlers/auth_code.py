@@ -16,11 +16,10 @@ credentials produced here have the same shape as any other
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 from urllib.parse import urlencode
 
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.repos.oauth_client_credential_repo import (
@@ -61,7 +60,7 @@ class AuthCodeFlowHandler:
 
     async def prepare(
         self,
-        db_session: AsyncSession,
+        db_session: Any,
         *,
         credential_id: str,
         flow: VendorFlowConfig,
@@ -125,7 +124,7 @@ class AuthCodeFlowHandler:
 
     async def on_finalise(
         self,
-        db_session: AsyncSession,
+        db_session: Any,
         *,
         credential_id: str,
     ) -> None:

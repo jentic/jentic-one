@@ -21,7 +21,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import VendorAuthConfig
 from jentic_one.shared.web import get_current_identity
 
-router = APIRouter(tags=["vendors"])
+router = APIRouter(tags=["Vendors"])
 
 
 @router.get("/vendors", summary="List verified vendors")
