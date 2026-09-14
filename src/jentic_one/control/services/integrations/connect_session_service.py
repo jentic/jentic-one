@@ -48,9 +48,36 @@ from jentic_one.control.services.vendors.service import (
 )
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
+from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.api_identity import canonical_credential_scope
 
 _logger = structlog.get_logger(__name__)
+
+# Metrics for the agent-driven vendor-connect flow. These are
+# the on-call's aggregate signal: is device-flow suddenly failing across the
+# fleet? What fraction of confirms actually connect? A per-``vendor`` +
+# ``flow`` + ``outcome`` breakdown lets us tell "GitHub broke" from "our
+# device-flow handler regressed" without spelunking through logs.
+_meter = get_meter("control")
+_sessions_created = _meter.create_counter(
+    "control.integrations.sessions_created_total",
+    description="Vendor-connect sessions created (POST /integrations:connect).",
+)
+_sessions_terminal = _meter.create_counter(
+    "control.integrations.sessions_terminal_total",
+    description=(
+        "Vendor-connect sessions that reached a terminal state. "
+        "outcome=connected|failed|expired|cancelled — one label captures both "
+        "the happy path and every unhappy-terminal branch."
+    ),
+)
+_time_to_connected = _meter.create_histogram(
+    "control.integrations.time_to_connected_seconds",
+    unit="s",
+    description=(
+        "Wall time from ``:connect`` to ``connected`` for successful vendor-connect sessions."
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +335,7 @@ class ConnectSessionService:
             agent_id=agent_id,
             initiator_actor_id=initiator_actor_id,
         )
+        _sessions_created.add(1, {"vendor": vendor_key, "flow": flow.kind})
         return CreatedSession(
             session_id=row.id,
             approval_url=approval_url,
@@ -675,6 +703,12 @@ class ConnectSessionService:
             credential_id=row.credential_id,
             connected_as=connected_as,
         )
+        # Metrics: terminal-connected + wall-clock time-to-connect. The
+        # histogram is a load-bearing SLO surface for the whole feature
+        # (fraction of sessions that reach ``connected`` in <N seconds).
+        attrs = {"vendor": row.vendor, "flow": row.resolved_flow}
+        _sessions_terminal.add(1, {**attrs, "outcome": "connected"})
+        _time_to_connected.record((datetime.now(UTC) - row.created_at).total_seconds(), attrs)
         await self._maybe_import_catalog(
             api_id=entry.vendor, initiator_actor_id=row.initiator_actor_id
         )
@@ -870,6 +904,18 @@ class ConnectSessionService:
             error_code=error_code,
             error_detail=detail,
             credential_id=row.credential_id,
+        )
+        # Metrics: per-vendor + per-flow + per-outcome unhappy-terminal
+        # counter. ``state`` here is the wire outcome (``failed``,
+        # ``expired``, ``cancelled``) — the connected path emits from
+        # ``_finalise_connected``, not through here.
+        _sessions_terminal.add(
+            1,
+            {
+                "vendor": row.vendor,
+                "flow": row.resolved_flow,
+                "outcome": state,
+            },
         )
         async with self._ctx.control_db.transaction() as session:
             await CredentialRepository.delete(session, row.credential_id)
