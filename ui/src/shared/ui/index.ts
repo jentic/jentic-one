@@ -56,8 +56,6 @@ export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
 export { StatCard } from '@/shared/ui/StatCard';
 export type { StatAccent } from '@/shared/ui/StatCard';
-export { ToolkitGlyph } from '@/shared/ui/ToolkitGlyph';
-export type { ToolkitGlyphProps } from '@/shared/ui/ToolkitGlyph';
 export { TabNav } from '@/shared/ui/TabNav';
 export type { TabNavOption } from '@/shared/ui/TabNav';
 

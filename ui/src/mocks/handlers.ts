@@ -1,5 +1,4 @@
 import { http, HttpResponse } from 'msw';
-import { toolkitsHandlers, toolkitsE2eHooks } from '@/modules/toolkits/mocks/handlers';
 import { agentsHandlers } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
@@ -166,7 +165,6 @@ export const handlers = [
 	// Feature modules append their handlers here, e.g.:
 	//   import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 	//   ...discoverHandlers,
-	...toolkitsHandlers,
 	...agentsHandlers,
 	// Credentials registers before Discover so its guided-picker `/catalog`
 	// handler (which falls through when its store is empty) gets a chance to
@@ -216,6 +214,5 @@ export const handlers = [
 export function installE2eTestHooks(target: Record<string, unknown>): void {
 	target.__mswTestHooks = {
 		...credentialsE2eHooks,
-		...toolkitsE2eHooks,
 	};
 }

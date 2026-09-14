@@ -223,7 +223,7 @@ def test_user(base_url: str, admin_token: str) -> Generator[SmokeUser]:
 
     permissions = [
         "capabilities:execute",
-        "toolkits:write",
+        "credentials:write",
         "users:read",
         "jobs:read",
         "events:read",
@@ -505,42 +505,6 @@ def test_agent(base_url: str, admin_token: str) -> Generator[SmokeAgent]:
     )
 
 
-@pytest.fixture()
-def agent_with_toolkit(base_url: str, test_agent: SmokeAgent) -> Generator[tuple[SmokeAgent, str]]:
-    """Create a toolkit, bind it to the test agent, yield, then unbind and delete."""
-    toolkit_name = f"smoke-toolkit-{uuid.uuid4().hex[:12]}"
-    create_body, status = authed_request(
-        f"{base_url}/toolkits",
-        method="POST",
-        token=test_agent.owner_token,
-        body={"name": toolkit_name},
-    )
-    assert status == 201, f"Toolkit creation failed: {status} {create_body}"
-    assert isinstance(create_body, dict)
-    toolkit_id: str = create_body["toolkit"]["toolkit_id"]
-
-    bind_body, bind_status = authed_request(
-        f"{base_url}/agents/{test_agent.agent_id}/toolkits",
-        method="POST",
-        token=test_agent.owner_token,
-        body={"toolkit_id": toolkit_id},
-    )
-    assert bind_status == 201, f"Toolkit bind failed: {bind_status} {bind_body}"
-
-    yield test_agent, toolkit_id
-
-    authed_request(
-        f"{base_url}/agents/{test_agent.agent_id}/toolkits/{toolkit_id}",
-        method="DELETE",
-        token=test_agent.owner_token,
-    )
-    authed_request(
-        f"{base_url}/toolkits/{toolkit_id}",
-        method="DELETE",
-        token=test_agent.owner_token,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Smoke-upstream harness fixtures & helpers
 # ---------------------------------------------------------------------------
@@ -704,39 +668,22 @@ def broker_call(
         return exc.read(), exc.code, dict(exc.headers.items())
 
 
-def provision_toolkit_and_credential(
+def provision_bound_credential(
     base_url: str,
     agent: SmokeAgent,
     *,
     credential_body: dict[str, Any],
-    bind_credential_to_toolkit: bool = True,
-) -> tuple[str, str]:
-    """Bind a fresh toolkit to the agent and create a credential.
+    rules: list[dict[str, Any]] | None = None,
+) -> str:
+    """Create a credential, direct-bind it to the agent, and install its rules.
 
-    Returns ``(toolkit_id, credential_id)``.
-
-    The agent↔toolkit binding is required for ``select_toolkit``; the credential
-    is required for ``inject``. Binding the credential to the toolkit is optional
-    for injection (resolution is keyed on the API tuple + ``active``) — kept on
-    by default to mirror the documented happy path.
+    The direct-binding twin of the deleted toolkit provisioning helper
+    (theme-5 Phase 5b): ``POST /credentials`` → ``POST /agents/{id}/credentials``
+    → ``PUT /credentials/{cid}/agents/{aid}/permissions``. The broker
+    default-denies a binding with zero permission rules, so an allow-all rule
+    is installed unless the caller passes an explicit list (pass ``[]`` to
+    leave the binding rule-less on purpose). Returns the ``credential_id``.
     """
-    tk, st = authed_request(
-        f"{base_url}/toolkits",
-        method="POST",
-        token=agent.owner_token,
-        body={"name": f"smoke-tk-{uuid.uuid4().hex[:12]}"},
-    )
-    assert st == 201 and isinstance(tk, dict), f"Toolkit creation failed: {st} {tk}"
-    toolkit_id = tk["toolkit"]["toolkit_id"]
-
-    _, st = authed_request(
-        f"{base_url}/agents/{agent.agent_id}/toolkits",
-        method="POST",
-        token=agent.owner_token,
-        body={"toolkit_id": toolkit_id},
-    )
-    assert st == 201, f"Toolkit bind failed: {st}"
-
     cred, st = authed_request(
         f"{base_url}/credentials",
         method="POST",
@@ -744,31 +691,41 @@ def provision_toolkit_and_credential(
         body=credential_body,
     )
     assert st == 201 and isinstance(cred, dict), f"Credential creation failed: {st} {cred}"
-    credential_id = cred["credential"]["credential_id"]
+    credential_id: str = cred["credential"]["credential_id"]
 
-    if bind_credential_to_toolkit:
+    _, st = authed_request(
+        f"{base_url}/agents/{agent.agent_id}/credentials",
+        method="POST",
+        token=agent.owner_token,
+        body={"credential_id": credential_id},
+    )
+    assert st == 201, f"Direct credential bind failed: {st}"
+
+    if rules is None:
+        rules = [{"effect": "allow", "path": ".*", "match_mode": "regex"}]
+    if rules:
         _, st = authed_request(
-            f"{base_url}/toolkits/{toolkit_id}/credentials",
-            method="POST",
+            f"{base_url}/credentials/{credential_id}/agents/{agent.agent_id}/permissions",
+            method="PUT",
             token=agent.owner_token,
-            body={"credential_id": credential_id},
+            body=rules,
         )
-        assert st == 201, f"Credential→toolkit bind failed: {st}"
-    return toolkit_id, credential_id
+        assert st == 200, f"Binding permission rules failed: {st}"
+    return credential_id
 
 
 @dataclass
 class ExecutableHarness:
     """An ingested harness API the agent can execute through the broker.
 
-    Bundles the API identity with the toolkit binding and bearer credential so a
-    proxied op passes the full broker pipeline: discovery → select_toolkit →
-    credential inject. ``bearer_token`` is the secret the broker injects upstream;
-    ``agent_token`` is the caller token broker auth expects on the proxy request.
+    Bundles the API identity with the direct credential binding so a proxied op
+    passes the full broker pipeline: discovery → binding resolution → rule
+    check → credential inject. ``bearer_token`` is the secret the broker
+    injects upstream; ``agent_token`` is the caller token broker auth expects
+    on the proxy request.
     """
 
     api: HarnessApi
-    toolkit_id: str
     credential_id: str
     bearer_token: str
     agent_token: str
@@ -780,14 +737,15 @@ def executable_harness(
     test_agent: SmokeAgent,
     harness_api: HarnessApi,
 ) -> ExecutableHarness:
-    """Ingested harness + a bound toolkit + an active bearer credential.
+    """Ingested harness + a directly bound, allow-all bearer credential.
 
     The minimum wiring for an execute-through-broker test: every proxied op
-    (secured or not) needs an active credential for the API tuple, and the agent
-    must be bound to exactly one toolkit for the API.
+    (secured or not) needs an active credential for the API tuple, the agent
+    must hold a direct binding to it, and the binding needs at least one allow
+    rule (zero rules default-deny).
     """
     bearer_token = f"smoke-bearer-{uuid.uuid4().hex[:16]}"
-    toolkit_id, credential_id = provision_toolkit_and_credential(
+    credential_id = provision_bound_credential(
         base_url,
         test_agent,
         credential_body={
@@ -804,7 +762,6 @@ def executable_harness(
     )
     return ExecutableHarness(
         api=harness_api,
-        toolkit_id=toolkit_id,
         credential_id=credential_id,
         bearer_token=bearer_token,
         agent_token=test_agent.access_token,

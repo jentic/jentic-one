@@ -62,12 +62,12 @@ test('dashboard landing surfaces the action queue behind the header bell', async
 	await expect(page.getByText('p95 latency')).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Top usage' })).toBeVisible();
 
-	// The range + lens toggles are interactive: flip to 7d and to Toolkits.
+	// The range + lens toggles are interactive: flip to 7d and to Credentials.
 	await page
 		.getByRole('group', { name: 'Time range' })
 		.getByRole('button', { name: '7d' })
 		.click();
-	await page.getByRole('tab', { name: 'Toolkits' }).click();
+	await page.getByRole('tab', { name: 'Credentials' }).click();
 
 	// Chart tooltips are immediate custom popovers (not slow native titles):
 	// hovering a volume column reveals the bucket's exact counts.

@@ -27,22 +27,34 @@ class ActorNotFoundError(AuthServiceError):
         self.actor_id = actor_id
 
 
-class ToolkitBindingConflictError(AuthServiceError):
-    """Raised when a toolkit binding already exists."""
+class CredentialBindingConflictError(AuthServiceError):
+    """Raised when a direct agent↔credential binding already exists."""
 
-    def __init__(self, agent_id: str, toolkit_id: str) -> None:
-        super().__init__(f"Agent '{agent_id}' is already bound to toolkit '{toolkit_id}'")
+    def __init__(self, agent_id: str, credential_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' is already bound to credential '{credential_id}'")
         self.agent_id = agent_id
-        self.toolkit_id = toolkit_id
+        self.credential_id = credential_id
 
 
-class ToolkitBindingNotFoundError(AuthServiceError):
-    """Raised when a toolkit binding does not exist."""
+class CredentialBindingNotFoundError(AuthServiceError):
+    """Raised when a direct agent↔credential binding does not exist."""
 
-    def __init__(self, agent_id: str, toolkit_id: str) -> None:
-        super().__init__(f"Agent '{agent_id}' has no binding to toolkit '{toolkit_id}'")
+    def __init__(self, agent_id: str, credential_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' has no binding to credential '{credential_id}'")
         self.agent_id = agent_id
-        self.toolkit_id = toolkit_id
+        self.credential_id = credential_id
+
+
+class CredentialNotVisibleError(AuthServiceError):
+    """Raised when the bind target credential does not exist or is not visible.
+
+    One error for both cases so the response does not leak whether a
+    credential id exists outside the caller's visibility.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(f"Credential '{credential_id}' not found")
+        self.credential_id = credential_id
 
 
 class InvalidGrantError(AuthServiceError):
@@ -140,7 +152,7 @@ class ClaimActorNotAllowedError(AuthServiceError):
     """Raised when a non-user actor tries to claim agent ownership.
 
     ``Agent.owner_id`` is a FK to ``users.id``, so only a human user can own an
-    agent. An authenticated agent/service-account/toolkit presenting the claim
+    agent. An authenticated agent/service-account presenting the claim
     token is rejected here rather than being allowed to write a non-user id into
     the users-FK column (which would fail as an unhandled integrity error).
     """

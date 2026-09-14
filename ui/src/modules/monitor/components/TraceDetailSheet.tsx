@@ -159,7 +159,15 @@ export function TraceDetailSheet({
 											/>
 											<DetailRow
 												label="API"
-												value={exec.api?.host ?? exec.toolkit_id}
+												value={
+													exec.api?.host ??
+													exec.credential_name ??
+													exec.credential_id ??
+													// Legacy attribution on
+													// pre-direct-binding rows.
+													exec.toolkit_id ??
+													'—'
+												}
 											/>
 											<DetailRow
 												label="Duration"

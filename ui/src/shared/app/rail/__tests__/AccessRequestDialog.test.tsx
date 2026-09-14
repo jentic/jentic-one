@@ -15,9 +15,10 @@ import { AccessRequestDialog } from '@/shared/app/rail/AccessRequestDialog';
  * The dialog's terminal screen must reflect the SERVER's authoritative per-item
  * outcome, not the operator's draft intent: the backend can override an
  * "approved" verdict to "denied" when a bind target can't be fulfilled as filed
- * (e.g. no toolkit serves the API yet). These tests register per-request MSW
- * handlers (the repo convention) whose `:decide` response returns a chosen
- * decided state regardless of the submitted body, simulating that override.
+ * (e.g. no credential exists for the referenced API yet). These tests register
+ * per-request MSW handlers (the repo convention) whose `:decide` response
+ * returns a chosen decided state regardless of the submitted body, simulating
+ * that override.
  */
 
 type Item = {
@@ -45,7 +46,7 @@ function request(id: string, status: string, items: Item[]) {
 
 const bindItem = (status: string, decision_reason: string | null = null): Item => ({
 	id: 'arqi_bind',
-	resource_type: 'toolkit',
+	resource_type: 'credential',
 	action: 'bind',
 	status,
 	resource_reference: { vendor: 'googleapis-com', name: 'googleapis-com-sheets' },
@@ -89,7 +90,7 @@ async function approveAllAndSubmit() {
 describe('AccessRequestDialog — server-authoritative outcome', () => {
 	it('shows the platform reason instead of "granted" when an approved bind is denied server-side', async () => {
 		const reason =
-			'No toolkit serves API googleapis-com/googleapis-com-sheets; provision and bind a credential for it first';
+			'No credential serves API googleapis-com/googleapis-com-sheets; provision one and bind the agent to it first';
 		stub(
 			request('areq_1', 'pending', [bindItem('pending')]),
 			request('areq_1', 'denied', [bindItem('denied', reason)]),
@@ -117,10 +118,10 @@ describe('AccessRequestDialog — server-authoritative outcome', () => {
 	});
 
 	it('reports partial success and lists the unfulfilled item on a mixed decision', async () => {
-		// Two approved items: the scope grant is fulfilled, the toolkit bind is
-		// not. Outcome is "Access granted" (something was granted) BUT the blocked
-		// item's reason must still be surfaced — not silently dropped.
-		const reason = 'No toolkit serves API googleapis-com/googleapis-com-sheets';
+		// Two approved items: the scope grant is fulfilled, the credential bind
+		// is not. Outcome is "Access granted" (something was granted) BUT the
+		// blocked item's reason must still be surfaced — not silently dropped.
+		const reason = 'No credential serves API googleapis-com/googleapis-com-sheets';
 		stub(
 			request('areq_2', 'pending', [scopeItem('pending'), bindItem('pending')]),
 			request('areq_2', 'partially_approved', [

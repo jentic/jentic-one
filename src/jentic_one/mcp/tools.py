@@ -52,7 +52,6 @@ from jentic_one.auth.web.routers.identity import (
 from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
     DuplicatePendingError,
-    PrerequisiteNotMetError,
     RequiredFieldMissingError,
     RulesNotSupportedForBindError,
     UnsupportedScopeGrantError,
@@ -1164,7 +1163,11 @@ async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any])
 _REQUEST_ACCESS_PARAMS = [
     ParamSpec("request_id", "string", ("id",)),
     ParamSpec("provision", "string_list", ("provisions",)),
-    ParamSpec("toolkits", "string_list", ("toolkit",)),
+    # "toolkits"/"toolkit" are the deprecated spellings of "apis" (toolkits
+    # were retired, theme-5); accepted as aliases for one release.
+    ParamSpec("apis", "string_list", ("api", "toolkits", "toolkit")),
+    # toolkit_ids stays accepted so an old caller gets compose()'s re-file
+    # error naming "apis" instead of an unknown-parameter failure.
     ParamSpec("toolkit_ids", "string_list", ("toolkit_id",)),
     ParamSpec("scopes", "string_list", ("scope",)),
     ParamSpec("auth", "string_list", ("auths",)),
@@ -1195,7 +1198,7 @@ def _request_access_options(args: dict[str, Any]) -> AccessRequestOptions:
         raise invalid_params(str(exc)) from None
     return AccessRequestOptions(
         provisions=args.get("provision") or [],
-        toolkits=args.get("toolkits") or [],
+        apis=args.get("apis") or [],
         toolkit_ids=args.get("toolkit_ids") or [],
         scopes=args.get("scopes") or [],
         auths=args.get("auth") or [],
@@ -1321,7 +1324,7 @@ def _access_request_result(
             CODE_BROKER_DENIED,
             f"access request {view.id} was denied",
             actionable="Read the items' decision_reason in this result to learn why "
-            "before giving up. A bare toolkit bind for an API nothing serves "
+            "before giving up. A bare bind request for an API no credential serves "
             'auto-denies — file a provisioning plan ({"provision": ["vendor/name"], …}) '
             "instead. Only re-file if something material changed.",
             next_tool="whoami",
@@ -1388,7 +1391,7 @@ async def handle_request_access(
         if opts.has_filing_params():
             raise invalid_params(
                 'pass EITHER "request_id" (to poll an existing request) OR filing '
-                'parameters ("provision"/"toolkits"/"toolkit_ids"/"scopes" with '
+                'parameters ("provision"/"apis"/"scopes" with '
                 '"auth"/"rules_json"/"reason") to file a new one, not both'
             )
         try:
@@ -1415,7 +1418,7 @@ async def handle_request_access(
     except AccessTargetRequiredError:
         raise invalid_params(
             'request_access requires a target: "provision" (vendor/name plans), '
-            '"toolkits" (vendor/name binds), "toolkit_ids" (tk_… binds), or "scopes" '
+            '"apis" (vendor/name binds), or "scopes" '
             '— or "request_id" to poll an existing request'
         ) from None
     except ComposeError as exc:
@@ -1458,19 +1461,6 @@ async def handle_request_access(
         raise invalid_params(str(exc)) from None
     except RequiredFieldMissingError as exc:
         raise invalid_params(str(exc)) from None
-    except PrerequisiteNotMetError as exc:
-        # The residual 403-filing arm (REST: 403): the control plane refused
-        # the FILING itself. Not the generic revoked-identity mapping — and
-        # not a request_access pointer either: an agent that may not file
-        # requests cannot request the right to file them.
-        raise ToolError(
-            CODE_BROKER_DENIED,
-            f"the control plane refused to accept this access request: {exc}",
-            actionable="This agent is not permitted to file this access request; "
-            "relay this error to your human operator — they can grant what you "
-            "need directly in the dashboard.",
-            next_tool="whoami",
-        ) from None
     return _access_request_result(env, view, None)
 
 

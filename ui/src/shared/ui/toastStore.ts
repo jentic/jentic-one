@@ -75,6 +75,12 @@ export function useToasts(): ToastEntry[] {
 	useEffect(() => {
 		const fn = (next: ToastEntry[]) => setSnap(next);
 		listeners.add(fn);
+		// Re-sync on subscribe: a toast fired between this component's render
+		// and this effect (e.g. another component's on-mount toast — the
+		// toolkits deprecation notice does exactly that) lands in the store
+		// before we're listening and would otherwise stay invisible until the
+		// next notify. Same-reference no-ops are free.
+		fn(toasts);
 		return () => {
 			listeners.delete(fn);
 		};

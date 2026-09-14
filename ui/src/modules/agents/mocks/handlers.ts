@@ -119,6 +119,72 @@ interface OAuthGrantRow {
 /** Consent→agent grants, mutated by the `:revoke` kill switch. */
 let oauthGrants: OAuthGrantRow[] = [];
 
+// ---------------------------------------------------------------------------
+// Direct agent↔credential bindings (theme 5 phase 5a).
+//
+// One store backs BOTH sides of the surface: the agent-side list/bind/
+// suspend/resume (`/agents/{id}/credentials…`) and the credential-side
+// reads (`/credentials/{cid}/agents…` + per-binding permissions), so a
+// mutation through either is observable from the other — exactly like the
+// real backend's single bindings table.
+// ---------------------------------------------------------------------------
+
+/** One permission rule as stored/returned (PermissionRuleReadSchema shape). */
+type BindingRule = {
+	effect: 'allow' | 'deny';
+	match_mode?: 'regex' | 'prefix' | 'exact';
+	methods?: string[] | null;
+	operations?: string[] | null;
+	path?: string | null;
+	_comment?: string | null;
+	_system?: boolean;
+};
+
+/** One binding row (CredentialBindingResponse shape + its rule list). */
+interface CredentialBindingRow {
+	id: string;
+	agent_id: string;
+	credential_id: string;
+	name: string | null;
+	suspended: boolean;
+	rule_set_id: string | null;
+	bound_at: string;
+	serves: Array<{ api_vendor: string; api_name?: string | null; api_version?: string | null }>;
+	permissions: BindingRule[];
+}
+
+let credentialBindings: CredentialBindingRow[] = [];
+
+function seedBinding(
+	over: Partial<CredentialBindingRow> & Pick<CredentialBindingRow, 'agent_id' | 'credential_id'>,
+): CredentialBindingRow {
+	return {
+		id: `acb_${over.agent_id}_${over.credential_id}`,
+		name: null,
+		suspended: false,
+		rule_set_id: null,
+		bound_at: now(-30),
+		serves: [],
+		permissions: [],
+		...over,
+	};
+}
+
+/** Test-only: append extra binding rows. Resets with `resetAgentsStore()`. */
+export function seedCredentialBindings(
+	rows: Array<
+		Partial<CredentialBindingRow> & Pick<CredentialBindingRow, 'agent_id' | 'credential_id'>
+	>,
+): void {
+	for (const over of rows) credentialBindings.push(seedBinding(over));
+}
+
+/** Wire projection of a binding row (strips the mock-internal rule list). */
+function bindingJson(row: CredentialBindingRow) {
+	const { permissions: _permissions, ...wire } = row;
+	return wire;
+}
+
 /**
  * The platform permission catalogue (`GET /permissions`).
  *
@@ -157,8 +223,6 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 			'jobs:write',
 			'service-accounts:read',
 			'service-accounts:write',
-			'toolkits:read',
-			'toolkits:write',
 			'users:read',
 			'users:write',
 		],
@@ -172,19 +236,7 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	},
 	{
 		name: 'capabilities:read',
-		description: 'Read capability and toolkit metadata',
-		implies: [],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'toolkits:write',
-		description: 'Create, update, and delete toolkits',
-		implies: ['toolkits:read'],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'toolkits:read',
-		description: 'Read toolkit configuration and status',
+		description: 'Read capability metadata',
 		implies: [],
 		grantable_by_caller: true,
 	},
@@ -281,7 +333,7 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	{
 		name: 'owner:resources:read',
 		description: "Read resources owned by the agent's creator (umbrella)",
-		implies: ['owner:agents:read', 'owner:credentials:read', 'owner:toolkits:read'],
+		implies: ['owner:agents:read', 'owner:credentials:read'],
 		grantable_by_caller: true,
 	},
 	{
@@ -293,12 +345,6 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	{
 		name: 'owner:agents:read',
 		description: "Read agents owned by the agent's creator",
-		implies: [],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'owner:toolkits:read',
-		description: "Read toolkits owned by the agent's creator",
 		implies: [],
 		grantable_by_caller: true,
 	},
@@ -408,6 +454,28 @@ export function resetAgentsStore(): void {
 			can_revoke: false,
 		},
 	];
+	// Direct credential bindings: agnt_active_1 carries one healthy binding
+	// (with a rule) and one suspended, rule-less binding — so the mocked dev
+	// card shows the resume affordance AND the zero-rules warning out of the
+	// box. Other agents have none (exercises the empty state).
+	credentialBindings = [
+		seedBinding({
+			agent_id: 'agnt_active_1',
+			credential_id: 'cred_slack_1',
+			name: 'Slack bot token',
+			serves: [{ api_vendor: 'slack.com', api_name: null, api_version: null }],
+			permissions: [
+				{ effect: 'allow', match_mode: 'prefix', methods: ['POST'], path: '/chat.' },
+			],
+		}),
+		seedBinding({
+			agent_id: 'agnt_active_1',
+			credential_id: 'cred_github_1',
+			name: 'GitHub PAT',
+			suspended: true,
+			serves: [{ api_vendor: 'github.com', api_name: null, api_version: null }],
+		}),
+	];
 }
 
 /**
@@ -485,7 +553,6 @@ const DEFAULT_AGENT_SCOPES_MOCK = [
 	'jobs:read',
 	'events:read',
 	'owner:resources:read',
-	'owner:toolkits:read',
 	'owner:agents:read',
 	'owner:credentials:read',
 	'owner:access-requests:read',
@@ -588,8 +655,8 @@ function executionRow(opts: {
 	id: string;
 	actorId: string;
 	status: 'completed' | 'failed';
-	toolkitId: string;
-	toolkitName: string;
+	credentialId: string;
+	credentialName: string;
 	operationId: string;
 	durationMs: number;
 	httpStatus: number;
@@ -612,8 +679,12 @@ function executionRow(opts: {
 		pinned_revisions: null,
 		started_at: now(-opts.minutesAgo),
 		status: opts.status,
-		toolkit_id: opts.toolkitId,
-		toolkit_name: opts.toolkitName,
+		credential_id: opts.credentialId,
+		credential_name: opts.credentialName,
+		// Legacy toolkit attribution is null on the direct-binding path (the
+		// columns survive server-side until Phase 6b for historical rows).
+		toolkit_id: null,
+		toolkit_name: null,
 		trace_id: `trace_${opts.id}`,
 	};
 }
@@ -629,8 +700,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_1',
 			actorId: 'agnt_active_1',
 			status: 'completed',
-			toolkitId: 'github',
-			toolkitName: 'github',
+			credentialId: 'github',
+			credentialName: 'github',
 			operationId: 'create_issue',
 			durationMs: 412,
 			httpStatus: 200,
@@ -642,8 +713,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_mcp_1',
 			actorId: 'agnt_active_1',
 			status: 'completed',
-			toolkitId: 'github',
-			toolkitName: 'github',
+			credentialId: 'github',
+			credentialName: 'github',
 			operationId: 'search_issues',
 			durationMs: 180,
 			httpStatus: 200,
@@ -654,8 +725,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_2',
 			actorId: 'agnt_active_1',
 			status: 'failed',
-			toolkitId: 'slack',
-			toolkitName: 'slack',
+			credentialId: 'slack',
+			credentialName: 'slack',
 			operationId: 'post_message',
 			durationMs: 38,
 			httpStatus: 403,
@@ -666,8 +737,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_3',
 			actorId: 'agnt_active_1',
 			status: 'completed',
-			toolkitId: 'github',
-			toolkitName: 'github',
+			credentialId: 'github',
+			credentialName: 'github',
 			operationId: 'list_pull_requests',
 			durationMs: 220,
 			httpStatus: 200,
@@ -677,8 +748,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_4',
 			actorId: 'agnt_active_1',
 			status: 'completed',
-			toolkitId: 'github',
-			toolkitName: 'github',
+			credentialId: 'github',
+			credentialName: 'github',
 			operationId: 'get_repo',
 			durationMs: 145,
 			httpStatus: 200,
@@ -690,8 +761,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_sva_1',
 			actorId: 'sva_active_1',
 			status: 'completed',
-			toolkitId: 'petstore',
-			toolkitName: 'petstore',
+			credentialId: 'petstore',
+			credentialName: 'petstore',
 			operationId: 'sync_inventory',
 			durationMs: 1240,
 			httpStatus: 200,
@@ -701,8 +772,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_sva_2',
 			actorId: 'sva_active_1',
 			status: 'completed',
-			toolkitId: 'petstore',
-			toolkitName: 'petstore',
+			credentialId: 'petstore',
+			credentialName: 'petstore',
 			operationId: 'sync_inventory',
 			durationMs: 1180,
 			httpStatus: 200,
@@ -947,23 +1018,6 @@ export const agentsHandlers = [
 	http.get('/agents/:id', ({ params }) => {
 		const row = agents.find((a) => a.id === params.id);
 		return row ? HttpResponse.json(row) : new HttpResponse(null, { status: 404 });
-	}),
-	http.get('/agents/:id/toolkits', ({ params }) => {
-		const row = agents.find((a) => a.id === params.id);
-		if (!row) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json({
-			data:
-				row.id === 'agnt_active_1'
-					? [
-							{
-								id: 'tkb_1',
-								agent_id: row.id,
-								toolkit_id: 'github',
-								bound_at: now(-20),
-							},
-						]
-					: [],
-		});
 	}),
 	// Colon-verb lifecycle. MSW matches the literal `:verb` suffix.
 	http.post('/agents/:id\\:approve', ({ params }) => {
@@ -1297,5 +1351,197 @@ export const agentsHandlers = [
 			grant.revoked_at = now();
 		}
 		return new HttpResponse(null, { status: 204 });
+	}),
+
+	// ---- Direct agent↔credential bindings (theme 5 phase 5a) ----
+	http.get('/agents/:id/credentials', ({ params }) => {
+		const agent = agents.find((a) => a.id === params.id);
+		if (!agent) return new HttpResponse(null, { status: 404 });
+		return HttpResponse.json({
+			data: credentialBindings.filter((b) => b.agent_id === params.id).map(bindingJson),
+		});
+	}),
+	http.post('/agents/:id/credentials', async ({ params, request }) => {
+		const agent = agents.find((a) => a.id === params.id);
+		if (!agent) return new HttpResponse(null, { status: 404 });
+		const body = (await request.json().catch(() => ({}))) as { credential_id?: string };
+		if (!body.credential_id) {
+			return HttpResponse.json(
+				{ detail: [{ loc: ['body', 'credential_id'], msg: 'Field required' }] },
+				{ status: 422 },
+			);
+		}
+		// Duplicate bind is a 409 — suspended rows count, they are still bound.
+		if (
+			credentialBindings.some(
+				(b) => b.agent_id === params.id && b.credential_id === body.credential_id,
+			)
+		) {
+			return HttpResponse.json(
+				{ detail: 'Credential is already bound to this agent.' },
+				{ status: 409 },
+			);
+		}
+		const row = seedBinding({
+			id: genId('acb'),
+			agent_id: params.id as string,
+			credential_id: body.credential_id,
+			bound_at: now(),
+		});
+		credentialBindings.push(row);
+		// The phase-1 bind creates the binding with ZERO rules (default deny);
+		// the wizard's grant arrives as a follow-up permissions PUT.
+		return HttpResponse.json(bindingJson(row), { status: 201 });
+	}),
+	http.delete('/agents/:id/credentials/:cid', ({ params, request }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.id && b.credential_id === params.cid,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		const purge = new URL(request.url).searchParams.get('purge') === 'true';
+		if (purge) {
+			// Purge deletes the binding AND its rules outright.
+			credentialBindings = credentialBindings.filter((b) => b !== row);
+		} else {
+			// Default DELETE is the reversible suspend — rules survive.
+			row.suspended = true;
+		}
+		return new HttpResponse(null, { status: 204 });
+	}),
+	http.post('/agents/:id/credentials/:cid\\:resume', ({ params }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.id && b.credential_id === params.cid,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		if (!row.suspended) return new HttpResponse(null, { status: 409 });
+		row.suspended = false;
+		return HttpResponse.json(bindingJson(row));
+	}),
+	// Credential-side roster (`GET /credentials/{cid}/agents`) — same store,
+	// projected to CredentialAgentResponse rows (agent name + lifecycle status
+	// resolved from THIS module's agent roster).
+	http.get('/credentials/:cid/agents', ({ params }) => {
+		const rows = credentialBindings
+			.filter((b) => b.credential_id === params.cid)
+			.map((b) => {
+				const agent = findActor(b.agent_id);
+				return {
+					agent_id: b.agent_id,
+					agent_name: agent?.name ?? b.agent_id,
+					bound_at: b.bound_at,
+					rule_set_id: b.rule_set_id,
+					status: agent?.status ?? 'active',
+					suspended: b.suspended,
+				};
+			});
+		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
+	}),
+	http.get('/credentials/:cid/agents/:aid/permissions', ({ params }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		return HttpResponse.json({ data: row.permissions });
+	}),
+	http.put('/credentials/:cid/agents/:aid/permissions', async ({ params, request }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		const rules = (await request.json()) as BindingRule[];
+		// Mirror the backend schema's guards (same contract as the toolkit-era
+		// permissions PUT): a condition-less allow is a 422, and an invalid
+		// regex path is a 422.
+		for (const rule of rules) {
+			const conditionless =
+				!rule.methods?.length &&
+				!(typeof rule.path === 'string' && rule.path.trim()) &&
+				!rule.operations?.length;
+			if (rule.effect === 'allow' && conditionless) {
+				return HttpResponse.json(
+					{ detail: 'A condition-less allow rule is not permitted.' },
+					{ status: 422 },
+				);
+			}
+			if (rule.path && (rule.match_mode ?? 'regex') === 'regex') {
+				try {
+					new RegExp(rule.path);
+				} catch {
+					return HttpResponse.json(
+						{ detail: `Invalid path regex: ${rule.path}` },
+						{ status: 422 },
+					);
+				}
+			}
+		}
+		// Replace USER rules only — system rules survive the save untouched.
+		const systemRules = row.permissions.filter((r) => r._system);
+		row.permissions = [...rules.map((r) => ({ ...r, _system: false })), ...systemRules];
+		return HttpResponse.json({ data: row.permissions });
+	}),
+	// Broker dry-run against ONE binding's rules (`POST …/permissions:test`).
+	// Unlike the toolkit-era mock there is NO vendor pooling — the direct
+	// binding's own ordered list is the whole policy. Same evaluation
+	// semantics: first match wins, condition-less allows are skipped,
+	// operation-scoped rules need an operation id, no match ⇒ default deny.
+	http.post('/credentials/:cid/agents/:aid/permissions\\:test', async ({ params, request }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		const body = (await request.json()) as {
+			method: string;
+			path: string;
+			operation_id?: string | null;
+		};
+		const method = body.method.toUpperCase();
+		for (let i = 0; i < row.permissions.length; i++) {
+			const rule = row.permissions[i];
+			if (
+				!rule.methods?.length &&
+				!rule.path &&
+				!rule.operations?.length &&
+				rule.effect === 'allow'
+			)
+				continue;
+			if (rule.methods?.length && !rule.methods.map((m) => m.toUpperCase()).includes(method))
+				continue;
+			if (rule.path != null && rule.path !== '') {
+				const mode = rule.match_mode ?? 'regex';
+				let matches = false;
+				if (mode === 'prefix') matches = body.path.startsWith(rule.path);
+				else if (mode === 'exact') matches = body.path === rule.path;
+				else {
+					try {
+						// `^(?:…)$` mirrors Python's re.fullmatch.
+						matches = new RegExp(`^(?:${rule.path})$`).test(body.path);
+					} catch {
+						matches = false;
+					}
+				}
+				if (!matches) continue;
+			}
+			if (
+				rule.operations?.length &&
+				(body.operation_id == null || !rule.operations.includes(body.operation_id))
+			)
+				continue;
+			return HttpResponse.json({
+				allowed: rule.effect === 'allow',
+				matched: true,
+				effect: rule.effect,
+				rule_index: i,
+				is_system: Boolean(rule._system),
+				credential_id: params.cid,
+			});
+		}
+		return HttpResponse.json({
+			allowed: false,
+			matched: false,
+			effect: null,
+			rule_index: null,
+			is_system: null,
+			credential_id: null,
+		});
 	}),
 ];

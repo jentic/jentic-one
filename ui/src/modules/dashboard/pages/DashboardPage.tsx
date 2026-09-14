@@ -22,7 +22,7 @@ import { ROUTES } from '@/shared/app/routes';
  *      an inline row instead of killing the queue.
  *   2. PERFORMANCE — real gateway KPIs and trend charts from the org:admin
  *      `GET /monitoring/usage` aggregate (no more client-side approximations).
- *   3. CONTEXT — top APIs / toolkits / agents by usage, same query.
+ *   3. CONTEXT — top APIs / credentials / agents by usage, same query.
  *   4. DETAIL — a five-row recent-activity teaser that links into Monitor.
  *
  * A workspace with no agents and no executions yet swaps layers 2–3 for the

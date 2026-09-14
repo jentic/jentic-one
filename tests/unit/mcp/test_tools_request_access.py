@@ -26,7 +26,6 @@ import jentic_one.mcp.tools as tools_mod
 from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
     DuplicatePendingError,
-    PrerequisiteNotMetError,
     UnsupportedScopeGrantError,
 )
 from jentic_one.control.services.access_requests.schemas.access_requests import (
@@ -63,7 +62,7 @@ def _payload(result: Any) -> dict[str, Any]:
 
 
 def _item(
-    resource_type: str = "toolkit",
+    resource_type: str = "credential",
     action: str = "bind",
     status: str = "pending",
     resource_id: str | None = None,
@@ -181,7 +180,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_no_target_and_no_request_id_is_invalid_params(service: None) -> None:
     with pytest.raises(MCPError) as err:
         await tools_mod.handle_request_access(_env(), {})
-    for name in ("provision", "toolkits", "scopes", "request_id"):
+    for name in ("provision", "apis", "scopes", "request_id"):
         assert name in str(err.value)
     assert _FakeAccessRequestService.filed == []
 
@@ -189,7 +188,7 @@ async def test_no_target_and_no_request_id_is_invalid_params(service: None) -> N
 @pytest.mark.parametrize(
     "arguments",
     [
-        {"request_id": "acr_1", "toolkits": ["acme/pets"]},
+        {"request_id": "acr_1", "apis": ["acme/pets"]},
         {"request_id": "acr_1", "reason": "please"},
         {"request_id": "acr_1", "auth": ["bearer"]},
         # A whitespace-only stray still marks the call confused: Go probes the
@@ -222,7 +221,7 @@ async def test_compose_conflict_is_invalid_params(service: None) -> None:
     result = None
     with pytest.raises(MCPError, match="provisioning plan already ends"):
         result = await tools_mod.handle_request_access(
-            _env(), {"provision": ["acme/pets"], "toolkits": ["acme/pets"]}
+            _env(), {"provision": ["acme/pets"], "apis": ["acme/pets"]}
         )
     assert result is None
     assert _FakeAccessRequestService.filed == []
@@ -246,7 +245,7 @@ async def test_filing_returns_pending_envelope_immediately_with_instruction(
             "provision": ["stripe.com/api"],
             "auth": ["bearer"],
             "rules_json": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
-            "toolkits": ["github.com/api"],
+            "apis": ["github.com/api"],
             "scopes": ["catalog:import"],
             "reason": "read invoices for the summary task",
         },
@@ -265,16 +264,14 @@ async def test_filing_returns_pending_envelope_immediately_with_instruction(
     assert call["reason"] == "read invoices for the summary task"
     kinds = [(i["resource_type"], i["action"]) for i in call["items"]]
     assert kinds == [
-        ("toolkit", "create"),
         ("credential", "provision"),
         ("credential", "bind"),
-        ("toolkit", "bind"),
-        ("toolkit", "bind"),
+        ("credential", "bind"),
         ("scope", "grant"),
-    ], "compose() fulfilment order: the 4-item chain, the bind, the grant"
-    assert call["items"][1]["resource_reference"]["security_scheme"] == "bearer"
-    assert call["items"][2]["rules"][0]["methods"] == ["GET"], "rules never comma-split"
-    assert call["items"][5]["resource_id"] == "catalog:import"
+    ], "compose() fulfilment order: the 2-item chain, the bind, the grant"
+    assert call["items"][0]["resource_reference"]["security_scheme"] == "bearer"
+    assert call["items"][1]["rules"][0]["methods"] == ["GET"], "rules never comma-split"
+    assert call["items"][3]["resource_id"] == "catalog:import"
     assert _FakeAccessRequestService.gets == [], "no post-file poll on this backend"
 
 
@@ -282,16 +279,14 @@ async def test_filing_absolutizes_the_relative_approve_url(service: None) -> Non
     """The service stores ``{canonical_base_url}/access-requests/{id}`` which
     is a rooted RELATIVE path when the knob is unset — absolutized onto
     env.base_url for the human operator."""
-    result = await dispatch_tool_call(_env(), "request_access", {"toolkits": ["acme/pets"]})
+    result = await dispatch_tool_call(_env(), "request_access", {"apis": ["acme/pets"]})
     payload = _payload(result)
     assert payload["approve_url"] == "https://auth.example.com/access-requests/acr_1"
 
 
 _PROVISION_CHAIN = [
-    ("toolkit", "create"),
     ("credential", "provision"),
     ("credential", "bind"),
-    ("toolkit", "bind"),
 ]
 
 
@@ -299,8 +294,9 @@ _PROVISION_CHAIN = [
     ("arguments", "expected_kinds"),
     [
         pytest.param({"provisions": ["a.com/api"]}, _PROVISION_CHAIN, id="provisions->provision"),
-        pytest.param({"toolkit": ["a.com/api"]}, [("toolkit", "bind")], id="toolkit->toolkits"),
-        pytest.param({"toolkit_id": ["tk_1"]}, [("toolkit", "bind")], id="toolkit_id->toolkit_ids"),
+        pytest.param({"api": ["a.com/api"]}, [("credential", "bind")], id="api->apis"),
+        pytest.param({"toolkits": ["a.com/api"]}, [("credential", "bind")], id="toolkits->apis"),
+        pytest.param({"toolkit": ["a.com/api"]}, [("credential", "bind")], id="toolkit->apis"),
         pytest.param({"scope": ["catalog:import"]}, [("scope", "grant")], id="scope->scopes"),
         pytest.param(
             {"provisions": ["a.com/api"], "auths": ["api_key"]},
@@ -320,18 +316,28 @@ async def test_filing_alias_spellings_reach_their_canonical_params(
     """The full alias table (Go: ``requestAccessParams``): each alias
     round-trips to its canonical parameter and files the same items the
     canonical spelling would (the ``id`` alias is pinned by the poll-arm
-    test)."""
+    test). The retired "toolkits"/"toolkit" spellings fold into "apis" and
+    file the same credential:bind, one release of compatibility."""
     result = await dispatch_tool_call(_env(), "request_access", arguments)
     assert not result.is_error, result.content
     (call,) = _FakeAccessRequestService.filed
     assert [(i["resource_type"], i["action"]) for i in call["items"]] == expected_kinds
     if "auths" in arguments:
-        assert call["items"][1]["resource_reference"]["security_scheme"] == "api_key"
+        assert call["items"][0]["resource_reference"]["security_scheme"] == "api_key"
     if "rules" in arguments:
         # The REST round-trip may ENRICH (rule defaults like match_mode) but
         # the aliased value must arrive on the bind item intact.
-        (filed_rule,) = call["items"][2]["rules"]
+        (filed_rule,) = call["items"][1]["rules"]
         assert {k: filed_rule[k] for k in ("effect", "path")} == {"effect": "allow", "path": ".*"}
+
+
+async def test_toolkit_id_alias_is_retired_with_a_refile_directive(service: None) -> None:
+    """The "toolkit_id"/"toolkit_ids" spellings stay ACCEPTED so an old
+    caller gets compose()'s re-file error naming "apis" — never an
+    unknown-parameter failure — and nothing is filed."""
+    with pytest.raises(MCPError, match=r'no longer supported.*use "apis"'):
+        await tools_mod.handle_request_access(_env(), {"toolkit_id": ["tk_1"]})
+    assert _FakeAccessRequestService.filed == []
 
 
 async def test_pydantic_validation_rejects_mis_shaped_rules(service: None) -> None:
@@ -362,20 +368,6 @@ async def test_file_time_policy_exceptions_map_to_invalid_params(service: None) 
         await tools_mod.handle_request_access(_env(), {"scopes": ["org:admin"]})
 
 
-async def test_prerequisite_refusal_is_the_residual_403_arm(service: None) -> None:
-    """A permission-shaped service refusal of the FILING itself: BROKER_DENIED
-    pointing at whoami — NOT request_access (an agent that may not file
-    requests cannot request the right to file them), NOT get_started (not on
-    this surface)."""
-    _FakeAccessRequestService.file_error = PrerequisiteNotMetError("agnt_1", "tk_1", "credential")
-    result = await dispatch_tool_call(_env(), "request_access", {"toolkits": ["acme/pets"]})
-    assert result.is_error
-    payload = _payload(result)
-    assert payload["error_code"] == "BROKER_DENIED"
-    assert payload["next_tool"] == "whoami"
-    assert "operator" in payload["actionable_step"]
-
-
 # ── duplicate handling (Go: DuplicatePendingSingleTargetAttaches / CompositeIsSoftError) ──
 
 
@@ -386,7 +378,7 @@ async def test_duplicate_single_target_attaches_to_the_existing_request(service:
     _FakeAccessRequestService.get_results["acr_old"] = _view(
         "pending", request_id="acr_old", approve_url="/access-requests/acr_old"
     )
-    result = await dispatch_tool_call(_env(), "request_access", {"toolkits": ["acme/pets"]})
+    result = await dispatch_tool_call(_env(), "request_access", {"apis": ["acme/pets"]})
     assert not result.is_error, "a single-target duplicate attaches, like the CLI"
     payload = _payload(result)
     assert payload["id"] == "acr_old"
@@ -404,7 +396,7 @@ async def test_duplicate_composite_is_an_honest_nothing_was_filed_error(service:
     result = await dispatch_tool_call(
         _env(),
         "request_access",
-        {"toolkits": ["acme/pets"], "scopes": ["catalog:import"]},
+        {"apis": ["acme/pets"], "scopes": ["catalog:import"]},
     )
     assert result.is_error, "a composite collision files NOTHING and must not read as success"
     payload = _payload(result)
@@ -423,7 +415,7 @@ async def test_duplicate_attach_fetch_failure_surfaces_the_existing_id(service: 
         approve_url="", existing_request_id="acr_old"
     )
     _FakeAccessRequestService.get_results = {}  # the fetch will miss
-    result = await dispatch_tool_call(_env(), "request_access", {"toolkits": ["acme/pets"]})
+    result = await dispatch_tool_call(_env(), "request_access", {"apis": ["acme/pets"]})
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "INTERNAL_ERROR"
@@ -482,7 +474,14 @@ async def test_denied_maps_to_broker_denied_with_the_request_attached(service: N
     error's ``request`` extra so the model can learn WHY before giving up."""
     _FakeAccessRequestService.get_results["acr_1"] = _view(
         "denied",
-        items=[_item(status="denied", decision_reason="No toolkit serves API acme/pets")],
+        items=[
+            _item(
+                status="denied",
+                decision_reason=(
+                    "No credential covers API acme/pets; provision a credential for it first"
+                ),
+            )
+        ],
     )
     result = await dispatch_tool_call(_env(), "request_access", {"request_id": "acr_1"})
     assert result.is_error, "a denied request must never look like success"
@@ -492,7 +491,9 @@ async def test_denied_maps_to_broker_denied_with_the_request_attached(service: N
     assert "provision" in payload["actionable_step"]
     assert payload["next_tool"] == "whoami"
     request = payload["request"]
-    assert request["items"][0]["decision_reason"] == "No toolkit serves API acme/pets"
+    assert request["items"][0]["decision_reason"] == (
+        "No credential covers API acme/pets; provision a credential for it first"
+    )
     assert request["schema_version"] == "1"
 
 
@@ -692,7 +693,7 @@ async def test_db_gate_refusal_is_a_soft_internal_error(service: None, blocked: 
     refuses softly before any filing."""
     env = _env()
     cast(MagicMock, env.ctx).is_db_allowed.side_effect = lambda db: db != blocked
-    result = await dispatch_tool_call(env, "request_access", {"toolkits": ["acme/pets"]})
+    result = await dispatch_tool_call(env, "request_access", {"apis": ["acme/pets"]})
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "INTERNAL_ERROR"
@@ -704,7 +705,7 @@ async def test_no_scope_gate_on_filing(service: None) -> None:
     """POST /access-requests uses bare get_current_identity() with no
     required_permissions — a zero-scope identity can still file (an
     empty-list require_scopes would deny every non-admin)."""
-    result = await dispatch_tool_call(_env([]), "request_access", {"toolkits": ["acme/pets"]})
+    result = await dispatch_tool_call(_env([]), "request_access", {"apis": ["acme/pets"]})
     assert not result.is_error, "filing is not scope-gated on the REST route it fronts"
     assert len(_FakeAccessRequestService.filed) == 1
 
@@ -717,7 +718,7 @@ async def test_handler_never_decides_or_amends(service: None) -> None:
     the dashboard. The fake's decide()/amend() raise if reached; the ledger
     staying empty across both arms pins that they never are."""
     _FakeAccessRequestService.get_results["acr_1"] = _view("pending")
-    filed = await dispatch_tool_call(_env(), "request_access", {"toolkits": ["acme/pets"]})
+    filed = await dispatch_tool_call(_env(), "request_access", {"apis": ["acme/pets"]})
     assert not filed.is_error
     polled = await dispatch_tool_call(_env(), "request_access", {"request_id": "acr_1"})
     assert not polled.is_error

@@ -49,7 +49,7 @@ jentic catalog import <api_id>`,
 	},
 	{
 		title: 'Bind a credential',
-		body: 'Store a credential and bind it to a toolkit so the Broker can inject it at execution time. Secrets stay in the Control plane — they never reach the agent.',
+		body: 'Store a credential and bind it to your agent so the Broker can inject it at execution time. Secrets stay in the Control plane — they never reach the agent.',
 		code: 'jentic apis operations <vendor/name/version>',
 		prompt: true,
 	},

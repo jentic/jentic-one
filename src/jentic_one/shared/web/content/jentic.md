@@ -1,7 +1,7 @@
 ---
 name: jentic
 description: Use this skill whenever the user wants to work with a third-party or external API/tool through the Jentic platform — e.g. asks to "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Prefer launching this before ToolSearch or hand-rolled HTTP: it drives the audited Jentic loop (identity → discover → request access → execute) over whichever Jentic surface the session has — `jentic` MCP tools or the `jentic` CLI — even inside a code repo. Do NOT use it for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
-version: 3
+version: 4
 ---
 
 # Using Jentic
@@ -87,7 +87,7 @@ reference names the exact recovery for each state.
 ### 2. Check what you can do, and request access if needed
 
 Your identity view (CLI `jentic access whoami`; MCP `whoami`) lists your
-status, scopes, and toolkit bindings; each binding lists the APIs it
+status, scopes, and credential bindings; each binding lists the APIs it
 **serves** (`serves: [{api_vendor, api_name, api_version}]`). This tells you
 exactly what you can already call. Combined with the catalog (what's
 available to add — step 3), it's your map of the workspace.
@@ -144,13 +144,13 @@ confuse the human reviewing it. You never enter the credential secret and
 you never approve — the human fills the secret in the dashboard and grants
 the plan. You propose; they decide.
 
-A plain toolkit-binding request is only the **last mile** — use it when a
-toolkit for the API already exists (e.g. an operator created one) and you
-just need to be bound to it. When nothing serves the API yet, a provisioning
-plan is the right first move; a bare toolkit bind would auto-deny with
-`decision_reason: "No toolkit serves API <vendor/name>; provision and bind a
-credential for it first, then request the toolkit binding"` — that is the
-signal to file the provisioning plan instead.
+A plain credential-binding request (filed by API reference) is only the
+**last mile** — use it when a credential serving the API already exists
+(e.g. an operator provisioned one) and you just need to be bound to it. When
+nothing serves the API yet, a provisioning plan is the right first move; a
+bare bind request would auto-deny with `decision_reason: "No credential
+covers API <vendor/name>; provision a credential for it first"` — that is
+the signal to file the provisioning plan instead.
 
 ### 3. Find an operation (import first, then search)
 
@@ -174,7 +174,7 @@ and don't file an access request for a made-up "catalog read" scope: reading
 the registry and importing a cataloged API need no grant.
 
 **Before concluding "the data is gone", confirm which backend you're on.**
-If APIs, credentials, or toolkits you *know* existed appear missing — or IDs
+If APIs or credentials you *know* existed appear missing — or IDs
 look unfamiliar — you may be talking to a **different** backend than you
 expect: a hosted (`remote`) install and a `local` self-hosted one have
 independent registries and credentials, and each surface in your session can

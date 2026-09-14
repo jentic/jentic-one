@@ -47,8 +47,8 @@ The runtime surfaces (from the public code / `README.md`):
 - **Registry** — catalogue of registered APIs (immutable revisions, operations,
   security schemes, servers); **APIs only**. Operator/agent spec fixes are applied as
   [overlays](overlays.md) (see the stacking contract + update loop there).
-- **Control** — credential storage + toolkit/credential bindings + access-request
-  lifecycle.
+- **Control** — credential storage + agent-credential bindings (with optional
+  shared rule sets) + access-request lifecycle.
 - **Admin** — operator accounts, role-based permissions/access grants, async jobs,
   append-only audit log, execution telemetry; serves the operator UI.
 - **Auth** — agent self-registration, token minting, OAuth client, service accounts,
@@ -113,7 +113,7 @@ Ordered by how strongly the public docs emphasize each.
    size.
 2. **Secure & auditable by default.** Default-deny permissions (a rule-less binding
    blocks everything); append-only audit log; operator-supplied encryption keyset
-   required (`SECURITY.md`, `control/web/schemas/toolkits.py`).
+   required (`SECURITY.md`, `control/web/schemas/permission_rules.py`).
 3. **Self-hostable & operable by a small team.** One-command install; tiered
    self-serve hardening path (`README.md`, `docs/security/hardening.md`).
 4. **Telemetry opt-in / off by default / closed-schema; observability self-hosted.**

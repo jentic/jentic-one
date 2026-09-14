@@ -51,7 +51,7 @@ Store the credential the API needs (an API key, bearer token, basic auth, or an
 OAuth2 flow). It is encrypted at rest and is **never** returned to a caller,
 logged in cleartext, or exposed to the agent — it is decrypted only inside the
 Broker, at execution time. See
-[Credentials and toolkits](credentials-and-toolkits.md) for how a credential is
+[Credentials and bindings](credentials-and-toolkits.md) for how a credential is
 stored and how one credential is shared across an API's operations.
 
 ## 4. Register the agent
@@ -77,15 +77,25 @@ agent is active. Re-running `register` is idempotent. (Registering with a
 
 ## 5. Grant access
 
-Bind the agent to a toolkit so it can reach specific operations. Access is
-**default-deny**: a rule-less binding blocks everything, and permissions are
-first-match. An agent reaches only the operations it has been approved for, and
-asking for more is a reviewable request rather than a silent widening:
+Give the agent access to a credential so it can reach specific operations.
+Either works:
+
+- **Operator-side:** open the agent's detail page in the UI and bind a stored
+  credential on its **Access** tab ("Bound credentials").
+- **Agent-side:** the agent files an access request the operator reviews:
 
 ```bash
-jentic access request --toolkit httpbin.org/httpbin   # file a request the operator can review
-jentic access status <request-id>                     # check whether it has been granted
+jentic access request --api httpbin.org/httpbin --wait   # file a request and block until decided
+jentic access status <request-id>                        # or poll it later
 ```
+
+Add `--provision` instead of `--api` when no stored credential serves the API
+yet — the request then asks the operator to provision one *and* bind it.
+
+Access is **default-deny**: a rule-less binding blocks everything, and
+permissions are first-match. An agent reaches only the operations it has been
+approved for, and asking for more is a reviewable request rather than a silent
+widening.
 
 ## 6. Make the call
 

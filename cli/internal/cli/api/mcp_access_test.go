@@ -445,7 +445,7 @@ func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
 		"provision": ["stripe.com/api"],
 		"auth": ["bearer"],
 		"rules_json": [{"effect":"allow","methods":["GET"],"path":".*"}],
-		"toolkits": ["github.com/api"],
+		"apis": ["github.com/api"],
 		"scopes": ["catalog:import"],
 		"reason": "read invoices for the summary task"
 	}`))
@@ -456,8 +456,9 @@ func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
 		t.Fatalf("a pending filing is a normal result, not an error: %s", toolResultText(res))
 	}
 
-	// The wire body: compose()'s exact plan — the 4-item provisioning chain
-	// first, then the toolkit bind, then the scope grant — plus the reason.
+	// The wire body: compose()'s exact plan — the 2-item provisioning chain
+	// first (theme-5 phase 3), then the reference bind, then the scope grant —
+	// plus the reason.
 	var wire struct {
 		Reason string `json:"reason"`
 		Items  []struct {
@@ -474,23 +475,26 @@ func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
 	if wire.Reason != "read invoices for the summary task" {
 		t.Errorf("reason on the wire = %q, want the argument mirrored", wire.Reason)
 	}
-	if len(wire.Items) != 6 {
-		t.Fatalf("items = %d, want the 4-item provision chain + toolkit bind + scope grant", len(wire.Items))
+	if len(wire.Items) != 4 {
+		t.Fatalf("items = %d, want the 2-item provision chain + reference bind + scope grant", len(wire.Items))
 	}
-	wantKinds := []string{"toolkit/create", "credential/provision", "credential/bind", "toolkit/bind", "toolkit/bind", "scope/grant"}
+	wantKinds := []string{"credential/provision", "credential/bind", "credential/bind", "scope/grant"}
 	for i, want := range wantKinds {
 		if got := wire.Items[i].ResourceType + "/" + wire.Items[i].Action; got != want {
 			t.Errorf("item %d = %s, want %s (compose() fulfilment order)", i, got, want)
 		}
 	}
-	if ref := wire.Items[1].ResourceReference; ref["security_scheme"] != "bearer" || ref["vendor"] != "stripe.com" {
+	if ref := wire.Items[0].ResourceReference; ref["security_scheme"] != "bearer" || ref["vendor"] != "stripe.com" {
 		t.Errorf("provision item reference = %v, want the auth type + API stamped on", ref)
 	}
-	if len(wire.Items[2].Rules) == 0 || !strings.Contains(string(wire.Items[2].Rules), `"methods":["GET"]`) {
-		t.Errorf("credential:bind rules = %s, want the proposed rules_json intact (never comma-split)", wire.Items[2].Rules)
+	if len(wire.Items[1].Rules) == 0 || !strings.Contains(string(wire.Items[1].Rules), `"methods":["GET"]`) {
+		t.Errorf("credential:bind rules = %s, want the proposed rules_json intact (never comma-split)", wire.Items[1].Rules)
 	}
-	if wire.Items[5].ResourceID == nil || *wire.Items[5].ResourceID != "catalog:import" {
-		t.Errorf("scope item = %+v, want resource_id catalog:import", wire.Items[5])
+	if ref := wire.Items[2].ResourceReference; ref["vendor"] != "github.com" {
+		t.Errorf("reference bind = %v, want the apis target filed as a credential bind by reference", ref)
+	}
+	if wire.Items[3].ResourceID == nil || *wire.Items[3].ResourceID != "catalog:import" {
+		t.Errorf("scope item = %+v, want resource_id catalog:import", wire.Items[3])
 	}
 
 	payload := decodeToolJSON(t, res)
@@ -517,13 +521,13 @@ func TestMCPRequestAccess_AutoDenialSurfacesInSameResult(t *testing.T) {
 	plane := &accessControlPlane{
 		fileStatus: statusPending,
 		pollStatus: statusDenied,
-		itemsJSON:  `[{"id":"item_1","resource_type":"toolkit","action":"bind","status":"denied","decision_reason":"No toolkit serves API acme/pets; provision and bind a credential for it first"}]`,
+		itemsJSON:  `[{"id":"item_1","resource_type":"credential","action":"bind","status":"denied","decision_reason":"No credential serves API acme/pets; provision one for it first"}]`,
 	}
 	srv := httptest.NewServer(plane.handler(t))
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"toolkits":["acme/pets"],"reason":"r"}`))
+	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
@@ -542,7 +546,7 @@ func TestMCPRequestAccess_AutoDenialSurfacesInSameResult(t *testing.T) {
 		t.Fatalf("denial must carry the full request for its decision_reason: %v", payload)
 	}
 	items, _ := request["items"].([]any)
-	if len(items) != 1 || !strings.Contains(fmt.Sprint(items[0]), "No toolkit serves") {
+	if len(items) != 1 || !strings.Contains(fmt.Sprint(items[0]), "No credential serves") {
 		t.Errorf("request.items = %v, want the decision_reason relayed", request["items"])
 	}
 }
@@ -553,6 +557,8 @@ func TestMCPRequestAccess_DuplicatePendingSingleTargetAttaches(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
+	// The legacy "toolkits" spelling rides the deprecated alias — this doubles
+	// as the alias-compat regression while the alias survives (one release).
 	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"toolkits":["acme/pets"]}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccess: %v", err)
@@ -573,7 +579,7 @@ func TestMCPRequestAccess_DuplicatePendingCompositeIsSoftError(t *testing.T) {
 
 	s := fastAccessServer(t)
 	res, err := s.handleRequestAccess(activeCtx(srv.URL),
-		callToolRequest("request_access", `{"toolkits":["acme/pets"],"scopes":["catalog:import"]}`))
+		callToolRequest("request_access", `{"apis":["acme/pets"],"scopes":["catalog:import"]}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
@@ -627,7 +633,7 @@ func TestMCPRequestAccess_MissingTargetIsInvalidParams(t *testing.T) {
 	if res != nil {
 		t.Fatalf("want a protocol error, got a result: %v", res)
 	}
-	for _, name := range []string{"provision", "toolkits", "scopes", "request_id"} {
+	for _, name := range []string{"provision", "apis", "scopes", "request_id"} {
 		if err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("err %v must name the parameter %q", err, name)
 		}
@@ -637,7 +643,7 @@ func TestMCPRequestAccess_MissingTargetIsInvalidParams(t *testing.T) {
 func TestMCPRequestAccess_RequestIDPlusTargetsIsInvalidParams(t *testing.T) {
 	s := fastAccessServer(t)
 	res, err := s.handleRequestAccess(activeCtx("http://127.0.0.1:0"),
-		callToolRequest("request_access", `{"request_id":"acr_1","toolkits":["acme/pets"]}`))
+		callToolRequest("request_access", `{"request_id":"acr_1","apis":["acme/pets"]}`))
 	if res != nil {
 		t.Fatalf("want a protocol error, got a result: %v", res)
 	}
@@ -657,7 +663,7 @@ func TestMCPRequestAccess_NeverSelfApproves(t *testing.T) {
 
 	s := fastAccessServer(t)
 	ctx := activeCtx(srv.URL)
-	if res, err := s.handleRequestAccess(ctx, callToolRequest("request_access", `{"toolkits":["acme/pets"],"reason":"r"}`)); err != nil || res.IsError {
+	if res, err := s.handleRequestAccess(ctx, callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`)); err != nil || res.IsError {
 		t.Fatalf("filing arm: err %v, res %v", err, res)
 	}
 	if res, err := s.handleRequestAccess(ctx, callToolRequest("request_access", `{"request_id":"acr_1"}`)); err != nil || res.IsError {
@@ -809,7 +815,7 @@ func TestMCPRequestAccess_FilingForbiddenIsBrokerDenied(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"toolkits":["acme/pets"],"reason":"r"}`))
+	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`))
 	if err != nil {
 		t.Fatalf("handleRequestAccess: %v", err)
 	}
@@ -839,7 +845,7 @@ func TestMCPRequestAccess_PollArmRejectsStrayFilingParams(t *testing.T) {
 		"stray auth":          `{"request_id":"acr_1","auth":["bearer"]}`,
 		"stray rules_json":    `{"request_id":"acr_1","rules_json":[{"effect":"allow"}]}`,
 		"malformed rules":     `{"request_id":"acr_1","rules_json":42}`,
-		"target and poll mix": `{"request_id":"acr_1","toolkits":["acme/pets"]}`,
+		"target and poll mix": `{"request_id":"acr_1","apis":["acme/pets"]}`,
 	} {
 		res, err := s.handleRequestAccess(activeCtx("http://127.0.0.1:0"), callToolRequest("request_access", argsJSON))
 		if res != nil {

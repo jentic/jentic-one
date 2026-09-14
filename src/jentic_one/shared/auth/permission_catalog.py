@@ -27,13 +27,10 @@ from jentic_one.shared.scopes import (
     OWNER_CREDENTIALS_READ,
     OWNER_RESOURCES_READ,
     OWNER_SERVICE_ACCOUNTS_READ,
-    OWNER_TOOLKITS_READ,
 )
 
 CAPABILITIES_EXECUTE = "capabilities:execute"
 CAPABILITIES_READ = "capabilities:read"
-TOOLKITS_WRITE = "toolkits:write"
-TOOLKITS_READ = "toolkits:read"
 USERS_WRITE = "users:write"
 USERS_READ = "users:read"
 JOBS_WRITE = "jobs:write"
@@ -76,8 +73,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
             {
                 CAPABILITIES_EXECUTE,
                 CAPABILITIES_READ,
-                TOOLKITS_WRITE,
-                TOOLKITS_READ,
                 USERS_WRITE,
                 USERS_READ,
                 JOBS_WRITE,
@@ -110,16 +105,7 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     ),
     CAPABILITIES_READ: Permission(
         name=CAPABILITIES_READ,
-        description="Read capability and toolkit metadata",
-    ),
-    TOOLKITS_WRITE: Permission(
-        name=TOOLKITS_WRITE,
-        description="Create, update, and delete toolkits",
-        implies=frozenset({TOOLKITS_READ}),
-    ),
-    TOOLKITS_READ: Permission(
-        name=TOOLKITS_READ,
-        description="Read toolkit configuration and status",
+        description="Read capability metadata",
     ),
     USERS_WRITE: Permission(
         name=USERS_WRITE,
@@ -226,7 +212,7 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     OWNER_RESOURCES_READ: Permission(
         name=OWNER_RESOURCES_READ,
         description="Read resources owned by the agent's creator (umbrella)",
-        implies=frozenset({OWNER_CREDENTIALS_READ, OWNER_AGENTS_READ, OWNER_TOOLKITS_READ}),
+        implies=frozenset({OWNER_CREDENTIALS_READ, OWNER_AGENTS_READ}),
     ),
     OWNER_CREDENTIALS_READ: Permission(
         name=OWNER_CREDENTIALS_READ,
@@ -235,10 +221,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     OWNER_AGENTS_READ: Permission(
         name=OWNER_AGENTS_READ,
         description="Read agents owned by the agent's creator",
-    ),
-    OWNER_TOOLKITS_READ: Permission(
-        name=OWNER_TOOLKITS_READ,
-        description="Read toolkits owned by the agent's creator",
     ),
     OWNER_ACCESS_REQUESTS_READ: Permission(
         name=OWNER_ACCESS_REQUESTS_READ,
@@ -313,8 +295,6 @@ __all__ = [
     "OVERLAYS_CONFIRM",
     "SERVICE_ACCOUNTS_READ",
     "SERVICE_ACCOUNTS_WRITE",
-    "TOOLKITS_READ",
-    "TOOLKITS_WRITE",
     "USERS_READ",
     "USERS_WRITE",
     "Permission",

@@ -44,8 +44,8 @@ context).
 
 ## Step 2 — access
 
-See your own identity, status, scopes, and toolkit bindings (with the APIs
-each one serves):
+See your own identity, status, scopes, and credential bindings (with the
+APIs each one serves):
 
 ```
 jentic access whoami
@@ -63,9 +63,9 @@ jentic access request --provision <vendor/name> \
 ```
 
 `--wait` blocks until a human fulfils and approves the plan in the
-dashboard; once approved, the toolkit binding is live immediately — just
+dashboard; once approved, the credential binding is live immediately — just
 retry `execute`. Always pass `--reason` on **every** access request
-(`--provision`, `--toolkit`, or `--scope`). You normally do **not** need
+(`--provision`, `--api`, or `--scope`). You normally do **not** need
 `jentic access refresh` after a `--provision` plan: bindings take effect
 live, and a plan grants no new token scope. Only refresh after an approved
 `scope:grant` **and** only if `whoami` flags the scope as not yet on your
@@ -80,14 +80,14 @@ jentic access request \
   --rules-json 'slack.com/api=[{"effect":"allow","methods":["POST"],"path":"/chat\\.postMessage"}]' \
   --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \
   --rules-json 'googleapis.com/sheets=[{"effect":"allow","methods":["GET"],"path":".*"}]' \
-  --toolkit github.com/api \
+  --api github.com/api \
   --reason "one reason covering the whole job" \
   --wait
 ```
 
 Each `--provision` adds a full plan for that API — keep every plan complete
 (auth, rules, reason), exactly as you would for a single one;
-`--toolkit`/`--toolkit-id`/`--scope` add single items. With more than one
+`--api`/`--scope` add single items. With more than one
 `--provision`, key `--auth` and `--rules-json` by the same
 `vendor/name[/version]` you passed to `--provision` (include the version in
 the key if you used one); the bare form applies when there is exactly one.
@@ -121,12 +121,12 @@ If you'd rather be reactive, the broker also guides you: when `execute` is
 denied it prints a recovery line on stderr (the `agent_directive`) and
 **exits 2**, so you can branch on the exit code instead of mistaking the 4xx
 body for success. The per-code MEANINGS (what each denial signifies, the
-`toolkit_serves_api` fork, `parameters.expected` vs `parameters.found`,
+`api_served` fork, `parameters.expected` vs `parameters.found`,
 which recoveries an access request can and cannot fix) are shared by both
 lanes and live in `references/recovery.md`; what follows is this lane's
 mechanics per code:
 
-- **`no_toolkit_binding` (403)** — with `toolkit_serves_api: false` the
+- **`no_credential_binding` (403)** — with `api_served: false` the
   directive's `suggested_command` points at a **provisioning plan**;
   propose the auth type and permission rules you read from the API spec:
 
@@ -138,8 +138,8 @@ jentic access request --provision stripe.com/api \
   --wait
 ```
 
-  With `toolkit_serves_api: true` the directive instead suggests
-  `jentic access request --toolkit <vendor/name> --wait`. File the suggested
+  With `api_served: true` the directive instead suggests
+  `jentic access request --api <vendor/name> --wait`. File the suggested
   form and wait for approval.
 - **`credential_not_provisioned` (424)** — the directive carries a
   `provisioning_url`: hand it to your operator to connect the account, then
@@ -149,9 +149,11 @@ jentic access request --provision stripe.com/api \
 - **`credential_identity_mismatch` (403)** — read the directive's
   `parameters.expected` vs `parameters.found` and ask your operator to fix
   or re-provision the credential so it targets `expected`, then retry.
-- **`ambiguous_toolkit` (409)** — resend the same `execute` with `--header
-  Jentic-Toolkit-Id=<toolkit_id>` picked from the directive's `candidates`
-  (the directive also gives a copy-pasteable `suggested_command`).
+- **`ambiguous_credential_binding` (409)** — resend the same `execute` with
+  `--header Jentic-Credential-Id=<credential_id>` picked from the
+  directive's `candidates` (the directive's `parameters.headers` carries the
+  exact header; `--header Jentic-Credential-Name=<name>` also works when
+  credential names are unique).
 
 Always follow the `agent_directive`'s `suggested_command` /
 `provisioning_url` rather than assuming which recovery applies. You can also

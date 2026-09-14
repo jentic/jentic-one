@@ -36,7 +36,7 @@ Requires the `oauth-clients:write` permission (`org:admin` implies it).
   "name": "my-app-production",
   "redirect_uris": ["https://app.example.com/oauth/callback"],
   "description": "Production deployment",
-  "allowed_scopes": ["openid", "agents:write", "toolkits:read"]
+  "allowed_scopes": ["openid", "agents:write", "owner:credentials:read"]
 }
 ```
 

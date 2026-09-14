@@ -109,7 +109,7 @@ func TestMCPExecute_DenialPassesDirectiveThrough(t *testing.T) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.Header().Set("Jentic-Error-Origin", "broker")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"detail":"no toolkit binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic access request --toolkit acme/pets --wait"},"human_readable_instruction":"Ask your operator to bind this agent to acme/pets."}}`))
+		_, _ = w.Write([]byte(`{"detail":"no credential binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic access request --api acme/pets --wait"},"human_readable_instruction":"Ask your operator to bind this agent to a credential for acme/pets."}}`))
 	}))
 	defer broker.Close()
 
@@ -145,7 +145,7 @@ func TestMCPExecute_DenialPassesDirectiveThrough(t *testing.T) {
 		t.Errorf("directive.strategy = %v, want prompt_human", directive["strategy"])
 	}
 	params, _ := directive["parameters"].(map[string]any)
-	if params["suggested_command"] != "jentic access request --toolkit acme/pets --wait" {
+	if params["suggested_command"] != "jentic access request --api acme/pets --wait" {
 		t.Errorf("directive.parameters = %v, want the suggested_command verbatim", directive["parameters"])
 	}
 	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "acme/pets") {
@@ -162,7 +162,7 @@ func TestMCPExecute_DenialRelaysUnknownDirectiveFields(t *testing.T) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.Header().Set("Jentic-Error-Origin", "broker")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"detail":"no toolkit binding","agent_directive":{"strategy":"prompt_human",` +
+		_, _ = w.Write([]byte(`{"detail":"no credential binding","agent_directive":{"strategy":"prompt_human",` +
 			`"future_field":"must-survive","parameters":{"nested_unknown":{"keep":"me"}},` +
 			`"human_readable_instruction":"Ask your operator."}}`))
 	}))

@@ -73,9 +73,9 @@ describe('#511 — no foreign-module query-key literals', () => {
 		expect(messages.some((m) => m.message.includes('sharedQueryKeys'))).toBe(true);
 	});
 
-	it("rejects a ['credentials', …] key literal written inside the toolkits module", async () => {
+	it("rejects a ['credentials', …] key literal written inside the agents module", async () => {
 		const messages = await lint(
-			'src/modules/toolkits/api/bad.ts',
+			'src/modules/agents/api/bad.ts',
 			"export const k = ['credentials', 'apis', 'list'];\n",
 		);
 		expect(ruleIds(messages)).toContain('no-restricted-syntax');

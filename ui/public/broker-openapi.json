@@ -29,7 +29,8 @@
         }
       },
       "JenticToolkitId": {
-        "description": "Toolkit ID — the logical grouping the execution belongs to.",
+        "deprecated": true,
+        "description": "**Legacy.** Toolkit ID the execution was attributed to. Emitted\nonly on the legacy flag-off toolkit path\n(`broker.direct_bindings_enabled: false`); absent on the default\ndirect-binding path, where credential attribution rides\n`Jentic-Credential-Id` / `Jentic-Credential-Name` instead.\nRemoved with the toolkit tables in theme-5 Phase 6b.\n",
         "schema": {
           "examples": [
             "tk_abc123"
@@ -47,7 +48,7 @@
         }
       },
       "Tracestate": {
-        "description": "W3C Trace Context vendor extensions. Jentic packs the\nexecution ID, toolkit ID, and the upstream API reference\n(`vendor:name:version`) under the `jentic` vendor key:\n`jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16`. The\nfirst two segments answer *who is calling*; the trailing\nsegments answer *what is being called*. Composable with other\nvendors (`jentic=...,datadog=...`).\n",
+        "description": "W3C Trace Context vendor extensions. Jentic packs a fixed\nfive-field value under the `jentic` vendor key:\n`jentic=<exec_id>:<toolkit_id>:<vendor>:<name>:<version>`, e.g.\n`jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16`. The\nfirst two segments answer *who is calling*; the trailing\nsegments answer *what is being called*. Missing segments are\nemitted as `_` so the shape stays positionally parseable — the\nsecond (legacy toolkit-id) segment is populated only on the\nlegacy flag-off toolkit path and is `_` on the default\ndirect-binding path. Composable with other vendors\n(`jentic=...,datadog=...`).\n",
         "schema": {
           "examples": [
             "jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16"
@@ -68,6 +69,32 @@
             "5f9c8b2e-7a4d-4e1f-9c3a-1b2d3e4f5a6b"
           ],
           "maxLength": 255,
+          "type": "string"
+        }
+      },
+      "JenticCredentialId": {
+        "description": "Disambiguate credential resolution by exact credential id — the\nauthoritative signal, applied before the name filter and\nspecificity narrowing. Ids are stable and non-secret\n(`cred_`-prefixed); the `409 ambiguous_credential_binding`\ncandidate list carries them. An id that matches no covering,\nbound candidate is rejected with `400 credential_id_not_found`\n(candidates listed). Consumed by the broker — never forwarded\nupstream. The same header name is also emitted on responses to\nattribute the credential used.\n",
+        "example": "cred_abc123",
+        "in": "header",
+        "name": "Jentic-Credential-Id",
+        "required": false,
+        "schema": {
+          "examples": [
+            "cred_abc123"
+          ],
+          "type": "string"
+        }
+      },
+      "JenticCredentialName": {
+        "description": "Disambiguate credential resolution by the credential's\nhuman-readable name. When several bound credentials cover the\ntarget API at the same specificity (a multi-account setup), the\nbroker refuses with `409 ambiguous_credential_binding` and lists\nthe candidates; resend with this header naming the one to use. A\nname that matches no covering candidate is rejected with\n`400 credential_name_not_found` (candidates listed). Consumed by\nthe broker — never forwarded upstream. The same header name is\nalso emitted on responses to attribute the credential used.\n",
+        "example": "Stripe prod key",
+        "in": "header",
+        "name": "Jentic-Credential-Name",
+        "required": false,
+        "schema": {
+          "examples": [
+            "Stripe prod key"
+          ],
           "type": "string"
         }
       },
@@ -148,7 +175,7 @@
             }
           }
         },
-        "description": "Idempotency-key conflict (RFC 9457 `application/problem+json`).\nOne of two cases, distinguished by the problem `type`:\n\n- `idempotency_conflict` — the same `Idempotency-Key` was already\n  used with a different request (method, upstream URL, toolkit, or\n  body). Reusing a key for a different request is rejected; pick a\n  new key.\n- `idempotency_in_progress` — a request with this `Idempotency-Key`\n  is still being processed. The response carries a `Retry-After`\n  header; retry after that delay to obtain the replayed result.\n"
+        "description": "Conflict (RFC 9457 `application/problem+json`), distinguished by\nthe problem `type`:\n\n- `ambiguous_credential_binding` — several credentials the caller\n  is bound to cover the target API at the same specificity. The\n  body lists the candidates (`id`, `name`, `last4`, `created_at`);\n  resend with the `Jentic-Credential-Name` or `Jentic-Credential-Id`\n  request header to pick one.\n- `idempotency_conflict` — the same `Idempotency-Key` was already\n  used with a different request (method, upstream URL, resolved\n  credential, or body). Reusing a key for a different request is\n  rejected; pick a new key.\n- `idempotency_in_progress` — a request with this `Idempotency-Key`\n  is still being processed. The response carries a `Retry-After`\n  header; retry after that delay to obtain the replayed result.\n"
       },
       "CredentialNotProvisioned": {
         "content": {
@@ -337,7 +364,7 @@
             }
           }
         },
-        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` scope\n(`type: insufficient_scope`), or attempting to pin a `draft`\nrevision they don't own or call a toolkit they aren't bound to.\nBody is RFC 9457 `application/problem+json`.\n"
+        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` scope\n(`type: insufficient_scope`), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n"
       },
       "NotFound": {
         "content": {
@@ -559,7 +586,7 @@
     },
     "securitySchemes": {
       "BearerAuth": {
-        "description": "Credential authorizing a Broker call, sent as\n`Authorization: Bearer <token>`. The Broker accepts several\ninterchangeable credential formats, dispatched by prefix/shape:\n\n- **Opaque access tokens** (`at_…`) — the *same* tokens the control\n  plane issues from `POST /oauth/token`. A random string validated by\n  server-side lookup (it is **not** a JWT and cannot be decoded by the\n  client). Broker and control plane share one token store, so a token\n  minted for the control plane authenticates here too.\n- **API keys** — agent (`jak_…`) or service-account (`sak_…`) keys.\n  May alternatively be sent in the `x-jentic-api-key` header.\n- **Toolkit keys** (`jntc_live_…`) — scoped to a single toolkit; they\n  carry execute capability implicitly.\n- **Self-contained JWTs** — verified by signature (a dev HS256 shared\n  secret or a configured trusted issuer with JWKS rotation). The Broker\n  is identity-provider-agnostic: the IdP, federation strategy, and\n  token-issuance flow are deployment concerns outside this spec.\n\nEvery protected operation requires the `capabilities:execute` scope.\nOpaque-token, JWT, and API-key callers must carry that scope; toolkit\nkeys hold it implicitly. Authorization beyond \"may execute\" (toolkit\nbinding, revision pinning) is enforced per-request and is not modelled\nhere.\n",
+        "description": "Credential authorizing a Broker call, sent as\n`Authorization: Bearer <token>`. The Broker accepts several\ninterchangeable credential formats, dispatched by prefix/shape:\n\n- **Opaque access tokens** (`at_…`) — the *same* tokens the control\n  plane issues from `POST /oauth/token`. A random string validated by\n  server-side lookup (it is **not** a JWT and cannot be decoded by the\n  client). Broker and control plane share one token store, so a token\n  minted for the control plane authenticates here too.\n- **API keys** — agent (`jak_…`) or service-account (`sak_…`) keys.\n  May alternatively be sent in the `x-jentic-api-key` header. The\n  `jntc_live_…` toolkit-key form is **retired** (theme-5): no new\n  keys are issued, and a presented plaintext authenticates as the\n  service account its retirement migration bound — rotate holders\n  to `sak_…` keys.\n- **Self-contained JWTs** — verified by signature (a dev HS256 shared\n  secret or a configured trusted issuer with JWKS rotation). The Broker\n  is identity-provider-agnostic: the IdP, federation strategy, and\n  token-issuance flow are deployment concerns outside this spec.\n\nEvery protected operation requires the `capabilities:execute` scope,\nwhatever the credential format. Authorization beyond \"may execute\"\n(agent-credential bindings, permission rules, revision pinning) is\nenforced per-request and is not modelled here.\n",
         "scheme": "bearer",
         "type": "http"
       }
@@ -571,7 +598,7 @@
       "name": "Jentic Platform Team",
       "url": "https://jentic.com"
     },
-    "description": "## Overview\n\nThe Broker is the platform's stateless data plane. Send it any\nHTTP request with the upstream URL as the path; it injects the\ncaller's stored credentials, forwards method/headers/body as-is,\nand returns the upstream response.\n\n```\nPOST https://broker.your-instance.example/petstore.swagger.io/v2/pet\n```\n\nSecrets stay off agents and end-user devices, outbound traffic\nhas one auditable choke-point, and credentials rotate centrally\nwithout redeploying callers. Sync responses return `200` with the\nupstream body; long calls fall back to `202` with a polling link\ninto the control plane (see `Prefer` on `/{upstream_url}`).\n\nAuth: every operation expects `Authorization: Bearer <token>` except\n`GET /health`. Broker-added metadata is confined to the `Jentic-*`\nheader namespace — anything else on a response belongs to the\nupstream.\n\nToolkit, credential, and API-revision management live on the\n[control plane](https://control-plane.example.com), not here.\n\n## Path format\n\nThe request path **is** the upstream URL. The broker reconstructs the\nfull target from your path, adding `https://` when no scheme is present:\n\n| You send | Broker proxies to |\n|----------|-------------------|\n| `GET /api.example.com/v1/users` | `https://api.example.com/v1/users` |\n| `POST /petstore.swagger.io/v2/pet` | `https://petstore.swagger.io/v2/pet` |\n| `GET /http://127.0.0.1:8080/get` | `http://127.0.0.1:8080/get` |\n| `GET /https://api.example.com/v1/users` | `https://api.example.com/v1/users` |\n\nFor HTTPS upstream targets (the common case), omit the scheme — just use\n`/{host}/{path}`. For plain HTTP targets (e.g. local development), include\nthe full `http://` scheme in the path so the broker doesn't upgrade to HTTPS.\n\nQuery strings pass through as-is: `/api.example.com/search?q=foo` works.\n\n## Tracing and audit\n\nEvery brokered response carries W3C trace context (`traceparent`,\n`tracestate`) and a `Jentic-*` header layer with the execution ID\n(`exec_…`), toolkit ID (`tk_…`), and upstream API reference\n(`vendor:name:version`). OpenTelemetry clients pick this up\nautomatically; nothing else needs to parse `tracestate`.\n\nTo see what happened, ask the control plane:\n\n- `GET /executions/{exec_id}` — full execution metadata (latency,\n  status, pinned revisions, caller).\n- `GET /executions` — list and filter recent executions.\n- `GET /executions/{exec_id}/steps` — per-step trace for workflow\n  executions.\n- `GET /jobs/{job_id}` and `GET /jobs/{job_id}/result` — async\n  job status and pickup of the upstream body.\n- `GET /events` / `GET /events/stream` — audit event feed.\n\nRequest and response bodies are not persisted by default. Execution\nmetadata is retained for 30 days (configurable). Body capture is\nexplicit opt-in. Async response bodies live in a short-lived\npickup buffer collected via `/jobs/{id}/result`, not in the audit\nstore.\n",
+    "description": "## Overview\n\nThe Broker is the platform's stateless data plane. Send it any\nHTTP request with the upstream URL as the path; it injects the\ncaller's stored credentials, forwards method/headers/body as-is,\nand returns the upstream response.\n\n```\nPOST https://broker.your-instance.example/petstore.swagger.io/v2/pet\n```\n\nSecrets stay off agents and end-user devices, outbound traffic\nhas one auditable choke-point, and credentials rotate centrally\nwithout redeploying callers. Sync responses return `200` with the\nupstream body; long calls fall back to `202` with a polling link\ninto the control plane (see `Prefer` on `/{upstream_url}`).\n\nAuth: every operation expects `Authorization: Bearer <token>` except\n`GET /health`. Broker-added metadata is confined to the `Jentic-*`\nheader namespace — anything else on a response belongs to the\nupstream.\n\nCredential, agent-binding, and API-revision management live on the\n[control plane](https://control-plane.example.com), not here.\n\n## Path format\n\nThe request path **is** the upstream URL. The broker reconstructs the\nfull target from your path, adding `https://` when no scheme is present:\n\n| You send | Broker proxies to |\n|----------|-------------------|\n| `GET /api.example.com/v1/users` | `https://api.example.com/v1/users` |\n| `POST /petstore.swagger.io/v2/pet` | `https://petstore.swagger.io/v2/pet` |\n| `GET /http://127.0.0.1:8080/get` | `http://127.0.0.1:8080/get` |\n| `GET /https://api.example.com/v1/users` | `https://api.example.com/v1/users` |\n\nFor HTTPS upstream targets (the common case), omit the scheme — just use\n`/{host}/{path}`. For plain HTTP targets (e.g. local development), include\nthe full `http://` scheme in the path so the broker doesn't upgrade to HTTPS.\n\nQuery strings pass through as-is: `/api.example.com/search?q=foo` works.\n\n## Tracing and audit\n\nEvery brokered response carries W3C trace context (`traceparent`,\n`tracestate`) and a `Jentic-*` header layer with the execution ID\n(`exec_…`), the credential used (`Jentic-Credential-Id` /\n`Jentic-Credential-Name`), and the upstream API reference\n(`vendor:name:version`). OpenTelemetry clients pick this up\nautomatically; nothing else needs to parse `tracestate`.\n\nTo see what happened, ask the control plane:\n\n- `GET /executions/{exec_id}` — full execution metadata (latency,\n  status, pinned revisions, caller).\n- `GET /executions` — list and filter recent executions.\n- `GET /executions/{exec_id}/steps` — per-step trace for workflow\n  executions.\n- `GET /jobs/{job_id}` and `GET /jobs/{job_id}/result` — async\n  job status and pickup of the upstream body.\n- `GET /events` / `GET /events/stream` — audit event feed.\n\nRequest and response bodies are not persisted by default. Execution\nmetadata is retained for 30 days (configurable). Body capture is\nexplicit opt-in. Async response bodies live in a short-lived\npickup buffer collected via `/jobs/{id}/result`, not in the audit\nstore.\n",
     "summary": "Secure execution proxy for upstream APIs — credentials never leave the Broker.",
     "title": "Broker API",
     "version": "beta.1"
@@ -911,6 +938,12 @@
         },
         {
           "$ref": "#/components/parameters/JenticRevision"
+        },
+        {
+          "$ref": "#/components/parameters/JenticCredentialName"
+        },
+        {
+          "$ref": "#/components/parameters/JenticCredentialId"
         }
       ],
       "patch": {

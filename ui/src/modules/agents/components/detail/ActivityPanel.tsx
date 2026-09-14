@@ -77,7 +77,7 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 						id: row.id,
 						status: row.status,
 						httpStatus: row.httpStatus,
-						label: `${row.toolkitName ?? row.toolkitId}${
+						label: `${row.credentialName ?? row.credentialId ?? row.toolkitName ?? row.toolkitId ?? 'unattributed'}${
 							row.operationId ? `.${row.operationId}` : ''
 						}`,
 						error: row.error,

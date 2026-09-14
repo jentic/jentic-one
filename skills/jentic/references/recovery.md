@@ -69,24 +69,20 @@ CLI delivery mechanics (flags, `suggested_command`, exit codes) live in
 `references/cli.md` step 2, the MCP envelope caveats in `references/mcp.md`
 step 5.
 
-- **`no_toolkit_binding` (403)** — nothing you're bound to serves this API
-  (no toolkit, and usually no credential either). The recovery forks on the
-  directive/envelope's `toolkit_serves_api` field:
-  - `false` — **no** toolkit serves this API at all, so a bare toolkit
-    binding request would auto-deny ("No toolkit serves API …"); filing one
-    is a dead-end. File a **provisioning plan** instead (CLI `--provision`;
-    MCP `request_access {"provision": …}`): it describes the whole path —
-    create toolkit, provision + bind a credential with your proposed rules,
-    bind you — which a human fulfils and approves in the dashboard. The
-    plan does **not** force a new toolkit: during fulfilment the operator
-    can add the credential to a toolkit they already have (the wizard
-    offers both) — worth relaying when your operator mentions an existing
-    toolkit they want to extend.
-  - `true` — a toolkit already serves this API and you just aren't bound to
-    it; request the toolkit binding (CLI `--toolkit <vendor/name>`; MCP
-    `"toolkits"`) and wait for approval.
-- **`credential_not_provisioned` (424)** — you're bound to a toolkit, but
-  no credential (account) is connected. Filing an access request will
+- **`no_credential_binding` (403)** — no credential binding of yours covers
+  this API. The recovery forks on the directive/envelope's `api_served`
+  field:
+  - `false` — **no** credential is provisioned for this API at all, so a
+    bare bind request would auto-deny ("No credential covers API …"); filing
+    one is a dead-end. File a **provisioning plan** instead (CLI
+    `--provision`; MCP `request_access {"provision": …}`): it describes the
+    whole path — provision a credential with your proposed auth type and
+    rules, bind you — which a human fulfils and approves in the dashboard.
+  - `true` — a credential already serves this API and you just aren't bound
+    to it; request the binding by API reference (CLI `--api <vendor/name>`;
+    MCP `"apis"`) and wait for approval.
+- **`credential_not_provisioned` (424)** — you're bound, but no
+  credential (account) is connected. Filing an access request will
   **not** fix this; the recovery carries a `provisioning_url` — hand it to
   your operator to connect the account, then retry.
 - **`credential_undecryptable` (424)** — a credential *is* connected, but
@@ -94,7 +90,7 @@ step 5.
   encryption key rotated underneath it, e.g. a reinstall over existing
   data). Neither an access request nor retrying will fix this — ask your
   operator to remove and re-add the credential, then retry.
-- **`credential_identity_mismatch` (403)** — a toolkit *is* bound and a
+- **`credential_identity_mismatch` (403)** — a binding exists and a
   credential *is* connected, but that credential's stored identity doesn't
   cover this API (e.g. it targets a different name/version, or was stored
   in a non-canonical form). Filing an access request will **not** fix this
@@ -103,11 +99,12 @@ step 5.
   the credential just needs re-provisioning to canonicalize its identity.
   Either way, ask your operator to fix or re-provision the credential so it
   targets `expected`, then retry.
-- **`ambiguous_toolkit` (409)** — multiple toolkits you're bound to serve
-  this API. The recovery lists `candidates`; resend the same execute
-  disambiguated with a `Jentic-Toolkit-Id: <toolkit_id>` header (the CLI
-  directive includes a copy-pasteable `suggested_command` with the exact
-  `--header` flag).
+- **`ambiguous_credential_binding` (409)** — multiple credentials you're
+  bound to cover this API. The recovery lists `candidates` and carries
+  `parameters.headers`; resend the same execute disambiguated with a
+  `Jentic-Credential-Id: <credential_id>` header — the authoritative
+  tie-breaker (`Jentic-Credential-Name: <name>` also works when credential
+  names are unique; the CLI adds either via `--header`).
 
 ## Quick Reference — CLI session
 
@@ -118,13 +115,14 @@ step 5.
   rendered for humans, next to the HTTP API and Broker API references.
 - `jentic context view` — the active context (environment + identity +
   base_url); start here in a CLI session.
-- `jentic access whoami` — your identity, status, scopes, and toolkit
+- `jentic access whoami` — your identity, status, scopes, and credential
   bindings with the APIs each one **serves** (check this before executing
   or provisioning).
 - `jentic access request` — ask a human for access. `--provision
   <vendor/name>` files the whole path to first execution as one plan when
-  nothing serves the API yet; `--toolkit <vendor/name>` asks to be bound to
-  an **existing** toolkit; `--scope <scope>` requests a missing scope. All
+  nothing serves the API yet; `--api <vendor/name>` asks to be bound to an
+  **existing** credential serving that API; `--scope <scope>` requests a
+  missing scope. All
   target flags repeat and combine into **one composite request**. Always
   pass `--reason`; add `--wait` to block on approval (full examples in
   `references/cli.md`).

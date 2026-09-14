@@ -4,7 +4,7 @@ import { DetailSection } from '@/shared/ui/DetailSection';
 
 /**
  * DangerZone — the Settings tab's destructive-actions card, shared by the
- * detail consoles (toolkit, agent, service account) so irreversible actions
+ * detail consoles (agent, service account) so irreversible actions
  * read identically everywhere: the danger-tinted `DetailSection` shell with
  * one row per action.
  *
