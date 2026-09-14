@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **180**._
+_Total endpoints: **183**._
 
 
 ## Agent-facing (typically agent / service-account) (31)
@@ -229,7 +229,7 @@ _Total endpoints: **180**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (69)
+## Any authenticated actor (70)
 
 
 ### `access-requests`
@@ -251,11 +251,12 @@ _Total endpoints: **180**._
 | PUT | `/admin/config/providers/{name}` | `config:write` | any | Set a credential provider config |
 | GET | `/admin/oauth-clients` | `oauth-clients:read` | any | List OAuth clients |
 | POST | `/admin/oauth-clients` | `oauth-clients:write` | any | Register OAuth client |
-| DELETE | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Deactivate OAuth client |
+| DELETE | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Disable OAuth client |
 | GET | `/admin/oauth-clients/{id}` | `oauth-clients:read` | any | Get OAuth client |
 | PATCH | `/admin/oauth-clients/{id}` | `oauth-clients:write` | any | Update OAuth client |
 | POST | `/admin/oauth-clients/{id}/rotate-secret` | `oauth-clients:write` | any | Rotate client secret |
 | POST | `/admin/oauth-clients/{id}:approve` | `oauth-clients:write` | any | Approve OAuth client |
+| POST | `/admin/oauth-clients/{id}:delete` | `oauth-clients:write` | any | Delete OAuth client |
 | POST | `/admin/oauth-clients/{id}:deny` | `oauth-clients:write` | any | Deny OAuth client |
 | GET | `/admin/oauth-grants` | `oauth-clients:read` | any | List OAuth grants |
 
@@ -386,7 +387,7 @@ _Total endpoints: **180**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (28)
+## Public (unauthenticated) (30)
 
 
 ### `.well-known`
@@ -464,6 +465,8 @@ _Total endpoints: **180**._
 | GET | `/oauth/callback` | _public — no auth_ | — | Authorize Oauth Callback |
 | GET | `/oauth/consent` | _public — no auth_ | — | Consent Page |
 | POST | `/oauth/consent` | _public — no auth_ | — | Consent Submit |
+| POST | `/oauth/consent/agent` | _public — no auth_ | — | Create the consenting user's first agent inline (consent page) |
+| GET | `/oauth/consent/agent/status` | _public — no auth_ | — | Poll pending-agent approval status (consent awaiting page) |
 | POST | `/oauth/token` | _public — no auth_ | — | Token Endpoint |
 
 ### `oauth-clients`

@@ -1,8 +1,8 @@
 """The request_access plan builder — the Go CLI's ``compose()`` in Python.
 
 ``AccessRequestService.file()`` accepts an already-composed ``items`` list and
-only validates it: the composition — expanding ``provision``/``toolkits``/
-``toolkit_ids``/``scopes`` with keyed ``auth``/``rules_json`` values into item
+only validates it: the composition — expanding ``provision``/``apis``/
+``scopes`` with keyed ``auth``/``rules_json`` values into item
 dicts, plus the duplicate/conflict validation — is client-side in the Go CLI
 (``cli/internal/cli/api/access_plan.go``) and must be client-side here too.
 This module is that port, kept ``tools.py``-free so the handler stays
@@ -38,8 +38,8 @@ class AccessTargetRequiredError(ComposeError):
 
     def __init__(self) -> None:
         super().__init__(
-            'specify what to request: "toolkits" (vendor/name), "toolkit_ids" (tk_…), '
-            '"scopes", or "provision" (vendor/name plans) — repeat and combine to '
+            'specify what to request: "apis" (vendor/name), "scopes", or '
+            '"provision" (vendor/name plans) — repeat and combine to '
             "compose one request"
         )
 
@@ -58,7 +58,10 @@ class AccessRequestOptions:
     """The normalized request_access filing arguments (Go: ``accessRequestOptions``)."""
 
     provisions: list[str] = field(default_factory=list)
-    toolkits: list[str] = field(default_factory=list)
+    apis: list[str] = field(default_factory=list)
+    # toolkit_ids stays accepted (toolkits were retired, theme-5) so an old
+    # caller gets compose()'s re-file error naming "apis" instead of an
+    # unknown-parameter failure.
     toolkit_ids: list[str] = field(default_factory=list)
     scopes: list[str] = field(default_factory=list)
     auths: list[str] = field(default_factory=list)
@@ -67,11 +70,12 @@ class AccessRequestOptions:
 
     def target_count(self) -> int:
         """The number of distinct targets named — each provision plan counts as
-        one, as does each toolkit/toolkit_id/scope item. Decides composite
-        behavior (the duplicate-pending handling)."""
+        one, as does each api/scope item (and each value of the retired
+        ``toolkit_ids`` parameter). Decides composite behavior (the
+        duplicate-pending handling)."""
         return (
             len(clean_values(self.provisions))
-            + len(clean_values(self.toolkits))
+            + len(clean_values(self.apis))
             + len(clean_values(self.toolkit_ids))
             + len(clean_values(self.scopes))
         )
@@ -89,33 +93,31 @@ class AccessRequestOptions:
     def compose(self) -> list[dict[str, Any]]:
         """Build the full item list in fulfilment order (Go: ``compose()``).
 
-        Provisioning plans first (one 4-item chain per provision, in argument
-        order), then toolkit binds by reference, by id, and scope grants.
-        Targets are validated as a set — duplicates and a toolkits/provision
+        Provisioning plans first (one 2-item chain per provision, in argument
+        order), then credential binds by API reference, and scope grants.
+        Targets are validated as a set — duplicates and an apis/provision
         pair naming the same API are rejected, since they would file
         conflicting or redundant intents the approving human has to untangle.
         """
         provisions = clean_values(self.provisions)
-        toolkits = clean_values(self.toolkits)
+        apis = clean_values(self.apis)
         toolkit_ids = clean_values(self.toolkit_ids)
         scopes = clean_values(self.scopes)
 
-        if not (provisions or toolkits or toolkit_ids or scopes):
+        if not (provisions or apis or toolkit_ids or scopes):
             raise AccessTargetRequiredError()
         if not provisions and (clean_values(self.auths) or clean_values(self.rules_jsons)):
             raise ComposeError('"auth" and "rules_json" only apply with "provision"')
 
         prov_keys = _canonical_ref_keys("provision", provisions)
-        toolkit_keys = _canonical_ref_keys("toolkits", toolkits)
-        for key in toolkit_keys:
+        api_keys = _canonical_ref_keys("apis", apis)
+        for key in api_keys:
             if key in prov_keys:
                 raise ComposeError(
-                    f'{key} is named by both "toolkits" and "provision"; a provisioning '
-                    "plan already ends with the toolkit binding, so drop it from "
-                    '"toolkits"'
+                    f'{key} is named by both "apis" and "provision"; a provisioning '
+                    "plan already ends with the credential binding, so drop it from "
+                    '"apis"'
                 )
-        if (dup := _first_duplicate(toolkit_ids)) is not None:
-            raise ComposeError(f'"toolkit_ids" {dup} given more than once')
         if (dup := _first_duplicate(scopes)) is not None:
             raise ComposeError(f'"scopes" {dup} given more than once')
 
@@ -131,16 +133,29 @@ class AccessRequestOptions:
                     rules_jsons.get(prov_keys[i], ""),
                 )
             )
-        for toolkit in toolkits:
+        for api in apis:
+            # Theme-5 phase 3: the surviving bind verb is credential:bind
+            # (agent↔credential); an "apis" vendor/name files it by API
+            # reference. The approver resolves the reference to a concrete,
+            # visible credential at decide time. The server substitutes a
+            # read-only default policy when no rules are given.
             items.append(
                 {
-                    "resource_type": "toolkit",
+                    "resource_type": "credential",
                     "action": "bind",
-                    "resource_reference": parse_toolkit_ref(toolkit),
+                    "resource_reference": parse_access_ref(api),
                 }
             )
-        for toolkit_id in toolkit_ids:
-            items.append({"resource_type": "toolkit", "action": "bind", "resource_id": toolkit_id})
+        if toolkit_ids:
+            # Toolkit ids no longer resolve to anything: toolkits were retired
+            # (theme-5 phase 3) and access is granted per credential. Fail with
+            # a re-file directive rather than filing an item the server will
+            # reject.
+            raise ComposeError(
+                '"toolkit_ids" is no longer supported: toolkits were retired; '
+                'use "apis" (vendor/name) to request access to the API by reference '
+                f'(got "toolkit_ids" {toolkit_ids[0]})'
+            )
         for scope in scopes:
             items.append({"resource_type": "scope", "action": "grant", "resource_id": scope})
         return items
@@ -166,7 +181,7 @@ def _canonical_ref_keys(param: str, values: list[str]) -> list[str]:
     form, rejecting duplicates within the parameter (Go: ``canonicalRefKeys``)."""
     keys: list[str] = []
     for value in values:
-        key = _ref_key(parse_toolkit_ref(value))
+        key = _ref_key(parse_access_ref(value))
         if key in keys:
             raise ComposeError(f'"{param}" {key} given more than once')
         keys.append(key)
@@ -235,7 +250,7 @@ def _split_keyed_value(param: str, raw: str, prov_keys: list[str]) -> tuple[str,
         return None
     candidate = raw[:eq].strip()
     try:
-        ref = parse_toolkit_ref(candidate)
+        ref = parse_access_ref(candidate)
     except ComposeError:
         return None  # an unparsable key prefix means "bare value", not a failure
     canonical = _ref_key(ref)
@@ -248,12 +263,12 @@ def _split_keyed_value(param: str, raw: str, prov_keys: list[str]) -> tuple[str,
 
 def _build_provision_plan(provision: str, auth: str, rules_json: str) -> list[dict[str, Any]]:
     """One full provisioning plan for a provision target (Go:
-    ``buildProvisionPlan``): the fixed 4-item chain (toolkit:create,
-    credential:provision, credential:bind, toolkit:bind) in fulfilment order.
-    The agent files intent; a human fulfils the create/provision steps via the
-    dashboard, which writes the resulting ids back onto the bind items before
-    approving."""
-    ref = parse_toolkit_ref(provision)
+    ``buildProvisionPlan``): the fixed 2-item chain (credential:provision,
+    credential:bind — theme-5 phase 3 collapsed the toolkit steps) in
+    fulfilment order. The agent files intent; a human fulfils the provision
+    step via the dashboard, which writes the resulting credential id back
+    onto the bind item before approving."""
+    ref = parse_access_ref(provision)
 
     auth = auth.strip() or "bearer"
     if auth not in _VALID_AUTH_TYPES:
@@ -268,14 +283,14 @@ def _build_provision_plan(provision: str, auth: str, rules_json: str) -> list[di
     rules = _parse_proposed_rules(rules_json)
 
     items: list[dict[str, Any]] = []
-    # Step 1: create a toolkit that will serve this API.
-    items.append({"resource_type": "toolkit", "action": "create", "resource_reference": ref})
-    # Step 2: provision a credential for this API. security_scheme carries the
+    # Step 1: provision a credential for this API. security_scheme carries the
     # agent-detected auth type so the operator's credential form can pre-select
     # it; the operator enters the secret — it never rides in the agent-filed
     # plan. For a no-auth API we still emit this item with
     # security_scheme=no_auth: a credential row is required for the
-    # credential:bind effect to attach the toolkit binding + rules to.
+    # credential:bind effect to attach the binding + rules to (the broker keys
+    # rules on ``(agent, credential)`` and resolves a no_auth credential as a
+    # no-op auth).
     items.append(
         {
             "resource_type": "credential",
@@ -283,11 +298,12 @@ def _build_provision_plan(provision: str, auth: str, rules_json: str) -> list[di
             "resource_reference": {**ref, "security_scheme": auth_scheme},
         }
     )
-    # Step 3: bind the (to-be-created) credential to the (to-be-created)
-    # toolkit, carrying the agent's proposed first-pass rules. The API
-    # reference is stamped on so the item names its chain in a composite
-    # request (item order is not guaranteed server-side); the server ignores
-    # it for credential:bind — only the amended ids wire the effect.
+    # Step 2: bind the agent to the (to-be-created) credential, carrying the
+    # agent's proposed first-pass rules. The operator amends the concrete
+    # credential id onto this item before approval. The API reference is
+    # stamped on so the item names its chain in a composite request (item
+    # order is not guaranteed server-side; it also keeps pending-dedup from
+    # colliding two different plans' bind items).
     bind_item: dict[str, Any] = {
         "resource_type": "credential",
         "action": "bind",
@@ -296,8 +312,6 @@ def _build_provision_plan(provision: str, auth: str, rules_json: str) -> list[di
     if rules is not None:
         bind_item["rules"] = rules
     items.append(bind_item)
-    # Step 4: bind the agent to the toolkit, named by the same API reference.
-    items.append({"resource_type": "toolkit", "action": "bind", "resource_reference": ref})
     return items
 
 
@@ -319,10 +333,10 @@ def _parse_proposed_rules(raw: str) -> list[dict[str, Any]] | None:
     return decoded
 
 
-def parse_toolkit_ref(value: str) -> dict[str, Any]:
+def parse_access_ref(value: str) -> dict[str, Any]:
     """Split "vendor/name[/version]" into a resource_reference (Go:
-    ``parseToolkitRef``). The agent names the API it discovered via search;
-    the server resolves it to a concrete toolkit at decide time."""
+    ``parseAccessRef``). The agent names the API it discovered via search;
+    the server resolves it to a concrete credential at decide time."""
     parts = value.strip().split("/")
     if len(parts) < 2 or not parts[0] or not parts[1]:
         raise ComposeError(

@@ -269,7 +269,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 			laneOverrides: map[string]mcpToolLaneOverride{
 				"http": {
 					description: "Show the calling agent's identity as the Jentic control plane sees it: " +
-						"id, status, scopes, and toolkit bindings with the APIs each one serves. " +
+						"id, status, scopes, and credential bindings with the APIs each one serves. " +
 						"Call before requesting access or executing operations — never execute " +
 						"an operation just to probe whether you have access. On an auth error, " +
 						"relay it to your human operator: this connection's credentials and the " +

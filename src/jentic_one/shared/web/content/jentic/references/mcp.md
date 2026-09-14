@@ -42,7 +42,7 @@ access step).
 ## Step 1 — identity
 
 Call `whoami` — it answers with your identity as the control plane sees it:
-id, **status**, scopes, and toolkit bindings.
+id, **status**, scopes, and credential bindings.
 
 ```
 whoami {}
@@ -67,7 +67,7 @@ request_access {"provision": ["slack.com/api", "googleapis.com/sheets"],
   "auth": ["slack.com/api=bearer", "googleapis.com/sheets=oauth2"],
   "rules_json": ["slack.com/api=[{\"effect\":\"allow\",\"methods\":[\"POST\"],\"path\":\"/chat\\\\.postMessage\"}]",
                  "googleapis.com/sheets=[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]"],
-  "toolkits": ["github.com/api"],
+  "apis": ["github.com/api"],
   "reason": "one reason covering the whole job"}
 ```
 
@@ -177,15 +177,15 @@ happens out-of-band, and re-sending duplicates the side effect.
 And know the CLI-only arms: a `credential_not_provisioned` (424) denial
 carries a `provisioning_url` — relay it to your operator to connect the
 account; there is nothing an MCP tool can do to fix it (do **not** file
-`request_access` for it). The denial taxonomy (`no_toolkit_binding`,
+`request_access` for it). The denial taxonomy (`no_credential_binding`,
 `credential_undecryptable`, `credential_identity_mismatch`,
-`ambiguous_toolkit` — the per-code meanings are surface-independent and
-live in `references/recovery.md`) applies unchanged — the same codes,
+`ambiguous_credential_binding` — the per-code meanings are surface-independent
+and live in `references/recovery.md`) applies unchanged — the same codes,
 delivered in the envelope instead of stderr.
 
 ## The 9 mount tools (each maps onto the loop)
 
-- `whoami` — your identity, status, scopes, and toolkit bindings with the
+- `whoami` — your identity, status, scopes, and credential bindings with the
   APIs each one serves; start here and decide access from it.
 - `search_apis` — search the imported registry for operations by
   natural-language query; each hit carries the `operation_id`.
@@ -204,7 +204,7 @@ delivered in the envelope instead of stderr.
   server reports the same duplicate as a failed dead-letter import; either
   way it's already there).
 - `request_access` — file ONE composite access request
-  (provision/toolkits/scopes + reason), or poll a filed one with
+  (provision/apis/scopes + reason), or poll a filed one with
   `{"request_id": "<id>"}`; relay `approve_url` to the human.
 
 The stdio server serves these nine plus `get_started` (pre-auth setup

@@ -10,8 +10,7 @@ import { Label } from '@/shared/ui/Label';
  * The entity kinds that expose a hard delete (or a terminal,
  * delete-equivalent action like agent/service-account *archive*).
  */
-export type CascadeEntityType =
-	'credential' | 'api' | 'agent' | 'service-account' | 'oauth-client';
+export type CascadeEntityType = 'credential' | 'api' | 'agent' | 'service-account' | 'oauth-client';
 
 /**
  * One group in the blast-radius list. `count` is authoritative (drives the

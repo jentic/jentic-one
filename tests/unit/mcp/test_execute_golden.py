@@ -175,7 +175,7 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
     taxonomy; the broker's verbatim agent_directive rides the payload (the
     same fixture the execute_broker_denial_directive_json golden froze)."""
     directive = {
-        "instruction": "Ask your operator to approve toolkit acme/pets, then retry.",
+        "instruction": "Ask your operator to approve access to acme/pets, then retry.",
         "next_action": "wait_for_approval",
     }
 

@@ -20,7 +20,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
-from jentic.problem_details import Forbidden, ProblemDetailException
+from jentic.problem_details import ProblemDetailException
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (

@@ -374,7 +374,7 @@
       "required_scopes": [
         "oauth-clients:write"
       ],
-      "summary": "Deactivate OAuth client",
+      "summary": "Disable OAuth client",
       "surface": "admin",
       "typical_caller": "any"
     },
@@ -473,6 +473,31 @@
         "oauth-clients:write"
       ],
       "summary": "Approve OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "deleteOauthClient",
+      "path": "/admin/oauth-clients/{id}:delete",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Delete OAuth client",
       "surface": "admin",
       "typical_caller": "any"
     },
@@ -2953,6 +2978,36 @@
       "typical_caller": null
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "consentAgentCreate",
+      "path": "/oauth/consent/agent",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Create the consenting user's first agent inline (consent page)",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "consentAgentStatus",
+      "path": "/oauth/consent/agent/status",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Poll pending-agent approval status (consent awaiting page)",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -4525,7 +4580,7 @@
           },
           {
             "action": "write",
-            "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+            "description": "Create, update, disable, and rotate secrets of OAuth clients",
             "family": "oauth-clients",
             "implies": [
               "oauth-clients:read"
@@ -4743,7 +4798,7 @@
       },
       {
         "action": "write",
-        "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+        "description": "Create, update, disable, and rotate secrets of OAuth clients",
         "family": "oauth-clients",
         "implies": [
           "oauth-clients:read"
@@ -4924,5 +4979,5 @@
     ],
     "total": 30
   },
-  "total": 180
+  "total": 183
 }

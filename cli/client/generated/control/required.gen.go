@@ -85,6 +85,7 @@ func (ChangePasswordRequest) RequiredFields() []string {
 }
 func (ClaimRequest) RequiredFields() []string                { return []string{"token"} }
 func (ConnectChallengeResponse) RequiredFields() []string    { return []string{"authorize_url", "state"} }
+func (ConsentAgentStatusResponse) RequiredFields() []string  { return []string{"status"} }
 func (CreateAdminRequest) RequiredFields() []string          { return []string{"email", "password"} }
 func (CredentialAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (CredentialAgentResponse) RequiredFields() []string {
