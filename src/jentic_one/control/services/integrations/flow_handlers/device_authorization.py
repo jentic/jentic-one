@@ -29,6 +29,14 @@ from jentic_one.shared.config import VendorDeviceAuthorizationFlowConfig, Vendor
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import StoredCredentialType
 
+# Upper bound on the RFC 8628 §3.5 ``slow_down`` interval widening. Every
+# ``slow_down`` bumps the interval by 5s; without a cap a jittery vendor could
+# compound this until the interval outlived the connect session TTL. 60s is
+# well above any real vendor's happy-path interval (GitHub / Google ship 5s)
+# and below the default session TTL, so a legit slow_down cycle still lets
+# the scanner drive the flow to completion.
+_MAX_POLL_INTERVAL_SECONDS = 60
+
 
 class DeviceAuthorizationHandler:
     """RFC 8628 device-flow handler."""
@@ -179,11 +187,14 @@ class DeviceAuthorizationHandler:
             return StatusReport(kind="pending")
         if result.status == "slow_down":
             # RFC 8628 §3.5 — widen the interval by 5s for future polls.
+            # Cap so a jittery vendor that fires repeated ``slow_down``
+            # errors doesn't compound the interval to the session TTL.
+            widened = min((dfc.poll_interval_seconds or 5) + 5, _MAX_POLL_INTERVAL_SECONDS)
             async with self._ctx.control_db.transaction() as session:
                 await DeviceAuthorizationCredentialRepository.update_fields(
                     session,
                     credential_id,
-                    poll_interval_seconds=(dfc.poll_interval_seconds or 5) + 5,
+                    poll_interval_seconds=widened,
                 )
             return StatusReport(kind="pending")
         if result.status == "denied":
@@ -197,6 +208,15 @@ class DeviceAuthorizationHandler:
                 kind="expired",
                 error_code="expired_token",
                 terminal_detail="expired_token",
+            )
+        if result.status != "success":
+            # Exhaustive: a new/unknown status from ``poll_device_authorization``
+            # must surface as a typed terminal failure, not fall into the
+            # success branch and blow up on the ``access_token`` assert.
+            return StatusReport(
+                kind="failed",
+                error_code="vendor_error",
+                terminal_detail=f"unknown poll status {result.status!r}",
             )
 
         # success

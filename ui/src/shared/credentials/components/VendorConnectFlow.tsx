@@ -404,7 +404,12 @@ function VendorApproveFlow({
 	}, [sessionId, pollToken]);
 
 	const handleCancel = (): void => {
-		if (phase === 'awaiting') {
+		// Both configure- and awaiting-phase cancels must cancel the
+		// server-side session. Without this the ``created`` session sits
+		// pending until the TTL scanner reaps it (~30 min) and the
+		// initiating agent's ``/status`` poll keeps reporting ``pending``
+		// on an explicit human refusal.
+		if (phase === 'awaiting' || phase === 'configure') {
 			cancelMutation.mutate({ sessionId, pollToken });
 			phaseRef.current = 'terminal';
 		}
