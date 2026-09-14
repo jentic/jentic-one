@@ -23578,7 +23578,7 @@
     },
     "/connect-sessions/{session_id}:cancel": {
       "post": {
-        "description": "Terminate a still-active session at the user's request.\n\nGated by the same ``poll_token`` capability as ``/status`` — the\nSPA already holds it, so we don't force the caller to bring a\nheavier scope than the poller endpoint they're already using.\nIdempotent: an already-terminal (or already-cleaned-up) session is\na 204 no-op so a \"Cancel\" click during a race with the poll scanner\ndoesn't error.",
+        "description": "Terminate a still-active session at the user's request.\n\nGated by the same ``poll_token`` capability as ``/status`` — the\nSPA already holds it, so we don't force the caller to bring a\nheavier scope than the poller endpoint they're already using.\n\nA still-existing but already-terminal session is a 204 no-op — a\n\"Cancel\" click racing the poll scanner doesn't error. A session\nthat has already been cascade-deleted (unhappy-terminal path in\n``_mark_terminal``) surfaces as 403, matching ``/status`` — the\ncaller can't distinguish \"gone\" from \"your poll_token is wrong\",\nwhich is the enumeration-oracle guard. The SPA's cancel-on-unmount\nis fire-and-forget and ``.catch``es the 403, so this doesn't leak\ninto the UX.",
         "operationId": "cancelConnectSession",
         "parameters": [
           {
