@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from jentic_one.control.services.integrations.connect_session_service import (
@@ -38,11 +38,46 @@ from jentic_one.control.web.schemas.integrations import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.state import MemoryStateBackend
 from jentic_one.shared.web import get_current_identity
 
 _logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["Integrations"])
+
+
+# ---------------------------------------------------------------------------
+# Per-actor rate limit for POST /integrations:connect
+# ---------------------------------------------------------------------------
+#
+# Every :connect POST fires the vendor's device-authorization / authorization
+# endpoint. A ``credentials:write`` caller that spams the endpoint can get the
+# platform IP throttled by GitHub / Google / etc., which would fail-fast every
+# legitimate user on the same install. This is a per-actor cap that fires
+# well below any vendor's own throttle: ``_CONNECT_RPM`` sustained requests
+# per minute, ``_CONNECT_BURST`` bucket capacity for a short spike.
+#
+# In-memory only (per-worker) — sufficient for the abuse case (one actor
+# spamming), not a coordinated-cluster limit. If a multi-worker cluster-wide
+# limit is ever needed, wire ``build_state_backend(ctx.config.<...>.backend)``
+# instead of the memory backend below.
+_CONNECT_RPM = 30
+_CONNECT_BURST = 10
+
+
+def _get_connect_limiter(request: Request) -> RateLimiter:
+    limiter: RateLimiter | None = getattr(request.app.state, "integrations_connect_limiter", None)
+    if limiter is not None:
+        return limiter
+    limiter = RateLimiter(
+        MemoryStateBackend(),
+        default_rpm=_CONNECT_RPM,
+        burst=_CONNECT_BURST,
+        namespace="integrations_connect",
+    )
+    request.app.state.integrations_connect_limiter = limiter
+    return limiter
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +93,7 @@ router = APIRouter(tags=["Integrations"])
 )
 async def integrations_connect(
     body: IntegrationsConnectRequest,
+    request: Request,
     identity: Identity = get_current_identity(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
@@ -72,6 +108,20 @@ async def integrations_connect(
     since credentials still bind through toolkits — it becomes mandatory
     once agent-credential bindings replace toolkit membership.
     """
+    # Per-actor rate limit — every :connect POST fires the vendor's
+    # authorize/device-authorization endpoint, so a spammy caller can get
+    # the platform IP throttled by the vendor and take out every legit
+    # user on the same install. See ``_get_connect_limiter`` for the
+    # policy knobs.
+    limiter = _get_connect_limiter(request)
+    outcome = await limiter.acquire(identity.sub)
+    if not outcome.allowed:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "rate limit exceeded"},
+            headers={**outcome.headers(), "Retry-After": str(outcome.retry_after_s)},
+        )
+
     if identity.actor_type == ActorType.AGENT:
         if body.agent_id is not None:
             return JSONResponse(
